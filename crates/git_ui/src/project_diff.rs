@@ -869,12 +869,20 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to previous hunk",
-                                &GoToPrevHunk,
+                                &GoToPrevHunk {
+                                    center_cursor: false,
+                                },
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToPrevHunk, window, cx)
+                                this.dispatch_action(
+                                    &GoToPrevHunk {
+                                        center_cursor: true,
+                                    },
+                                    window,
+                                    cx,
+                                )
                             })),
                     )
                     .child(
@@ -882,12 +890,20 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to next hunk",
-                                &GoToHunk,
+                                &GoToHunk {
+                                    center_cursor: false,
+                                },
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToHunk, window, cx)
+                                this.dispatch_action(
+                                    &GoToHunk {
+                                        center_cursor: true,
+                                    },
+                                    window,
+                                    cx,
+                                )
                             })),
                     ),
             )

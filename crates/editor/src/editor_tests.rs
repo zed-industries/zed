@@ -11302,7 +11302,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         //Wrap around the bottom of the buffer
         for _ in 0..3 {
-            editor.go_to_next_hunk(&GoToHunk, window, cx);
+            editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
         }
     });
 
@@ -11324,7 +11324,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         //Wrap around the top of the buffer
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+            editor.go_to_prev_hunk(&GoToPrevHunk::default(), window, cx);
         }
     });
 
@@ -11344,7 +11344,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+        editor.go_to_prev_hunk(&GoToPrevHunk::default(), window, cx);
     });
 
     cx.assert_editor_state(
@@ -11363,7 +11363,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+        editor.go_to_prev_hunk(&GoToPrevHunk::default(), window, cx);
     });
 
     cx.assert_editor_state(
@@ -11383,7 +11383,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
 
     cx.update_editor(|editor, window, cx| {
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+            editor.go_to_prev_hunk(&GoToPrevHunk::default(), window, cx);
         }
     });
 
@@ -11407,7 +11407,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     });
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk, window, cx);
+        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
     });
 
     cx.assert_editor_state(
@@ -13414,7 +13414,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk, window, cx);
+        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
     });
     executor.run_until_parked();
@@ -13436,7 +13436,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
 
     cx.update_editor(|editor, window, cx| {
         for _ in 0..2 {
-            editor.go_to_next_hunk(&GoToHunk, window, cx);
+            editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
             editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
         }
     });
@@ -13459,7 +13459,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk, window, cx);
+        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
     });
     executor.run_until_parked();

@@ -11411,27 +11411,45 @@ impl Editor {
         }
     }
 
-    fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
+    fn go_to_next_hunk(&mut self, action: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_position(&snapshot, selection.head(), window, cx);
+        self.go_to_hunk_after_or_before_position(
+            &snapshot,
+            selection.head(),
+            true,
+            action.center_cursor,
+            window,
+            cx,
+        );
     }
 
-    fn go_to_hunk_after_position(
+    fn go_to_hunk_after_or_before_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
+        after: bool,
+        scroll_center: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        let hunk = self.hunk_after_position(snapshot, position);
+        let hunk = if after {
+            self.hunk_after_position(snapshot, position)
+        } else {
+            self.hunk_before_position(snapshot, position)
+        };
 
         if let Some(hunk) = &hunk {
-            let point = Point::new(hunk.row_range.start.0, 0);
+            let destination = Point::new(hunk.row_range.start.0, 0);
+            let autoscroll = if scroll_center {
+                Autoscroll::center()
+            } else {
+                Autoscroll::fit()
+            };
 
-            self.unfold_ranges(&[point..point], false, false, cx);
-            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select_ranges([point..point]);
+            self.unfold_ranges(&[destination..destination], false, false, cx);
+            self.change_selections(Some(autoscroll), window, cx, |s| {
+                s.select_ranges([destination..destination]);
             });
         }
 
@@ -11455,32 +11473,33 @@ impl Editor {
             })
     }
 
-    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, window: &mut Window, cx: &mut Context<Self>) {
+    fn go_to_prev_hunk(
+        &mut self,
+        action: &GoToPrevHunk,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_before_position(&snapshot, selection.head(), window, cx);
+        self.go_to_hunk_after_or_before_position(
+            &snapshot,
+            selection.head(),
+            false,
+            action.center_cursor,
+            window,
+            cx,
+        );
     }
 
-    fn go_to_hunk_before_position(
+    fn hunk_before_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        let mut hunk = snapshot.buffer_snapshot.diff_hunk_before(position);
-        if hunk.is_none() {
-            hunk = snapshot.buffer_snapshot.diff_hunk_before(Point::MAX);
-        }
-        if let Some(hunk) = &hunk {
-            let destination = Point::new(hunk.row_range.start.0, 0);
-            self.unfold_ranges(&[destination..destination], false, false, cx);
-            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select_ranges(vec![destination..destination]);
-            });
-        }
-
-        hunk
+        snapshot
+            .buffer_snapshot
+            .diff_hunk_before(position)
+            .or_else(|| snapshot.buffer_snapshot.diff_hunk_before(Point::MAX))
     }
 
     pub fn go_to_definition(
@@ -13598,7 +13617,13 @@ impl Editor {
                 });
 
             if run_twice {
-                self.go_to_next_hunk(&Default::default(), window, cx);
+                self.go_to_next_hunk(
+                    &GoToHunk {
+                        center_cursor: true,
+                    },
+                    window,
+                    cx,
+                );
             }
         } else if !self.buffer().read(cx).is_singleton() {
             self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
@@ -13656,7 +13681,13 @@ impl Editor {
             }
         }
         self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
-        self.go_to_next_hunk(&Default::default(), window, cx);
+        self.go_to_next_hunk(
+            &GoToHunk {
+                center_cursor: true,
+            },
+            window,
+            cx,
+        );
     }
 
     fn do_stage_or_unstage(

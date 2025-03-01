@@ -8873,7 +8873,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Next Hunk",
-                                    &GoToHunk,
+                                    &GoToHunk::default(),
                                     &focus_handle,
                                     window,
                                     cx,
@@ -8887,8 +8887,9 @@ fn diff_hunk_controls(
                                     let snapshot = editor.snapshot(window, cx);
                                     let position =
                                         hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                                    editor
-                                        .go_to_hunk_after_position(&snapshot, position, window, cx);
+                                    editor.go_to_hunk_after_or_before_position(
+                                        &snapshot, position, true, true, window, cx,
+                                    );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
                             }
@@ -8904,7 +8905,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
-                                    &GoToPrevHunk,
+                                    &GoToPrevHunk::default(),
                                     &focus_handle,
                                     window,
                                     cx,
@@ -8918,7 +8919,9 @@ fn diff_hunk_controls(
                                     let snapshot = editor.snapshot(window, cx);
                                     let point =
                                         hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                    editor.go_to_hunk_before_position(&snapshot, point, window, cx);
+                                    editor.go_to_hunk_after_or_before_position(
+                                        &snapshot, point, false, true, window, cx,
+                                    );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
                             }

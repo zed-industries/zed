@@ -372,8 +372,8 @@
       "ctrl-alt-y": "git::ToggleStaged",
       "alt-y": ["git::StageAndNext", { "whole_excerpt": false }],
       "alt-shift-y": ["git::UnstageAndNext", { "whole_excerpt": false }],
-      "alt-.": "editor::GoToHunk",
-      "alt-,": "editor::GoToPrevHunk"
+      "alt-.": ["editor::GoToHunk", { "center_cursor": true }],
+      "alt-,": ["editor::GoToPrevHunk", { "center_cursor": true }]
     }
   },
   {
@@ -564,8 +564,8 @@
       "shift-enter": "editor::ExpandExcerpts",
       "ctrl-alt-enter": "editor::OpenExcerptsSplit",
       "ctrl-shift-e": "pane::RevealInProjectPanel",
-      "ctrl-f8": "editor::GoToHunk",
-      "ctrl-shift-f8": "editor::GoToPrevHunk",
+      "ctrl-f8": ["editor::GoToHunk", { "center_cursor": true }],
+      "ctrl-shift-f8": ["editor::GoToPrevHunk", { "center_cursor": true }],
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }
