@@ -13,7 +13,7 @@ pub struct JsxTagCompletionState {
     open_tag_range: Range<usize>,
 }
 
-pub fn should_auto_close(
+pub(crate) fn should_auto_close(
     buffer: &BufferSnapshot,
     edited_ranges: &[Range<usize>],
     config: &JsxTagAutoCloseConfig,
@@ -23,15 +23,15 @@ pub fn should_auto_close(
         let text = buffer
             .text_for_range(edited_range.clone())
             .collect::<String>();
-        if dbg!(!text.ends_with(">")) {
+        if !text.ends_with(">") {
             continue;
         }
-        let Some(layer) = dbg!(buffer.syntax_layer_at(edited_range.start)) else {
+        let Some(layer) = buffer.syntax_layer_at(edited_range.start) else {
             continue;
         };
-        let Some(node) = dbg!(layer
+        let Some(node) = layer
             .node()
-            .descendant_for_byte_range(edited_range.start, edited_range.end))
+            .descendant_for_byte_range(edited_range.start, edited_range.end)
         else {
             continue;
         };
@@ -43,7 +43,7 @@ pub fn should_auto_close(
                 }
             }
         }
-        if dbg!(jsx_open_tag_node.grammar_name()) != config.open_tag_node_name {
+        if jsx_open_tag_node.grammar_name() != config.open_tag_node_name {
             continue;
         }
 
@@ -70,10 +70,7 @@ pub fn should_auto_close(
             edit_index: index,
             open_tag_range: jsx_open_tag_node.byte_range(),
         });
-
-        dbg!(node.parent());
     }
-    dbg!(&to_auto_edit.len());
     if to_auto_edit.is_empty() {
         return None;
     } else {
@@ -81,7 +78,7 @@ pub fn should_auto_close(
     }
 }
 
-pub fn generate_auto_close_edits(
+pub(crate) fn generate_auto_close_edits(
     buffer: &BufferSnapshot,
     ranges: &[Range<usize>],
     config: &JsxTagAutoCloseConfig,
@@ -105,7 +102,6 @@ pub fn generate_auto_close_edits(
             .map_or(0..0, |node| node.byte_range());
 
         let tag_name = buffer.text_for_range(tag_name_range).collect::<String>();
-        dbg!(&tag_name);
         {
             let mut tree_root_node = open_tag;
             // todo! child_with_descendant
@@ -118,8 +114,6 @@ pub fn generate_auto_close_edits(
                     break;
                 }
             }
-
-            dbg!(tree_root_node);
 
             let mut unclosed_open_tag_count: i32 = 0;
 
@@ -140,7 +134,6 @@ pub fn generate_auto_close_edits(
                             .text_for_range(node.byte_range())
                             .equals_str(&tag_name)
                     }) {
-                        dbg!("found open");
                         unclosed_open_tag_count += 1;
                     }
                     continue;
@@ -150,7 +143,6 @@ pub fn generate_auto_close_edits(
                             .text_for_range(node.byte_range())
                             .equals_str(&tag_name)
                     }) {
-                        dbg!("found close");
                         unclosed_open_tag_count -= 1;
                     }
                     continue;
@@ -175,10 +167,12 @@ pub fn generate_auto_close_edits(
         edits.push((edit_range, format!("</{}>", tag_name)));
     }
     return Ok(edits);
-    // Ok(vec![])
 }
 
-pub fn enabled_in_any_buffer(multi_buffer: &Entity<MultiBuffer>, cx: &mut Context<Editor>) -> bool {
+pub(crate) fn enabled_in_any_buffer(
+    multi_buffer: &Entity<MultiBuffer>,
+    cx: &mut Context<Editor>,
+) -> bool {
     let multi_buffer = multi_buffer.read(cx);
     let mut found_enabled = false;
     multi_buffer.for_each_buffer(|buffer| {
