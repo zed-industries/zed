@@ -2,6 +2,7 @@ use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     default_working_directory,
+    diagnostics_view::DiagnosticsView,
     persistence::{
         deserialize_terminal_panel, serialize_pane_group, SerializedItems, SerializedTerminalPanel,
     },
@@ -54,6 +55,7 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(TerminalPanel::new_diagnostics);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
@@ -134,6 +136,7 @@ impl TerminalPanel {
                 if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
                     return (None, None);
                 }
+
                 let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
@@ -159,6 +162,10 @@ impl TerminalPanel {
                                         .action(
                                             "Spawn task",
                                             zed_actions::Spawn::modal().boxed_clone(),
+                                        )
+                                        .action(
+                                            "Open diagnostics",
+                                            workspace::NewDiagnostics.boxed_clone(),
                                         )
                                 });
 
@@ -601,6 +608,24 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
+    /// Create a new diagnostics view
+    fn new_diagnostics(
+        workspace: &mut Workspace,
+        _: &workspace::NewDiagnostics,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+
+        terminal_panel
+            .update(cx, |this, cx| {
+                this.add_diagnostics(RevealStrategy::Always, window, cx)
+            })
+            .detach_and_log_err(cx);
+    }
+
     fn terminals_for_task(
         &self,
         label: &str,
@@ -756,6 +781,51 @@ impl TerminalPanel {
         })
     }
 
+    fn add_diagnostics(
+        &mut self,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, |terminal_panel, mut cx| async move {
+            let pane = terminal_panel.update(&mut cx, |terminal_panel, _| {
+                terminal_panel.active_pane.clone()
+            })?;
+            let result = workspace.update_in(&mut cx, |workspace, window, cx| {
+                let diagnostics_view = Box::new(DiagnosticsView::new(
+                    workspace.weak_handle(),
+                    workspace.project().clone(),
+                    window,
+                    cx,
+                ));
+
+                match reveal_strategy {
+                    RevealStrategy::Always => {
+                        workspace.focus_panel::<Self>(window, cx);
+                    }
+                    RevealStrategy::NoFocus => {
+                        workspace.open_panel::<Self>(window, cx);
+                    }
+                    RevealStrategy::Never => {}
+                }
+
+                pane.update(cx, |pane, cx| {
+                    let focus = pane.has_focus(window, cx)
+                        || matches!(reveal_strategy, RevealStrategy::Always);
+                    pane.add_item(diagnostics_view, true, focus, None, window, cx);
+                    pane.focus_active_item(window, cx);
+                });
+
+                Ok(())
+            })?;
+
+            terminal_panel.update(&mut cx, |this, cx| this.serialize(cx))?;
+            result
+        })
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let height = self.height;
         let width = self.width;
@@ -783,6 +853,7 @@ impl TerminalPanel {
                     ))
                 })
                 .ok()?;
+
             cx.background_spawn(
                 async move {
                     KEY_VALUE_STORE
@@ -1037,13 +1108,16 @@ pub fn new_terminal_pane(
             };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
                 let this_pane = cx.entity().clone();
+
                 let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {
                     tab.pane.read(cx).item_for_index(tab.ix)
                 };
                 if let Some(item) = item {
-                    if item.downcast::<TerminalView>().is_some() {
+                    if item.downcast::<TerminalView>().is_some()
+                        || item.downcast::<DiagnosticsView>().is_some()
+                    {
                         let source = tab.pane.clone();
                         let item_id_to_move = item.item_id();
 
