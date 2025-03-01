@@ -106,18 +106,18 @@ pub trait HttpClient: 'static + Send + Sync {
 
 /// A wrapper that adds logging for HTTP request failures
 #[derive(Deref)]
-pub struct LoggingHttpClient {
+pub struct HttpClientWithLog {
     #[deref]
     client: Arc<dyn HttpClient>,
 }
 
-impl LoggingHttpClient {
+impl HttpClientWithLog {
     pub fn new(client: Arc<dyn HttpClient>) -> Self {
         Self { client }
     }
 }
 
-impl HttpClient for LoggingHttpClient {
+impl HttpClient for HttpClientWithLog {
     fn send(
         &self,
         req: http::Request<AsyncBody>,
@@ -144,7 +144,7 @@ impl HttpClient for LoggingHttpClient {
     }
 }
 
-impl HttpClient for Arc<LoggingHttpClient> {
+impl HttpClient for Arc<HttpClientWithLog> {
     fn send(
         &self,
         req: http::Request<AsyncBody>,
@@ -221,7 +221,7 @@ impl HttpClientWithProxy {
         Self::new_uri(client, proxy_uri)
     }
     pub fn new_uri(client: Arc<dyn HttpClient>, proxy_uri: Option<Uri>) -> Self {
-        let client = Arc::new(LoggingHttpClient::new(client));
+        let client = Arc::new(HttpClientWithLog::new(client));
         Self {
             client,
             proxy: proxy_uri,
