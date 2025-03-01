@@ -37,6 +37,7 @@ shlex.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 release_channel.workspace = true
 which.workspace = true
