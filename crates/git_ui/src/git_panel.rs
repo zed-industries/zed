@@ -2916,6 +2916,7 @@ impl PanelRepoFooter {
     }
 
     fn render_push_button(&self, id: SharedString, ahead: u32, cx: &mut App) -> SplitButton {
+        let panel = self.git_panel.clone();
         let panel_focus_handle = self.panel_focus_handle(cx);
 
         SplitButton::new(
@@ -2924,7 +2925,13 @@ impl PanelRepoFooter {
             ahead as usize,
             0,
             None,
-            |_, _, cx| cx.dispatch_action(&git::Push { options: None }),
+            move |_, window, cx| {
+                if let Some(panel) = panel.as_ref() {
+                    panel.update(cx, |panel, cx| {
+                        panel.push(&git::Push { options: None }, window, cx);
+                    });
+                }
+            },
             move |window, cx| {
                 git_action_tooltip(
                     "Push committed changes to remote",
@@ -2945,6 +2952,7 @@ impl PanelRepoFooter {
         behind: u32,
         cx: &mut App,
     ) -> SplitButton {
+        let panel = self.git_panel.clone();
         let panel_focus_handle = self.panel_focus_handle(cx);
 
         SplitButton::new(
@@ -2953,7 +2961,13 @@ impl PanelRepoFooter {
             ahead as usize,
             behind as usize,
             None,
-            |_, _, cx| cx.dispatch_action(&git::Pull),
+            move |_, window, cx| {
+                if let Some(panel) = panel.as_ref() {
+                    panel.update(cx, |panel, cx| {
+                        panel.pull(&git::Pull, window, cx);
+                    });
+                }
+            },
             move |window, cx| {
                 git_action_tooltip(
                     "Pull",
@@ -2968,6 +2982,7 @@ impl PanelRepoFooter {
     }
 
     fn render_fetch_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
+        let panel = self.git_panel.clone();
         let panel_focus_handle = self.panel_focus_handle(cx);
 
         SplitButton::new(
@@ -2976,7 +2991,13 @@ impl PanelRepoFooter {
             0,
             0,
             Some(IconName::ArrowCircle),
-            |_, _, cx| cx.dispatch_action(&git::Fetch),
+            move |_, window, cx| {
+                if let Some(panel) = panel.as_ref() {
+                    panel.update(cx, |panel, cx| {
+                        panel.fetch(&git::Fetch, window, cx);
+                    });
+                }
+            },
             move |window, cx| {
                 git_action_tooltip(
                     "Fetch updates from remote",
@@ -2991,6 +3012,7 @@ impl PanelRepoFooter {
     }
 
     fn render_publish_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
+        let panel = self.git_panel.clone();
         let panel_focus_handle = self.panel_focus_handle(cx);
 
         SplitButton::new(
@@ -2999,10 +3021,18 @@ impl PanelRepoFooter {
             0,
             0,
             Some(IconName::ArrowUpFromLine),
-            |_, _, cx| {
-                cx.dispatch_action(&git::Push {
-                    options: Some(PushOptions::SetUpstream),
-                })
+            move |_, window, cx| {
+                if let Some(panel) = panel.as_ref() {
+                    panel.update(cx, |panel, cx| {
+                        panel.push(
+                            &git::Push {
+                                options: Some(PushOptions::SetUpstream),
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                }
             },
             move |window, cx| {
                 git_action_tooltip(
@@ -3020,6 +3050,7 @@ impl PanelRepoFooter {
     }
 
     fn render_republish_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
+        let panel = self.git_panel.clone();
         let panel_focus_handle = self.panel_focus_handle(cx);
 
         SplitButton::new(
@@ -3028,10 +3059,18 @@ impl PanelRepoFooter {
             0,
             0,
             Some(IconName::ArrowUpFromLine),
-            |_, _, cx| {
-                cx.dispatch_action(&git::Push {
-                    options: Some(PushOptions::SetUpstream),
-                })
+            move |_, window, cx| {
+                if let Some(panel) = panel.as_ref() {
+                    panel.update(cx, |panel, cx| {
+                        panel.push(
+                            &git::Push {
+                                options: Some(PushOptions::SetUpstream),
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                }
             },
             move |window, cx| {
                 git_action_tooltip(
