@@ -3541,7 +3541,9 @@ impl MultiBufferSnapshot {
         cursor.seek(&range.start);
         std::iter::from_fn(move || {
             let region = cursor.region()?;
-            if region.range.start >= range.end {
+            if region.range.start > range.end
+                || region.range.start == range.end && region.range.start > range.start
+            {
                 return None;
             }
             cursor.next_excerpt();
