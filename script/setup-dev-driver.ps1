@@ -2,10 +2,10 @@
 
 # Currently, total CI requires almost 45GB of space, here we are creating a 100GB drive.
 $Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 100GB |
-					Mount-VHD -Passthru |
-					Initialize-Disk -Passthru |
-					New-Partition -AssignDriveLetter -UseMaximumSize |
-					Format-Volume -DevDrive -Confirm:$false -Force
+                    Mount-VHD -Passthru |
+                    Initialize-Disk -Passthru |
+                    New-Partition -AssignDriveLetter -UseMaximumSize |
+                    Format-Volume -DevDrive -Confirm:$false -Force
 
 $Drive = "$($Volume.DriveLetter):"
 
