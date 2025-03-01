@@ -416,6 +416,19 @@ pub fn iterate_expanded_and_wrapped_usize_range(
     }
 }
 
+#[cfg(target_os = "windows")]
+pub fn retrieve_system_shell() -> String {
+    static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
+        if std::env::var("Path").is_ok_and(|env| env.contains("PowerShell\\7\\")) {
+            "pwsh.exe".to_string()
+        } else {
+            "powershell.exe".to_string()
+        }
+    });
+
+    (*SYSTEM_SHELL).clone()
+}
+
 pub trait ResultExt<E> {
     type Ok;
 
