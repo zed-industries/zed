@@ -104,6 +104,100 @@ pub trait HttpClient: 'static + Send + Sync {
     fn proxy(&self) -> Option<&Uri>;
 }
 
+/// A wrapper that adds logging for HTTP request failures
+#[derive(Deref)]
+pub struct LoggingHttpClient {
+    #[deref]
+    client: Arc<dyn HttpClient>,
+}
+
+impl LoggingHttpClient {
+    pub fn new(client: Arc<dyn HttpClient>) -> Self {
+        Self { client }
+    }
+}
+
+impl HttpClient for LoggingHttpClient {
+    fn send(
+        &self,
+        req: http::Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+        let req_method = req.method().clone();
+        let req_uri = req.uri().to_string();
+        let client_type = self.type_name().to_string();
+        let client = self.client.clone();
+
+        Box::pin(async move {
+            let result = client.send(req).await;
+            log_if_failed(req_method, req_uri, client_type, &result);
+            result
+        })
+    }
+
+    fn proxy(&self) -> Option<&Uri> {
+        self.client.proxy()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.client.type_name()
+    }
+}
+
+impl HttpClient for Arc<LoggingHttpClient> {
+    fn send(
+        &self,
+        req: http::Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+        let req_method = req.method().clone();
+        let req_uri = req.uri().to_string();
+        let client_type = self.type_name().to_string();
+        let client = self.client.clone();
+
+        Box::pin(async move {
+            let result = client.send(req).await;
+            log_if_failed(req_method, req_uri, client_type, &result);
+            result
+        })
+    }
+
+    fn proxy(&self) -> Option<&Uri> {
+        self.client.proxy()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.client.type_name()
+    }
+}
+
+fn log_if_failed(
+    req_method: Method,
+    req_uri: String,
+    client_type: String,
+    result: &std::result::Result<Response<AsyncBody>, anyhow::Error>,
+) {
+    match result {
+        Ok(response) if !response.status().is_success() => {
+            log::error!(
+                "HTTP request failed: client={}, method={}, uri={}, status={}",
+                client_type,
+                req_method,
+                req_uri,
+                response.status()
+            );
+        }
+        Err(ref e) => {
+            log::error!(
+                "HTTP request failed: client={}, method={}, uri={}, error={}",
+                client_type,
+                req_method,
+                req_uri,
+                e
+            );
+        }
+        _ => {}
+    }
+}
+
 /// An [`HttpClient`] that may have a proxy.
 #[derive(Deref)]
 pub struct HttpClientWithProxy {
@@ -122,6 +216,7 @@ impl HttpClientWithProxy {
         Self::new_uri(client, proxy_uri)
     }
     pub fn new_uri(client: Arc<dyn HttpClient>, proxy_uri: Option<Uri>) -> Self {
+        let client = Arc::new(LoggingHttpClient::new(client));
         Self {
             client,
             proxy: proxy_uri,
