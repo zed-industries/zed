@@ -199,7 +199,6 @@ fn retrieve_command_description() -> windows_core::Result<HSTRING> {
     const REG_PATH: &str = "Software\\Classes\\ZedEditorPreviewContextMenu";
     #[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
     const REG_PATH: &str = "Software\\Classes\\ZedEditorNightlyContextMenu";
-    let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
 
     // Make cargo clippy happy
     #[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
