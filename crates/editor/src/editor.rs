@@ -7722,7 +7722,7 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         let chunk_by = self
             .snapshot(window, cx)
-            .hunks_for_ranges(ranges.into_iter())
+            .hunks_for_ranges(ranges)
             .into_iter()
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
@@ -11424,25 +11424,35 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        let mut hunk = snapshot
-            .buffer_snapshot
-            .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
-            .find(|hunk| hunk.row_range.start.0 > position.row);
-        if hunk.is_none() {
-            hunk = snapshot
-                .buffer_snapshot
-                .diff_hunks_in_range(Point::zero()..position)
-                .find(|hunk| hunk.row_range.end.0 < position.row)
-        }
+        let hunk = self.hunk_after_position(snapshot, position);
+
         if let Some(hunk) = &hunk {
-            let destination = Point::new(hunk.row_range.start.0, 0);
-            self.unfold_ranges(&[destination..destination], false, false, cx);
+            let point = Point::new(hunk.row_range.start.0, 0);
+
+            self.unfold_ranges(&[point..point], false, false, cx);
             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select_ranges(vec![destination..destination]);
+                s.select_ranges([point..point]);
             });
         }
 
         hunk
+    }
+
+    fn hunk_after_position(
+        &mut self,
+        snapshot: &EditorSnapshot,
+        position: Point,
+    ) -> Option<MultiBufferDiffHunk> {
+        snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
+            .find(|hunk| hunk.row_range.start.0 > position.row)
+            .or_else(|| {
+                snapshot
+                    .buffer_snapshot
+                    .diff_hunks_in_range(Point::zero()..position)
+                    .find(|hunk| hunk.row_range.end.0 < position.row)
+            })
     }
 
     fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, window: &mut Window, cx: &mut Context<Self>) {
@@ -13528,20 +13538,20 @@ impl Editor {
 
     pub fn stage_and_next(
         &mut self,
-        _: &::git::StageAndNext,
+        action: &::git::StageAndNext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.do_stage_or_unstage_and_next(true, window, cx);
+        self.do_stage_or_unstage_and_next(true, action.whole_excerpt, window, cx);
     }
 
     pub fn unstage_and_next(
         &mut self,
-        _: &::git::UnstageAndNext,
+        action: &::git::UnstageAndNext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.do_stage_or_unstage_and_next(false, window, cx);
+        self.do_stage_or_unstage_and_next(false, action.whole_excerpt, window, cx);
     }
 
     pub fn stage_or_unstage_diff_hunks(
@@ -13563,16 +13573,36 @@ impl Editor {
     fn do_stage_or_unstage_and_next(
         &mut self,
         stage: bool,
+        whole_excerpt: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+
         if ranges.iter().any(|range| range.start != range.end) {
             self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
             return;
         }
 
-        if !self.buffer().read(cx).is_singleton() {
+        if !whole_excerpt {
+            let snapshot = self.snapshot(window, cx);
+            let newest_range = self.selections.newest::<Point>(cx).range();
+
+            let run_twice = snapshot
+                .hunks_for_ranges([newest_range])
+                .first()
+                .is_some_and(|hunk| {
+                    let next_line = Point::new(hunk.row_range.end.0 + 1, 0);
+                    self.hunk_after_position(&snapshot, next_line)
+                        .is_some_and(|other| other.row_range == hunk.row_range)
+                });
+
+            if run_twice {
+                self.go_to_next_hunk(&Default::default(), window, cx);
+            }
+        } else if !self.buffer().read(cx).is_singleton() {
+            self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
+
             if let Some((excerpt_id, buffer, range)) = self.active_excerpt(cx) {
                 if buffer.read(cx).is_empty() {
                     let buffer = buffer.read(cx);
@@ -13586,9 +13616,9 @@ impl Editor {
                     let Some(project) = self.project.as_ref() else {
                         return;
                     };
-                    let project = project.read(cx);
 
-                    let Some(repo) = project.git_store().read(cx).active_repository() else {
+                    let Some(repo) = project.read(cx).git_store().read(cx).active_repository()
+                    else {
                         return;
                     };
 
@@ -13620,7 +13650,7 @@ impl Editor {
                     point = snapshot.clip_point(point, Bias::Right);
                     self.change_selections(Some(Autoscroll::top_relative(6)), window, cx, |s| {
                         s.select_ranges([point..point]);
-                    })
+                    });
                 }
                 return;
             }
@@ -13756,7 +13786,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx);
-        let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx).into_iter());
+        let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx));
         let mut ranges_by_buffer = HashMap::default();
         self.transact(window, cx, |editor, _window, cx| {
             for hunk in hunks {
@@ -17083,7 +17113,7 @@ impl EditorSnapshot {
 
     pub fn hunks_for_ranges(
         &self,
-        ranges: impl Iterator<Item = Range<Point>>,
+        ranges: impl IntoIterator<Item = Range<Point>>,
     ) -> Vec<MultiBufferDiffHunk> {
         let mut hunks = Vec::new();
         let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =

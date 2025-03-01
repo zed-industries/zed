@@ -4112,6 +4112,8 @@ mod tests {
                     | "vim::PushLiteral"
                     | "vim::Number"
                     | "vim::SelectRegister"
+                    | "git::StageAndNext"
+                    | "git::UnstageAndNext"
                     | "terminal::SendText"
                     | "terminal::SendKeystroke"
                     | "app_menu::OpenApplicationMenu"
