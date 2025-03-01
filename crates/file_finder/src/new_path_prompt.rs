@@ -192,7 +192,7 @@ impl Match {
             }
         }
 
-        StyledText::new(text).with_highlights(&window.text_style().clone(), highlights)
+        StyledText::new(text).with_default_highlights(&window.text_style().clone(), highlights)
     }
 }
 

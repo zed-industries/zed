@@ -141,19 +141,20 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                     cx,
                     move |cx| {
                         let workspace_handle = cx.entity().downgrade();
-                        cx.new(|_cx| {
-                            MessageNotification::new(format!("Updated to {app_name} {}", version))
-                                .primary_message("View Release Notes")
-                                .primary_on_click(move |window, cx| {
-                                    if let Some(workspace) = workspace_handle.upgrade() {
-                                        workspace.update(cx, |workspace, cx| {
-                                            crate::view_release_notes_locally(
-                                                workspace, window, cx,
-                                            );
-                                        })
-                                    }
-                                    cx.emit(DismissEvent);
-                                })
+                        cx.new(|cx| {
+                            MessageNotification::new(
+                                format!("Updated to {app_name} {}", version),
+                                cx,
+                            )
+                            .primary_message("View Release Notes")
+                            .primary_on_click(move |window, cx| {
+                                if let Some(workspace) = workspace_handle.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        crate::view_release_notes_locally(workspace, window, cx);
+                                    })
+                                }
+                                cx.emit(DismissEvent);
+                            })
                         })
                     },
                 );

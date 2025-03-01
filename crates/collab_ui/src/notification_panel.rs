@@ -22,7 +22,7 @@ use ui::{
     h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::notifications::NotificationId;
+use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -570,11 +570,12 @@ impl NotificationPanel {
                 workspace.dismiss_notification(&id, cx);
                 workspace.show_notification(id, cx, |cx| {
                     let workspace = cx.entity().downgrade();
-                    cx.new(|_| NotificationToast {
+                    cx.new(|cx| NotificationToast {
                         notification_id,
                         actor,
                         text,
                         workspace,
+                        focus_handle: cx.focus_handle(),
                     })
                 })
             })
@@ -771,7 +772,16 @@ pub struct NotificationToast {
     actor: Option<Arc<User>>,
     text: String,
     workspace: WeakEntity<Workspace>,
+    focus_handle: FocusHandle,
 }
+
+impl Focusable for NotificationToast {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl WorkspaceNotification for NotificationToast {}
 
 impl NotificationToast {
     fn focus_notification_panel(&self, window: &mut Window, cx: &mut Context<Self>) {

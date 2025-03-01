@@ -514,7 +514,7 @@ impl CompletionsMenu {
                         );
 
                         let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_highlights(&style.text, highlights);
+                            .with_default_highlights(&style.text, highlights);
                         let documentation_label = if let Some(
                             CompletionDocumentation::SingleLine(text),
                         ) = documentation

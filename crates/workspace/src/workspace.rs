@@ -157,6 +157,7 @@ actions!(
         ToggleZoom,
         Unfollow,
         Welcome,
+        FocusOutwards,
     ]
 );
 
@@ -920,7 +921,7 @@ impl Workspace {
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
                     cx,
-                    |cx| cx.new(|_| MessageNotification::new(message.clone())),
+                    |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
                 ),
 
                 project::Event::HideToast { notification_id } => {
@@ -937,7 +938,11 @@ impl Workspace {
                     this.show_notification(
                         NotificationId::composite::<LanguageServerPrompt>(id as usize),
                         cx,
-                        |cx| cx.new(|_| notifications::LanguageServerPrompt::new(request.clone())),
+                        |cx| {
+                            cx.new(|cx| {
+                                notifications::LanguageServerPrompt::new(request.clone(), cx)
+                            })
+                        },
                     );
                 }
 
@@ -2499,6 +2504,27 @@ impl Workspace {
         self.focus_or_unfocus_panel::<T>(window, cx, |panel, window, cx| {
             !panel.panel_focus_handle(cx).contains_focused(window, cx)
         });
+    }
+
+    pub fn focus_outwards(
+        &mut self,
+        _: &FocusOutwards,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.modal_layer.read(cx).has_active_modal() {
+            self.modal_layer.update(cx, |modal_layer, cx| {
+                if modal_layer.has_active_modal() {
+                    modal_layer.hide_modal(window, cx);
+                }
+            });
+
+            return;
+        }
+
+        // if let Some((id, any_view)) = self.notifications.first() {
+        //     any_view.
+        // }
     }
 
     pub fn activate_panel_for_proto_id(
@@ -5223,8 +5249,8 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
                     |cx| {
-                        cx.new(|_| {
-                            MessageNotification::new("Failed to load the database file.")
+                        cx.new(|cx| {
+                            MessageNotification::new("Failed to load the database file.", cx)
                                 .primary_message("File an Issue")
                                 .primary_icon(IconName::Plus)
                                 .primary_on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
