@@ -743,6 +743,30 @@ impl Pane {
         }
     }
 
+    /// Returns the list of pinned ProjectPaths.
+    pub fn get_pinned_project_paths(&self, cx: &App) -> Vec<ProjectPath> {
+        let mut results: Vec<ProjectPath> = Vec::new();
+
+        let pinned_count = self.pinned_count();
+        for i in 0..pinned_count {
+            let item = self.items.get(i).unwrap();
+            let project_path = item.project_path(cx).unwrap();
+            results.push(project_path);
+        }
+
+        results
+    }
+
+    /// Checks if the provided ProjectPath is pinned.
+    pub fn is_pinned(&self, project_path: &ProjectPath, cx: &App) -> bool {
+        for (index, item) in self.items.iter().enumerate() {
+            if self.is_tab_pinned(index) && item.project_path(cx).unwrap() == *project_path {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn nav_history(&self) -> &NavHistory {
         &self.nav_history
     }

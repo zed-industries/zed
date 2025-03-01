@@ -229,6 +229,15 @@ pub struct ToggleFileFinder {
 
 impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema)]
+pub struct TogglePinnedFileFinder {
+    #[serde(default)]
+    pub separate_history: bool,
+}
+
+impl_action_as!(pinned_file_finder, TogglePinnedFileFinder as Toggle);
+
+
 impl_actions!(
     workspace,
     [
@@ -1374,6 +1383,16 @@ impl Workspace {
         &self.project
     }
 
+    pub fn get_pinned_project_paths(&self, cx: &App) -> Vec<ProjectPath> {
+        let mut pinned_project_paths: Vec<ProjectPath> = Vec::new();
+        for pane in &self.panes {
+            let pane = pane.read(cx);
+            let pinned_project_paths_in_pane = pane.get_pinned_project_paths(cx);
+            pinned_project_paths.extend(pinned_project_paths_in_pane);
+        }
+        pinned_project_paths
+    }
+
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
@@ -1384,6 +1403,10 @@ impl Workspace {
             let pane = pane.read(cx);
             pane.nav_history()
                 .for_each_entry(cx, |entry, (project_path, fs_path)| {
+                    if !pane.is_pinned(&project_path, cx) {
+                        return;
+                    }
+
                     if let Some(fs_path) = &fs_path {
                         abs_paths_opened
                             .entry(fs_path.clone())
