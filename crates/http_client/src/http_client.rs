@@ -7,7 +7,7 @@ use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
 use futures::future::BoxFuture;
-use http::request::Builder;
+use http::{request::Builder, HeaderMap, HeaderValue};
 use rustls::ClientConfig;
 use rustls_platform_verifier::ConfigVerifierExt;
 #[cfg(feature = "test-support")]
@@ -124,12 +124,13 @@ impl HttpClient for LoggingHttpClient {
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
         let req_method = req.method().clone();
         let req_uri = req.uri().to_string();
+        let req_headers = req.headers().clone();
         let client_type = self.type_name().to_string();
         let client = self.client.clone();
 
         Box::pin(async move {
             let result = client.send(req).await;
-            log_if_failed(req_method, req_uri, client_type, &result);
+            log_if_failed(req_method, req_uri, req_headers, client_type, &result);
             result
         })
     }
@@ -150,12 +151,13 @@ impl HttpClient for Arc<LoggingHttpClient> {
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
         let req_method = req.method().clone();
         let req_uri = req.uri().to_string();
+        let req_headers = req.headers().clone();
         let client_type = self.type_name().to_string();
         let client = self.client.clone();
 
         Box::pin(async move {
             let result = client.send(req).await;
-            log_if_failed(req_method, req_uri, client_type, &result);
+            log_if_failed(req_method, req_uri, req_headers, client_type, &result);
             result
         })
     }
@@ -172,25 +174,28 @@ impl HttpClient for Arc<LoggingHttpClient> {
 fn log_if_failed(
     req_method: Method,
     req_uri: String,
+    req_headers: HeaderMap<HeaderValue>,
     client_type: String,
     result: &std::result::Result<Response<AsyncBody>, anyhow::Error>,
 ) {
     match result {
         Ok(response) if !response.status().is_success() => {
             log::error!(
-                "HTTP request failed: client={}, method={}, uri={}, status={}",
+                "HTTP request failed: client={}, method={}, uri={}, headers={:?}, status={}",
                 client_type,
                 req_method,
                 req_uri,
+                req_headers,
                 response.status()
             );
         }
         Err(ref e) => {
             log::error!(
-                "HTTP request failed: client={}, method={}, uri={}, error={}",
+                "HTTP request failed: client={}, method={}, uri={}, headers={:?}, error={}",
                 client_type,
                 req_method,
                 req_uri,
+                req_headers,
                 e
             );
         }
