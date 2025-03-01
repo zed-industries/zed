@@ -1417,11 +1417,11 @@ impl ShellExec {
                 cx.emit(workspace::Event::SpawnTask {
                     action: Box::new(SpawnInTerminal {
                         id: TaskId("vim".to_string()),
-                        full_label: self.command.clone(),
-                        label: self.command.clone(),
+                        full_label: command.clone(),
+                        label: command.clone(),
                         command: command.clone(),
                         args: Vec::new(),
-                        command_label: self.command.clone(),
+                        command_label: command.clone(),
                         cwd,
                         env: HashMap::default(),
                         use_new_terminal: true,
