@@ -100,6 +100,8 @@ pub struct LanguageSettings {
     pub formatter: SelectedFormatter,
     /// Zed's Prettier integration settings.
     pub prettier: PrettierSettings,
+    /// Whether to automatically close JSX tags.
+    pub jsx_tag_auto_close: JsxTagAutoCloseSettings,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
     /// The list of language servers to use (or disable) for this language.
@@ -374,6 +376,9 @@ pub struct LanguageSettingsContent {
     /// Default: off
     #[serde(default)]
     pub prettier: Option<PrettierSettings>,
+    /// Whether to automatically close JSX tags.
+    #[serde(default)]
+    pub jsx_tag_auto_close: Option<JsxTagAutoCloseSettings>,
     /// Whether to use language servers to provide code intelligence.
     ///
     /// Default: true
@@ -1335,6 +1340,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.formatter, src.formatter.clone());
     merge(&mut settings.prettier, src.prettier.clone());
+    merge(
+        &mut settings.jsx_tag_auto_close,
+        src.jsx_tag_auto_close.clone(),
+    );
     merge(&mut settings.format_on_save, src.format_on_save.clone());
     merge(
         &mut settings.remove_trailing_whitespace_on_save,
@@ -1396,6 +1405,13 @@ pub struct PrettierSettings {
     /// If project installs Prettier via its package.json, these options will be ignored.
     #[serde(flatten)]
     pub options: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JsxTagAutoCloseSettings {
+    /// Enables or disables auto-closing of JSX tags.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[cfg(test)]
