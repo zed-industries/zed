@@ -4,7 +4,7 @@ mod image_viewer_settings;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use editor::{items::entry_git_aware_label_color, EditorSettings};
+use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,

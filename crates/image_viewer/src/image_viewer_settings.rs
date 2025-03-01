@@ -14,7 +14,7 @@ pub struct ImageViewerSettings {
     /// Whether to show breadcrumbs in the image viewer
     ///
     /// Default: true
-    pub breadcrumbs: bool
+    pub breadcrumbs: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Default)]
