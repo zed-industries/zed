@@ -3691,6 +3691,7 @@ impl Editor {
             InlayHintRefreshReason::SettingsChange(_)
                 | InlayHintRefreshReason::Toggle(_)
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
+                | InlayHintRefreshReason::ModifiersChanged(_)
         );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::ModifiersChanged(enabled) => {
