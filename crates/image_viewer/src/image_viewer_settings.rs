@@ -11,6 +11,10 @@ pub struct ImageViewerSettings {
     /// Default: "binary"
     #[serde(default)]
     pub unit: ImageFileSizeUnit,
+    /// Whether to show breadcrumbs in the image viewer
+    ///
+    /// Default: true
+    pub breadcrumbs: bool
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Default)]

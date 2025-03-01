@@ -145,7 +145,7 @@ impl Item for ImageView {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        let show_breadcrumb = EditorSettings::get_global(cx).toolbar.breadcrumbs;
+        let show_breadcrumb = ImageViewerSettings::get_global(cx).breadcrumbs;
         if show_breadcrumb {
             ToolbarItemLocation::PrimaryLeft
         } else {
