@@ -7722,7 +7722,7 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         let chunk_by = self
             .snapshot(window, cx)
-            .hunks_for_ranges(ranges.into_iter())
+            .hunks_for_ranges(ranges)
             .into_iter()
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
@@ -13786,7 +13786,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx);
-        let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx).into_iter());
+        let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx));
         let mut ranges_by_buffer = HashMap::default();
         self.transact(window, cx, |editor, _window, cx| {
             for hunk in hunks {
