@@ -278,6 +278,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#d3869bff",
             "font_style": null,
@@ -330,6 +335,11 @@
           },
           "punctuation.special": {
             "color": "#e5d5adff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#fabd2eff",
             "font_style": null,
             "font_weight": null
           },
@@ -666,6 +676,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#d3869bff",
             "font_style": null,
@@ -718,6 +733,11 @@
           },
           "punctuation.special": {
             "color": "#e5d5adff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#fabd2eff",
             "font_style": null,
             "font_weight": null
           },
@@ -1054,6 +1074,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#d3869bff",
             "font_style": null,
@@ -1106,6 +1131,11 @@
           },
           "punctuation.special": {
             "color": "#e5d5adff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#fabd2eff",
             "font_style": null,
             "font_weight": null
           },
@@ -1442,6 +1472,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#066578ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#8f3e71ff",
             "font_style": null,
@@ -1494,6 +1529,11 @@
           },
           "punctuation.special": {
             "color": "#413d3aff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1830,6 +1870,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#066578ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#8f3e71ff",
             "font_style": null,
@@ -1882,6 +1927,11 @@
           },
           "punctuation.special": {
             "color": "#413d3aff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
@@ -2218,6 +2268,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#066578ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#8f3e71ff",
             "font_style": null,
@@ -2270,6 +2325,11 @@
           },
           "punctuation.special": {
             "color": "#413d3aff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
