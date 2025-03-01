@@ -1151,4 +1151,112 @@ mod tests {
             .unindent(),
         );
     }
+
+    #[gpui::test]
+    async fn test_hunks_after_restore_then_modify(cx: &mut TestAppContext) {
+        // open buffer w/ a change
+        // open project diff
+        // assert hunks
+        // from buffer, revert
+        // from buffer, make some other change
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo": "modified\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/project/foo", cx)
+            })
+            .await
+            .unwrap();
+        let buffer_editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+        });
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo".into(), "original\n".into())],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.statuses = HashMap::from_iter([(
+                "foo".into(),
+                TrackedStatus {
+                    index_status: StatusCode::Unmodified,
+                    worktree_status: StatusCode::Modified,
+                }
+                .into(),
+            )]);
+        });
+        cx.run_until_parked();
+
+        let diff_editor = diff.update(cx, |diff, _| diff.editor.clone());
+
+        assert_state_with_diff(
+            &diff_editor,
+            cx,
+            &"
+                - original
+                + ˇmodified
+            "
+            .unindent(),
+        );
+
+        let prev_buffer_hunks =
+            cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
+                let snapshot = buffer_editor.snapshot(window, cx);
+                let snapshot = &snapshot.buffer_snapshot;
+                let prev_buffer_hunks = buffer_editor
+                    .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
+                    .collect::<Vec<_>>();
+                buffer_editor.git_restore(&Default::default(), window, cx);
+                prev_buffer_hunks
+            });
+        assert_eq!(prev_buffer_hunks.len(), 1);
+        cx.run_until_parked();
+
+        let new_buffer_hunks =
+            cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
+                let snapshot = buffer_editor.snapshot(window, cx);
+                let snapshot = &snapshot.buffer_snapshot;
+                let new_buffer_hunks = buffer_editor
+                    .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
+                    .collect::<Vec<_>>();
+                buffer_editor.git_restore(&Default::default(), window, cx);
+                new_buffer_hunks
+            });
+        assert_eq!(new_buffer_hunks.as_slice(), &[]);
+
+        cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
+            buffer_editor.set_text("different", window, cx);
+            buffer_editor.save(false, project.clone(), window, cx)
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        assert_state_with_diff(
+            &diff_editor,
+            cx,
+            &"
+                - original
+                + ˇdifferent
+            "
+            .unindent(),
+        );
+    }
 }
