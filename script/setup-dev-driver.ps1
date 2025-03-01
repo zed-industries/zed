@@ -1,7 +1,4 @@
 # Configures a drive for testing in CI.
-# todo(windows)
-# The current version of the Windows runner is 10.0.20348 which does not support DevDrive option.
-# Ref: https://learn.microsoft.com/en-us/windows/dev-drive/
 
 # Currently, total CI requires almost 45GB of space, here we are creating a 100GB drive.
 $Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 100GB |
