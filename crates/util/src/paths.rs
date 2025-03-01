@@ -165,9 +165,7 @@ pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
 const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
     ([^\(]+)(?:
-        \((\d+),(\d+)\) # filename(row,column)
-        |
-        \((\d+):(\d+)\) # filename(row:column)
+        \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
         |
         \((\d+)\)()     # filename(row)
     )
