@@ -370,8 +370,8 @@
       "ctrl-shift-v": "markdown::OpenPreview",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames",
       "ctrl-alt-y": "git::ToggleStaged",
-      "alt-y": "git::StageAndNext",
-      "alt-shift-y": "git::UnstageAndNext",
+      "alt-y": ["git::StageAndNext", { "whole_excerpt": false }],
+      "alt-shift-y": ["git::UnstageAndNext", { "whole_excerpt": false }],
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPrevHunk"
     }

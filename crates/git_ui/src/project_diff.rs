@@ -813,7 +813,9 @@ impl Render for ProjectDiffToolbar {
                             Button::new("stage", "Stage")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Stage",
-                                    &StageAndNext,
+                                    &StageAndNext {
+                                        whole_excerpt: false,
+                                    },
                                     &focus_handle,
                                 ))
                                 // don't actually disable the button so it's mashable
@@ -823,14 +825,22 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&StageAndNext, window, cx)
+                                    this.dispatch_action(
+                                        &StageAndNext {
+                                            whole_excerpt: false,
+                                        },
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                         .child(
                             Button::new("unstage", "Unstage")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Unstage",
-                                    &UnstageAndNext,
+                                    &UnstageAndNext {
+                                        whole_excerpt: false,
+                                    },
                                     &focus_handle,
                                 ))
                                 .color(if button_states.unstage {
@@ -839,7 +849,13 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&UnstageAndNext, window, cx)
+                                    this.dispatch_action(
+                                        &UnstageAndNext {
+                                            whole_excerpt: false,
+                                        },
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                     }),
