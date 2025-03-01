@@ -1905,15 +1905,11 @@ impl GitPanel {
                     .trim_end_matches("/"),
             ));
             let branches = branch_picker::popover(self.project.clone(), window, cx);
+            let has_entries = self.entries.len() > 0;
             let footer = v_flex()
-                .child(PanelRepoFooter::new(
-                    "footer-button",
-                    display_name,
-                    Some(branch),
-                    Some(git_panel),
-                    Some(branches),
-                ))
-                .child(
+                .child(if !has_entries {
+                    h_flex().id("commit-editor-container")
+                } else {
                     panel_editor_container(window, cx)
                         .id("commit-editor-container")
                         .relative()
@@ -1978,8 +1974,15 @@ impl GitPanel {
                                             }
                                         })),
                                 ),
-                        ),
-                );
+                        )
+                })
+                .child(PanelRepoFooter::new(
+                    "footer-button",
+                    display_name,
+                    Some(branch),
+                    Some(git_panel),
+                    Some(branches),
+                ));
 
             Some(footer)
         } else {
