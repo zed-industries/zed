@@ -141,6 +141,11 @@ const MODULE_ID: GUID = GUID::from_u128(0xaf8e85ea_fb20_4db2_93cf_56513c1ec697);
 #[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
 const MODULE_ID: GUID = GUID::from_u128(0x266f2cfe_1653_42af_b55c_fe3590c83871);
 
+// Make cargo clippy happy
+#[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
+const MODULE_ID: GUID =
+    panic!("Only one of the nightly, stable, or preview features should be enabled");
+
 #[no_mangle]
 extern "system" fn DllGetClassObject(
     class_id: *const GUID,
@@ -194,6 +199,13 @@ fn retrieve_command_description() -> windows_core::Result<HSTRING> {
     const REG_PATH: &str = "Software\\Classes\\ZedEditorPreviewContextMenu";
     #[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
     const REG_PATH: &str = "Software\\Classes\\ZedEditorNightlyContextMenu";
+    let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
+
+    // Make cargo clippy happy
+    #[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
+    const REG_PATH: &str =
+        panic!("Only one of the nightly, stable, or preview features should be enabled");
+
     let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
     key.get_hstring("Title")
 }
