@@ -640,8 +640,8 @@
       "shift-enter": "editor::ExpandExcerpts",
       "cmd-alt-enter": "editor::OpenExcerptsSplit",
       "cmd-shift-e": "pane::RevealInProjectPanel",
-      "cmd-f8": "editor::GoToHunk",
-      "cmd-shift-f8": "editor::GoToPrevHunk",
+      "cmd-f8": ["editor::GoToHunk", { "center_cursor": true }],
+      "cmd-shift-f8": ["editor::GoToPrevHunk", { "center_cursor": true }],
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }
