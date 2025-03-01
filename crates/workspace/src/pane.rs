@@ -2566,15 +2566,31 @@ impl Pane {
                         })
                     };
                     if let Some(entry) = single_entry_to_resolve {
+                        let project_path = pane
+                            .read(cx)
+                            .item_for_entry(entry, cx)
+                            .and_then(|item| item.project_path(cx));
+                        let worktree = project_path.as_ref().and_then(|project_path| {
+                            pane.read(cx)
+                                .project
+                                .upgrade()?
+                                .read(cx)
+                                .worktree_for_id(project_path.worktree_id, cx)
+                        });
+                        let has_relative_path = worktree.is_some_and(|worktree| {
+                            worktree
+                                .read(cx)
+                                .root_entry()
+                                .map_or(false, |entry| entry.is_dir())
+                        });
+
                         let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
                         let parent_abs_path = entry_abs_path
                             .as_deref()
                             .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
-                        let relative_path = pane
-                            .read(cx)
-                            .item_for_entry(entry, cx)
-                            .and_then(|item| item.project_path(cx))
-                            .map(|project_path| project_path.path);
+                        let relative_path = project_path
+                            .map(|project_path| project_path.path)
+                            .filter(|_| has_relative_path);
 
                         let entry_id = entry.to_proto();
                         menu = menu
