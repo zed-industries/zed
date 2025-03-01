@@ -146,6 +146,12 @@ impl From<SanitizedPath> for Arc<Path> {
     }
 }
 
+impl From<SanitizedPath> for PathBuf {
+    fn from(sanitized_path: SanitizedPath) -> Self {
+        sanitized_path.0.as_ref().into()
+    }
+}
+
 impl<T: AsRef<Path>> From<T> for SanitizedPath {
     #[cfg(not(target_os = "windows"))]
     fn from(path: T) -> Self {

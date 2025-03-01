@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{paths::SanitizedPath, ResultExt};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -98,7 +98,7 @@ impl LocalPaths {
     pub fn new<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
         let mut paths: Vec<PathBuf> = paths
             .into_iter()
-            .map(|p| p.as_ref().to_path_buf())
+            .map(|p| SanitizedPath::from(p).into())
             .collect();
         // Ensure all future `zed workspace1 workspace2` and `zed workspace2 workspace1` calls are using the same workspace.
         // The actual workspace order is stored in the `LocalPathsOrder` struct.
