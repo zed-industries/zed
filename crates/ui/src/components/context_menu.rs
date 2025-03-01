@@ -614,7 +614,7 @@ impl Render for ContextMenu {
                                             };
 
                                             let label_color = if *disabled {
-                                                Color::Muted
+                                                Color::Disabled
                                             } else {
                                                 Color::Default
                                             };
@@ -659,7 +659,7 @@ impl Render for ContextMenu {
                                             div()
                                                 .id(("context-menu-child", ix))
                                                 .when_some(
-                                                    documentation_aside_callback,
+                                                    documentation_aside_callback.clone(),
                                                     |this, documentation_aside_callback| {
                                                         this.occlude().on_hover(cx.listener(
                                                             move |menu, hovered, _, cx| {
@@ -732,10 +732,16 @@ impl Render for ContextMenu {
                                                                     })
                                                                     .map(|binding| {
                                                                         div().ml_4().child(binding)
+                                                                            .when(*disabled && documentation_aside_callback.is_some(), |parent| {
+                                                                                parent.invisible()
+                                                                            })
                                                                     })
                                                                         },
                                                                     ),
-                                                                ),
+                                                                )
+                                                                .when(*disabled && documentation_aside_callback.is_some(), |parent| {
+                                                                    parent.child(Icon::new(IconName::Info).size(IconSize::XSmall).color(Color::Muted))
+                                                                }),
                                                         )
                                                         .on_click({
                                                             let context =
