@@ -10,8 +10,11 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::Borrow;
+use std::env::temp_dir;
 use std::io::Write as _;
-use std::process::Stdio;
+use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::net::UnixListener;
+use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
@@ -200,6 +203,7 @@ impl std::fmt::Debug for dyn GitRepository {
 pub struct RealGitRepository {
     pub repository: Mutex<git2::Repository>,
     pub git_binary_path: PathBuf,
+    pub askpass_path: PathBuf,
     hosting_provider_registry: Arc<GitHostingProviderRegistry>,
 }
 
@@ -207,11 +211,13 @@ impl RealGitRepository {
     pub fn new(
         repository: git2::Repository,
         git_binary_path: Option<PathBuf>,
+        askpass_path: PathBuf,
         hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     ) -> Self {
         Self {
             repository: Mutex::new(repository),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
+            askpass_path,
             hosting_provider_registry,
         }
     }
@@ -608,7 +614,10 @@ impl GitRepository for RealGitRepository {
     ) -> Result<()> {
         let working_directory = self.working_directory()?;
 
-        let output = new_std_command(&self.git_binary_path)
+        // We don't use the bundled git, so we can ensure that system
+        // credential management and transfer mechanisms are respected
+        let output = new_std_command("git")
+            .env("GIT_ASKPASS", &self.askpass_path)
             .current_dir(&working_directory)
             .args(["push", "--quiet"])
             .args(options.map(|option| match option {
@@ -632,9 +641,12 @@ impl GitRepository for RealGitRepository {
     fn pull(&self, branch_name: &str, remote_name: &str) -> Result<()> {
         let working_directory = self.working_directory()?;
 
-        let output = new_std_command(&self.git_binary_path)
+        // We don't use the bundled git, so we can ensure that system
+        // credential management and transfer mechanisms are respected
+        let output = new_std_command("git")
+            .env("GIT_ASKPASS", &self.askpass_path)
             .current_dir(&working_directory)
-            .args(["pull", "--quiet"])
+            .args(["pull"])
             .arg(remote_name)
             .arg(branch_name)
             .output()?;
@@ -652,7 +664,10 @@ impl GitRepository for RealGitRepository {
     fn fetch(&self) -> Result<()> {
         let working_directory = self.working_directory()?;
 
-        let output = new_std_command(&self.git_binary_path)
+        // We don't use the bundled git, so we can ensure that system
+        // credential management and transfer mechanisms are respected
+        let output = new_std_command("git")
+            .env("GIT_ASKPASS", &self.askpass_path)
             .current_dir(&working_directory)
             .args(["fetch", "--quiet", "--all"])
             .output()?;

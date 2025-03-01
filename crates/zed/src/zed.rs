@@ -1,4 +1,5 @@
 mod app_menus;
+pub mod git_askpass;
 pub mod inline_completion_registry;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod linux_prompts;

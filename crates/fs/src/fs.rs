@@ -248,6 +248,7 @@ impl From<MTime> for proto::Timestamp {
 pub struct RealFs {
     git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
+    askpass_path: PathBuf,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -302,10 +303,12 @@ impl RealFs {
     pub fn new(
         git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
         git_binary_path: Option<PathBuf>,
+        askpass_path: PathBuf,
     ) -> Self {
         Self {
             git_hosting_provider_registry,
             git_binary_path,
+            askpass_path,
         }
     }
 }
@@ -769,6 +772,7 @@ impl Fs for RealFs {
         Some(Arc::new(RealGitRepository::new(
             repo,
             self.git_binary_path.clone(),
+            self.askpass_path.to_owned(),
             self.git_hosting_provider_registry.clone(),
         )))
     }
