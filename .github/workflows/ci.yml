@@ -755,10 +755,10 @@ jobs:
       - name: Limit /nix/store to 50GB
         run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
 
-  bundle-windows:
+  bundle-windows-x64:
     timeout-minutes: 120
     name: Create a Windows installer
-    runs-on: hosted-windows-1
+    runs-on: hosted-windows-2
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [windows_tests]
     steps:
