@@ -143,8 +143,7 @@ const MODULE_ID: GUID = GUID::from_u128(0x266f2cfe_1653_42af_b55c_fe3590c83871);
 
 // Make cargo clippy happy
 #[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
-const MODULE_ID: GUID =
-    panic!("Only one of the nightly, stable, or preview features should be enabled");
+const MODULE_ID: GUID = GUID::from_u128(0x685f4d49_6718_4c55_b271_ebb5c6a48d6f);
 
 #[no_mangle]
 extern "system" fn DllGetClassObject(
@@ -202,8 +201,7 @@ fn retrieve_command_description() -> windows_core::Result<HSTRING> {
 
     // Make cargo clippy happy
     #[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
-    const REG_PATH: &str =
-        panic!("Only one of the nightly, stable, or preview features should be enabled");
+    const REG_PATH: &str = "Software\\Classes\\ZedEditorClippyContextMenu";
 
     let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
     key.get_hstring("Title")
