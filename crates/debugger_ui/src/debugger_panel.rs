@@ -153,7 +153,7 @@ impl DebugPanel {
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
                     let (has_active_session, support_step_back) =
                         debug_panel.update(cx, |this, cx| {
-                            this.active_debug_panel_item(cx)
+                            this.active_session(cx)
                                 .map(|_item| (true, false))
                                 .unwrap_or((false, false))
                         });
@@ -194,18 +194,7 @@ impl DebugPanel {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn message_queue(&self) -> &HashMap<SessionId, VecDeque<OutputEvent>> {
-        // &self.message_queue
-        unimplemented!("Should chekc session for console messagse")
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn dap_store(&self) -> Entity<DapStore> {
-        self.dap_store.clone()
-    }
-
-    pub fn active_debug_panel_item(&self, cx: &Context<Self>) -> Option<Entity<DebugSession>> {
+    pub fn active_session(&self, cx: &Context<Self>) -> Option<Entity<DebugSession>> {
         self.pane
             .read(cx)
             .active_item()
