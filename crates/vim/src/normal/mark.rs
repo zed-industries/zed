@@ -130,6 +130,7 @@ impl Vim {
                     .collect::<Vec<Anchor>>()
             }),
             "." => self.change_list.last().cloned(),
+            "^" | "[" | "]" | "<" | ">" => self.special_marks.get(&text.to_string()).cloned(),
             m if m.starts_with(|c: char| c.is_digit(10)) => {
                 if let Some(either) = self.get_global_mark_identifier(text.to_string(), window, cx)
                 {

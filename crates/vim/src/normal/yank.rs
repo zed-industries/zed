@@ -126,36 +126,20 @@ impl Vim {
         selections: Vec<Range<Point>>,
         cx: &mut Context<Editor>,
     ) {
-        let Some(workspace) = editor.workspace() else {
-            return;
-        };
-        let Some(wid) = workspace.read(cx).database_id() else {
-            return;
-        };
-        let multi_buffer_entity = editor.buffer();
-        let Some(buffer_entity) = multi_buffer_entity.read(cx).as_singleton() else {
-            return;
-        };
         let buffer = editor.buffer().read(cx).snapshot(cx);
-        self.set_mark(
+        self.special_marks.insert(
             "[".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_before(s.start))
                 .collect(),
-            &buffer_entity,
-            wid,
-            cx,
         );
-        self.set_mark(
+        self.special_marks.insert(
             "]".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_after(s.end))
                 .collect(),
-            &buffer_entity,
-            wid,
-            cx,
         );
 
         let mut text = String::new();
