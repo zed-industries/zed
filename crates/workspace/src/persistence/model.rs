@@ -4,7 +4,6 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
-use collections::HashMap;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,

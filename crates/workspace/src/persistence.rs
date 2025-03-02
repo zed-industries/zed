@@ -10,7 +10,6 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
-use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 use project::debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint};

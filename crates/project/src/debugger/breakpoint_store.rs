@@ -2,7 +2,7 @@
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use anyhow::Result;
-use collections::{BTreeMap, HashMap};
+use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{proto, AnyProtoClient};
@@ -38,6 +38,7 @@ struct LocalBreakpointStore {
 #[derive(Clone)]
 enum BreakpointStoreMode {
     Local(LocalBreakpointStore),
+    #[expect(dead_code)]
     Remote(RemoteBreakpointStore),
 }
 pub struct BreakpointStore {
@@ -271,7 +272,7 @@ impl BreakpointStore {
                 this.update(&mut cx, |this, cx| {
                     this.breakpoints = new_breakpoints;
                     cx.notify();
-                });
+                })?;
 
                 Ok(())
             })
