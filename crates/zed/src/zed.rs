@@ -1134,6 +1134,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         let editor = cx.new(|cx| {
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                            editor.set_read_only(true);
                             editor.set_breadcrumb_header(format!(
                                 "Last {} lines in {}",
                                 MAX_LINES,
@@ -1622,6 +1623,7 @@ fn open_telemetry_log_file(
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
                         let mut editor = Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                        editor.set_read_only(true);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
                     })),
