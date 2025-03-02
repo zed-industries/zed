@@ -1972,7 +1972,7 @@ impl GitPanel {
                                         .on_click(cx.listener({
                                             move |_, _, window, cx| {
                                                 window.dispatch_action(
-                                                    git::ExpandCommitEditor.boxed_clone(),
+                                                    git::ShowCommitEditor.boxed_clone(),
                                                     cx,
                                                 )
                                             }
@@ -2221,6 +2221,10 @@ impl GitPanel {
         Label::new(label.into()).color(color).single_line()
     }
 
+    fn list_item_height(&self) -> Rems {
+        rems(2.)
+    }
+
     fn render_list_header(
         &self,
         ix: usize,
@@ -2229,8 +2233,10 @@ impl GitPanel {
         _: &Window,
         _: &Context<Self>,
     ) -> AnyElement {
-        div()
+        h_flex()
+            .h(self.list_item_height())
             .w_full()
+            .items_end()
             .child(
                 ListItem::new(ix)
                     .spacing(ListItemSpacing::Sparse)
@@ -2412,6 +2418,7 @@ impl GitPanel {
             });
 
         div()
+            .h(self.list_item_height())
             .w_full()
             .child(
                 ListItem::new(ix)
