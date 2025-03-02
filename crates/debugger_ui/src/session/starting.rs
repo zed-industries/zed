@@ -9,7 +9,7 @@ use gpui::{
 use project::debugger::session::Session;
 use ui::{v_flex, Color, Context, Icon, IconName, IntoElement, ParentElement, Render, Styled};
 
-pub(super) struct StartingState {
+pub(crate) struct StartingState {
     focus_handle: FocusHandle,
     _notify_parent: Task<()>,
 }

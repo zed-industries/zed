@@ -1,5 +1,5 @@
 mod inert;
-mod running;
+pub mod running;
 mod starting;
 
 use dap::client::SessionId;
@@ -19,10 +19,20 @@ use workspace::{
     FollowableItem, ViewId, Workspace,
 };
 
-enum DebugSessionState {
+pub(crate) enum DebugSessionState {
     Inert(Entity<InertState>),
     Starting(Entity<StartingState>),
     Running(Entity<running::RunningState>),
+}
+
+impl DebugSessionState {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn as_running(&self) -> Option<&Entity<running::RunningState>> {
+        match &self {
+            DebugSessionState::Running(entity) => Some(entity),
+            _ => None,
+        }
+    }
 }
 
 pub struct DebugSession {
@@ -33,6 +43,7 @@ pub struct DebugSession {
     workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
 }
+
 #[derive(Debug)]
 pub enum DebugPanelItemEvent {
     Close,
@@ -100,6 +111,12 @@ impl DebugSession {
             DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
         }
     }
+
+    #[cfg(any(test, feature = "test-feature"))]
+    pub(crate) fn mode(&self) -> &DebugSessionState {
+        &self.mode
+    }
+
     fn on_inert_event(
         &mut self,
         _: &Entity<InertState>,

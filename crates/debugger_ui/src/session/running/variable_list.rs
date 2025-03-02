@@ -13,22 +13,23 @@ use util::debug_panic;
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct VariableState {
+pub(crate) struct VariableState {
     depth: usize,
     is_expanded: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ScopeState {
+pub(crate) struct ScopeState {
     is_expanded: bool,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
-struct VariablePath {
-    base: VariableReference,
-    indices: Arc<[VariableReference]>,
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub(crate) struct VariablePath {
+    pub base: VariableReference,
+    pub indices: Arc<[VariableReference]>,
 }
 
+#[derive(Debug)]
 enum VariableListEntry {
     Scope((dap::Scope, ScopeState)),
     Variable((dap::Variable, VariablePath, VariableState)),
@@ -233,7 +234,7 @@ impl VariableList {
         self.build_entries(cx);
     }
 
-    fn toggle_variable(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_variable(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
         let Some(entry) = self.variable_states.get_mut(var_path) else {
             debug_panic!("Trying to toggle variable in variable list that has an no state");
             return;
@@ -375,68 +376,41 @@ impl VariableList {
 
     #[track_caller]
     #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_visual_entries(&self, expected: Vec<&str>, cx: &Context<Self>) {
-        unimplemented!("Will finish after refactor is done");
-        // const INDENT: &'static str = "    ";
+    pub fn assert_visual_entries(&self, expected: Vec<&str>) {
+        const INDENT: &'static str = "    ";
 
-        // let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
-        // let entries = self.entries.get(&stack_frame_id).unwrap();
+        let entries = &self.entries;
+        let mut visual_entries = Vec::with_capacity(entries.len());
+        for entry in entries {
+            match entry {
+                VariableListEntry::Scope((scope, state)) => {
+                    visual_entries.push(format!(
+                        "{} {}",
+                        if state.is_expanded { "v" } else { ">" },
+                        scope.name,
+                    ));
+                }
+                // TODO(debugger): make this work again
+                // VariableListEntry::SetVariableEditor { depth, state } => {
+                //     visual_entries.push(format!(
+                //         "{}  [EDITOR: {}]{}",
+                //         INDENT.repeat(*depth),
+                //         state.name,
+                //         if is_selected { " <=== selected" } else { "" }
+                //     ));
+                // }
+                VariableListEntry::Variable((variable, _, state)) => {
+                    visual_entries.push(format!(
+                        "{}{} {}",
+                        INDENT.repeat(state.depth),
+                        if state.is_expanded { "v" } else { ">" },
+                        variable.name,
+                    ));
+                }
+            };
+        }
 
-        // let mut visual_entries = Vec::with_capacity(entries.len());
-        // for entry in entries {
-        //     let is_selected = Some(entry) == self.selection.as_ref();
-
-        //     match entry {
-        //         VariableListEntry::Scope(scope) => {
-        //             let is_expanded = self
-        //                 .open_entries
-        //                 .binary_search(&OpenEntry::Scope {
-        //                     name: scope.name.clone(),
-        //                 })
-        //                 .is_ok();
-
-        //             visual_entries.push(format!(
-        //                 "{} {}{}",
-        //                 if is_expanded { "v" } else { ">" },
-        //                 scope.name,
-        //                 if is_selected { " <=== selected" } else { "" }
-        //             ));
-        //         }
-        //         VariableListEntry::SetVariableEditor { depth, state } => {
-        //             visual_entries.push(format!(
-        //                 "{}  [EDITOR: {}]{}",
-        //                 INDENT.repeat(*depth),
-        //                 state.name,
-        //                 if is_selected { " <=== selected" } else { "" }
-        //             ));
-        //         }
-        //         VariableListEntry::Variable {
-        //             depth,
-        //             variable,
-        //             scope,
-        //             ..
-        //         } => {
-        //             let is_expanded = self
-        //                 .open_entries
-        //                 .binary_search(&OpenEntry::Variable {
-        //                     depth: *depth,
-        //                     name: variable.name.clone(),
-        //                     scope_name: scope.name.clone(),
-        //                 })
-        //                 .is_ok();
-
-        //             visual_entries.push(format!(
-        //                 "{}{} {}{}",
-        //                 INDENT.repeat(*depth),
-        //                 if is_expanded { "v" } else { ">" },
-        //                 variable.name,
-        //                 if is_selected { " <=== selected" } else { "" }
-        //             ));
-        //         }
-        //     };
-        // }
-
-        // pretty_assertions::assert_eq!(expected, visual_entries);
+        pretty_assertions::assert_eq!(expected, visual_entries);
     }
 
     #[allow(clippy::too_many_arguments)]

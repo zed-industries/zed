@@ -12,7 +12,7 @@ use ui::{
     Render, SharedString, Styled, Window,
 };
 
-pub(super) struct InertState {
+pub(crate) struct InertState {
     focus_handle: FocusHandle,
     selected_debugger: Option<SharedString>,
     program_editor: Entity<Editor>,
