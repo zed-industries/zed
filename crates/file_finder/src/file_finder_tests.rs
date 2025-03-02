@@ -758,6 +758,42 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_open_path_prompt(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": "A",
+                "dir1": {},
+                "dir2": {
+                    "dir3": {
+                        "b": "B"
+                    }
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |f, window, cx| {
+            f.delegate.update_matches("dir".to_string(), window, cx)
+        })
+        .await;
+    cx.dispatch_action(picker::ConfirmCompletion);
+    cx.read(|cx| {
+        let finder = picker.read(cx);
+        let x = picker.read(cx).query(cx);
+        println!("{:?}", x);
+    });
+}
+
+#[gpui::test]
 async fn test_query_history(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
