@@ -425,6 +425,26 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
+    pub fn editor_cancel(
+        &mut self,
+        _: &editor::actions::Cancel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &self.head {
+            Head::Editor(editor) => {
+                let should_cancel = editor.update(cx, |editor, cx| !editor.try_cancel(window, cx));
+
+                if should_cancel {
+                    self.cancel(&menu::Cancel, window, cx);
+                }
+            }
+            Head::Empty(_) => {
+                self.cancel(&menu::Cancel, window, cx);
+            }
+        }
+    }
+
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
             self.delegate.dismissed(window, cx);
@@ -790,6 +810,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::editor_cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::confirm_completion))
