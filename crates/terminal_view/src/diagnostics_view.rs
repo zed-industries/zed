@@ -533,7 +533,6 @@ impl DiagnosticsView {
         self.selected_entry = entry.into();
 
         self.autoscroll(cx);
-        cx.notify();
     }
 
     fn autoscroll(&mut self, cx: &mut Context<Self>) {
