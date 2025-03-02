@@ -4682,30 +4682,13 @@ impl Workspace {
     }
 
     pub(crate) fn load_workspace(
-        mut serialized_workspace: SerializedWorkspace,
+        serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
         cx.spawn_in(window, |workspace, mut cx| async move {
             let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
-
-            workspace.update(&mut cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    project.dap_store().update(cx, |_store, cx| {
-                        for worktree in project.worktrees(cx) {
-                            let (_worktree_id, worktree_path) =
-                                worktree.read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
-
-                            if let Some(_serialized_breakpoints) =
-                                serialized_workspace.breakpoints.remove(&worktree_path)
-                            {
-                                // store.deserialize_breakpoints(worktree_id, serialized_breakpoints);
-                            }
-                        }
-                    });
-                })
-            })?;
 
             let mut center_group = None;
             let mut center_items = None;
@@ -4784,6 +4767,17 @@ impl Workspace {
 
                 cx.notify();
             })?;
+
+            let _ = project
+                .update(&mut cx, |project, cx| {
+                    project
+                        .breakpoint_store()
+                        .update(cx, |breakpoint_store, cx| {
+                            breakpoint_store
+                                .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)
+                        })
+                })?
+                .await;
 
             // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
             // after loading the items, we might have different items and in order to avoid

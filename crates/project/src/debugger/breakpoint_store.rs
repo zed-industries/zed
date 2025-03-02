@@ -1,8 +1,9 @@
 //! Module for managing breakpoints in a project.
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
+use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use gpui::{App, Context, Entity, EventEmitter};
+use gpui::{App, Context, Entity, EventEmitter, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{proto, AnyProtoClient};
 use std::{
@@ -12,6 +13,8 @@ use std::{
     sync::Arc,
 };
 use text::Point;
+
+use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, ProjectPath};
 
 #[derive(Clone)]
 struct RemoteBreakpointStore {
@@ -26,19 +29,33 @@ struct BreakpointsInFile {
     breakpoints: Vec<(text::Anchor, Breakpoint)>,
 }
 
+#[derive(Clone)]
+struct LocalBreakpointStore {
+    worktree_store: Entity<WorktreeStore>,
+    buffer_store: Entity<BufferStore>,
+}
+
+#[derive(Clone)]
+enum BreakpointStoreMode {
+    Local(LocalBreakpointStore),
+    Remote(RemoteBreakpointStore),
+}
 pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frame: Option<(Arc<Path>, text::Anchor)>,
     // E.g ssh
-    _upstream_client: Option<RemoteBreakpointStore>,
+    mode: BreakpointStoreMode,
 }
 
 impl BreakpointStore {
-    pub fn local() -> Self {
+    pub fn local(worktree_store: Entity<WorktreeStore>, buffer_store: Entity<BufferStore>) -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
-            _upstream_client: None,
+            mode: BreakpointStoreMode::Local(LocalBreakpointStore {
+                worktree_store,
+                buffer_store,
+            }),
             downstream_client: None,
             active_stack_frame: Default::default(),
         }
@@ -47,7 +64,7 @@ impl BreakpointStore {
     pub(crate) fn remote(upstream_project_id: u64, upstream_client: AnyProtoClient) -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
-            _upstream_client: Some(RemoteBreakpointStore {
+            mode: BreakpointStoreMode::Remote(RemoteBreakpointStore {
                 _upstream_client: Some(upstream_client),
                 _upstream_project_id: upstream_project_id,
             }),
@@ -64,10 +81,6 @@ impl BreakpointStore {
         self.downstream_client.take();
 
         cx.notify();
-    }
-
-    fn _upstream_client(&self) -> Option<RemoteBreakpointStore> {
-        self._upstream_client.clone()
     }
 
     fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -186,7 +199,7 @@ impl BreakpointStore {
         cx.notify();
     }
 
-    pub fn all_breakpoints(&self, cx: &App) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+    pub fn all_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
         self.breakpoints
             .iter()
             .map(|(path, bp)| {
@@ -207,6 +220,61 @@ impl BreakpointStore {
                 )
             })
             .collect()
+    }
+
+    pub fn with_serialized_breakpoints(
+        &self,
+        breakpoints: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+        cx: &mut Context<'_, BreakpointStore>,
+    ) -> Task<Result<()>> {
+        if let BreakpointStoreMode::Local(mode) = &self.mode {
+            let mode = mode.clone();
+            cx.spawn(move |this, mut cx| async move {
+                let mut new_breakpoints = BTreeMap::default();
+                for (path, bps) in breakpoints {
+                    if bps.is_empty() {
+                        continue;
+                    }
+                    let (worktree, relative_path) = mode
+                        .worktree_store
+                        .update(&mut cx, |this, cx| {
+                            this.find_or_create_worktree(&path, false, cx)
+                        })?
+                        .await?;
+                    let buffer = mode.buffer_store.update(&mut cx, |this, cx| {
+                        let path = ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: relative_path.into(),
+                        };
+                        this.get_by_path(&path, cx)
+                    })?;
+                    let Some(buffer) = buffer else {
+                        log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
+                        continue;
+                    };
+                    let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+                    let mut breakpoints_for_file = BreakpointsInFile {
+                        buffer,
+                        breakpoints: vec![],
+                    };
+                    for bp in bps {
+                        let position = snapshot.anchor_before(Point::new(bp.position, 0));
+                        breakpoints_for_file
+                            .breakpoints
+                            .push((position, Breakpoint { kind: bp.kind }))
+                    }
+                    new_breakpoints.insert(path, breakpoints_for_file);
+                }
+                this.update(&mut cx, |this, cx| {
+                    this.breakpoints = new_breakpoints;
+                    cx.notify();
+                });
+
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 }
 

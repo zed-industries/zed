@@ -2,6 +2,7 @@ pub mod model;
 
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -520,8 +521,7 @@ define_connection! {
     sql!(
             CREATE TABLE breakpoints (
                 workspace_id INTEGER NOT NULL,
-                worktree_path BLOB NOT NULL,
-                relative_path BLOB NOT NULL,
+                path TEXT NOT NULL,
                 breakpoint_location INTEGER NOT NULL,
                 kind INTEGER NOT NULL,
                 log_message TEXT,
@@ -682,10 +682,10 @@ impl WorkspaceDb {
     fn breakpoints(
         &self,
         workspace_id: WorkspaceId,
-    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let breakpoints: Result<Vec<(PathBuf, PathBuf, Breakpoint)>> = self
+    ) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
-                SELECT worktree_path, relative_path, breakpoint_location, kind, log_message
+                SELECT path, breakpoint_location, kind
                 FROM breakpoints
                 WHERE workspace_id = ?
             })
@@ -697,14 +697,15 @@ impl WorkspaceDb {
                     log::error!("Breakpoints are empty after querying database for them");
                 }
 
-                let mut map: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+                let mut map: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
 
-                for (worktree_path, file_path, breakpoint) in bp {
-                    map.entry(Arc::from(worktree_path.as_path()))
+                for (path, breakpoint) in bp {
+                    let path: Arc<Path> = path.into();
+                    map.entry(path.clone())
                         .or_default()
                         .push(SerializedBreakpoint {
                             position: breakpoint.position,
-                            path: Arc::from(file_path.as_path()),
+                            path,
                             kind: breakpoint.kind,
                         });
                 }
@@ -728,6 +729,13 @@ impl WorkspaceDb {
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
+                for (path, breakpoints) in workspace.breakpoints {
+                    for bp in breakpoints {
+
+                        conn.exec_bound(sql!(INSERT INTO breakpoints (workspace_id, path, kind, breakpoint_location) VALUES (?1, ?2, ?3, ?4)))?((workspace.id, path.as_ref(),  0, bp.position))?;
+                    }
+
+                }
 
 
                 match workspace.location {
@@ -910,10 +918,10 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub fn breakpoints_for_file(file_path: &Path) -> Result<Vec<Breakpoint>> {
+        pub fn breakpoints_for_file(workspace_id: WorkspaceId, file_path: &Path) -> Result<Vec<Breakpoint>> {
             SELECT breakpoint_location
             FROM breakpoints
-            WHERE  file_path = ?1
+            WHERE  workspace_id= ?1 AND path = ?2
         }
     }
 
@@ -921,12 +929,6 @@ impl WorkspaceDb {
         pub fn clear_breakpoints(file_path: &Path) -> Result<()> {
             DELETE FROM breakpoints
             WHERE file_path = ?2
-        }
-    }
-
-    query! {
-        pub fn insert_breakpoint(file_path: &Path, breakpoint_location: Breakpoint) -> Result<()> {
-            INSERT INTO breakpoints (file_path, breakpoint_location) VALUES (?1, ?2)
         }
     }
 

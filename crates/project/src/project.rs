@@ -684,7 +684,8 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
-            let breakpoint_store = cx.new(|_| BreakpointStore::local());
+            let breakpoint_store =
+                cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
