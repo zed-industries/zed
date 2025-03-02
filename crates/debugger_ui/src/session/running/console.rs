@@ -399,8 +399,8 @@ impl ConsoleQueryBarCompletionProvider {
         cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
         let (variables, string_matches) = console.update(cx, |console, cx| {
-            let mut variables = HashMap::new();
-            let mut string_matches = Vec::new();
+            let mut variables = HashMap::default();
+            let mut string_matches = Vec::default();
 
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)

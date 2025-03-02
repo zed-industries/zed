@@ -1,5 +1,5 @@
 use gpui::{Entity, TestAppContext, WindowHandle};
-use project::{Project, Worktree};
+use project::Project;
 use settings::SettingsStore;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
@@ -28,6 +28,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         workspace::init_settings(cx);
         Project::init_settings(cx);
         editor::init(cx);
+        crate::init(cx);
     });
 }
 
@@ -59,7 +60,7 @@ pub async fn init_test_workspace(
     workspace_handle
 }
 
-pub fn active_debug_panel_item(
+pub fn active_debug_session_panel(
     workspace: WindowHandle<Workspace>,
     cx: &mut TestAppContext,
 ) -> Entity<DebugSession> {
@@ -67,15 +68,8 @@ pub fn active_debug_panel_item(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             debug_panel
-                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+                .update(cx, |this, cx| this.active_session(cx))
                 .unwrap()
         })
         .unwrap()
-}
-
-pub fn worktree_from_project(
-    project: &Entity<Project>,
-    cx: &mut TestAppContext,
-) -> Entity<Worktree> {
-    project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap())
 }

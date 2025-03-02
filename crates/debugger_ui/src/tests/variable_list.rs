@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    tests::{active_debug_panel_item, init_test, init_test_workspace},
+    tests::{active_debug_session_panel, init_test, init_test_workspace},
     variable_list::{CollapseSelectedEntry, ExpandSelectedEntry, VariableContainer},
 };
 use collections::HashMap;
@@ -180,7 +180,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         let (stack_frame_list, stack_frame_id) =
             debug_panel_item.stack_frame_list().update(cx, |list, cx| {
                 (
@@ -432,7 +432,7 @@ async fn test_fetch_variables_for_multiple_scopes(
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         let (stack_frame_list, stack_frame_id) =
             debug_panel_item.stack_frame_list().update(cx, |list, cx| {
                 (
@@ -726,7 +726,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
+    active_debug_session_panel(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
         debug_panel_item
             .variable_list()
             .focus_handle(cx)
@@ -736,7 +736,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     cx.dispatch_action(SelectFirst);
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -755,7 +755,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select the first variable of scope 1
     cx.dispatch_action(SelectNext);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -774,7 +774,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // expand the nested variables of variable 1
     cx.dispatch_action(ExpandSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -795,7 +795,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select the first nested variable of variable 1
     cx.dispatch_action(SelectNext);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -816,7 +816,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select the second nested variable of variable 1
     cx.dispatch_action(SelectNext);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -837,7 +837,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select variable 2 of scope 1
     cx.dispatch_action(SelectNext);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -858,7 +858,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select scope 2
     cx.dispatch_action(SelectNext);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -879,7 +879,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // expand the nested variables of scope 2
     cx.dispatch_action(ExpandSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -901,7 +901,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select variable 3 of scope 2
     cx.dispatch_action(SelectNext);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -923,7 +923,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select scope 2
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -945,7 +945,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // collapse variables of scope 2
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -966,7 +966,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select variable 2 of scope 1
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -987,7 +987,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select nested2 of variable 1
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -1008,7 +1008,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select nested1 of variable 1
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -1029,7 +1029,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select variable 1 of scope 1
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -1050,7 +1050,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // collapse variables of variable 1
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -1069,7 +1069,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // select scope 1
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -1088,7 +1088,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     // collapse variables of scope 1
     cx.dispatch_action(CollapseSelectedEntry);
     cx.run_until_parked();
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .variable_list()
             .update(cx, |variable_list, cx| {
@@ -1301,7 +1301,7 @@ async fn test_it_only_fetches_scopes_and_variables_for_the_first_stack_frame(
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         let (stack_frame_list, stack_frame_id) =
             debug_panel_item.stack_frame_list().update(cx, |list, cx| {
                 (
@@ -1537,7 +1537,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         let (stack_frame_list, stack_frame_id) =
             debug_panel_item.stack_frame_list().update(cx, |list, cx| {
                 (
@@ -1637,7 +1637,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
         })
         .await;
 
-    active_debug_panel_item(workspace, cx)
+    active_debug_session_panel(workspace, cx)
         .update_in(cx, |debug_panel_item, window, cx| {
             debug_panel_item
                 .stack_frame_list()
@@ -1650,7 +1650,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         let (stack_frame_list, stack_frame_id) =
             debug_panel_item.stack_frame_list().update(cx, |list, cx| {
                 (

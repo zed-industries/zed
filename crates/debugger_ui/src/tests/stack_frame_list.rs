@@ -1,7 +1,7 @@
 use crate::{
     debugger_panel::DebugPanel,
     stack_frame_list::StackFrameEntry,
-    tests::{active_debug_panel_item, init_test, init_test_workspace},
+    tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
     requests::{Disconnect, Initialize, Launch, StackTrace},
@@ -602,7 +602,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
             .stack_frame_list()
             .update(cx, |stack_frame_list, cx| {

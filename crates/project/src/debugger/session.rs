@@ -134,7 +134,7 @@ enum Mode {
 }
 
 #[derive(Clone)]
-struct LocalMode {
+pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
     config: DebugAdapterConfig,
 }
@@ -196,6 +196,25 @@ impl LocalMode {
                         .await?
                 },
             );
+
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                client
+                    .on_request::<dap::requests::Initialize, _>(move |_, _| {
+                        Ok(dap::Capabilities {
+                            supports_step_back: Some(false),
+                            ..Default::default()
+                        })
+                    })
+                    .await;
+
+                client
+                    .on_request::<dap::requests::Launch, _>(move |_, _| Ok(()))
+                    .await;
+
+                client.fake_event(Events::Initialized(None)).await;
+            }
+
             let session = Self { client, config };
 
             Self::initialize(session, adapter, breakpoints, initialized_rx, &mut cx).await
@@ -305,7 +324,7 @@ impl LocalMode {
                     .await?;
             }
 
-            anyhow::Result::<_, anyhow::Error>::Ok(())
+            anyhow::Ok(())
         };
 
         let _ = futures::future::join(configuration_sequence, launch).await;
@@ -639,7 +658,7 @@ impl Session {
         matches!(self.mode, Mode::Local(_))
     }
 
-    fn as_local(&self) -> Option<&LocalMode> {
+    pub fn as_local(&self) -> Option<&LocalMode> {
         match &self.mode {
             Mode::Local(local_mode) => Some(local_mode),
             Mode::Remote(_) => None,
@@ -733,6 +752,7 @@ impl Session {
                 }
 
                 self.output.push(event);
+                cx.notify();
             }
             Events::Breakpoint(_) => {}
             Events::Module(_) => {
@@ -893,6 +913,10 @@ impl Session {
         }
 
         &self.modules
+    }
+
+    pub fn ignore_breakpoints(&self) -> bool {
+        self.ignore_breakpoints
     }
 
     pub fn toggle_ignore_breakpoints(&mut self, cx: &App) -> Task<Result<()>> {

@@ -27,7 +27,7 @@ use std::{
     },
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use tests::{active_debug_panel_item, init_test, init_test_workspace, worktree_from_project};
+use tests::{active_debug_session_panel, init_test, init_test_workspace, worktree_from_project};
 use workspace::{dock::Panel, Item};
 
 #[gpui::test]
@@ -901,7 +901,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
         "step_in",
         "step_out",
     ] {
-        active_debug_panel_item(workspace, cx).update(
+        active_debug_session_panel(workspace, cx).update(
             cx,
             |debug_panel_item, cx| match *operation {
                 "step_over" => debug_panel_item.step_over(cx),
@@ -915,7 +915,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
         cx.run_until_parked();
 
-        active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+        active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
             assert_eq!(
                 debug_panel_item.thread_state().read(cx).status,
                 debugger_panel::ThreadStatus::Stopped,

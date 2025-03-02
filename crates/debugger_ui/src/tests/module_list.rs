@@ -1,6 +1,6 @@
 use crate::{
     session::ThreadItem,
-    tests::{active_debug_panel_item, init_test, init_test_workspace},
+    tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
     requests::{Disconnect, Initialize, Launch, Modules, StackTrace},
@@ -119,7 +119,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         "Request Modules shouldn't be called before it's needed"
     );
 
-    active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
         item.set_thread_item(ThreadItem::Modules, cx);
     });
 
@@ -130,7 +130,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         "Request Modules should be called because a user clicked on the module list"
     );
 
-    active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
         item.set_thread_item(ThreadItem::Modules, cx);
 
         let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
@@ -164,7 +164,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
         let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(actual_modules.len(), 3);
         assert!(actual_modules.contains(&new_module));
@@ -192,7 +192,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
         let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(actual_modules.len(), 3);
         assert!(actual_modules.contains(&changed_module));
@@ -207,7 +207,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
         let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(actual_modules.len(), 2);
         assert!(!actual_modules.contains(&changed_module));

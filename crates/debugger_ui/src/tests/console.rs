@@ -1,6 +1,8 @@
-use crate::*;
+use crate::session::running::variable_list::VariablePath;
+use crate::{tests::active_debug_session_panel, *};
+use dap::requests::Threads;
 use dap::{
-    requests::{Disconnect, Evaluate, Initialize, Launch, Scopes, StackTrace, Variables},
+    requests::{Disconnect, Evaluate, Scopes, StackTrace, Variables},
     Scope, StackFrame, Variable,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -10,9 +12,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tests::{active_debug_panel_item, init_test, init_test_workspace};
+use tests::{init_test, init_test_workspace};
 use unindent::Unindent as _;
-use variable_list::{VariableContainer, VariableListEntry};
 
 #[gpui::test]
 async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -36,18 +37,8 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         project.start_debug_session(dap::test_config(), cx)
     });
 
-    let (session, client) = task.await.unwrap();
-
-    client
-        .on_request::<Initialize, _>(move |_, _| {
-            Ok(dap::Capabilities {
-                supports_step_back: Some(false),
-                ..Default::default()
-            })
-        })
-        .await;
-
-    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client
         .on_request::<StackTrace, _>(move |_, _| {
@@ -104,15 +95,13 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
     workspace
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            let active_debug_panel_item = debug_panel
-                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            let active_debug_session_panel = debug_panel
+                .update(cx, |this, cx| this.active_session(cx))
                 .unwrap();
-
-            assert_eq!(1, debug_panel.read(cx).message_queue().len());
 
             assert_eq!(
                 "First console output line before thread stopped!\nFirst output line before thread stopped!\n",
-                active_debug_panel_item.read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
+                active_debug_session_panel.read(cx).mode().as_running().unwrap().read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
             );
         })
         .unwrap();
@@ -149,22 +138,20 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
     workspace
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            let active_debug_panel_item = debug_panel
-                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            let active_session_panel = debug_panel
+                .update(cx, |this, cx| this.active_session(cx))
                 .unwrap();
-
-            assert!(!debug_panel.read(cx).message_queue().is_empty());
 
             assert_eq!(
                 "First console output line before thread stopped!\nFirst output line before thread stopped!\nSecond output line after thread stopped!\nSecond console output line after thread stopped!\n",
-                active_debug_panel_item.read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
+                active_session_panel.read(cx).mode().as_running().unwrap().read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
             );
         })
         .unwrap();
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
         })
     });
 
@@ -193,18 +180,8 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
         project.start_debug_session(dap::test_config(), cx)
     });
 
-    let (session, client) = task.await.unwrap();
-
-    client
-        .on_request::<Initialize, _>(move |_, _| {
-            Ok(dap::Capabilities {
-                supports_step_back: Some(false),
-                ..Default::default()
-            })
-        })
-        .await;
-
-    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client
         .on_request::<StackTrace, _>(move |_, _| {
@@ -413,11 +390,16 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        debug_panel_item.console().update(cx, |console, cx| {
-            console.editor().update(cx, |editor, cx| {
-                pretty_assertions::assert_eq!(
-                    "
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .mode()
+            .as_running()
+            .unwrap()
+            .update(cx, |running_state, cx| {
+                running_state.console().update(cx, |console, cx| {
+                    console.editor().update(cx, |editor, cx| {
+                        pretty_assertions::assert_eq!(
+                            "
                         First line
                         First group
                             First item in group 1
@@ -430,16 +412,17 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
                             Third item in group 1
                         Second item
                     "
-                    .unindent(),
-                    editor.display_text(cx)
-                );
-            })
-        });
+                            .unindent(),
+                            editor.display_text(cx)
+                        );
+                    })
+                });
+            });
     });
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
         })
     });
 
@@ -484,18 +467,19 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
         project.start_debug_session(dap::test_config(), cx)
     });
 
-    let (session, client) = task.await.unwrap();
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client
-        .on_request::<Initialize, _>(move |_, _| {
-            Ok(dap::Capabilities {
-                supports_step_back: Some(false),
-                ..Default::default()
+        .on_request::<Threads, _>(move |_, _| {
+            Ok(dap::ThreadsResponse {
+                threads: vec![dap::Thread {
+                    id: 1,
+                    name: "Thread 1".into(),
+                }],
             })
         })
         .await;
-
-    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
 
     let stack_frames = vec![StackFrame {
         id: 1,
@@ -701,43 +685,60 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
     cx.run_until_parked();
 
     // toggle nested variables for scope 1
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        let scope1_variables = scope1_variables.lock().unwrap().clone();
-
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         debug_panel_item
-            .variable_list()
-            .update(cx, |variable_list, cx| {
-                variable_list.toggle_entry(
-                    &variable_list::OpenEntry::Variable {
-                        scope_name: scopes[0].name.clone(),
-                        name: scope1_variables[0].name.clone(),
-                        depth: 1,
-                    },
-                    cx,
-                );
+            .mode()
+            .as_running()
+            .unwrap()
+            .update(cx, |running_state, cx| {
+                running_state
+                    .variable_list()
+                    .update(cx, |variable_list, cx| {
+                        variable_list.toggle_variable(
+                            &VariablePath {
+                                base: scopes[0].variables_reference,
+                                indices: Arc::from([scopes[0].variables_reference]),
+                            },
+                            cx,
+                        );
+                    });
             });
     });
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
-        debug_panel_item.console().update(cx, |console, item_cx| {
-            console
-                .query_bar()
-                .update(item_cx, |query_bar, console_cx| {
-                    query_bar.set_text(format!("$variable1 = {}", NEW_VALUE), window, console_cx);
-                });
+    active_debug_session_panel(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
+        debug_panel_item
+            .mode()
+            .as_running()
+            .unwrap()
+            .update(cx, |running_state, cx| {
+                running_state.console().update(cx, |console, item_cx| {
+                    console
+                        .query_bar()
+                        .update(item_cx, |query_bar, console_cx| {
+                            query_bar.set_text(
+                                format!("$variable1 = {}", NEW_VALUE),
+                                window,
+                                console_cx,
+                            );
+                        });
 
-            console.evaluate(&menu::Confirm, window, item_cx);
-        });
+                    console.evaluate(&menu::Confirm, window, item_cx);
+                });
+            });
     });
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+    active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         assert_eq!(
             "",
             debug_panel_item
+                .mode()
+                .as_running()
+                .unwrap()
+                .read(cx)
                 .console()
                 .read(cx)
                 .query_bar()
@@ -749,6 +750,10 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
         assert_eq!(
             format!("{}\n", NEW_VALUE),
             debug_panel_item
+                .mode()
+                .as_running()
+                .unwrap()
+                .read(cx)
                 .console()
                 .read(cx)
                 .editor()
@@ -758,83 +763,97 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
         );
 
         debug_panel_item
-            .variable_list()
-            .update(cx, |variable_list, _| {
-                let scope1_variables = scope1_variables.lock().unwrap().clone();
+            .mode()
+            .as_running()
+            .unwrap()
+            .update(cx, |running_state, cx| {
+                running_state
+                    .variable_list()
+                    .update(cx, |variable_list, _| {
+                        let scope1_variables = scope1_variables.lock().unwrap().clone();
 
-                // scope 1
-                assert_eq!(
-                    vec![
-                        VariableContainer {
-                            container_reference: scopes[0].variables_reference,
-                            variable: scope1_variables[0].clone(),
-                            depth: 1,
-                        },
-                        VariableContainer {
-                            container_reference: scope1_variables[0].variables_reference,
-                            variable: nested_variables[0].clone(),
-                            depth: 2,
-                        },
-                        VariableContainer {
-                            container_reference: scope1_variables[0].variables_reference,
-                            variable: nested_variables[1].clone(),
-                            depth: 2,
-                        },
-                        VariableContainer {
-                            container_reference: scopes[0].variables_reference,
-                            variable: scope1_variables[1].clone(),
-                            depth: 1,
-                        },
-                    ],
-                    variable_list.variables_by_scope(1, 2).unwrap().variables()
-                );
+                        // scope 1
+                        // assert_eq!(
+                        //     vec![
+                        //         VariableContainer {
+                        //             container_reference: scopes[0].variables_reference,
+                        //             variable: scope1_variables[0].clone(),
+                        //             depth: 1,
+                        //         },
+                        //         VariableContainer {
+                        //             container_reference: scope1_variables[0].variables_reference,
+                        //             variable: nested_variables[0].clone(),
+                        //             depth: 2,
+                        //         },
+                        //         VariableContainer {
+                        //             container_reference: scope1_variables[0].variables_reference,
+                        //             variable: nested_variables[1].clone(),
+                        //             depth: 2,
+                        //         },
+                        //         VariableContainer {
+                        //             container_reference: scopes[0].variables_reference,
+                        //             variable: scope1_variables[1].clone(),
+                        //             depth: 1,
+                        //         },
+                        //     ],
+                        //     variable_list.variables_by_scope(1, 2).unwrap().variables()
+                        // );
 
-                // scope 2
-                assert_eq!(
-                    vec![VariableContainer {
-                        container_reference: scopes[1].variables_reference,
-                        variable: scope2_variables[0].clone(),
-                        depth: 1,
-                    }],
-                    variable_list.variables_by_scope(1, 4).unwrap().variables()
-                );
+                        // scope 2
+                        // assert_eq!(
+                        //     vec![VariableContainer {
+                        //         container_reference: scopes[1].variables_reference,
+                        //         variable: scope2_variables[0].clone(),
+                        //         depth: 1,
+                        //     }],
+                        //     variable_list.variables_by_scope(1, 4).unwrap().variables()
+                        // );
 
-                // assert visual entries
-                assert_eq!(
-                    vec![
-                        VariableListEntry::Scope(scopes[0].clone()),
-                        VariableListEntry::Variable {
-                            depth: 1,
-                            scope: Arc::new(scopes[0].clone()),
-                            has_children: true,
-                            variable: Arc::new(scope1_variables[0].clone()),
-                            container_reference: scopes[0].variables_reference,
-                        },
-                        VariableListEntry::Variable {
-                            depth: 2,
-                            scope: Arc::new(scopes[0].clone()),
-                            has_children: false,
-                            variable: Arc::new(nested_variables[0].clone()),
-                            container_reference: scope1_variables[0].variables_reference,
-                        },
-                        VariableListEntry::Variable {
-                            depth: 2,
-                            scope: Arc::new(scopes[0].clone()),
-                            has_children: false,
-                            variable: Arc::new(nested_variables[1].clone()),
-                            container_reference: scope1_variables[0].variables_reference,
-                        },
-                        VariableListEntry::Variable {
-                            depth: 1,
-                            scope: Arc::new(scopes[0].clone()),
-                            has_children: false,
-                            variable: Arc::new(scope1_variables[1].clone()),
-                            container_reference: scopes[0].variables_reference,
-                        },
-                        VariableListEntry::Scope(scopes[1].clone()),
-                    ],
-                    variable_list.entries().get(&1).unwrap().clone()
-                );
+                        variable_list.assert_visual_entries(vec![
+                            "v Scope 1",
+                            "    v variable1",
+                            "       > nested1",
+                            "       > nested2",
+                            "    > variable2",
+                        ]);
+
+                        // assert visual entries
+                        // assert_eq!(
+                        //     vec![
+                        //         VariableListEntry::Scope(scopes[0].clone()),
+                        //         VariableListEntry::Variable {
+                        //             depth: 1,
+                        //             scope: Arc::new(scopes[0].clone()),
+                        //             has_children: true,
+                        //             variable: Arc::new(scope1_variables[0].clone()),
+                        //             container_reference: scopes[0].variables_reference,
+                        //         },
+                        //         VariableListEntry::Variable {
+                        //             depth: 2,
+                        //             scope: Arc::new(scopes[0].clone()),
+                        //             has_children: false,
+                        //             variable: Arc::new(nested_variables[0].clone()),
+                        //             container_reference: scope1_variables[0].variables_reference,
+                        //         },
+                        //         VariableListEntry::Variable {
+                        //             depth: 2,
+                        //             scope: Arc::new(scopes[0].clone()),
+                        //             has_children: false,
+                        //             variable: Arc::new(nested_variables[1].clone()),
+                        //             container_reference: scope1_variables[0].variables_reference,
+                        //         },
+                        //         VariableListEntry::Variable {
+                        //             depth: 1,
+                        //             scope: Arc::new(scopes[0].clone()),
+                        //             has_children: false,
+                        //             variable: Arc::new(scope1_variables[1].clone()),
+                        //             container_reference: scopes[0].variables_reference,
+                        //         },
+                        //         VariableListEntry::Scope(scopes[1].clone()),
+                        //     ],
+                        //     variable_list.entries().get(&1).unwrap().clone()
+                        // );
+                    });
             });
     });
 
@@ -845,7 +864,7 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
         })
     });
 

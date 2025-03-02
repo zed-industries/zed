@@ -2,7 +2,7 @@ mod console;
 mod loaded_source_list;
 mod module_list;
 mod stack_frame_list;
-mod variable_list;
+pub mod variable_list;
 
 use super::{DebugPanelItemEvent, ThreadItem};
 use console::Console;
