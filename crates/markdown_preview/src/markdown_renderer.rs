@@ -370,7 +370,7 @@ fn render_markdown_code_block(
     cx: &mut RenderContext,
 ) -> AnyElement {
     let body = if let Some(highlights) = parsed.highlights.as_ref() {
-        StyledText::new(parsed.contents.clone()).with_highlights(
+        StyledText::new(parsed.contents.clone()).with_default_highlights(
             &cx.buffer_text_style,
             highlights.iter().filter_map(|(range, highlight_id)| {
                 highlight_id
@@ -468,7 +468,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         InteractiveText::new(
                             element_id,
                             StyledText::new(parsed.contents.clone())
-                                .with_highlights(&text_style, highlights),
+                                .with_default_highlights(&text_style, highlights),
                         )
                         .tooltip({
                             let links = links.clone();

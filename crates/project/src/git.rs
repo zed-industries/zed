@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
-use git::repository::{Branch, CommitDetails, PushOptions, Remote, ResetMode};
+use git::repository::{Branch, CommitDetails, PushOptions, Remote, RemoteCommandOutput, ResetMode};
 use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
@@ -265,23 +265,27 @@ impl GitStore {
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::Fetch>,
         mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+    ) -> Result<proto::RemoteMessageResponse> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
-        repository_handle
+        let remote_output = repository_handle
             .update(&mut cx, |repository_handle, _cx| repository_handle.fetch())?
             .await??;
-        Ok(proto::Ack {})
+
+        Ok(proto::RemoteMessageResponse {
+            stdout: remote_output.stdout,
+            stderr: remote_output.stderr,
+        })
     }
 
     async fn handle_push(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::Push>,
         mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+    ) -> Result<proto::RemoteMessageResponse> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
@@ -299,19 +303,22 @@ impl GitStore {
         let branch_name = envelope.payload.branch_name.into();
         let remote_name = envelope.payload.remote_name.into();
 
-        repository_handle
+        let remote_output = repository_handle
             .update(&mut cx, |repository_handle, _cx| {
                 repository_handle.push(branch_name, remote_name, options)
             })?
             .await??;
-        Ok(proto::Ack {})
+        Ok(proto::RemoteMessageResponse {
+            stdout: remote_output.stdout,
+            stderr: remote_output.stderr,
+        })
     }
 
     async fn handle_pull(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::Pull>,
         mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+    ) -> Result<proto::RemoteMessageResponse> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
@@ -320,12 +327,15 @@ impl GitStore {
         let branch_name = envelope.payload.branch_name.into();
         let remote_name = envelope.payload.remote_name.into();
 
-        repository_handle
+        let remote_message = repository_handle
             .update(&mut cx, |repository_handle, _cx| {
                 repository_handle.pull(branch_name, remote_name)
             })?
             .await??;
-        Ok(proto::Ack {})
+        Ok(proto::RemoteMessageResponse {
+            stdout: remote_message.stdout,
+            stderr: remote_message.stderr,
+        })
     }
 
     async fn handle_stage(
@@ -1086,7 +1096,7 @@ impl Repository {
         })
     }
 
-    pub fn fetch(&self) -> oneshot::Receiver<Result<()>> {
+    pub fn fetch(&self) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         self.send_job(|git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => git_repository.fetch(),
@@ -1096,7 +1106,7 @@ impl Repository {
                     worktree_id,
                     work_directory_id,
                 } => {
-                    client
+                    let response = client
                         .request(proto::Fetch {
                             project_id: project_id.0,
                             worktree_id: worktree_id.to_proto(),
@@ -1105,7 +1115,10 @@ impl Repository {
                         .await
                         .context("sending fetch request")?;
 
-                    Ok(())
+                    Ok(RemoteCommandOutput {
+                        stdout: response.stdout,
+                        stderr: response.stderr,
+                    })
                 }
             }
         })
@@ -1116,7 +1129,7 @@ impl Repository {
         branch: SharedString,
         remote: SharedString,
         options: Option<PushOptions>,
-    ) -> oneshot::Receiver<Result<()>> {
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => git_repository.push(&branch, &remote, options),
@@ -1126,7 +1139,7 @@ impl Repository {
                     worktree_id,
                     work_directory_id,
                 } => {
-                    client
+                    let response = client
                         .request(proto::Push {
                             project_id: project_id.0,
                             worktree_id: worktree_id.to_proto(),
@@ -1141,7 +1154,10 @@ impl Repository {
                         .await
                         .context("sending push request")?;
 
-                    Ok(())
+                    Ok(RemoteCommandOutput {
+                        stdout: response.stdout,
+                        stderr: response.stderr,
+                    })
                 }
             }
         })
@@ -1151,7 +1167,7 @@ impl Repository {
         &self,
         branch: SharedString,
         remote: SharedString,
-    ) -> oneshot::Receiver<Result<()>> {
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         self.send_job(|git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => git_repository.pull(&branch, &remote),
@@ -1161,7 +1177,7 @@ impl Repository {
                     worktree_id,
                     work_directory_id,
                 } => {
-                    client
+                    let response = client
                         .request(proto::Pull {
                             project_id: project_id.0,
                             worktree_id: worktree_id.to_proto(),
@@ -1172,8 +1188,10 @@ impl Repository {
                         .await
                         .context("sending pull request")?;
 
-                    // TODO: wire through remote
-                    Ok(())
+                    Ok(RemoteCommandOutput {
+                        stdout: response.stdout,
+                        stderr: response.stderr,
+                    })
                 }
             }
         })

@@ -96,7 +96,7 @@ impl RichText {
 
         InteractiveText::new(
             id,
-            StyledText::new(self.text.clone()).with_highlights(
+            StyledText::new(self.text.clone()).with_default_highlights(
                 &window.text_style(),
                 self.highlights.iter().map(|(range, highlight)| {
                     (

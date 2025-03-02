@@ -7,10 +7,12 @@ use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
 pub mod branch_picker;
 mod commit_modal;
+mod git_debug_log;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod picker_prompt;
 pub mod project_diff;
+mod remote_output_toast;
 pub mod repository_selector;
 
 pub fn init(cx: &mut App) {

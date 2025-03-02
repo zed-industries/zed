@@ -359,7 +359,7 @@ pub fn render_item<T>(
         outline_item.highlight_ranges.iter().cloned(),
     );
 
-    StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
+    StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
 }
 
 #[cfg(test)]
