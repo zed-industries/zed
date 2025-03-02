@@ -730,8 +730,10 @@ impl WorkspaceDb {
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
                 for (path, breakpoints) in workspace.breakpoints {
+                    conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
+                    .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
-
+                        // todo: handle log breakpoint serialization.
                         conn.exec_bound(sql!(INSERT INTO breakpoints (workspace_id, path, kind, breakpoint_location) VALUES (?1, ?2, ?3, ?4)))?((workspace.id, path.as_ref(),  0, bp.position))?;
                     }
 
