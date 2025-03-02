@@ -5,7 +5,9 @@ use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
+    language_settings::{
+          language_settings, AllLanguageSettings, LanguageSettingsContent, SoftWrap,
+    },
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, DiagnosticSet,
     DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
     OffsetRangeExt, Point, ToPoint,
@@ -119,8 +121,10 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             end_of_line = lf
             insert_final_newline = true
             trim_trailing_whitespace = true
+            max_line_length = 80
         [*.js]
             tab_width = 10
+            max_line_length = 80
         "#,
         ".zed": {
             "settings.json": r#"{
@@ -128,7 +132,13 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 "hard_tabs": false,
                 "ensure_final_newline_on_save": false,
                 "remove_trailing_whitespace_on_save": false,
-                "soft_wrap": "editor_width"
+                "preferred_line_length": 64,
+                "soft_wrap": "editor_width",
+                "languages": {
+                    "JavaScript": {
+                        "editorconfig_soft_wrap": true
+                    }
+                }
             }"#,
         },
         "a.rs": "fn a() {\n    A\n}",
@@ -140,6 +150,13 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "b.rs": "fn b() {\n    B\n}",
         },
         "c.js": "def c\n  C\nend",
+        "d": {
+            ".editorconfig": r#"
+            [*.js]
+                max_line_length = off
+            "#,
+            "d.js": "def d\n  D\nend",
+        },
         "README.json": "tabs are better\n",
     }));
 
@@ -177,6 +194,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         let settings_a = settings_for("a.rs");
         let settings_b = settings_for("b/b.rs");
         let settings_c = settings_for("c.js");
+        let settings_d = settings_for("d/d.js");
         let settings_readme = settings_for("README.json");
 
         // .editorconfig overrides .zed/settings
@@ -185,11 +203,24 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         assert_eq!(settings_a.ensure_final_newline_on_save, true);
         assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
 
+        // preferred line length is unchanged by default
+        assert_eq!(settings_a.preferred_line_length, 64);
+        assert_eq!(settings_a.soft_wrap, SoftWrap::EditorWidth);
+
         // .editorconfig in b/ overrides .editorconfig in root
         assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
 
         // "indent_size" is not set, so "tab_width" is used
         assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+        // preferred line length wrapped when editorconfig_soft_wrap
+        // is set to true
+        assert_eq!(settings_c.preferred_line_length, 80);
+        // "max_line_length" also sets "soft_wrap"
+        assert_eq!(settings_c.soft_wrap, SoftWrap::PreferredLineLength);
+
+        // When max_line_length is "off", default to .zed/settings.json
+         assert_eq!(settings_d.preferred_line_length, 64);
+         assert_eq!(settings_d.soft_wrap, SoftWrap::EditorWidth);
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));

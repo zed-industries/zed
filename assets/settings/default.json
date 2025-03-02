@@ -752,6 +752,9 @@
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
+  /// Whether to use soft-wrap settings from .editorconfig files and rewrite
+  /// `preferred_line_length` setting.
+  "editorconfig_soft_wrap": false,
   // Whether to indent lines using tab characters, as opposed to multiple
   // spaces.
   "hard_tabs": false,

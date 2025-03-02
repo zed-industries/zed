@@ -55,6 +55,7 @@ You can customize a wide range of settings for each language, including:
 - [`enable_language_server`](./configuring-zed.md#enable-language-server): Toggle language server support
 - [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
 - [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
+- [`editorconfig_soft_wrap`](./configuring-zed.md#editorconfig_soft_wrap): Whether to use soft wrapping based on the .edtitorconfig file
 - [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
 - [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
 - [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu

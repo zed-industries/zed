@@ -5,7 +5,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
 use ec4rs::{
-    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
+    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
     Properties as EditorconfigProperties,
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
@@ -79,6 +79,8 @@ pub struct LanguageSettings {
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
+    /// Whether to use soft-wrap settings from .editorconfig files and rewrite `preferred_line_length` setting.
+    pub editorconfig_soft_wrap: bool,
     // Whether to show wrap guides (vertical rulers) in the editor.
     // Setting this to true will show a guide at the 'preferred_line_length' value
     // if softwrap is set to 'preferred_line_length', and will show any
@@ -329,6 +331,11 @@ pub struct LanguageSettingsContent {
     /// Default: 80
     #[serde(default)]
     pub preferred_line_length: Option<u32>,
+    /// Whether to use the soft wrap setting from the editorconfig file and override `preferred_line_length` setting.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub editorconfig_soft_wrap: Option<bool>,
     /// Whether to show wrap guides in the editor. Setting this to true will
     /// show a guide at the 'preferred_line_length' value if softwrap is set to
     /// 'preferred_line_length', and will show any additional guides as specified
@@ -1053,6 +1060,23 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         &mut settings.ensure_final_newline_on_save,
         ensure_final_newline_on_save,
     );
+
+    if settings.editorconfig_soft_wrap {
+        let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+            MaxLineLen::Value(u) => Some(u as u32),
+            MaxLineLen::Off => None,
+        });
+
+        let preferred_line_length = max_line_length;
+        let soft_wrap = if max_line_length.is_some() {
+          Some(SoftWrap::PreferredLineLength)
+        } else {
+          None
+        };
+
+        merge(&mut settings.preferred_line_length, preferred_line_length);
+        merge(&mut settings.soft_wrap, soft_wrap);
+    }
 }
 
 /// The kind of an inlay hint.
@@ -1332,6 +1356,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(
         &mut settings.preferred_line_length,
         src.preferred_line_length,
+    );
+    merge(
+        &mut settings.editorconfig_soft_wrap,
+        src.editorconfig_soft_wrap,
     );
     merge(&mut settings.formatter, src.formatter.clone());
     merge(&mut settings.prettier, src.prettier.clone());

@@ -1634,6 +1634,7 @@ The following settings can be overridden for each specific language:
 - [`formatter`](#formatter)
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
+- [`editorconfig_soft_wrap`](#editorconfig-soft-wrap)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
@@ -1739,6 +1740,12 @@ Or to set a `socks5` proxy:
 - Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.
 - Setting: `preferred_line_length`
 - Default: `80`
+
+## Editorconfig Soft Wrap
+
+- Description: Whether to soft-wrap lines according to the .editorconfig column `max_line_length` specification.
+- Setting: `editorconfig_soft_wrap`
+- Default: `false`
 
 **Options**
 
