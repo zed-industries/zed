@@ -821,6 +821,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<Anchor>> {
+        if let Some(anchors) = self.special_marks.get(&name) {
+            return Some(anchors.clone());
+        }
         VimGlobals::update_global(cx, |globals, cx| {
             let workspace_id = self.workspace(window)?.read(cx).database_id()?;
             globals.marks.get_mut(&workspace_id)?.update(cx, |ms, cx| {
@@ -839,6 +842,9 @@ impl Vim {
         multi_buffer: &Entity<MultiBuffer>,
         cx: &mut App,
     ) -> Option<Vec<Anchor>> {
+        if let Some(anchors) = self.special_marks.get(&name) {
+            return Some(anchors.clone());
+        }
         VimGlobals::update_global(cx, |globals, cx| {
             let workspace_id = self.workspace(window)?.read(cx).database_id()?;
             globals

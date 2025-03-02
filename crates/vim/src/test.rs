@@ -1088,24 +1088,20 @@ async fn test_mouse_selection(cx: &mut TestAppContext) {
 async fn test_lowercase_marks(cx: &mut TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
-    println!("here1");
     cx.set_shared_state("line one\nline ˇtwo\nline three").await;
     cx.simulate_shared_keystrokes("m a l ' a").await;
     cx.shared_state()
         .await
         .assert_eq("line one\nˇline two\nline three");
-    println!("here2");
     cx.simulate_shared_keystrokes("` a").await;
     cx.shared_state()
         .await
         .assert_eq("line one\nline ˇtwo\nline three");
-    println!("here3");
 
     cx.simulate_shared_keystrokes("^ d ` a").await;
     cx.shared_state()
         .await
         .assert_eq("line one\nˇtwo\nline three");
-    println!("here4");
 }
 
 #[gpui::test]
