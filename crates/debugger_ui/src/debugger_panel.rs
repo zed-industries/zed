@@ -62,7 +62,7 @@ impl DebugPanel {
             let pane = cx.new(|cx| {
                 let mut pane = Pane::new(
                     workspace.weak_handle(),
-                    workspace.project().clone(),
+                    project.clone(),
                     Default::default(),
                     None,
                     gpui::NoAction.boxed_clone(),

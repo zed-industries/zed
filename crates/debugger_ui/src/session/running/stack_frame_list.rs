@@ -41,6 +41,7 @@ impl StackFrameList {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();
@@ -60,8 +61,8 @@ impl StackFrameList {
             },
         );
 
-        let _subscription = cx.observe(&session, |stack_frame_list, _, cx| {
-            stack_frame_list.build_entries(cx);
+        let _subscription = cx.observe_in(&session, window, |stack_frame_list, _, window, cx| {
+            stack_frame_list.build_entries(stack_frame_list.entries.is_empty(), window, cx);
         });
 
         Self {
@@ -77,9 +78,14 @@ impl StackFrameList {
         }
     }
 
-    pub(crate) fn set_thread_id(&mut self, thread_id: Option<ThreadId>, cx: &mut Context<Self>) {
+    pub(crate) fn set_thread_id(
+        &mut self,
+        thread_id: Option<ThreadId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.thread_id = thread_id;
-        self.build_entries(cx);
+        self.build_entries(true, window, cx);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -119,11 +125,18 @@ impl StackFrameList {
         self.thread_id
     }
 
-    fn build_entries(&mut self, cx: &mut Context<Self>) {
+    fn build_entries(
+        &mut self,
+        select_first_stack_frame: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
+        let mut current_stack_frame = None;
 
-        for stack_frame in &self.stack_frames(cx) {
+        let stack_frames = self.stack_frames(cx);
+        for stack_frame in &stack_frames {
             match stack_frame.dap.presentation_hint {
                 Some(dap::StackFramePresentationHint::Deemphasize) => {
                     collapsed_entries.push(stack_frame.dap.clone());
@@ -134,6 +147,7 @@ impl StackFrameList {
                         entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
                     }
 
+                    current_stack_frame = Some(&stack_frame.dap);
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
                 }
             }
@@ -146,6 +160,13 @@ impl StackFrameList {
 
         std::mem::swap(&mut self.entries, &mut entries);
         self.list.reset(self.entries.len());
+
+        if let Some(current_stack_frame) = current_stack_frame.filter(|_| select_first_stack_frame)
+        {
+            self.select_stack_frame(current_stack_frame, true, window, cx)
+                .detach_and_log_err(cx);
+        }
+
         cx.notify();
     }
 

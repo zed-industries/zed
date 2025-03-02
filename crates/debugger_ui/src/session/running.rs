@@ -44,7 +44,7 @@ impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
         if let Some((thread, _)) = threads.first().filter(|_| self.thread.is_none()) {
-            self.select_thread(ThreadId(thread.id), thread.name.clone(), cx);
+            self.select_thread(ThreadId(thread.id), thread.name.clone(), window, cx);
         }
 
         let thread_status = self
@@ -249,16 +249,20 @@ impl Render for RunningState {
                                                 let state = state.clone();
                                                 let thread_id = thread.id;
                                                 let thread_name = SharedString::from(&thread.name);
-                                                this =
-                                                    this.entry(thread.name, None, move |_, cx| {
+                                                this = this.entry(
+                                                    thread.name,
+                                                    None,
+                                                    move |window, cx| {
                                                         state.update(cx, |state, cx| {
                                                             state.select_thread(
                                                                 ThreadId(thread_id),
                                                                 String::from(thread_name.as_ref()),
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
-                                                    });
+                                                    },
+                                                );
                                             }
                                             this
                                         }),
@@ -346,7 +350,7 @@ impl RunningState {
         let focus_handle = cx.focus_handle();
         let session_id = session.read(cx).session_id();
         let stack_frame_list =
-            cx.new(|cx| StackFrameList::new(workspace.clone(), session.clone(), cx));
+            cx.new(|cx| StackFrameList::new(workspace.clone(), session.clone(), window, cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -469,11 +473,17 @@ impl RunningState {
         self.session().read(cx).capabilities().clone()
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, thread_name: String, cx: &mut Context<Self>) {
+    fn select_thread(
+        &mut self,
+        thread_id: ThreadId,
+        thread_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.thread = Some((thread_id, thread_name));
 
         self.stack_frame_list.update(cx, |stack_frame_list, cx| {
-            stack_frame_list.set_thread_id(self.thread.as_ref().map(|id| id.0), cx);
+            stack_frame_list.set_thread_id(self.thread.as_ref().map(|id| id.0), window, cx);
         });
 
         cx.notify();
