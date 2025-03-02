@@ -14016,7 +14016,17 @@ impl Editor {
     }
 
     pub fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
-        let settings = self.buffer.read(cx).settings_at(0, cx);
+        // Determine the language of the multibuffer's first buffer. Multibuffers don't support
+        // per-buffer soft wrap modes, so for now we have to pick _something_.
+        let buffer = self
+            .buffer
+            .read(cx)
+            .point_to_buffer_offset(0, cx)
+            .map(|b| b.0);
+        let (language, file) =
+            buffer.map_or((None, None), |b| (b.read(cx).language(), b.read(cx).file()));
+
+        let settings = language_settings(language.map(|l| l.name()), file, cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
             language_settings::SoftWrap::PreferLine | language_settings::SoftWrap::None => {
