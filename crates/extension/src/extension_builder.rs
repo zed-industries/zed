@@ -239,7 +239,10 @@ impl ExtensionBuilder {
         log::info!("compiling {grammar_name} parser");
         let clang_output = util::command::new_std_command(&clang_path)
             .args(["-fPIC", "-shared", "-Os"])
-            .arg(format!("-Wl,--export=tree_sitter_{}", grammar_name.replace('-', "_")))
+            .arg(format!(
+                "-Wl,--export=tree_sitter_{}",
+                grammar_name.replace('-', "_")
+            ))
             .arg("-o")
             .arg(&grammar_wasm_path)
             .arg("-I")
