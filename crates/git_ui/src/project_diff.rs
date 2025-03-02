@@ -814,7 +814,9 @@ impl Render for ProjectDiffToolbar {
                             Button::new("stage", "Stage")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Stage",
-                                    &StageAndNext,
+                                    &StageAndNext {
+                                        whole_excerpt: false,
+                                    },
                                     &focus_handle,
                                 ))
                                 // don't actually disable the button so it's mashable
@@ -824,14 +826,22 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&StageAndNext, window, cx)
+                                    this.dispatch_action(
+                                        &StageAndNext {
+                                            whole_excerpt: false,
+                                        },
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                         .child(
                             Button::new("unstage", "Unstage")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Unstage",
-                                    &UnstageAndNext,
+                                    &UnstageAndNext {
+                                        whole_excerpt: false,
+                                    },
                                     &focus_handle,
                                 ))
                                 .color(if button_states.unstage {
@@ -840,7 +850,13 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&UnstageAndNext, window, cx)
+                                    this.dispatch_action(
+                                        &UnstageAndNext {
+                                            whole_excerpt: false,
+                                        },
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                     }),
@@ -854,12 +870,20 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to previous hunk",
-                                &GoToPrevHunk,
+                                &GoToPrevHunk {
+                                    center_cursor: false,
+                                },
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToPrevHunk, window, cx)
+                                this.dispatch_action(
+                                    &GoToPrevHunk {
+                                        center_cursor: true,
+                                    },
+                                    window,
+                                    cx,
+                                )
                             })),
                     )
                     .child(
@@ -867,12 +891,20 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to next hunk",
-                                &GoToHunk,
+                                &GoToHunk {
+                                    center_cursor: false,
+                                },
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToHunk, window, cx)
+                                this.dispatch_action(
+                                    &GoToHunk {
+                                        center_cursor: true,
+                                    },
+                                    window,
+                                    cx,
+                                )
                             })),
                     ),
             )

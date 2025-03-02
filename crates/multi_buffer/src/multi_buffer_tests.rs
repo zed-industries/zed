@@ -2035,6 +2035,25 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         ]
     );
 
+    let buffer_ids_by_range = [
+        (Point::new(0, 0)..Point::new(0, 0), &[id_1] as &[_]),
+        (Point::new(0, 0)..Point::new(2, 0), &[id_1]),
+        (Point::new(2, 0)..Point::new(2, 0), &[id_1]),
+        (Point::new(3, 0)..Point::new(3, 0), &[id_1]),
+        (Point::new(8, 0)..Point::new(9, 0), &[id_1]),
+        (Point::new(8, 0)..Point::new(10, 0), &[id_1, id_2]),
+        (Point::new(9, 0)..Point::new(9, 0), &[id_2]),
+    ];
+    for (range, buffer_ids) in buffer_ids_by_range {
+        assert_eq!(
+            snapshot
+                .buffer_ids_for_range(range.clone())
+                .collect::<Vec<_>>(),
+            buffer_ids,
+            "buffer_ids_for_range({range:?}"
+        );
+    }
+
     assert_position_translation(&snapshot);
     assert_line_indents(&snapshot);
 

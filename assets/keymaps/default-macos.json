@@ -1,4 +1,15 @@
 [
+  // Moved before Standard macOS bindings so that `cmd-w` is not the last binding for
+  // `workspace::CloseWindow` and displayed/intercepted by macOS
+  {
+    "context": "PromptLibrary",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "prompt_library::NewPrompt",
+      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
+      "cmd-w": "workspace::CloseWindow"
+    }
+  },
   // Standard macOS bindings
   {
     "use_key_equivalents": true,
@@ -131,8 +142,8 @@
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "git::Restore",
       "cmd-alt-y": "git::ToggleStaged",
-      "cmd-y": "git::StageAndNext",
-      "cmd-shift-y": "git::UnstageAndNext",
+      "cmd-y": ["git::StageAndNext", { "whole_excerpt": false }],
+      "cmd-shift-y": ["git::UnstageAndNext", { "whole_excerpt": false }],
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
@@ -268,15 +279,6 @@
     "context": "ThreadHistory",
     "bindings": {
       "backspace": "assistant2::RemoveSelectedThread"
-    }
-  },
-  {
-    "context": "PromptLibrary",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-n": "prompt_library::NewPrompt",
-      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
-      "cmd-w": "workspace::CloseWindow"
     }
   },
   {
@@ -640,8 +642,8 @@
       "shift-enter": "editor::ExpandExcerpts",
       "cmd-alt-enter": "editor::OpenExcerptsSplit",
       "cmd-shift-e": "pane::RevealInProjectPanel",
-      "cmd-f8": "editor::GoToHunk",
-      "cmd-shift-f8": "editor::GoToPrevHunk",
+      "cmd-f8": ["editor::GoToHunk", { "center_cursor": true }],
+      "cmd-shift-f8": ["editor::GoToPrevHunk", { "center_cursor": true }],
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }

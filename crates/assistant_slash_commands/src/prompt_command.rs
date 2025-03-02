@@ -5,7 +5,7 @@ use assistant_slash_command::{
 };
 use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use prompt_library::PromptStore;
+use prompt_store::PromptStore;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
 use workspace::Workspace;

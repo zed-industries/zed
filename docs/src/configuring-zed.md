@@ -1779,6 +1779,18 @@ Or to set a `socks5` proxy:
 },
 ```
 
+## Seed Search Query From Cursor
+
+- Description: When to populate a new search's query based on the text under the cursor.
+- Setting: `seed_search_query_from_cursor`
+- Default: `always`
+
+**Options**
+
+1. `always` always populate the search query with the word under the cursor
+2. `selection` only populate the search query when there is text selected
+3. `never` never populate the search query
+
 ## Use Smartcase Search
 
 - Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \
