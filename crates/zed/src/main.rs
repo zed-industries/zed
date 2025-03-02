@@ -256,9 +256,11 @@ fn main() {
         };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
+    let git_askpass_path = zed::git_askpass::get_askpass_dir();
     let fs = Arc::new(RealFs::new(
         git_hosting_provider_registry.clone(),
         git_binary_path,
+        git_askpass_path.clone(),
     ));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
@@ -301,6 +303,7 @@ fn main() {
     });
 
     app.run(move |cx| {
+        zed::git_askpass::setup_git_askpass(git_askpass_path, cx);
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
         if let Some(app_commit_sha) = app_commit_sha {
