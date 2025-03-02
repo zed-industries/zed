@@ -2727,6 +2727,14 @@ pub struct Stateful<E> {
     pub(crate) element: E,
 }
 
+impl<E> Stateful<E> {
+    /// Applies a function to the inner element
+    pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> Self {
+        self.element = f(self.element);
+        self
+    }
+}
+
 impl<E> Styled for Stateful<E>
 where
     E: Styled,
