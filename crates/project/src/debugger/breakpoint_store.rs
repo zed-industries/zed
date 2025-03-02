@@ -183,6 +183,7 @@ impl BreakpointStore {
     ) {
         self.active_stack_frame = position;
         cx.emit(BreakpointEvent::ActiveDebugLineChanged);
+        cx.notify();
     }
 
     pub fn all_breakpoints(&self, cx: &App) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
@@ -206,11 +207,6 @@ impl BreakpointStore {
                 )
             })
             .collect()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
-        &self.breakpoints
     }
 }
 
