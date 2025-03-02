@@ -44,7 +44,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(file_finder, [SelectPrev, ToggleMenu]);
+actions!(file_finder, [SelectPrev, SelectNext, ToggleMenu]);
 
 impl ModalView for FileFinder {
     fn on_before_dismiss(
@@ -204,6 +204,11 @@ impl FileFinder {
         window.dispatch_action(Box::new(menu::SelectPrev), cx);
     }
 
+    fn handle_select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.init_modifiers = Some(window.modifiers());
+        window.dispatch_action(Box::new(menu::SelectNext), cx);
+    }
+
     fn handle_toggle_menu(&mut self, _: &ToggleMenu, window: &mut Window, cx: &mut Context<Self>) {
         self.picker.update(cx, |picker, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
@@ -317,6 +322,7 @@ impl Render for FileFinder {
             .w(modal_max_width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
+            .on_action(cx.listener(Self::handle_select_next))
             .on_action(cx.listener(Self::handle_toggle_menu))
             .on_action(cx.listener(Self::go_to_file_split_left))
             .on_action(cx.listener(Self::go_to_file_split_right))
