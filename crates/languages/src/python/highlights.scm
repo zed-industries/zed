@@ -1,4 +1,6 @@
 ; Identifier naming conventions; these "soft conventions" should stay at the top of the file as they're often overridden
+(identifier) @variable
+(attribute attribute: (identifier) @property)
 
 ; CamelCase for classes
 ((identifier) @type.class
@@ -8,8 +10,6 @@
 ((identifier) @constant
   (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
 
-(identifier) @variable
-(attribute attribute: (identifier) @property)
 (type (identifier) @type)
 (generic_type (identifier) @type)
 (comment) @comment
@@ -61,6 +61,8 @@
         (identifier) @function.arguments) ; Typed parameters
       (default_parameter
         name: (identifier) @function.arguments) ; Default parameters
+      (typed_default_parameter
+        name: (identifier) @function.arguments) ; Typed default parameters
   ]))
 
 ; Keyword arguments
