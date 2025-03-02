@@ -171,13 +171,7 @@ impl LanguageSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| {
-                if extension.contains('.') {
-                    None
-                } else {
-                    FileIcons::get_icon(Path::new(&format!("file.{extension}")), cx)
-                }
-            })
+            .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))
     }
