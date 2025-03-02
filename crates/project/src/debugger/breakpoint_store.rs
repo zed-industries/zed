@@ -241,14 +241,17 @@ impl BreakpointStore {
                             this.find_or_create_worktree(&path, false, cx)
                         })?
                         .await?;
-                    let buffer = mode.buffer_store.update(&mut cx, |this, cx| {
-                        let path = ProjectPath {
-                            worktree_id: worktree.read(cx).id(),
-                            path: relative_path.into(),
-                        };
-                        this.get_by_path(&path, cx)
-                    })?;
-                    let Some(buffer) = buffer else {
+                    let buffer = mode
+                        .buffer_store
+                        .update(&mut cx, |this, cx| {
+                            let path = ProjectPath {
+                                worktree_id: worktree.read(cx).id(),
+                                path: relative_path.into(),
+                            };
+                            this.open_buffer(path, cx)
+                        })?
+                        .await;
+                    let Ok(buffer) = buffer else {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
                         continue;
                     };
