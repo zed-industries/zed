@@ -9,9 +9,11 @@ use gpui::{
     list, AppContext, ClickEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     ListAlignment, ListState, Subscription, Task, WeakEntity,
 };
+use itertools::Itertools;
 use language::{
     Anchor, Buffer, DiagnosticEntry, DiagnosticSeverity, LanguageServerId, OffsetRangeExt,
 };
+use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::project_settings::ProjectSettings;
 use project::Project;
 use project::{DiagnosticSummary, ProjectPath};
@@ -20,7 +22,7 @@ use ui::{
     div, h_flex, px, v_flex, AnyElement, App, ButtonCommon, Clickable, Color, Context, Element,
     FluentBuilder, Icon, IconButton, IconButtonShape, IconName, IconSize, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, List, ListHeader, ListItem, ParentElement, Render,
-    Styled, Tooltip, Window,
+    Styled, Toggleable, Tooltip, Window,
 };
 use util::ResultExt;
 use workspace::item::TabContentParams;
@@ -33,12 +35,13 @@ pub struct DiagnosticsView {
     focus_handle: FocusHandle,
     summary: DiagnosticSummary,
     paths_to_update: BTreeSet<(ProjectPath, Option<LanguageServerId>)>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
     update_diagnostics_task: Option<Task<anyhow::Result<()>>>,
     include_warnings: bool,
     diagnostic_groups:
         IndexMap<ProjectPath, Vec<(Entity<Buffer>, LanguageServerId, DiagnosticEntry<Anchor>)>>,
     diagnostic_list: ListState,
+    selected_entry: Option<(usize, usize)>,
 }
 
 impl DiagnosticsView {
@@ -107,11 +110,12 @@ impl DiagnosticsView {
                 project,
                 focus_handle,
                 paths_to_update,
-                _subscription: project_event_subscription,
+                _subscriptions: vec![project_event_subscription],
                 update_diagnostics_task: None,
                 diagnostic_groups: IndexMap::default(),
                 include_warnings,
                 diagnostic_list,
+                selected_entry: None,
             };
             diagnostics_view.update_diagnostics(window, cx);
 
@@ -164,32 +168,38 @@ impl DiagnosticsView {
                     let snapshot = this.update(&mut cx, |_, cx| buffer.read(cx).snapshot())?;
                     let diagnostic_groups = snapshot.diagnostic_groups(language_server_id);
                     this.update(&mut cx, |diag_view, cx| {
-                        let diag_entry =
-                            diagnostic_groups
-                                .into_iter()
-                                .filter_map(|(lsp_id, mut diag_group)| {
-                                    let diag = diag_group.entries.remove(diag_group.primary_ix);
-                                    if diag_view.include_warnings {
-                                        Some((buffer.clone(), lsp_id, diag))
-                                    } else {
-                                        (diag.diagnostic.severity < DiagnosticSeverity::WARNING)
-                                            .then_some((buffer.clone(), lsp_id, diag))
-                                    }
-                                });
+                        let diag_entry: Vec<(
+                            Entity<Buffer>,
+                            LanguageServerId,
+                            DiagnosticEntry<Anchor>,
+                        )> = diagnostic_groups
+                            .into_iter()
+                            .filter_map(|(lsp_id, mut diag_group)| {
+                                let diag = diag_group.entries.remove(diag_group.primary_ix);
+                                if diag_view.include_warnings {
+                                    Some((buffer.clone(), lsp_id, diag))
+                                } else {
+                                    (diag.diagnostic.severity < DiagnosticSeverity::WARNING)
+                                        .then_some((buffer.clone(), lsp_id, diag))
+                                }
+                            })
+                            .collect();
+                        if diag_entry.is_empty() {
+                            return;
+                        }
                         match diag_view.diagnostic_groups.get_mut(&path) {
                             Some(e) => {
                                 e.extend(diag_entry);
                             }
                             None => {
-                                diag_view
-                                    .diagnostic_groups
-                                    .insert(path.clone(), diag_entry.collect());
+                                diag_view.diagnostic_groups.insert(path.clone(), diag_entry);
                             }
                         }
 
                         diag_view
                             .diagnostic_list
                             .splice(Range::default(), diag_view.diagnostic_groups.len());
+                        diag_view.selected_entry = None;
                         cx.notify();
                     })?;
                 } else {
@@ -238,6 +248,11 @@ impl DiagnosticsView {
                     _ => unreachable!("should not happen"),
                 };
                 let point = diag.range.to_point(&buffer.read(cx).snapshot());
+                let point_sec = point.clone();
+                let is_active = match self.selected_entry {
+                    Some(selected_entry) => selected_entry.0 == ix && selected_entry.1 == idx,
+                    None => false,
+                };
 
                 let task_workspace = task_workspace.clone();
                 let task_project_path = task_project_path.clone();
@@ -245,6 +260,7 @@ impl DiagnosticsView {
                 let task_sec_project_path = task_project_path.clone();
                 ListItem::new(idx)
                     .child(icon)
+                    .toggle_state(is_active)
                     .child(
                         div().size_full().child(Label::new(
                             diag.diagnostic
@@ -273,100 +289,33 @@ impl DiagnosticsView {
                             .map(|t| t.to_string())
                             .unwrap_or_else(|| diag.diagnostic.message.clone()),
                     ))
-                    .on_secondary_mouse_down(cx.listener(move |_, _, window, cx| {
+                    .on_secondary_mouse_down(cx.listener(move |this, _, window, cx| {
                         let task_workspace = task_sec_workspace.clone();
                         let task_project_path = task_sec_project_path.clone();
+                        this.select_entry((idx, ix), false, window, cx);
 
-                        cx.spawn_in(window, |_diagnostic_view, mut cx| async move {
-                            let open_path = task_workspace
-                                .update_in(&mut cx, |workspace, window, cx| {
-                                    workspace.open_path(
-                                        task_project_path.clone(),
-                                        None,
-                                        true,
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .log_err()?
-                                .await
-                                .log_err()?;
-
-                            if let Some(active_editor) = open_path.downcast::<Editor>() {
-                                active_editor
-                                    .downgrade()
-                                    .update_in(&mut cx, |editor, window, cx| {
-                                        editor.go_to_singleton_buffer_point(
-                                            point.start,
-                                            window,
-                                            cx,
-                                        );
-                                        window.dispatch_action(
-                                            Box::new(actions::ToggleCodeActions {
-                                                deployed_from_indicator: Some(
-                                                    editor::display_map::DisplayRow(
-                                                        point.start.row,
-                                                    ),
-                                                ),
-                                            }),
-                                            cx,
-                                        );
-                                    })
-                                    .log_err()?;
-                            }
-
-                            Some(())
-                        })
-                        .detach();
+                        Self::open_diag(
+                            point_sec.clone(),
+                            true,
+                            task_project_path,
+                            task_workspace,
+                            window,
+                            cx,
+                        );
                     }))
-                    .on_click(cx.listener(move |_this, click: &ClickEvent, window, cx| {
+                    .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                        this.select_entry((idx, ix), false, window, cx);
                         let task_workspace = task_workspace.clone();
                         let task_project_path = task_project_path.clone();
-                        let platofm_key_pressed = click.modifiers().platform;
-                        cx.spawn_in(window, |_diagnostic_view, mut cx| async move {
-                            let open_path = task_workspace
-                                .update_in(&mut cx, |workspace, window, cx| {
-                                    workspace.open_path(
-                                        task_project_path.clone(),
-                                        None,
-                                        true,
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .log_err()?
-                                .await
-                                .log_err()?;
-
-                            if let Some(active_editor) = open_path.downcast::<Editor>() {
-                                active_editor
-                                    .downgrade()
-                                    .update_in(&mut cx, |editor, window, cx| {
-                                        editor.go_to_singleton_buffer_point(
-                                            point.start,
-                                            window,
-                                            cx,
-                                        );
-
-                                        if platofm_key_pressed {
-                                            window.dispatch_action(
-                                                Box::new(actions::ToggleCodeActions {
-                                                    deployed_from_indicator: Some(
-                                                        editor::display_map::DisplayRow(
-                                                            point.start.row,
-                                                        ),
-                                                    ),
-                                                }),
-                                                cx,
-                                            );
-                                        }
-                                    })
-                                    .log_err()?;
-                            }
-
-                            Some(())
-                        })
-                        .detach();
+                        let platform_key_pressed = click.modifiers().platform;
+                        Self::open_diag(
+                            point.clone(),
+                            platform_key_pressed,
+                            task_project_path,
+                            task_workspace,
+                            window,
+                            cx,
+                        );
                     }))
             })
             .collect();
@@ -379,6 +328,220 @@ impl DiagnosticsView {
             .children(diags_per_file)
             .into_any_element()
             .into()
+    }
+
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        match self.selected_entry() {
+            Some(selected_entry) => {
+                if self
+                    .diagnostic_groups
+                    .get_index(selected_entry.0)
+                    .and_then(|(_, diags)| diags.get(selected_entry.1 + 1))
+                    .is_some()
+                {
+                    self.select_entry((selected_entry.0, selected_entry.1 + 1), true, window, cx);
+                } else if self
+                    .diagnostic_groups
+                    .get_index(selected_entry.0 + 1)
+                    .and_then(|(_, diags)| diags.get(0))
+                    .is_some()
+                {
+                    self.select_entry((selected_entry.0 + 1, 0), true, window, cx);
+                } else {
+                    return;
+                }
+            }
+            None => self.select_first(&SelectFirst {}, window, cx),
+        }
+    }
+
+    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+        match self.selected_entry() {
+            Some(selected_entry) => {
+                if self
+                    .diagnostic_groups
+                    .get_index(selected_entry.0)
+                    .and_then(|(_, diags)| diags.get(selected_entry.1.checked_sub(1)?))
+                    .is_some()
+                {
+                    self.select_entry(
+                        (selected_entry.0, selected_entry.1.saturating_sub(1)),
+                        true,
+                        window,
+                        cx,
+                    );
+                } else if selected_entry.0 > 0
+                    && self
+                        .diagnostic_groups
+                        .get_index(selected_entry.0.saturating_sub(1))
+                        .map(|(_, diags)| diags.get(0))
+                        .is_some()
+                {
+                    self.select_entry(
+                        (
+                            selected_entry.0.saturating_sub(1),
+                            self.diagnostic_groups
+                                .get_index(selected_entry.0.saturating_sub(1))
+                                .expect("already checked in the condition")
+                                .1
+                                .len()
+                                .saturating_sub(1),
+                        ),
+                        true,
+                        window,
+                        cx,
+                    );
+                } else {
+                    return;
+                }
+            }
+            None => self.select_last(&SelectLast {}, window, cx),
+        }
+    }
+
+    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.diagnostic_groups.is_empty()
+            && self
+                .diagnostic_groups
+                .iter()
+                .any(|(_, diags)| !diags.is_empty())
+        {
+            self.select_entry((0, 0), true, window, cx);
+        }
+    }
+
+    fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((position, (_, diags))) = self
+            .diagnostic_groups
+            .iter()
+            .find_position(|(_, diags)| !diags.is_empty())
+        else {
+            return;
+        };
+
+        self.select_entry(
+            (
+                self.diagnostic_groups
+                    .len()
+                    .saturating_sub(1)
+                    .saturating_sub(position),
+                diags.len().saturating_sub(1),
+            ),
+            true,
+            window,
+            cx,
+        );
+    }
+
+    fn on_confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_selected_entry(false, window, cx);
+    }
+
+    fn on_secondary_confirm(
+        &mut self,
+        _: &SecondaryConfirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_selected_entry(true, window, cx);
+    }
+
+    fn open_selected_entry(
+        &mut self,
+        secondary_action: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((project_path, (buffer, _lsp_id, diag))) =
+            self.selected_entry.and_then(|(diag_group_idx, diag_idx)| {
+                self.diagnostic_groups
+                    .get_index(diag_group_idx)
+                    .and_then(|(project_path, diags)| Some((project_path, diags.get(diag_idx)?)))
+            })
+        {
+            let point = diag.range.to_point(&buffer.read(cx).snapshot());
+            let task_workspace = self.workspace.clone();
+            let project_path = project_path.clone();
+            Self::open_diag(
+                point,
+                secondary_action,
+                project_path,
+                task_workspace,
+                window,
+                cx,
+            );
+        }
+    }
+
+    /// Open diagnostic in editor
+    fn open_diag(
+        point: Range<rope::Point>,
+        platform_key_pressed: bool,
+        project_path: ProjectPath,
+        task_workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<DiagnosticsView>,
+    ) {
+        cx.spawn_in(window, |_diagnostic_view, mut cx| async move {
+            let open_path = task_workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
+                })
+                .log_err()?
+                .await
+                .log_err()?;
+
+            if let Some(active_editor) = open_path.downcast::<Editor>() {
+                active_editor
+                    .downgrade()
+                    .update_in(&mut cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(point.start, window, cx);
+
+                        if platform_key_pressed {
+                            window.dispatch_action(
+                                Box::new(actions::ToggleCodeActions {
+                                    deployed_from_indicator: Some(editor::display_map::DisplayRow(
+                                        point.start.row,
+                                    )),
+                                }),
+                                cx,
+                            );
+                        }
+                    })
+                    .log_err()?;
+            }
+
+            Some(())
+        })
+        .detach();
+    }
+
+    fn selected_entry(&self) -> Option<(usize, usize)> {
+        self.selected_entry
+    }
+
+    fn select_entry(
+        &mut self,
+        entry: (usize, usize),
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if focus {
+            self.focus_handle.focus(window);
+        }
+        self.selected_entry = entry.into();
+
+        self.autoscroll(cx);
+        cx.notify();
+    }
+
+    fn autoscroll(&mut self, cx: &mut Context<Self>) {
+        // FIXME: if the number of diagnostics per file are higher than the number of items we can display on the screen it doesn't work properly
+        if let Some(selected_entry) = self.selected_entry() {
+            self.diagnostic_list.scroll_to_reveal_item(selected_entry.0);
+            cx.notify();
+        }
     }
 }
 
@@ -402,6 +565,10 @@ impl Render for DiagnosticsView {
             .id("diagnostics-view")
             .size_full()
             .relative()
+            .on_action(cx.listener(Self::on_confirm))
+            .on_action(cx.listener(Self::on_secondary_confirm))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::toggle_warnings))
             .track_focus(&self.focus_handle(cx))
             .child(
