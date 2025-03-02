@@ -170,49 +170,6 @@ impl StackFrameList {
         cx.notify();
     }
 
-    // fn fetch_stack_frames(
-    //     &mut self,
-    //     go_to_stack_frame: bool,
-    //     window: &Window,
-    //     cx: &mut Context<Self>,
-    // ) {
-    //     // If this is a remote debug session we never need to fetch stack frames ourselves
-    //     // because the host will fetch and send us stack frames whenever there's a stop event
-    //     if self.dap_store.read(cx).as_remote().is_some() {
-    //         return;
-    //     }
-
-    //     let task = self.dap_store.update(cx, |store, cx| {
-    //         store.stack_frames(&self.client_id, self.thread_id, cx)
-    //     });
-
-    //     self.fetch_stack_frames_task = Some(cx.spawn_in(window, |this, mut cx| async move {
-    //         let mut stack_frames = task.await?;
-
-    //         let task = this.update_in(&mut cx, |this, window, cx| {
-    //             std::mem::swap(&mut this.stack_frames, &mut stack_frames);
-
-    //             this.build_entries();
-
-    //             cx.emit(StackFrameListEvent::StackFramesUpdated);
-
-    //             let stack_frame = this
-    //                 .stack_frames
-    //                 .first()
-    //                 .cloned()
-    //                 .ok_or_else(|| anyhow!("No stack frame found to select"))?;
-
-    //             anyhow::Ok(this.select_stack_frame(&stack_frame, go_to_stack_frame, window, cx))
-    //         })?;
-
-    //         task?.await?;
-
-    //         this.update(&mut cx, |this, _| {
-    //             this.fetch_stack_frames_task.take();
-    //         })
-    //     }));
-    // }
-
     pub fn select_stack_frame(
         &mut self,
         stack_frame: &dap::StackFrame,
@@ -237,51 +194,47 @@ impl StackFrameList {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
-        cx.spawn_in(window, {
-            // let client_id = self.client_id;
-            move |this, mut cx| async move {
-                let buffer = this
-                    .update(&mut cx, |this, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace
-                                .project()
-                                .update(cx, |this, cx| this.open_local_buffer(abs_path.clone(), cx))
-                        })
-                    })??
-                    .await?;
-                let position = buffer.update(&mut cx, |this, _| {
-                    this.snapshot().anchor_before(Point::new(row, 0))
-                })?;
-                this.update_in(&mut cx, |this, window, cx| {
+        cx.spawn_in(window, move |this, mut cx| async move {
+            let buffer = this
+                .update(&mut cx, |this, cx| {
                     this.workspace.update(cx, |workspace, cx| {
-                        let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
-                            anyhow!("Could not select a stack frame for unnamed buffer")
-                        })?;
-                        Result::<_, anyhow::Error>::Ok(workspace.open_path_preview(
-                            project_path,
-                            None,
-                            false,
-                            true,
-                            true,
-                            window,
-                            cx,
-                        ))
+                        workspace
+                            .project()
+                            .update(cx, |this, cx| this.open_local_buffer(abs_path.clone(), cx))
                     })
-                })???
+                })??
                 .await?;
+            let position = buffer.update(&mut cx, |this, _| {
+                this.snapshot().anchor_before(Point::new(row, 0))
+            })?;
+            this.update_in(&mut cx, |this, window, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
+                        anyhow!("Could not select a stack frame for unnamed buffer")
+                    })?;
+                    anyhow::Ok(workspace.open_path_preview(
+                        project_path,
+                        None,
+                        false,
+                        true,
+                        true,
+                        window,
+                        cx,
+                    ))
+                })
+            })???
+            .await?;
 
-                // TODO(debugger): make this work again
-                this.update(&mut cx, |this, cx| {
-                    this.workspace.update(cx, |workspace, cx| {
-                        let breakpoint_store = workspace.project().read(cx).breakpoint_store();
+            // TODO(debugger): make this work again
+            this.update(&mut cx, |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    let breakpoint_store = workspace.project().read(cx).breakpoint_store();
 
-                        breakpoint_store.update(cx, |store, cx| {
-                            let _ = store.set_active_position(Some((abs_path, position)), cx);
-                            cx.notify();
-                        })
+                    breakpoint_store.update(cx, |store, cx| {
+                        store.set_active_position(Some((abs_path, position)), cx);
                     })
-                })?
-            }
+                })
+            })?
         })
     }
 
