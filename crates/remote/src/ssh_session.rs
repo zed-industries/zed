@@ -33,7 +33,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::{
     fs,
-    net::unix::UnixStream,
     process::{self, Child, Stdio},
 };
 use std::{
@@ -1463,7 +1462,7 @@ impl SshRemoteConnection {
             .prefix("zed-ssh-session")
             .tempdir()?;
 
-        let askpass = AskPassSession::new(&temp_dir, cx, {
+        let mut askpass = AskPassSession::new(&temp_dir, cx, {
             let delegate = delegate.clone();
             move |prompt, cx| delegate.ask_password(prompt, cx)
         })
@@ -1493,8 +1492,45 @@ impl SshRemoteConnection {
             .arg(&url)
             .kill_on_drop(true)
             .spawn()?;
+        // Wait for this ssh process to close its stdout, indicating that authentication
+        // has completed.
+        let mut stdout = master_process.stdout.take().unwrap();
+        let mut output = Vec::new();
 
-        askpass.run(&mut master_process).await?;
+        let result = select_biased! {
+            result = askpass.run().fuse() => {
+                match result {
+                    AskPassResult::CancelledByUser => {
+                        master_process.kill().ok();
+                        Err(anyhow!("SSH connection canceled"))?
+                    }
+                    AskPassResult::Timedout => {
+                        Err(anyhow!("connecting to host timed out"))?
+                    }
+                }
+            }
+            _ = stdout.read_to_end(&mut output).fuse() => {
+                anyhow::Ok(())
+            }
+        };
+
+        if let Err(e) = result {
+            return Err(e.context("Failed to connect to host"));
+        }
+
+        if master_process.try_status()?.is_some() {
+            output.clear();
+            let mut stderr = master_process.stderr.take().unwrap();
+            stderr.read_to_end(&mut output).await?;
+
+            let error_message = format!(
+                "failed to connect: {}",
+                String::from_utf8_lossy(&output).trim()
+            );
+            Err(anyhow!(error_message))?;
+        }
+
+        drop(askpass);
 
         let socket = SshSocket {
             connection_options,
@@ -2476,19 +2512,23 @@ mod fake {
     }
 }
 
-struct CommandOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-}
-
 struct AskPassSession {
     script_path: PathBuf,
-    askpass_task: Task<()>,
-    askpass_opened_rx: oneshot::Receiver<()>,
-    askpass_kill_master_rx: oneshot::Receiver<UnixStream>,
+    _askpass_task: Task<()>,
+    askpass_opened_rx: Option<oneshot::Receiver<()>>,
+    askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum AskPassResult {
+    CancelledByUser,
+    Timedout,
 }
 
 impl AskPassSession {
+    /// This will create a new AskPassSession.
+    /// You must retain this session until the master process exits.
+    #[must_use]
     pub async fn new(
         temp_dir: &TempDir,
         cx: &mut AsyncApp,
@@ -2499,7 +2539,6 @@ impl AskPassSession {
     ) -> Result<Self> {
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
-        use smol::net::unix::UnixStream;
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
 
@@ -2508,7 +2547,7 @@ impl AskPassSession {
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
 
-        let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
+        let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
 
         let askpass_task = cx.spawn(|mut cx| async move {
@@ -2533,9 +2572,13 @@ impl AskPassSession {
                     stream.write_all(password.as_bytes()).await.log_err();
                 } else {
                     if let Some(kill_tx) = kill_tx.take() {
-                        kill_tx.send(stream).log_err();
-                        break;
+                        kill_tx.send(()).log_err();
                     }
+                    // note: we expect the caller to drop this task when it's done.
+                    // We need to keep the stream open until the caller is done to avoid
+                    // spurious errors from ssh.
+                    std::future::pending::<()>().await;
+                    drop(stream);
                 }
             }
         });
@@ -2565,9 +2608,9 @@ impl AskPassSession {
 
         Ok(Self {
             script_path: askpass_script_path,
-            askpass_task,
-            askpass_kill_master_rx,
-            askpass_opened_rx,
+            _askpass_task: askpass_task,
+            askpass_kill_master_rx: Some(askpass_kill_master_rx),
+            askpass_opened_rx: Some(askpass_opened_rx),
         })
     }
 
@@ -2575,65 +2618,28 @@ impl AskPassSession {
         &self.script_path
     }
 
-    pub async fn run(self, master_process: &mut process::Child) -> Result<CommandOutput> {
-        let Self {
-            askpass_task,
-            askpass_kill_master_rx,
-            askpass_opened_rx,
-            ..
-        } = self;
-
-        let mut stdout_stream = master_process.stdout.take().unwrap();
-        let mut stderr_stream = master_process.stderr.take().unwrap();
-
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
+    // This will run the askpass task forever, resolving as many authentication requests as needed.
+    // The caller is responsible for examining the result of their own commands and cancelling this
+    // future when this is no longer needed. Note that this can only be called once, but due to the
+    // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
+    async fn run(&mut self) -> AskPassResult {
         let connection_timeout = Duration::from_secs(10);
+        let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
+        let askpass_kill_master_rx = self
+            .askpass_kill_master_rx
+            .take()
+            .expect("Only call run once");
 
-        let mut output_futures = futures::future::join(
-            stdout_stream.read_to_end(&mut stdout),
-            stderr_stream.read_to_end(&mut stderr),
-        )
-        .fuse();
-
-        let result = select_biased! {
+        select_biased! {
             _ = askpass_opened_rx.fuse() => {
-                select_biased! {
-                    stream = askpass_kill_master_rx.fuse() => {
-                        master_process.kill().ok();
-                        drop(stream);
-                        Err(anyhow!("command canceled"))
-                    }
-                    // If the askpass script has opened, that means the user is typing
-                    // their password, in which case we don't want to timeout anymore,
-                    // since we know a connection has been established.
-                    _ = output_futures => {
-                        Ok(())
-                    }
-                }
+                // Note: this await can only resolve after we are dropped.
+                askpass_kill_master_rx.await.ok();
+                return AskPassResult::CancelledByUser
             }
-            _ = output_futures => {
-                Ok(())
-            }
+
             _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
-                Err(anyhow!("Exceeded {:?} timeout trying to connect to host", connection_timeout))
+                return AskPassResult::Timedout
             }
-        };
-
-        if let Err(e) = result {
-            return Err(e.context("Failed to connect to host"));
-        }
-
-        drop(askpass_task);
-
-        if master_process.try_status()?.is_some() {
-            let error_message = format!(
-                "failed to connect: {}",
-                String::from_utf8_lossy(&stderr).trim()
-            );
-            return Err(anyhow!(error_message))?;
-        } else {
-            Ok(CommandOutput { stdout, stderr })
         }
     }
 }
