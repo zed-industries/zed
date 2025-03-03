@@ -3,10 +3,10 @@ use crate::project_settings::ProjectSettings;
 use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
-    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, ModulesCommand, NextCommand,
-    PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand,
-    StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
-    TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
+    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
+    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
+    SetVariableValueCommand, StackTraceCommand, StepBackCommand, StepCommand, StepInCommand,
+    StepOutCommand, TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -445,6 +445,7 @@ pub struct Session {
     threads: IndexMap<ThreadId, Thread>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
+    locations: HashMap<u64, dap::LocationsResponse>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
@@ -594,6 +595,7 @@ impl Session {
                     loaded_sources: Vec::default(),
                     threads: IndexMap::default(),
                     stack_frames: IndexMap::default(),
+                    locations: Default::default(),
                     _background_tasks,
                     is_session_terminated: false,
                 }
@@ -626,6 +628,7 @@ impl Session {
             loaded_sources: Vec::default(),
             threads: IndexMap::default(),
             _background_tasks: Vec::default(),
+            locations: Default::default(),
             is_session_terminated: false,
         }
     }
@@ -1368,6 +1371,20 @@ impl Session {
         .detach();
     }
 
+    pub fn location(
+        &mut self,
+        reference: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<dap::LocationsResponse> {
+        self.fetch(
+            LocationsCommand { reference },
+            move |this, response, _| {
+                this.locations.insert(reference, response.clone());
+            },
+            cx,
+        );
+        self.locations.get(&reference).cloned()
+    }
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {
         let command = DisconnectCommand {
             restart: Some(false),

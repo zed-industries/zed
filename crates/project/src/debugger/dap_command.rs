@@ -1681,3 +1681,57 @@ impl LocalDapCommand for SetBreakpoints {
         Ok(message.breakpoints)
     }
 }
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(super) struct LocationsCommand {
+    pub(super) reference: u64,
+}
+
+impl LocalDapCommand for LocationsCommand {
+    type Response = dap::LocationsResponse;
+    type DapRequest = dap::requests::Locations;
+    const CACHEABLE: bool = true;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::LocationsArguments {
+            location_reference: self.reference,
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}
+
+impl DapCommand for LocationsCommand {
+    type ProtoRequest = proto::DapThreadsRequest;
+
+    fn client_id_from_proto(_: &Self::ProtoRequest) -> SessionId {
+        todo!()
+    }
+
+    fn from_proto(_: &Self::ProtoRequest) -> Self {
+        todo!()
+    }
+
+    fn to_proto(&self, _: SessionId, _: u64) -> Self::ProtoRequest {
+        todo!()
+    }
+
+    fn response_to_proto(
+        _: SessionId,
+        _: Self::Response,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
+        todo!()
+    }
+
+    fn response_from_proto(
+        &self,
+        _: <Self::ProtoRequest as proto::RequestMessage>::Response,
+    ) -> Result<Self::Response> {
+        todo!()
+    }
+}
