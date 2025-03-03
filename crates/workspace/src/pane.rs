@@ -743,7 +743,28 @@ impl Pane {
         }
     }
 
-    /// Returns the list of pinned ProjectPaths.
+    pub fn get_pinned_paths(&self, cx: &App) -> Vec<(ProjectPath, Option<PathBuf>)> {
+        let mut results: Vec<(ProjectPath, Option<PathBuf>)> = Vec::new();
+
+        let pinned_count = self.pinned_count();
+        for i in 0..pinned_count {
+            let item = self.items.get(i).unwrap();
+            if let Some(project_path) = item.project_path(cx) {
+                let abs_path = self
+                    .nav_history
+                    .0
+                    .lock()
+                    .paths_by_item
+                    .get(&item.item_id())
+                    .and_then(|(_, abs_path)| abs_path.clone());
+
+                results.push((project_path, abs_path));
+            }
+        }
+
+        results
+    }
+
     pub fn get_pinned_project_paths(&self, cx: &App) -> Vec<ProjectPath> {
         let mut results: Vec<ProjectPath> = Vec::new();
 

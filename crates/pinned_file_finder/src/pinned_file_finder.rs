@@ -1,16 +1,15 @@
 #[cfg(test)]
 mod pinned_file_finder_tests;
 
-pub mod pinned_file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
+pub mod pinned_file_finder_settings;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
 use editor::Editor;
-use pinned_file_finder_settings::{PinnedFileFinderSettings, PinnedFileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -21,17 +20,15 @@ use gpui::{
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
+use pinned_file_finder_settings::{PinnedFileFinderSettings, PinnedFileFinderWidth};
+use project::{Project, ProjectPath, WorktreeId};
 use settings::Settings;
 use std::{
     borrow::Cow,
     cmp,
     ops::Range,
     path::{Component, Path, PathBuf},
-    sync::{
-        atomic::{self, AtomicBool},
-        Arc,
-    },
+    sync::Arc,
 };
 use text::Point;
 use ui::{
@@ -108,45 +105,32 @@ impl PinnedFileFinder {
         let project = workspace.project().read(cx);
         let fs = project.fs();
 
-        // INFO: commenting this because I don't need current buffer if unpinned to show up in the search.
-        // TODO: include this if the current buffer is pinned.
-        // let currently_opened_path = workspace
-        //     .active_item(cx)
-        //     .and_then(|item| item.project_path(cx))
-        //     .map(|project_path| {
-        //         let abs_path = project
-        //             .worktree_for_id(project_path.worktree_id, cx)
-        //             .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
-        //         FoundPath::new(project_path, abs_path)
-        //     });
+        let pinned_paths = workspace.get_pinned_paths(cx);
 
-        let navigation_history =
-            workspace.recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx);
-
-        println!(
-            "navigation history paths: {:?}",
-            navigation_history.clone().iter().map(|(val, _)| {
-                val.path.to_string_lossy()
-            }).collect::<Vec<_>>()
-        );
-
-        let history_items = navigation_history
+        let items = pinned_paths
             .into_iter()
             .filter_map(|(project_path, abs_path)| {
                 if project.entry_for_path(&project_path, cx).is_some() {
                     return Some(Task::ready(Some(FoundPath::new(project_path, abs_path))));
                 }
+
                 let abs_path = abs_path?;
+                // For local projects, we need to verify if the file actually exists on disk
+                // by checking asynchronously with the filesystem
                 if project.is_local() {
                     let fs = fs.clone();
                     Some(cx.background_spawn(async move {
                         if fs.is_file(&abs_path).await {
+                            // If the file exists, create a FoundPath with the project path and absolute path
                             Some(FoundPath::new(project_path, Some(abs_path)))
                         } else {
+                            // If file doesn't exist, don't include it in the results
                             None
                         }
                     }))
                 } else {
+                    // For remote projects (like via collaboration), we don't verify file existence
+                    // and just trust that the project path is valid, returning it immediately
                     Some(Task::ready(Some(FoundPath::new(
                         project_path,
                         Some(abs_path),
@@ -156,7 +140,7 @@ impl PinnedFileFinder {
             .collect::<Vec<_>>();
 
         cx.spawn_in(window, move |workspace, mut cx| async move {
-            let history_items = join_all(history_items).await.into_iter().flatten();
+            let history_items = join_all(items).await.into_iter().flatten();
 
             workspace
                 .update_in(&mut cx, |workspace, window, cx| {
@@ -181,7 +165,11 @@ impl PinnedFileFinder {
         })
     }
 
-    fn new(delegate: PinnedFileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        delegate: PinnedFileFinderDelegate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -295,7 +283,10 @@ impl PinnedFileFinder {
         })
     }
 
-    pub fn modal_max_width(width_setting: Option<PinnedFileFinderWidth>, window: &mut Window) -> Pixels {
+    pub fn modal_max_width(
+        width_setting: Option<PinnedFileFinderWidth>,
+        window: &mut Window,
+    ) -> Pixels {
         let window_width = window.viewport_size().width;
         let small_width = Pixels(545.);
 
@@ -350,7 +341,6 @@ pub struct PinnedFileFinderDelegate {
     matches: Matches,
     selected_index: usize,
     has_changed_selected_index: bool,
-    cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
     separate_history: bool,
     first_update: bool,
@@ -634,8 +624,6 @@ impl FoundPath {
     }
 }
 
-const MAX_RECENT_SELECTIONS: usize = 20;
-
 pub enum Event {
     Selected(ProjectPath),
     Dismissed,
@@ -682,7 +670,6 @@ impl PinnedFileFinderDelegate {
             matches: Matches::default(),
             has_changed_selected_index: false,
             selected_index: 0,
-            cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
             separate_history,
             first_update: true,
@@ -720,22 +707,18 @@ impl PinnedFileFinderDelegate {
 
         // Get list of pinned project paths
         let pinned_paths = if let Some(workspace) = &workspace_entity {
-            workspace.update(cx, |workspace, cx| {
-                workspace.get_pinned_project_paths(cx)
-            })
+            workspace.update(cx, |workspace, cx| workspace.get_pinned_project_paths(cx))
         } else {
             Vec::new()
         };
 
-        // If we have pinned paths, only search those
-        if !pinned_paths.is_empty() {
-            println!("Searching only among {} pinned paths", pinned_paths.len());
+        // Create a direct match for each pinned file
+        let search_id = util::post_inc(&mut self.search_count);
 
-            // Create a direct match for each pinned file
-            let search_id = util::post_inc(&mut self.search_count);
-
-            // Create PathMatch objects for each pinned file
-            let matches = pinned_paths.into_iter().filter_map(|project_path| {
+        // Create PathMatch objects for each pinned file
+        let matches = pinned_paths
+            .into_iter()
+            .filter_map(|project_path| {
                 // Only include files that contain the query string
                 let path_str = project_path.path.to_string_lossy().to_lowercase();
                 if path_str.contains(&query.path_query().to_lowercase()) {
@@ -751,68 +734,22 @@ impl PinnedFileFinderDelegate {
                 } else {
                     None
                 }
-            }).collect::<Vec<_>>();
-
-            cx.spawn_in(window, |picker, mut cx| async move {
-                picker
-                    .update(&mut cx, |picker, cx| {
-                        picker
-                            .delegate
-                            .set_search_matches(search_id, false, query, matches.into_iter(), cx)
-                    })
-                    .log_err();
             })
-        } else {
-            // Fall back to the original implementation if no pinned files
-            let relative_to = self
-                .currently_opened_path
-                .as_ref()
-                .map(|found_path| Arc::clone(&found_path.project.path));
+            .collect::<Vec<_>>();
 
-            let worktrees = self.project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
-            let include_root_name = worktrees.len() > 1;
-            let candidate_sets = worktrees
-                .into_iter()
-                .map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    PathMatchCandidateSet {
-                        snapshot: worktree.snapshot(),
-                        include_ignored: worktree
-                            .root_entry()
-                            .map_or(false, |entry| entry.is_ignored),
-                        include_root_name,
-                        candidates: project::Candidates::Files,
-                    }
+        cx.spawn_in(window, |picker, mut cx| async move {
+            picker
+                .update(&mut cx, |picker, cx| {
+                    picker.delegate.set_search_matches(
+                        search_id,
+                        false,
+                        query,
+                        matches.into_iter(),
+                        cx,
+                    )
                 })
-                .collect::<Vec<_>>();
-
-            let search_id = util::post_inc(&mut self.search_count);
-            self.cancel_flag.store(true, atomic::Ordering::Relaxed);
-            self.cancel_flag = Arc::new(AtomicBool::new(false));
-            let cancel_flag = self.cancel_flag.clone();
-            cx.spawn_in(window, |picker, mut cx| async move {
-                let matches = fuzzy::match_path_sets(
-                    candidate_sets.as_slice(),
-                    query.path_query(),
-                    relative_to,
-                    false,
-                    100,
-                    &cancel_flag,
-                    cx.background_executor().clone(),
-                )
-                .await
-                .into_iter()
-                .map(ProjectPanelOrdMatch);
-                let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
-                picker
-                    .update(&mut cx, |picker, cx| {
-                        picker
-                            .delegate
-                            .set_search_matches(search_id, did_cancel, query, matches, cx)
-                    })
-                    .log_err();
-            })
-        }
+                .log_err();
+        })
     }
 
     fn set_search_matches(
