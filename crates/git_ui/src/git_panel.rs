@@ -40,8 +40,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, ListItem, ListItemSpacing,
-    PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, PopoverButton, PopoverMenu,
+    Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 
@@ -2328,7 +2328,7 @@ impl GitPanel {
         Label::new(label.into()).color(color).single_line()
     }
 
-    fn list_item_height(&self, window: &Window) -> Rems {
+    fn list_item_height(&self) -> Rems {
         rems(1.75)
     }
 
@@ -2337,14 +2337,14 @@ impl GitPanel {
         ix: usize,
         header: &GitHeaderEntry,
         _: bool,
-        window: &Window,
+        _: &Window,
         _: &Context<Self>,
     ) -> AnyElement {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
 
         h_flex()
             .id(id)
-            .h(self.list_item_height(window))
+            .h(self.list_item_height())
             .w_full()
             .items_end()
             .px(rems(0.75)) // ~12px
@@ -2444,7 +2444,7 @@ impl GitPanel {
         ix: usize,
         entry: &GitStatusEntry,
         has_write_access: bool,
-        window: &Window,
+        _: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let display_name = entry
@@ -2533,7 +2533,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
-            .h(self.list_item_height(window))
+            .h(self.list_item_height())
             .w_full()
             .items_center()
             .px(rems(0.75)) // ~12px
