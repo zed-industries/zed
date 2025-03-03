@@ -667,8 +667,14 @@ impl Element for MarkdownElement {
                                 range,
                                 markdown_end,
                             );
+                            builder.push_div(div().v_flex(), range, markdown_end);
                         }
                         MarkdownTag::TableHead => {
+                            builder.push_div(
+                                div().border_b_1().border_color(cx.theme().colors().border),
+                                range,
+                                markdown_end,
+                            );
                             builder.push_text_style(TextStyleRefinement {
                                 font_weight: Some(FontWeight::BOLD),
                                 ..Default::default()
@@ -751,8 +757,10 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
+                        builder.pop_div();
                     }
                     MarkdownTagEnd::TableHead => {
+                        builder.pop_div();
                         builder.pop_text_style();
                     }
                     MarkdownTagEnd::TableRow => {
