@@ -438,7 +438,6 @@ impl Thread {
                         }
 
                         thread.touch_updated_at();
-                        cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
                     })?;
 
@@ -446,6 +445,7 @@ impl Thread {
                 }
 
                 thread.update(&mut cx, |thread, cx| {
+                    cx.emit(ThreadEvent::StreamedCompletion);
                     thread
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
