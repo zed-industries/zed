@@ -57,6 +57,8 @@ zed_actions.workspace = true
 windows.workspace = true
 
 [dev-dependencies]
+ctor.workspace = true
+env_logger.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
