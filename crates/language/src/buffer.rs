@@ -1,4 +1,5 @@
 pub mod search;
+pub mod words;
 
 pub use crate::{
     diagnostic_set::DiagnosticSet,
@@ -69,6 +70,7 @@ use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{debug_panic, maybe, RangeExt};
+use words::Words;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -108,6 +110,7 @@ pub struct Buffer {
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
+    words: Option<Words>,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
@@ -814,6 +817,7 @@ impl Buffer {
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
             Capability::ReadWrite,
+            cx,
         )
     }
 
@@ -832,6 +836,7 @@ impl Buffer {
             ),
             None,
             Capability::ReadWrite,
+            cx,
         )
     }
 
@@ -841,11 +846,13 @@ impl Buffer {
         replica_id: ReplicaId,
         capability: Capability,
         base_text: impl Into<String>,
+        cx: &App,
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, remote_id, base_text.into()),
             None,
             capability,
+            cx,
         )
     }
 
@@ -856,11 +863,12 @@ impl Buffer {
         capability: Capability,
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
+        cx: &App,
     ) -> Result<Self> {
         let buffer_id = BufferId::new(message.id)
             .with_context(|| anyhow!("Could not deserialize buffer_id"))?;
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
-        let mut this = Self::build(buffer, file, capability);
+        let mut this = Self::build(buffer, file, capability, cx);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -949,32 +957,61 @@ impl Buffer {
     }
 
     /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
-    pub fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, capability: Capability) -> Self {
+    pub fn build(
+        buffer: TextBuffer,
+        file: Option<Arc<dyn File>>,
+        capability: Capability,
+        cx: &App,
+    ) -> Self {
         let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
+        let remote_selections = TreeMap::default();
+        let language = None;
+        let diagnostics = SmallVec::default();
+        let non_text_state_update_count = 0;
+
+        let words = match capability {
+            Capability::ReadWrite => {
+                // TODO kb allow disabling it, only buffers for full width editors need this
+                let syntax = syntax_map.lock().snapshot();
+                let snapshot = BufferSnapshot {
+                    text: snapshot,
+                    syntax,
+                    file: file.clone(),
+                    remote_selections: remote_selections.clone(),
+                    diagnostics: diagnostics.clone(),
+                    language: language.clone(),
+                    non_text_state_update_count,
+                };
+                Some(Words::new(snapshot, cx))
+            }
+            Capability::ReadOnly => None,
+        };
+
         Self {
             saved_mtime,
             saved_version: buffer.version(),
             preview_version: buffer.version(),
-            reload_task: None,
-            transaction_depth: 0,
-            was_dirty_before_starting_transaction: None,
             has_unsaved_edits: Cell::new((buffer.version(), false)),
             text: buffer,
-            branch_state: None,
             file,
             capability,
             syntax_map,
-            reparse: None,
-            non_text_state_update_count: 0,
+            remote_selections,
+            words,
+            language,
+            diagnostics,
+            branch_state: None,
+            reload_task: None,
+            transaction_depth: 0,
+            was_dirty_before_starting_transaction: None,
             sync_parse_timeout: Duration::from_millis(1),
             parse_status: async_watch::channel(ParseStatus::Idle),
+            reparse: None,
+            non_text_state_update_count,
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
-            language: None,
-            remote_selections: Default::default(),
-            diagnostics: Default::default(),
             diagnostics_timestamp: Default::default(),
             completion_triggers: Default::default(),
             completion_triggers_per_language_server: Default::default(),
@@ -1091,7 +1128,7 @@ impl Buffer {
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
                 _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
-                ..Self::build(self.text.branch(), self.file.clone(), self.capability())
+                ..Self::build(self.text.branch(), self.file.clone(), self.capability(), cx)
             };
             if let Some(language_registry) = self.language_registry() {
                 branch.set_language_registry(language_registry);
@@ -2249,11 +2286,16 @@ impl Buffer {
     }
 
     fn did_edit(&mut self, old_version: &clock::Global, was_dirty: bool, cx: &mut Context<Self>) {
-        if self.edits_since::<usize>(old_version).next().is_none() {
+        let edits = self.edits_since::<Point>(old_version).collect::<Vec<_>>();
+        if edits.is_empty() {
             return;
         }
 
         self.reparse(cx);
+        if let Some(mut words) = self.words.take() {
+            words.schedule_update(Some(self.snapshot()), edits, cx);
+            self.words = Some(words);
+        }
 
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {

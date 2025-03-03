@@ -6,6 +6,7 @@ use std::ops::Range;
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
 pub struct Outline<T> {
+    // TODO kb use these for word suggestions too
     pub items: Vec<OutlineItem<T>>,
     candidates: Vec<StringMatchCandidate>,
     pub path_candidates: Vec<StringMatchCandidate>,

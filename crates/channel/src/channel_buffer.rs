@@ -64,7 +64,13 @@ impl ChannelBuffer {
 
         let buffer = cx.new(|cx| {
             let capability = channel_store.read(cx).channel_capability(channel.id);
-            language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
+            language::Buffer::remote(
+                buffer_id,
+                response.replica_id as u16,
+                capability,
+                base_text,
+                cx,
+            )
         })?;
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 

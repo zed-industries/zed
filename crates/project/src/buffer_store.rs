@@ -475,7 +475,7 @@ impl RemoteBufferStore {
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
                             as Arc<dyn language::File>);
                     }
-                    Buffer::from_proto(replica_id, capability, state, buffer_file)
+                    Buffer::from_proto(replica_id, capability, state, buffer_file, cx)
                 });
 
                 match buffer_result {
@@ -1147,8 +1147,8 @@ impl LocalBufferStore {
                 let text_buffer = cx
                     .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
-                cx.insert_entity(reservation, |_| {
-                    Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
+                cx.insert_entity(reservation, |cx| {
+                    Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite, cx)
                 })
             })
         });
@@ -1170,6 +1170,7 @@ impl LocalBufferStore {
                             is_private: false,
                         })),
                         Capability::ReadWrite,
+                        cx,
                     )
                 }),
                 Err(e) => Err(e),

@@ -271,6 +271,7 @@ fn test_edit_events(cx: &mut gpui::App) {
             1,
             Capability::ReadWrite,
             "abcdef",
+            cx,
         )
     });
     let buffer1_ops = Arc::new(Mutex::new(Vec::new()));
@@ -2482,7 +2483,7 @@ fn test_serialization(cx: &mut gpui::App) {
         .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new(|cx| {
-        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
+        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None, cx).unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -2501,7 +2502,14 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
 
     // Create a remote replica of the base buffer.
     let base_replica = cx.new(|cx| {
-        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
+        Buffer::from_proto(
+            1,
+            Capability::ReadWrite,
+            base.read(cx).to_proto(cx),
+            None,
+            cx,
+        )
+        .unwrap()
     });
     base.update(cx, |_buffer, cx| {
         cx.subscribe(&base_replica, |this, _, event, cx| {
@@ -2538,7 +2546,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
         assert_eq!(buffer.text(), "one\n1.5\ntwo\nTHREE\n");
     });
 
-    // Convert from branch buffer ranges to the corresoponing ranges in the
+    // Convert from branch buffer ranges to the corresponding ranges in the
     // base buffer.
     branch.read_with(cx, |buffer, cx| {
         assert_eq!(
@@ -2815,7 +2823,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 .background_executor()
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer =
-                Buffer::from_proto(i as ReplicaId, Capability::ReadWrite, state, None).unwrap();
+                Buffer::from_proto(i as ReplicaId, Capability::ReadWrite, state, None, cx).unwrap();
             buffer.apply_ops(
                 ops.into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -2939,6 +2947,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         Capability::ReadWrite,
                         old_buffer_state,
                         None,
+                        cx,
                     )
                     .unwrap();
                     new_buffer.apply_ops(
