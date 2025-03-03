@@ -202,6 +202,8 @@ SignZedAndItsFriends
 CollectFiles
 BuildInstaller
 
+# TODO: upload_to_blob_store
+
 if ($buildSuccess) {
     Write-Output "Build successful"
     if ($Install) {
