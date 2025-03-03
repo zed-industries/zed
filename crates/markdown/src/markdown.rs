@@ -673,6 +673,7 @@ impl Element for MarkdownElement {
                             builder.push_div(
                                 div()
                                     .flex()
+                                    .justify_between()
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border),
                                 range,
