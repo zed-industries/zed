@@ -20,6 +20,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
+use util::command::new_std_command;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
 
@@ -1419,6 +1420,42 @@ impl Repository {
                         .await?;
 
                     Ok(())
+                }
+            }
+        })
+    }
+
+    pub fn get_merge_bases(&self) -> oneshot::Receiver<Result<Vec<Remote>>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => {
+                    git_repository.on_merge_bases()
+                }
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    todo!()
+                    // let response = client
+                    //     .request(proto::GetRemotes {
+                    //         project_id: project_id.0,
+                    //         worktree_id: worktree_id.to_proto(),
+                    //         work_directory_id: work_directory_id.to_proto(),
+                    //         branch_name,
+                    //     })
+                    //     .await?;
+
+                    // let remotes = response
+                    //     .remotes
+                    //     .into_iter()
+                    //     .map(|remotes| git::repository::Remote {
+                    //         name: remotes.name.into(),
+                    //     })
+                    //     .collect();
+
+                    // Ok(remotes)
                 }
             }
         })
