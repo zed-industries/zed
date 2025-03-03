@@ -72,7 +72,7 @@ pub fn migrate_edit_prediction_provider_settings(text: &str) -> Result<Option<St
     migrate(
         &text,
         &[(
-            SETTINGS_REPLACE_NESTED_KEY,
+            SETTINGS_NESTED_KEY_VALUE_PATTERN,
             replace_edit_prediction_provider_setting,
         )],
         &EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY,
@@ -571,8 +571,16 @@ pub static ACTION_ARGUMENT_SNAKE_CASE_REPLACE: LazyLock<HashMap<&str, &str>> =
 const SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
     (SETTINGS_STRING_REPLACE_QUERY, replace_setting_name),
     (
-        SETTINGS_REPLACE_NESTED_KEY,
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
         replace_edit_prediction_provider_setting,
+    ),
+    (
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
+        replace_tab_close_button_setting_key,
+    ),
+    (
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
+        replace_tab_close_button_setting_value,
     ),
     (
         SETTINGS_REPLACE_IN_LANGUAGES_QUERY,
@@ -594,7 +602,7 @@ static SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(
         &tree_sitter_json::LANGUAGE.into(),
-        SETTINGS_REPLACE_NESTED_KEY,
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
     )
     .unwrap()
 });
@@ -639,14 +647,14 @@ pub static SETTINGS_STRING_REPLACE: LazyLock<HashMap<&'static str, &'static str>
         ])
     });
 
-const SETTINGS_REPLACE_NESTED_KEY: &str = r#"
+const SETTINGS_NESTED_KEY_VALUE_PATTERN: &str = r#"
 (object
   (pair
     key: (string (string_content) @parent_key)
     value: (object
         (pair
             key: (string (string_content) @setting_name)
-            value: (_) @value
+            value: (_) @setting_value
         )
     )
   )
@@ -674,6 +682,73 @@ fn replace_edit_prediction_provider_setting(
 
     if parent_object_name == "features" && setting_name == "inline_completion_provider" {
         return Some((setting_range, "edit_prediction_provider".into()));
+    }
+
+    None
+}
+
+fn replace_tab_close_button_setting_key(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let parent_object_capture_ix = query.capture_index_for_name("parent_key")?;
+    let parent_object_range = mat
+        .nodes_for_capture_index(parent_object_capture_ix)
+        .next()?
+        .byte_range();
+    let parent_object_name = contents.get(parent_object_range.clone())?;
+
+    let setting_name_ix = query.capture_index_for_name("setting_name")?;
+    let setting_range = mat
+        .nodes_for_capture_index(setting_name_ix)
+        .next()?
+        .byte_range();
+    let setting_name = contents.get(setting_range.clone())?;
+
+    if parent_object_name == "tabs" && setting_name == "always_show_close_button" {
+        return Some((setting_range, "show_close_button".into()));
+    }
+
+    None
+}
+
+fn replace_tab_close_button_setting_value(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let parent_object_capture_ix = query.capture_index_for_name("parent_key")?;
+    let parent_object_range = mat
+        .nodes_for_capture_index(parent_object_capture_ix)
+        .next()?
+        .byte_range();
+    let parent_object_name = contents.get(parent_object_range.clone())?;
+
+    let setting_name_ix = query.capture_index_for_name("setting_name")?;
+    let setting_name_range = mat
+        .nodes_for_capture_index(setting_name_ix)
+        .next()?
+        .byte_range();
+    let setting_name = contents.get(setting_name_range.clone())?;
+
+    let setting_value_ix = query.capture_index_for_name("setting_value")?;
+    let setting_value_range = mat
+        .nodes_for_capture_index(setting_value_ix)
+        .next()?
+        .byte_range();
+    let setting_value = contents.get(setting_value_range.clone())?;
+
+    if parent_object_name == "tabs" && setting_name == "always_show_close_button" {
+        match setting_value {
+            "true" => {
+                return Some((setting_value_range, "\"always\"".to_string()));
+            }
+            "false" => {
+                return Some((setting_value_range, "\"hover\"".to_string()));
+            }
+            _ => {}
+        }
     }
 
     None
