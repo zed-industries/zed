@@ -12,7 +12,7 @@ use futures::FutureExt as _;
 use gpui::{
     prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
 };
-use heed::types::SerdeBincode;
+use heed::types::{SerdeBincode, SerdeJson};
 use heed::Database;
 use language_model::Role;
 use project::Project;
@@ -255,7 +255,7 @@ impl Global for GlobalThreadsDatabase {}
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerdeBincode<SavedThread>>,
+    threads: Database<SerdeBincode<ThreadId>, SerdeJson<SavedThread>>,
 }
 
 impl ThreadsDatabase {
@@ -270,7 +270,7 @@ impl ThreadsDatabase {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
+                let database_path = paths::support_dir().join("threads/threads-db.1.mdb");
                 async move { ThreadsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
