@@ -355,8 +355,8 @@
     "context": "Pane",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-cmd-left": "pane::ActivatePrevItem",
-      "cmd-{": "pane::ActivatePrevItem",
+      "alt-cmd-left": "pane::ActivatePreviousItem",
+      "cmd-{": "pane::ActivatePreviousItem",
       "alt-cmd-right": "pane::ActivateNextItem",
       "cmd-}": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",

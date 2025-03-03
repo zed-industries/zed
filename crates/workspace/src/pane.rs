@@ -172,7 +172,7 @@ impl_actions!(
 actions!(
     pane,
     [
-        ActivatePrevItem,
+        ActivatePreviousItem,
         ActivateNextItem,
         ActivateLastItem,
         AlternateFile,
@@ -3203,7 +3203,7 @@ impl Render for Pane {
                 }),
             )
             .on_action(
-                cx.listener(|pane: &mut Pane, _: &ActivatePrevItem, window, cx| {
+                cx.listener(|pane: &mut Pane, _: &ActivatePreviousItem, window, cx| {
                     pane.activate_prev_item(true, window, cx);
                 }),
             )

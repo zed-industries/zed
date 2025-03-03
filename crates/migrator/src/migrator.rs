@@ -482,6 +482,9 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
         ("file_finder::SelectPrev", "file_finder::SelectPrevious"),
         ("menu::SelectPrev", "menu::SelectPrevious"),
         ("editor::TabPrev", "editor::Backtab"),
+        ("pane::ActivatePrevItem", "pane::ActivatePreviousItem"),
+        ("vim::MoveToPrev", "vim::MoveToPrevious"),
+        ("vim::MoveToPrevMatch", "vim::MoveToPreviousMatch"),
     ])
 });
 
