@@ -604,13 +604,17 @@ impl Element for MarkdownElement {
                                 None
                             };
 
-                            let mut d = div().w_full().rounded_lg();
-                            d.style().refine(&self.style.code_block);
+                            let mut code_block = div()
+                                .id(("code-block", range.start))
+                                .flex()
+                                .rounded_lg()
+                                .overflow_x_scroll();
+                            code_block.style().refine(&self.style.code_block);
                             if let Some(code_block_text_style) = &self.style.code_block.text {
                                 builder.push_text_style(code_block_text_style.to_owned());
                             }
                             builder.push_code_block(language);
-                            builder.push_div(d, range, markdown_end);
+                            builder.push_div(code_block, range, markdown_end);
                         }
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
