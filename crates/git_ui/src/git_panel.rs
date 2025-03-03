@@ -2204,7 +2204,7 @@ impl GitPanel {
                     }
                 })
                 .size_full()
-                .with_sizing_behavior(ListSizingBehavior::Infer)
+                .with_sizing_behavior(ListSizingBehavior::Auto)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .track_scroll(self.scroll_handle.clone()),
             )
@@ -2221,8 +2221,8 @@ impl GitPanel {
         Label::new(label.into()).color(color).single_line()
     }
 
-    fn list_item_height(&self) -> Rems {
-        rems(2.)
+    fn list_item_height(&self, window: &Window) -> Rems {
+        rems(1.75)
     }
 
     fn render_list_header(
@@ -2230,23 +2230,20 @@ impl GitPanel {
         ix: usize,
         header: &GitHeaderEntry,
         _: bool,
-        _: &Window,
+        window: &Window,
         _: &Context<Self>,
     ) -> AnyElement {
         h_flex()
-            .h(self.list_item_height())
-            .w_full()
+            .h(self.list_item_height(window))
             .items_end()
+            .px(rems(0.75)) // ~12px
+            .pb(rems(0.3125)) // ~ 5px
             .child(
-                ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .disabled(true)
-                    .child(
-                        Label::new(header.title())
-                            .color(Color::Muted)
-                            .size(LabelSize::Small)
-                            .single_line(),
-                    ),
+                Label::new(header.title())
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel)
+                    .single_line(),
             )
             .into_any_element()
     }
@@ -2382,88 +2379,137 @@ impl GitPanel {
             is_staged = ToggleState::Selected;
         }
 
-        let checkbox = Checkbox::new(id, is_staged)
-            .disabled(!has_write_access)
-            .fill()
-            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
-            .elevation(ElevationIndex::Surface)
-            .on_click({
-                let entry = entry.clone();
-                cx.listener(move |this, _, window, cx| {
-                    this.toggle_staged_for_entry(
-                        &GitListEntry::GitStatusEntry(entry.clone()),
-                        window,
-                        cx,
-                    );
-                    cx.stop_propagation();
-                })
-            });
-
-        let start_slot = h_flex()
-            .id(("start-slot", ix))
+        h_flex()
+            .id(id)
+            .h(self.list_item_height(window))
+            .items_center()
+            .px(rems(0.75)) // ~12px
+            .overflow_hidden()
             .gap(DynamicSpacing::Base04.rems(cx))
-            .child(checkbox.tooltip(move |window, cx| {
-                let tooltip_name = if is_entry_staged.unwrap_or(false) {
-                    "Unstage"
-                } else {
-                    "Stage"
-                };
-
-                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
-            }))
-            .child(git_status_icon(status, cx))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                // prevent the list item active state triggering when toggling checkbox
+            .on_click({
+                cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    this.selected_entry = Some(ix);
+                    cx.notify();
+                    if event.modifiers().secondary() {
+                        this.open_file(&Default::default(), window, cx)
+                    } else {
+                        this.open_diff(&Default::default(), window, cx);
+                    }
+                })
+            })
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                self.deploy_entry_context_menu(event.position, ix, window, cx);
                 cx.stop_propagation();
-            });
-
-        div()
-            .h(self.list_item_height())
-            .w_full()
+            })
+            // .on_secondary_mouse_down(cx.listener(
+            //     move |this, event: &MouseDownEvent, window, cx| {
+            //         this.deploy_entry_context_menu(event.position, ix, window, cx);
+            //         cx.stop_propagation();
+            //     },
+            // ))
             .child(
-                ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .start_slot(start_slot)
-                    .toggle_state(selected)
-                    .focused(selected && self.focus_handle(cx).is_focused(window))
+                Checkbox::new(id, is_staged)
                     .disabled(!has_write_access)
+                    .fill()
+                    .placeholder(!self.has_staged_changes() && !self.has_conflicts())
+                    .elevation(ElevationIndex::Surface)
                     .on_click({
-                        cx.listener(move |this, event: &ClickEvent, window, cx| {
-                            this.selected_entry = Some(ix);
-                            cx.notify();
-                            if event.modifiers().secondary() {
-                                this.open_file(&Default::default(), window, cx)
-                            } else {
-                                this.open_diff(&Default::default(), window, cx);
-                            }
+                        let entry = entry.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.toggle_staged_for_entry(
+                                &GitListEntry::GitStatusEntry(entry.clone()),
+                                window,
+                                cx,
+                            );
+                            cx.stop_propagation();
                         })
                     })
-                    .on_secondary_mouse_down(cx.listener(
-                        move |this, event: &MouseDownEvent, window, cx| {
-                            this.deploy_entry_context_menu(event.position, ix, window, cx);
-                            cx.stop_propagation();
-                        },
-                    ))
-                    .child(
-                        h_flex()
-                            .when_some(repo_path.parent(), |this, parent| {
-                                let parent_str = parent.to_string_lossy();
-                                if !parent_str.is_empty() {
-                                    this.child(
-                                        self.entry_label(format!("{}/", parent_str), path_color)
-                                            .when(status.is_deleted(), |this| this.strikethrough()),
-                                    )
-                                } else {
-                                    this
-                                }
-                            })
-                            .child(
-                                self.entry_label(display_name.clone(), label_color)
+                    .tooltip(move |window, cx| {
+                        let tooltip_name = if is_entry_staged.unwrap_or(false) {
+                            "Unstage"
+                        } else {
+                            "Stage"
+                        };
+
+                        Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+                    }),
+            )
+            .child(git_status_icon(status, cx))
+            .child(
+                h_flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .when_some(repo_path.parent(), |this, parent| {
+                        let parent_str = parent.to_string_lossy();
+                        if !parent_str.is_empty() {
+                            this.child(
+                                self.entry_label(format!("{}/", parent_str), path_color)
                                     .when(status.is_deleted(), |this| this.strikethrough()),
-                            ),
+                            )
+                        } else {
+                            this
+                        }
+                    })
+                    .child(
+                        self.entry_label(display_name.clone(), label_color)
+                            .when(status.is_deleted(), |this| this.strikethrough()),
                     ),
             )
             .into_any_element()
+
+        // ListItem::new(ix)
+        //     .spacing(ListItemSpacing::Dense)
+        //     .start_slot(
+        //         h_flex()
+        //             .h(self.list_item_height(window))
+        //             .items_center()
+        //             .overflow_hidden()
+        //             .id(("start-slot", ix))
+        //             .gap(DynamicSpacing::Base04.rems(cx))
+
+        //     )
+        //     .toggle_state(selected)
+        //     .focused(selected && self.focus_handle(cx).is_focused(window))
+        //     .disabled(!has_write_access)
+        //     .on_click({
+        //         cx.listener(move |this, event: &ClickEvent, window, cx| {
+        //             this.selected_entry = Some(ix);
+        //             cx.notify();
+        //             if event.modifiers().secondary() {
+        //                 this.open_file(&Default::default(), window, cx)
+        //             } else {
+        //                 this.open_diff(&Default::default(), window, cx);
+        //             }
+        //         })
+        //     })
+        //     .on_secondary_mouse_down(cx.listener(
+        //         move |this, event: &MouseDownEvent, window, cx| {
+        //             this.deploy_entry_context_menu(event.position, ix, window, cx);
+        //             cx.stop_propagation();
+        //         },
+        //     ))
+        //     .child(
+        //         h_flex()
+        //             .h(self.list_item_height(window))
+        //             .items_center()
+        //             .overflow_hidden()
+        //             .when_some(repo_path.parent(), |this, parent| {
+        //                 let parent_str = parent.to_string_lossy();
+        //                 if !parent_str.is_empty() {
+        //                     this.child(
+        //                         self.entry_label(format!("{}/", parent_str), path_color)
+        //                             .when(status.is_deleted(), |this| this.strikethrough()),
+        //                     )
+        //                 } else {
+        //                     this
+        //                 }
+        //             })
+        //             .child(
+        //                 self.entry_label(display_name.clone(), label_color)
+        //                     .when(status.is_deleted(), |this| this.strikethrough()),
+        //             ),
+        //     )
+        //     .into_any_element()
     }
 
     fn has_write_access(&self, cx: &App) -> bool {
