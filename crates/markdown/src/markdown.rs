@@ -654,6 +654,12 @@ impl Element for MarkdownElement {
                             }
                         }
                         MarkdownTag::MetadataBlock(_) => {}
+                        MarkdownTag::Table(_alignments) => {}
+                        MarkdownTag::TableHead => {}
+                        MarkdownTag::TableRow => {}
+                        MarkdownTag::TableCell => {
+                            builder.push_text("|", range.start);
+                        }
                         _ => log::error!("unsupported markdown tag {:?}", tag),
                     }
                 }
@@ -723,6 +729,12 @@ impl Element for MarkdownElement {
                             builder.pop_text_style()
                         }
                     }
+                    MarkdownTagEnd::Table => {}
+                    MarkdownTagEnd::TableHead => {}
+                    MarkdownTagEnd::TableRow => {
+                        builder.push_text("|\n", range.start);
+                    }
+                    MarkdownTagEnd::TableCell => {}
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text(parsed) => {
