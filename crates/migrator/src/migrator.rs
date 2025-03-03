@@ -924,6 +924,36 @@ mod tests {
     }
 
     #[test]
+    fn test_string_of_array_replace() {
+        assert_migrate_keymap(
+            r#"
+                [
+                    {
+                        "bindings": {
+                            "ctrl-p": ["editor::GoToPrevHunk", { "center_cursor": true }],
+                            "ctrl-q": ["editor::GoToPrevHunk"],
+                            "ctrl-q": "editor::GoToPrevHunk", // should remain same
+                        }
+                    }
+                ]
+            "#,
+            Some(
+                r#"
+                [
+                    {
+                        "bindings": {
+                            "ctrl-p": ["editor::GoToPreviousHunk", { "center_cursor": true }],
+                            "ctrl-q": ["editor::GoToPreviousHunk"],
+                            "ctrl-q": "editor::GoToPrevHunk", // should remain same
+                        }
+                    }
+                ]
+            "#,
+            ),
+        )
+    }
+
+    #[test]
     fn test_action_argument_snake_case() {
         // First performs transformations, then replacements
         assert_migrate_keymap(
