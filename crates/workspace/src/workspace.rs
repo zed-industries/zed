@@ -47,7 +47,9 @@ use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-use notifications::{simple_message_notification::MessageNotification, DetachAndPromptErr};
+use notifications::{
+    simple_message_notification::MessageNotification, DetachAndPromptErr, Notifications,
+};
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
@@ -815,7 +817,7 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(NotificationId, AnyView)>,
+    notifications: Notifications,
     project: Entity<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, PeerId>,

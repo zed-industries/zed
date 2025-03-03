@@ -4,10 +4,30 @@ use gpui::{
     Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task,
 };
 use parking_lot::Mutex;
+use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
+
+#[derive(Default)]
+pub struct Notifications {
+    notifications: Vec<(NotificationId, AnyView)>,
+}
+
+impl Deref for Notifications {
+    type Target = Vec<(NotificationId, AnyView)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.notifications
+    }
+}
+
+impl std::ops::DerefMut for Notifications {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.notifications
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NotificationId {

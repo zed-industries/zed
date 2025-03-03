@@ -1,6 +1,5 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel_settings::StatusStyle;
-use crate::project_diff::Diff;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
 use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
@@ -41,8 +40,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
-    ListItemSpacing, PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, ListItem, ListItemSpacing,
+    PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 
