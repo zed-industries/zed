@@ -15,7 +15,6 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
-use ui::VisualContext;
 pub use vim_test_context::*;
 
 use indoc::indoc;
@@ -1749,7 +1748,6 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         editor
     });
     let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
-    cx.focus(&editor);
 
     cx.assert_excerpts_with_selections(indoc! {"
         [EXCERPT]

@@ -90,8 +90,9 @@ impl EditorTestContext {
     }
 
     pub async fn for_editor_in(editor: Entity<Editor>, cx: &mut gpui::VisualTestContext) -> Self {
+        cx.focus(&editor);
         Self {
-            window: cx.windows()[0].clone(),
+            window: cx.windows()[0],
             cx: cx.clone(),
             editor,
             assertion_cx: AssertionContextManager::new(),
