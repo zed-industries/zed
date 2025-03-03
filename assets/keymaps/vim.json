@@ -138,7 +138,7 @@
       "g ^": ["vim::FirstNonWhitespace", { "display_lines": true }],
       "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
-      "g [": "editor::GoToPrevDiagnostic",
+      "g [": "editor::GoToPreviousDiagnostic",
       "g i": "vim::InsertAtPrevious",
       "g ,": "vim::ChangeListNewer",
       "g ;": "vim::ChangeListOlder",
@@ -237,9 +237,9 @@
       "[ x": "vim::SelectLargerSyntaxNode",
       "] x": "vim::SelectSmallerSyntaxNode",
       "] d": "editor::GoToDiagnostic",
-      "[ d": "editor::GoToPrevDiagnostic",
+      "[ d": "editor::GoToPreviousDiagnostic",
       "] c": ["editor::GoToHunk", { "center_cursor": true }],
-      "[ c": ["editor::GoToPrevHunk", { "center_cursor": true }],
+      "[ c": ["editor::GoToPreviousHunk", { "center_cursor": true }],
       "g c": "vim::PushToggleComments"
     }
   },
@@ -664,7 +664,7 @@
       "escape": "project_panel::ToggleFocus",
       "h": "project_panel::CollapseSelectedEntry",
       "j": "menu::SelectNext",
-      "k": "menu::SelectPrev",
+      "k": "menu::SelectPrevious",
       "l": "project_panel::ExpandSelectedEntry",
       "o": "project_panel::OpenPermanent",
       "shift-d": "project_panel::Delete",
@@ -690,7 +690,7 @@
     "context": "OutlinePanel && not_editing",
     "bindings": {
       "j": "menu::SelectNext",
-      "k": "menu::SelectPrev",
+      "k": "menu::SelectPrevious",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst"
     }
@@ -699,7 +699,7 @@
     "context": "GitPanel && ChangesList",
     "use_key_equivalents": true,
     "bindings": {
-      "k": "menu::SelectPrev",
+      "k": "menu::SelectPrevious",
       "j": "menu::SelectNext",
       "g g": "menu::SelectFirst",
       "shift-g": "menu::SelectLast",
