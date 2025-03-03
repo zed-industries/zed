@@ -816,7 +816,7 @@ impl Fs for RealFs {
     }
 
     fn home_dir(&self) -> Option<PathBuf> {
-        std::env::var_os("HOME").map(PathBuf::from)
+        Some(paths::home_dir().clone())
     }
 }
 
