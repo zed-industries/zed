@@ -26,6 +26,7 @@ pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
 pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
+pub static LFS_DIR: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("lfs"));
 pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
 pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
