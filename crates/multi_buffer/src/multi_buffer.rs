@@ -2063,6 +2063,7 @@ impl MultiBuffer {
                         buffer_state.excerpts.retain(|l| l != &excerpt.locator);
                         if buffer_state.excerpts.is_empty() {
                             buffers.remove(&excerpt.buffer_id);
+                            self.diffs.remove(&excerpt.buffer_id);
                         }
                     }
                     cursor.next(&());

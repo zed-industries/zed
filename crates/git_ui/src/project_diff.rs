@@ -399,6 +399,7 @@ impl ProjectDiff {
         self.editor.update(cx, |editor, cx| {
             if was_empty {
                 editor.change_selections(None, window, cx, |selections| {
+                    // TODO select the very beginning (possibly inside a deletion)
                     selections.select_ranges([0..0])
                 });
             }
@@ -979,6 +980,11 @@ mod tests {
 
     use super::*;
 
+    #[ctor::ctor]
+    fn init_logger() {
+        env_logger::init();
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
@@ -1154,11 +1160,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_hunks_after_restore_then_modify(cx: &mut TestAppContext) {
-        // open buffer w/ a change
-        // open project diff
-        // assert hunks
-        // from buffer, revert
-        // from buffer, make some other change
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1241,7 +1242,7 @@ mod tests {
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
 
         cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
-            buffer_editor.set_text("different", window, cx);
+            buffer_editor.set_text("different\n", window, cx);
             buffer_editor.save(false, project.clone(), window, cx)
         })
         .await
