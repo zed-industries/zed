@@ -12,7 +12,7 @@ OutputDir={#OutputDir}
 OutputBaseFilename={#AppSetupName}
 Compression=lzma
 SolidCompression=yes
-AppMutex={#AppMutex}
+AppMutex={code:GetAppMutex}
 SetupMutex={#AppMutex}Setup
 ; WizardImageFile="{#ResourcesDir}\inno-100.bmp,{#ResourcesDir}\inno-125.bmp,{#ResourcesDir}\inno-150.bmp,{#ResourcesDir}\inno-175.bmp,{#ResourcesDir}\inno-200.bmp,{#ResourcesDir}\inno-225.bmp,{#ResourcesDir}\inno-250.bmp"
 ; WizardSmallImageFile="{#ResourcesDir}\inno-small-100.bmp,{#ResourcesDir}\inno-small-125.bmp,{#ResourcesDir}\inno-small-150.bmp,{#ResourcesDir}\inno-small-175.bmp,{#ResourcesDir}\inno-small-200.bmp,{#ResourcesDir}\inno-small-225.bmp,{#ResourcesDir}\inno-small-250.bmp"
@@ -1387,4 +1387,12 @@ begin
       SaveStringToFile(ExpandConstant('{app}\updates\versions.txt'), '{#Version}' + #13#10, True);
     end
   end;
+end;
+
+function GetAppMutex(): string;
+begin
+  if WizardSilent() then
+    Result := ''
+  else
+    Result := '{#AppMutex}';
 end;
