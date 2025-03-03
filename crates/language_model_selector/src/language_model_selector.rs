@@ -402,7 +402,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .w(px(240.))
                         .child(
                             div().max_w_40().child(
-                                Label::new(model_info.model.name().0.clone()).text_ellipsis(),
+                                Label::new(model_info.model.name().0.clone()).truncate(),
                             ),
                         )
                         .child(

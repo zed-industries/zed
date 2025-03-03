@@ -171,8 +171,9 @@ impl LabelCommon for Label {
         self
     }
 
-    fn text_ellipsis(mut self) -> Self {
-        self.base = self.base.text_ellipsis();
+    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    fn truncate(mut self) -> Self {
+        self.base = self.base.truncate();
         self
     }
 
@@ -240,7 +241,7 @@ mod label_preview {
                         "Special Cases",
                         vec![
                             single_example("Single Line", Label::new("Line 1\nLine 2\nLine 3").single_line().into_any_element()),
-                            single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").text_ellipsis()).into_any_element()),
+                            single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
                         ],
                     ),
                 ])
