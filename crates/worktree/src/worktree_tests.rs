@@ -2302,7 +2302,7 @@ async fn test_home_dir_as_git_repository(cx: &mut TestAppContext) {
         assert_eq!(
             repo.map(|repo| &repo.work_directory),
             Some(&WorkDirectory::InProject {
-                relative_path: Path::new(path!("")).into()
+                relative_path: Path::new("").into()
             })
         );
     })
