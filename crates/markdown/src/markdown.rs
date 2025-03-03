@@ -654,9 +654,29 @@ impl Element for MarkdownElement {
                             }
                         }
                         MarkdownTag::MetadataBlock(_) => {}
-                        MarkdownTag::Table(_alignments) => {}
-                        MarkdownTag::TableHead => {}
-                        MarkdownTag::TableRow => {}
+                        MarkdownTag::Table(_alignments) => {
+                            builder.push_div(
+                                div()
+                                    .id(("table", range.start))
+                                    .flex()
+                                    .px_0p5()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .rounded_md()
+                                    .overflow_x_scroll(),
+                                range,
+                                markdown_end,
+                            );
+                        }
+                        MarkdownTag::TableHead => {
+                            builder.push_text_style(TextStyleRefinement {
+                                font_weight: Some(FontWeight::BOLD),
+                                ..Default::default()
+                            });
+                        }
+                        MarkdownTag::TableRow => {
+                            builder.push_text("\n", range.start);
+                        }
                         MarkdownTag::TableCell => {
                             builder.push_text("|", range.start);
                         }
@@ -729,10 +749,14 @@ impl Element for MarkdownElement {
                             builder.pop_text_style()
                         }
                     }
-                    MarkdownTagEnd::Table => {}
-                    MarkdownTagEnd::TableHead => {}
+                    MarkdownTagEnd::Table => {
+                        builder.pop_div();
+                    }
+                    MarkdownTagEnd::TableHead => {
+                        builder.pop_text_style();
+                    }
                     MarkdownTagEnd::TableRow => {
-                        builder.push_text("|\n", range.start);
+                        builder.push_text("|", range.start);
                     }
                     MarkdownTagEnd::TableCell => {}
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
