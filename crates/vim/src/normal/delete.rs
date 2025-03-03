@@ -90,6 +90,11 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
+        let current_mode = self.mode;
+        let target_mode = object.target_visual_mode(current_mode, around);
+        if object != Object::Paragraph {
+            self.switch_mode(target_mode, true, window, cx);
+        }
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -166,6 +171,7 @@ impl Vim {
                 editor.refresh_inline_completion(true, false, window, cx);
             });
         });
+        self.switch_mode(current_mode, false, window, cx);
     }
 }
 
