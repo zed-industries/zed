@@ -4597,18 +4597,19 @@ impl BackgroundScanner {
             return;
         }
 
-        self.state.lock().snapshot.scan_id += 1;
-
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        log::debug!("received fs events {:?}", relative_paths);
-        self.reload_entries_for_paths(
-            root_path,
-            root_canonical_path,
-            &relative_paths,
-            abs_paths,
-            Some(scan_job_tx.clone()),
-        )
-        .await;
+        if !relative_paths.is_empty() {
+            self.state.lock().snapshot.scan_id += 1;
+            log::debug!("received fs events {relative_paths:?}");
+            self.reload_entries_for_paths(
+                root_path,
+                root_canonical_path,
+                &relative_paths,
+                abs_paths,
+                Some(scan_job_tx.clone()),
+            )
+            .await;
+        }
 
         self.update_ignore_statuses(scan_job_tx).await;
         let scans_running = self.scan_dirs(false, scan_job_rx).await;
@@ -5511,6 +5512,7 @@ impl BackgroundScanner {
                     }
                 }
 
+                let statuses_updated = repository.statuses_by_path != new_entries_by_path;
                 repository.statuses_by_path = new_entries_by_path;
                 let mut state = job_state.lock();
                 state
@@ -5526,7 +5528,9 @@ impl BackgroundScanner {
                         )
                         .ok()
                         .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
-                        entry.status_scan_id += 1;
+                        if statuses_updated {
+                            entry.status_scan_id += 1;
+                        }
                     },
                 );
 
