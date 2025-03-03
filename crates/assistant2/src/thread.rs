@@ -89,7 +89,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
-            tool_use: ToolUseState::default(),
+            tool_use: ToolUseState::new(),
         }
     }
 
@@ -100,6 +100,7 @@ impl Thread {
         _cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(saved.messages.len());
+        let tool_use = ToolUseState::from_saved_messages(&saved.messages);
 
         Self {
             id,
@@ -121,7 +122,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
-            tool_use: ToolUseState::default(),
+            tool_use,
         }
     }
 

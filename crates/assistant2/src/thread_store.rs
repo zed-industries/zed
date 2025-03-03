@@ -257,7 +257,7 @@ pub struct SavedThread {
     pub messages: Vec<SavedMessage>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SavedMessage {
     pub id: MessageId,
     pub role: Role,
@@ -268,14 +268,14 @@ pub struct SavedMessage {
     pub tool_results: Vec<SavedToolResult>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SavedToolUse {
     pub id: LanguageModelToolUseId,
     pub name: SharedString,
     pub input: serde_json::Value,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SavedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
