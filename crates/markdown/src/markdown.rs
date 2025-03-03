@@ -610,6 +610,7 @@ impl Element for MarkdownElement {
                                 .rounded_lg()
                                 .overflow_x_scroll();
                             code_block.style().refine(&self.style.code_block);
+                            code_block.style().restrict_scroll_to_axis = Some(true);
                             if let Some(code_block_text_style) = &self.style.code_block.text {
                                 builder.push_text_style(code_block_text_style.to_owned());
                             }
@@ -674,7 +675,11 @@ impl Element for MarkdownElement {
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_md()
-                                    .overflow_x_scroll(),
+                                    .overflow_x_scroll()
+                                    .map(|mut table| {
+                                        table.style().restrict_scroll_to_axis = Some(true);
+                                        table
+                                    }),
                                 range,
                                 markdown_end,
                             );
