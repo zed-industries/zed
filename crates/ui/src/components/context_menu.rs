@@ -6,7 +6,7 @@ use gpui::{
     px, Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Subscription,
 };
-use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use settings::Settings;
 use std::{rc::Rc, time::Duration};
 use theme::ThemeSettings;
@@ -410,7 +410,12 @@ impl ContextMenu {
         }
     }
 
-    pub fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_previous(
+        &mut self,
+        _: &SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(ix) = self.selected_index {
             if ix == 0 {
                 self.handle_select_last(&SelectLast, window, cx);
@@ -555,7 +560,7 @@ impl Render for ContextMenu {
                             .on_action(cx.listener(ContextMenu::select_first))
                             .on_action(cx.listener(ContextMenu::handle_select_last))
                             .on_action(cx.listener(ContextMenu::select_next))
-                            .on_action(cx.listener(ContextMenu::select_prev))
+                            .on_action(cx.listener(ContextMenu::select_previous))
                             .on_action(cx.listener(ContextMenu::confirm))
                             .on_action(cx.listener(ContextMenu::cancel))
                             .when(!self.delayed, |mut el| {

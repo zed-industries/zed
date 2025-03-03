@@ -92,6 +92,10 @@ const KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS: MigrationPatterns = &[
     ),
     (ACTION_STRING_PATTERN, rename_string_action),
     (CONTEXT_PREDICATE_PATTERN, rename_context_key),
+    (
+        ACTION_STRING_OF_ARRAY_PATTERN,
+        replace_first_string_of_array,
+    ),
 ];
 
 static KEYMAP_MIGRATION_TRANSFORMATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -265,6 +269,51 @@ static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(||
     ])
 });
 
+const ACTION_STRING_OF_ARRAY_PATTERN: &str = r#"(document
+    (array
+   	    (object
+            (pair
+                key: (string (string_content) @name)
+                value: (
+                    (object
+                        (pair
+                            key: (string)
+                            value: ((array
+                                . (string (string_content) @action_name)
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+    (#eq? @name "bindings")
+)"#;
+
+// ["editor::GoToPrevHunk", { "center_cursor": true }] -> ["editor::GoToPreviousHunk", { "center_cursor": true }]
+fn replace_first_string_of_array(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let action_name_ix = query.capture_index_for_name("action_name")?;
+    let action_name = contents.get(
+        mat.nodes_for_capture_index(action_name_ix)
+            .next()?
+            .byte_range(),
+    )?;
+    let replacement = STRING_OF_ARRAY_REPLACE.get(action_name)?;
+    let range_to_replace = mat
+        .nodes_for_capture_index(action_name_ix)
+        .next()?
+        .byte_range();
+    Some((range_to_replace, replacement.to_string()))
+}
+
+static STRING_OF_ARRAY_REPLACE: LazyLock<HashMap<&str, &str>> =
+    LazyLock::new(|| HashMap::from_iter([("editor::GoToPrevHunk", "editor::GoToPreviousHunk")]));
+
 const ACTION_ARGUMENT_OBJECT_PATTERN: &str = r#"(document
     (array
         (object
@@ -424,20 +473,29 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
             "editor::ToggleInlineCompletions",
             "editor::ToggleEditPrediction",
         ),
+        (
+            "editor::GoToPrevDiagnostic",
+            "editor::GoToPreviousDiagnostic",
+        ),
+        ("editor::ContextMenuPrev", "editor::ContextMenuPrevious"),
+        ("search::SelectPrevMatch", "search::SelectPreviousMatch"),
+        ("file_finder::SelectPrev", "file_finder::SelectPrevious"),
+        ("menu::SelectPrev", "menu::SelectPrevious"),
+        ("editor::TabPrev", "editor::Backtab"),
     ])
 });
 
-const CONTEXT_PREDICATE_PATTERN: &str = r#"
-(array
-    (object
-        (pair
-            key: (string (string_content) @name)
-            value: (string (string_content) @context_predicate)
+const CONTEXT_PREDICATE_PATTERN: &str = r#"(document
+    (array
+        (object
+            (pair
+                key: (string (string_content) @name)
+                value: (string (string_content) @context_predicate)
+            )
         )
     )
-)
-(#eq? @name "context")
-"#;
+    (#eq? @name "context")
+)"#;
 
 fn rename_context_key(
     contents: &str,
@@ -933,6 +991,36 @@ mod tests {
                 [
                     {
                         "context": "Editor && edit_prediction && !showing_completions"
+                    }
+                ]
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_string_of_array_replace() {
+        assert_migrate_keymap(
+            r#"
+                [
+                    {
+                        "bindings": {
+                            "ctrl-p": ["editor::GoToPrevHunk", { "center_cursor": true }],
+                            "ctrl-q": ["editor::GoToPrevHunk"],
+                            "ctrl-q": "editor::GoToPrevHunk", // should remain same
+                        }
+                    }
+                ]
+            "#,
+            Some(
+                r#"
+                [
+                    {
+                        "bindings": {
+                            "ctrl-p": ["editor::GoToPreviousHunk", { "center_cursor": true }],
+                            "ctrl-q": ["editor::GoToPreviousHunk"],
+                            "ctrl-q": "editor::GoToPrevHunk", // should remain same
+                        }
                     }
                 ]
             "#,
