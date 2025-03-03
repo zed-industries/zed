@@ -157,7 +157,6 @@ actions!(
         ToggleZoom,
         Unfollow,
         Welcome,
-        FocusOutwards,
     ]
 );
 
@@ -2504,27 +2503,6 @@ impl Workspace {
         self.focus_or_unfocus_panel::<T>(window, cx, |panel, window, cx| {
             !panel.panel_focus_handle(cx).contains_focused(window, cx)
         });
-    }
-
-    pub fn focus_outwards(
-        &mut self,
-        _: &FocusOutwards,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.modal_layer.read(cx).has_active_modal() {
-            self.modal_layer.update(cx, |modal_layer, cx| {
-                if modal_layer.has_active_modal() {
-                    modal_layer.hide_modal(window, cx);
-                }
-            });
-
-            return;
-        }
-
-        // if let Some((id, any_view)) = self.notifications.first() {
-        //     any_view.
-        // }
     }
 
     pub fn activate_panel_for_proto_id(
