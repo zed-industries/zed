@@ -261,7 +261,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "assistant2::NewPromptEditor",
-      "cmd-alt-p": "assistant2::NewThread"
+      "cmd-alt-t": "assistant2::NewThread"
     }
   },
   {
