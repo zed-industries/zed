@@ -138,7 +138,8 @@ use project::{
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    LspDiagnostics, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
+    TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -202,6 +203,8 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+#[doc(hidden)]
+pub const DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -749,6 +752,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    tasks_pull_diagnostics_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1259,6 +1263,11 @@ impl Editor {
                         if let project::Event::RefreshInlayHints = event {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                        } else if let project::Event::LanguageServerAdded(_, _, _)
+                        | project::Event::LanguageServerRemoved(_)
+                        | project::Event::RefreshDocumentsDiagnostics = event
+                        {
+                            editor.refresh_diagnostics(cx);
                         } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
@@ -1473,6 +1482,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            tasks_pull_diagnostics_task: Task::ready(()),
             linked_edit_ranges: Default::default(),
             in_project_search: false,
             previous_search_ranges: None,
@@ -12828,6 +12838,50 @@ impl Editor {
         });
     }
 
+    fn refresh_diagnostics(&mut self, cx: &mut Context<Self>) -> Option<()> {
+        let project = self.project.as_ref()?.downgrade();
+        let buffers = self.buffer.read(cx).all_buffers();
+
+        self.tasks_pull_diagnostics_task = cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
+                .await;
+
+            let Some(project) = project.upgrade() else {
+                return;
+            };
+
+            for buffer in buffers {
+                let diagnostics = if let Some(diagnostics) = cx
+                    .update(|cx| project.pull_diagnostics(&buffer, cx))
+                    .ok()
+                    .flatten()
+                {
+                    diagnostics.await.log_err()
+                } else {
+                    None
+                };
+
+                if let Some(diagnostics) = diagnostics {
+                    this.update(&mut cx, |editor, cx| {
+                        if let Some(result) = project.update_diagnostics(diagnostics, cx) {
+                            match result {
+                                Ok(_) => {
+                                    editor.refresh_active_diagnostics(cx);
+                                }
+                                Err(err) => {
+                                    log::error!("Failed to update project diagnostics: {:?}", err);
+                                }
+                            }
+                        }
+                    })
+                    .log_err();
+                }
+            }
+        });
+        None
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -15245,6 +15299,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
+                self.refresh_diagnostics(cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 if self.has_active_inline_completion() {
@@ -16632,6 +16687,18 @@ pub trait SemanticsProvider {
         new_name: String,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
+
+    fn pull_diagnostics(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>>;
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<Option<LspDiagnostics>>,
+        cx: &mut App,
+    ) -> Option<Result<()>>;
 }
 
 pub trait CompletionProvider {
@@ -17069,6 +17136,48 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
+    }
+
+    fn pull_diagnostics(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>> {
+        Some(self.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.document_diagnostic(buffer.clone(), cx)
+            })
+        }))
+    }
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<Option<LspDiagnostics>>,
+        cx: &mut App,
+    ) -> Option<Result<()>> {
+        self.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                diagnostics
+                    .iter()
+                    .map(|diagnostic_set| match diagnostic_set {
+                        Some(diagnostic_set) => Some(lsp_store.update_diagnostics(
+                            diagnostic_set.server_id,
+                            lsp::PublishDiagnosticsParams {
+                                uri: diagnostic_set.uri.as_ref().unwrap().clone(),
+                                diagnostics: match diagnostic_set.diagnostics.as_ref() {
+                                    Some(diagnostics) => diagnostics.clone(),
+                                    None => Vec::new(),
+                                },
+                                version: None,
+                            },
+                            &[],
+                            cx,
+                        )),
+                        None => None,
+                    })
+                    .collect()
+            })
+        })
     }
 }
 
