@@ -3691,6 +3691,7 @@ impl Editor {
             InlayHintRefreshReason::SettingsChange(_)
                 | InlayHintRefreshReason::Toggle(_)
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
+                | InlayHintRefreshReason::ModifiersChanged(_)
         );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::ModifiersChanged(enabled) => {
@@ -9515,7 +9516,7 @@ impl Editor {
 
     pub fn delete_to_beginning_of_line(
         &mut self,
-        _: &DeleteToBeginningOfLine,
+        action: &DeleteToBeginningOfLine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -9529,7 +9530,7 @@ impl Editor {
             this.select_to_beginning_of_line(
                 &SelectToBeginningOfLine {
                     stop_at_soft_wraps: false,
-                    stop_at_indent: false,
+                    stop_at_indent: action.stop_at_indent,
                 },
                 window,
                 cx,

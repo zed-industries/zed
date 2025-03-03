@@ -626,7 +626,7 @@ impl GitRepository for RealGitRepository {
     ) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
-        let output = new_std_command(&self.git_binary_path)
+        let output = new_std_command("git")
             .current_dir(&working_directory)
             .args(["push"])
             .args(options.map(|option| match option {
@@ -653,7 +653,7 @@ impl GitRepository for RealGitRepository {
     fn pull(&self, branch_name: &str, remote_name: &str) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
-        let output = new_std_command(&self.git_binary_path)
+        let output = new_std_command("git")
             .current_dir(&working_directory)
             .args(["pull"])
             .arg(remote_name)
@@ -676,7 +676,7 @@ impl GitRepository for RealGitRepository {
     fn fetch(&self) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
-        let output = new_std_command(&self.git_binary_path)
+        let output = new_std_command("git")
             .current_dir(&working_directory)
             .args(["fetch", "--all"])
             .output()?;

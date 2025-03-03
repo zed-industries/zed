@@ -1,4 +1,15 @@
 [
+  // Moved before Standard macOS bindings so that `cmd-w` is not the last binding for
+  // `workspace::CloseWindow` and displayed/intercepted by macOS
+  {
+    "context": "PromptLibrary",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "prompt_library::NewPrompt",
+      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
+      "cmd-w": "workspace::CloseWindow"
+    }
+  },
   // Standard macOS bindings
   {
     "use_key_equivalents": true,
@@ -268,15 +279,6 @@
     "context": "ThreadHistory",
     "bindings": {
       "backspace": "assistant2::RemoveSelectedThread"
-    }
-  },
-  {
-    "context": "PromptLibrary",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-n": "prompt_library::NewPrompt",
-      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
-      "cmd-w": "workspace::CloseWindow"
     }
   },
   {
