@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::Borrow;
 use std::io::Write as _;
+#[cfg(not(windows))]
 use std::os::unix::fs::PermissionsExt;
 use std::process::Stdio;
 use std::sync::LazyLock;
@@ -20,7 +21,6 @@ use std::{
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
-use tempfile::TempDir;
 use util::command::new_std_command;
 use util::ResultExt;
 
@@ -629,19 +629,26 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory()?;
 
         // We do this on every operation to ensure that the askpass script exists and is executable.
+        #[cfg(not(windows))]
         let (askpass_script_path, _temp_dir) = setup_askpass()?;
 
-        let output = new_std_command("git")
+        let mut command = new_std_command("git");
+        command
             .current_dir(&working_directory)
-            .env("GIT_ASKPASS", askpass_script_path)
             .args(["push"])
             .args(options.map(|option| match option {
                 PushOptions::SetUpstream => "--set-upstream",
                 PushOptions::Force => "--force-with-lease",
             }))
             .arg(remote_name)
-            .arg(format!("{}:{}", branch_name, branch_name))
-            .output()?;
+            .arg(format!("{}:{}", branch_name, branch_name));
+
+        #[cfg(not(windows))]
+        {
+            command.env("GIT_ASKPASS", askpass_script_path);
+        }
+
+        let output = command.output()?;
 
         if !output.status.success() {
             return Err(anyhow!(
@@ -660,15 +667,22 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory()?;
 
         // We do this on every operation to ensure that the askpass script exists and is executable.
+        #[cfg(not(windows))]
         let (askpass_script_path, _temp_dir) = setup_askpass()?;
 
-        let output = new_std_command("git")
+        let mut command = new_std_command("git");
+        command
             .current_dir(&working_directory)
-            .env("GIT_ASKPASS", askpass_script_path)
             .args(["pull"])
             .arg(remote_name)
-            .arg(branch_name)
-            .output()?;
+            .arg(branch_name);
+
+        #[cfg(not(windows))]
+        {
+            command.env("GIT_ASKPASS", askpass_script_path);
+        }
+
+        let output = command.output()?;
 
         if !output.status.success() {
             return Err(anyhow!(
@@ -687,13 +701,20 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory()?;
 
         // We do this on every operation to ensure that the askpass script exists and is executable.
+        #[cfg(not(windows))]
         let (askpass_script_path, _temp_dir) = setup_askpass()?;
 
-        let output = new_std_command("git")
+        let mut command = new_std_command("git");
+        command
             .current_dir(&working_directory)
-            .env("GIT_ASKPASS", askpass_script_path)
-            .args(["fetch", "--all"])
-            .output()?;
+            .args(["fetch", "--all"]);
+
+        #[cfg(not(windows))]
+        {
+            command.env("GIT_ASKPASS", askpass_script_path);
+        }
+
+        let output = command.output()?;
 
         if !output.status.success() {
             return Err(anyhow!(
@@ -751,7 +772,8 @@ impl GitRepository for RealGitRepository {
     }
 }
 
-fn setup_askpass() -> Result<(PathBuf, TempDir), anyhow::Error> {
+#[cfg(not(windows))]
+fn setup_askpass() -> Result<(PathBuf, tempfile::TempDir), anyhow::Error> {
     let temp_dir = tempfile::Builder::new()
         .prefix("zed-git-askpass")
         .tempdir()?;
