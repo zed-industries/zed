@@ -243,7 +243,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                 Label::new(info.description.clone())
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
-                                    .text_ellipsis(),
+                                    .truncate(),
                             ),
                     ),
             ),
