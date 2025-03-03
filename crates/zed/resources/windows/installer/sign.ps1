@@ -23,10 +23,25 @@ if ([string]::IsNullOrWhiteSpace($certificateProfileName)) {
 }
 $params["CertificateProfileName"] = $certificateProfileName
 
+$fileDigest = $ENV:FILE_DIGEST
+if ([string]::IsNullOrWhiteSpace($fileDigest)) {
+    throw "The 'FILE_DIGEST' env is required."
+}
+$params["FileDigest"] = $fileDigest
+
+$timeStampDigest = $ENV:TIMESTAMP_DIGEST
+if ([string]::IsNullOrWhiteSpace($timeStampDigest)) {
+    throw "The 'TIMESTAMP_DIGEST' env is required."
+}
+$params["TimestampDigest"] = $timeStampDigest
+
+$timeStampServer = $ENV:TIMESTAMP_SERVER
+if ([string]::IsNullOrWhiteSpace($timeStampServer)) {
+    throw "The 'TIMESTAMP_SERVER' env is required."
+}
+$params["TimestampRfc3161"] = $timeStampServer
+
 $params["Files"] = $filePath
-$params["FileDigest"] = "SHA256"
-$params["TimestampRfc3161"] = "http://timestamp.acs.microsoft.com"
-$params["TimestampDigest"] = "SHA256"
 
 $trace = $ENV:TRACE
 if (-Not [string]::IsNullOrWhiteSpace($trace)) {
