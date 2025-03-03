@@ -205,7 +205,7 @@ pub struct GoToHunk {
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct GoToPrevHunk {
+pub struct GoToPreviousHunk {
     #[serde(default)]
     pub center_cursor: bool,
 }
@@ -241,7 +241,7 @@ impl_actions!(
         ExpandExcerptsUp,
         FoldAt,
         GoToHunk,
-        GoToPrevHunk,
+        GoToPreviousHunk,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -281,7 +281,7 @@ gpui::actions!(
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
-        ContextMenuPrev,
+        ContextMenuPrevious,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
@@ -325,7 +325,7 @@ gpui::actions!(
         GoToDiagnostic,
         GoToImplementation,
         GoToImplementationSplit,
-        GoToPrevDiagnostic,
+        GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
         HalfPageDown,
@@ -420,7 +420,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,
-        TabPrev,
+        Backtab,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,

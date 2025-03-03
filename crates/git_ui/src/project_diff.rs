@@ -3,7 +3,7 @@ use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    actions::{GoToHunk, GoToPrevHunk},
+    actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
     Editor, EditorEvent, ToPoint,
 };
@@ -870,7 +870,7 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to previous hunk",
-                                &GoToPrevHunk {
+                                &GoToPreviousHunk {
                                     center_cursor: false,
                                 },
                                 &focus_handle,
@@ -878,7 +878,7 @@ impl Render for ProjectDiffToolbar {
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.dispatch_action(
-                                    &GoToPrevHunk {
+                                    &GoToPreviousHunk {
                                         center_cursor: true,
                                     },
                                     window,

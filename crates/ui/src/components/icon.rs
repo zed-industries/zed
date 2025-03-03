@@ -237,6 +237,7 @@ pub enum IconName {
     Menu,
     MessageBubbles,
     MessageCircle,
+    Cloud,
     Mic,
     MicMute,
     Microscope,
