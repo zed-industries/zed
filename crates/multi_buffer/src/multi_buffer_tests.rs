@@ -2415,6 +2415,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         .unwrap_or(10);
 
     let mut buffers: Vec<Entity<Buffer>> = Vec::new();
+    let mut base_texts: HashMap<BufferId, String> = HashMap::default();
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let mut reference = ReferenceMultibuffer::default();
     let mut anchors = Vec::new();
@@ -2533,17 +2534,31 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             56..=85 if needs_diff_calculation => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     for buffer in multibuffer.all_buffers() {
+                        let id = buffer.read(cx).remote_id();
                         let snapshot = buffer.read(cx).snapshot();
-                        let _ = multibuffer.diff_for(snapshot.remote_id()).unwrap().update(
-                            cx,
-                            |diff, cx| {
+                        multibuffer
+                            .diffs
+                            .entry(snapshot.remote_id())
+                            .or_insert_with(|| {
+                                DiffState::new(
+                                    cx.new(|cx| {
+                                        BufferDiff::new_with_base_text(
+                                            &base_texts.get(&id).unwrap(),
+                                            &buffer,
+                                            cx,
+                                        )
+                                    }),
+                                    cx,
+                                )
+                            })
+                            .diff
+                            .update(cx, |diff, cx| {
                                 log::info!(
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
                                 );
                                 diff.recalculate_diff_sync(snapshot.text, cx);
-                            },
-                        );
+                            });
                     }
                     reference.diffs_updated(cx);
                     needs_diff_calculation = false;
@@ -2562,6 +2577,10 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         reference.add_diff(diff.clone(), cx);
                         multibuffer.add_diff(diff, cx)
                     });
+                    base_texts.insert(
+                        buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                        base_text.clone(),
+                    );
                     buffers.push(buffer);
                     buffers.last().unwrap()
                 } else {

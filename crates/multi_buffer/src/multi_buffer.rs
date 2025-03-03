@@ -2062,6 +2062,10 @@ impl MultiBuffer {
                     if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
                         buffer_state.excerpts.retain(|l| l != &excerpt.locator);
                         if buffer_state.excerpts.is_empty() {
+                            log::debug!(
+                                "removing buffer and diff for buffer {}",
+                                excerpt.buffer_id
+                            );
                             buffers.remove(&excerpt.buffer_id);
                             self.diffs.remove(&excerpt.buffer_id);
                         }
