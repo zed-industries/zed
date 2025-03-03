@@ -1176,7 +1176,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/project/foo", cx)
+                project.open_local_buffer(path!("/project/foo"), cx)
             })
             .await
             .unwrap();
