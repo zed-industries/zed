@@ -30,11 +30,11 @@ struct InfoFromRemote {
 }
 
 pub struct RemoteOutputToast {
-    workspace: WeakEntity<Workspace>,
-    id: NotificationId,
+    _workspace: WeakEntity<Workspace>,
+    _id: NotificationId,
     message: SharedString,
     remote_info: Option<InfoFromRemote>,
-    dismiss_task: Task<()>,
+    _dismiss_task: Task<()>,
     focus_handle: FocusHandle,
 }
 
@@ -95,7 +95,7 @@ impl RemoteOutputToast {
                     .collect_vec();
 
                 remote = Some(InfoFromRemote {
-                    name: remote_ref.name.into(),
+                    name: remote_ref.name,
                     remote_text: remote_message.into(),
                     links,
                 });
@@ -103,11 +103,11 @@ impl RemoteOutputToast {
         }
 
         Self {
-            workspace,
-            id,
+            _workspace: workspace,
+            _id: id,
             message,
             remote_info: remote,
-            dismiss_task: task,
+            _dismiss_task: task,
             focus_handle: cx.focus_handle(),
         }
     }

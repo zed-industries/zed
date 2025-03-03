@@ -14,8 +14,8 @@ use editor::{
     ShowScrollbar,
 };
 use git::repository::{
-    Branch, CommitDetails, CommitSummary, PushOptions, Remote, ResetMode, Upstream,
-    UpstreamTracking, UpstreamTrackingStatus,
+    Branch, CommitDetails, CommitSummary, PushOptions, Remote, RemoteCommandOutput, ResetMode,
+    Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
@@ -41,8 +41,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, ListItem, ListItemSpacing,
-    PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
+    ListItemSpacing, PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 
@@ -1335,11 +1335,19 @@ impl GitPanel {
         let guard = self.start_remote_operation();
         let fetch = repo.read(cx).fetch();
         cx.spawn(|this, mut cx| async move {
-            let remote_message = fetch.await??;
+            let remote_message = fetch.await?;
             drop(guard);
             this.update(&mut cx, |this, cx| {
-                // TODO: remove this
-                this.show_remote_output(RemoteAction::Fetch, remote_message, cx);
+                match remote_message {
+                    Ok(remote_message) => {
+                        this.show_remote_output(RemoteAction::Fetch, remote_message, cx);
+                    }
+                    Err(e) => {
+                        this.show_err_toast(e, cx);
+                    }
+                }
+
+                anyhow::Ok(())
             })
             .ok();
             anyhow::Ok(())
@@ -1348,29 +1356,41 @@ impl GitPanel {
     }
 
     fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let Some(branch) = repo.read(cx).current_branch() else {
+            return;
+        };
+        let branch = branch.clone();
         let guard = self.start_remote_operation();
         let remote = self.get_current_remote(window, cx);
         cx.spawn(move |this, mut cx| async move {
-            let remote = remote.await?;
+            let remote = match remote.await {
+                Ok(Some(remote)) => remote,
+                Ok(None) => {
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::error!("Failed to get current remote: {}", e);
+                    this.update(&mut cx, |this, cx| this.show_err_toast(e, cx))
+                        .ok();
+                    return Ok(());
+                }
+            };
 
-            let remote_message = this
-                .update(&mut cx, |this, cx| {
-                    let Some(repo) = this.active_repository.clone() else {
-                        return Err(anyhow::anyhow!("No active repository"));
-                    };
+            let pull = repo.update(&mut cx, |repo, _cx| {
+                repo.pull(branch.name.clone(), remote.name.clone())
+            })?;
 
-                    let Some(branch) = repo.read(cx).current_branch() else {
-                        return Err(anyhow::anyhow!("No active branch"));
-                    };
-
-                    Ok(repo.read(cx).pull(branch.name.clone(), remote.name.clone()))
-                })??
-                .await??;
-
+            let remote_message = pull.await?;
             drop(guard);
 
-            this.update(&mut cx, |this, cx| {
-                this.show_remote_output(RemoteAction::Pull, remote_message, cx);
+            this.update(&mut cx, |this, cx| match remote_message {
+                Ok(remote_message) => {
+                    this.show_remote_output(RemoteAction::Pull, remote_message, cx)
+                }
+                Err(err) => this.show_err_toast(err, cx),
             })
             .ok();
 
@@ -1380,34 +1400,47 @@ impl GitPanel {
     }
 
     fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let Some(branch) = repo.read(cx).current_branch() else {
+            return;
+        };
+        let branch = branch.clone();
         let guard = self.start_remote_operation();
         let options = action.options;
         let remote = self.get_current_remote(window, cx);
+
         cx.spawn(move |this, mut cx| async move {
-            let remote = remote.await?;
+            let remote = match remote.await {
+                Ok(Some(remote)) => remote,
+                Ok(None) => {
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::error!("Failed to get current remote: {}", e);
+                    this.update(&mut cx, |this, cx| this.show_err_toast(e, cx))
+                        .ok();
+                    return Ok(());
+                }
+            };
 
-            let remote_message = this
-                .update(&mut cx, |this, cx| {
-                    let Some(repo) = this.active_repository.clone() else {
-                        return Err(anyhow::anyhow!("No active repository"));
-                    };
+            let push = repo.update(&mut cx, |repo, _cx| {
+                repo.push(branch.name.clone(), remote.name.clone(), options)
+            })?;
 
-                    let Some(branch) = repo.read(cx).current_branch() else {
-                        return Err(anyhow::anyhow!("No active branch"));
-                    };
-
-                    Ok(repo
-                        .read(cx)
-                        .push(branch.name.clone(), remote.name.clone(), options))
-                })??
-                .await??;
+            let remote_output = push.await?;
 
             drop(guard);
 
-            this.update(&mut cx, |this, cx| {
-                this.show_remote_output(RemoteAction::Push(remote), remote_message, cx);
-            })
-            .ok();
+            this.update(&mut cx, |this, cx| match remote_output {
+                Ok(remote_message) => {
+                    this.show_remote_output(RemoteAction::Push(remote), remote_message, cx);
+                }
+                Err(e) => {
+                    this.show_err_toast(e, cx);
+                }
+            })?;
 
             anyhow::Ok(())
         })
@@ -1418,7 +1451,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<Remote>> {
+    ) -> impl Future<Output = Result<Option<Remote>>> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
@@ -1441,7 +1474,7 @@ impl GitPanel {
             if current_remotes.len() == 0 {
                 return Err(anyhow::anyhow!("No active remote"));
             } else if current_remotes.len() == 1 {
-                return Ok(current_remotes.pop().unwrap());
+                return Ok(Some(current_remotes.pop().unwrap()));
             } else {
                 let current_remotes: Vec<_> = current_remotes
                     .into_iter()
@@ -1459,9 +1492,9 @@ impl GitPanel {
                     })?
                     .await?;
 
-                return Ok(Remote {
+                Ok(selection.map(|selection| Remote {
                     name: current_remotes[selection].clone(),
-                });
+                }))
             }
         }
     }
@@ -1891,15 +1924,12 @@ impl GitPanel {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(self.render_repository_selector(cx))
                     .child(div().flex_grow()) // spacer
                     .child(
                         div()
                             .h_flex()
                             .gap_1()
-                            .children(self.render_spinner(cx))
-                            .children(self.render_sync_button(cx))
-                            .children(self.render_pull_button(cx))
+                            .children(self.render_spinner())
                             .child(
                                 Button::new("diff", "+/-")
                                     .tooltip(Tooltip::for_action_title("Open diff", &Diff))
@@ -1908,8 +1938,7 @@ impl GitPanel {
                                             cx.dispatch_action(&Diff);
                                         })
                                     }),
-                            )
-                            .child(self.render_overflow_menu()),
+                            ),
                     ),
             )
         } else {
@@ -1917,7 +1946,7 @@ impl GitPanel {
         }
     }
 
-    pub fn render_spinner(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    pub fn render_spinner(&self) -> Option<impl IntoElement> {
         (!self.pending_remote_operations.borrow().is_empty()).then(|| {
             Icon::new(IconName::ArrowCircle)
                 .size(IconSize::XSmall)

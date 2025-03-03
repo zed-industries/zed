@@ -61,6 +61,12 @@ pub enum UpstreamTracking {
     Tracked(UpstreamTrackingStatus),
 }
 
+impl From<UpstreamTrackingStatus> for UpstreamTracking {
+    fn from(status: UpstreamTrackingStatus) -> Self {
+        UpstreamTracking::Tracked(status)
+    }
+}
+
 impl UpstreamTracking {
     pub fn is_gone(&self) -> bool {
         matches!(self, UpstreamTracking::Gone)

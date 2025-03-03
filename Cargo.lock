@@ -5410,6 +5410,7 @@ dependencies = [
  "language",
  "linkify",
  "linkme",
+ "log",
  "menu",
  "multi_buffer",
  "panel",
