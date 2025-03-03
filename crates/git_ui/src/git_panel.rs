@@ -2118,7 +2118,7 @@ impl GitPanel {
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
-                                .text_ellipsis(),
+                                .truncate(),
                         )
                         .id("commit-msg-hover")
                         .hoverable_tooltip(move |window, cx| {
@@ -3296,41 +3296,32 @@ impl RenderOnce for PanelRepoFooter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_repo = self.active_repository.clone();
         let overflow_menu_id: SharedString = format!("overflow-menu-{}", active_repo).into();
+        let repo_selector_trigger = Button::new("repo-selector", active_repo)
+            .style(ButtonStyle::Transparent)
+            .size(ButtonSize::None)
+            .label_size(LabelSize::Small)
+            .color(Color::Muted);
 
         let repo_selector = if let Some(panel) = self.git_panel.clone() {
             let repo_selector = panel.read(cx).repository_selector.clone();
             let repo_count = repo_selector.read(cx).repositories_len(cx);
-            if repo_count > 1 {
-                RepositorySelectorPopoverMenu::new(
-                    panel.read(cx).repository_selector.clone(),
-                    Button::new("repo-selector", active_repo)
-                        .style(ButtonStyle::Transparent)
-                        .size(ButtonSize::None)
-                        .label_size(LabelSize::Small)
-                        .color(Color::Muted),
-                    Tooltip::text("Choose a repository"),
-                )
-                .into_any_element()
-            } else {
-                Label::new(active_repo)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .line_height_style(LineHeightStyle::UiLabel)
-                    .into_any_element()
-            }
+            let single_repo = repo_count == 1;
+
+            RepositorySelectorPopoverMenu::new(
+                panel.read(cx).repository_selector.clone(),
+                repo_selector_trigger.disabled(single_repo).truncate(true),
+                Tooltip::text("Switch active repository"),
+            )
+            .into_any_element()
         } else {
-            Button::new("repo-selector", active_repo.clone())
-                .style(ButtonStyle::Transparent)
-                .size(ButtonSize::None)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .into_any_element()
+            // for rendering preview, we don't have git_panel there
+            repo_selector_trigger.into_any_element()
         };
 
         let branch = self.branch.clone();
         let branch_name = branch
             .as_ref()
-            .map_or("<no branch>".into(), |branch| branch.name.clone());
+            .map_or(" (no branch)".into(), |branch| branch.name.clone());
 
         let branches = self.branches.clone();
 
@@ -3338,6 +3329,7 @@ impl RenderOnce for PanelRepoFooter {
             .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
+            .truncate(true)
             .tooltip(Tooltip::for_action_title(
                 "Switch Branch",
                 &zed_actions::git::Branch,
@@ -3372,36 +3364,42 @@ impl RenderOnce for PanelRepoFooter {
             .justify_between()
             .child(
                 h_flex()
-                    .relative()
+                    .debug_below()
+                    .flex_1()
+                    .overflow_hidden()
                     .items_center()
-                    .gap_0p5()
                     .child(
-                        div()
-                            // .when(repo_or_branch_has_uppercase, |this| {
-                            //     this.relative().pt(px(2.))
-                            // })
-                            .child(
-                                Icon::new(IconName::GitBranchSmall)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            ),
+                        div().child(
+                            Icon::new(IconName::GitBranchSmall)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(repo_selector)
-                            .child(
-                                div()
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .text_sm()
-                                    .child("/"),
-                            )
+                        div()
+                            .max_w(relative(0.25))
+                            .overflow_hidden()
+                            .child(repo_selector),
+                    )
+                    .when_some(branch.clone(), |this, _| {
+                        this.child(
+                            div()
+                                .text_color(cx.theme().colors().text_muted)
+                                .text_sm()
+                                .child("/"),
+                        )
+                    })
+                    .child(
+                        div()
+                            .max_w(relative(0.25))
+                            .overflow_hidden()
                             .child(branch_selector),
                     ),
             )
             .child(
                 h_flex()
                     .gap_1()
+                    .flex_shrink_0()
                     .children(spinner)
                     .child(self.render_overflow_menu(overflow_menu_id))
                     .when_some(branch, |this, branch| {
@@ -3627,6 +3625,22 @@ impl ComponentPreview for PanelRepoFooter {
                                 "long-repo",
                                 SharedString::from("zed-industries-community-examples"),
                                 Some(custom("gpui", ahead_of_upstream)),
+                            ))
+                            .into_any_element(),
+                    )
+                    .grow(),
+                    single_example(
+                        "Long Repo & Branch",
+                        div()
+                            .w(example_width)
+                            .overflow_hidden()
+                            .child(PanelRepoFooter::new_preview(
+                                "long-repo-and-branch",
+                                SharedString::from("zed-industries-community-examples"),
+                                Some(custom(
+                                    "redesign-and-update-git-ui-list-entry-style",
+                                    behind_upstream,
+                                )),
                             ))
                             .into_any_element(),
                     )
