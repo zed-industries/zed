@@ -257,6 +257,14 @@
     }
   },
   {
+    "context": "AssistantPanel2 && prompt_editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "assistant2::NewPromptEditor",
+      "cmd-alt-t": "assistant2::NewThread"
+    }
+  },
+  {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
