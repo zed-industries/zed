@@ -8,8 +8,11 @@ use gpui::{
     Task, Window,
 };
 use picker::{Picker, PickerDelegate};
+use project::git::GitRepo;
 use project::{Project, ProjectPath};
 use std::sync::Arc;
+use time::OffsetDateTime;
+use time_format::format_local_timestamp;
 use ui::{
     prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TriggerablePopover,
 };
@@ -381,16 +384,51 @@ impl PickerDelegate for BranchListDelegate {
         cx.emit(DismissEvent);
     }
 
+    fn render_header(&self, _: &mut Window, _cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        if self.last_query.is_empty() && !self.matches.is_empty() {
+            Some(
+                Label::new("Recent Branches")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .mt_1()
+                    .mb_0p5()
+                    .ml_2()
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =
             util::truncate_and_trailoff(&hit.name(), self.branch_name_trailoff_after);
+
+        let repo = self
+            .project
+            .update(cx, |project, cx| project.active_repository(cx));
+
+        let branch_name = match hit {
+            BranchEntry::Branch(branch) => Some(branch.string.as_str()),
+            BranchEntry::History(branch) => Some(branch.as_str()),
+            BranchEntry::NewBranch { name } => Some(name.as_str()),
+        };
+
+        let commit_info = repo.as_ref().and_then(|repo_entity| {
+            let repo = repo_entity.read(cx);
+            let git_repo = match &repo.git_repo {
+                GitRepo::Local(git_repo) => git_repo.as_ref(),
+                _ => return None,
+            };
+            branch_name.and_then(|name| git_repo.show(name).ok())
+        });
 
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
@@ -401,13 +439,6 @@ impl PickerDelegate for BranchListDelegate {
                 })
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .when(matches!(hit, BranchEntry::History(_)), |el| {
-                    el.end_slot(
-                        Icon::new(IconName::HistoryRerun)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
-                    )
-                })
                 .map(|el| match hit {
                     BranchEntry::Branch(branch) => {
                         let highlights: Vec<_> = branch
@@ -419,10 +450,82 @@ impl PickerDelegate for BranchListDelegate {
 
                         el.child(HighlightedLabel::new(shortened_branch_name, highlights))
                     }
-                    BranchEntry::History(_) => el.child(Label::new(shortened_branch_name)),
-                    BranchEntry::NewBranch { name } => {
-                        el.child(Label::new(format!("Create branch '{name}'")))
+                    BranchEntry::History(_) => {
+                        let (commit_sha, commit_time, commit_message) = commit_info
+                            .as_ref()
+                            .map(|commit| {
+                                let commit_message = commit.message.clone();
+                                let commit_time =
+                                    OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
+                                        .unwrap_or_else(|_| OffsetDateTime::now_utc());
+                                let formatted_time = format_local_timestamp(
+                                    commit_time,
+                                    OffsetDateTime::now_utc(),
+                                    time_format::TimestampFormat::Relative,
+                                );
+                                (commit.sha.clone(), formatted_time, commit_message)
+                            })
+                            .unwrap_or_else(|| {
+                                (
+                                    "No Commit SHA".into(),
+                                    "Unknown Date".to_string(),
+                                    SharedString::from("No commit message available"),
+                                )
+                            });
+                        el.child(
+                            v_flex()
+                                .w_full()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .gap_2()
+                                        .justify_between()
+                                        .child(div().max_w_80().child(
+                                            Label::new(shortened_branch_name).text_ellipsis(),
+                                        ))
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(
+                                                    Label::new(commit_sha)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .into_element(),
+                                                )
+                                                .child(div().size_1().rounded_full().bg(
+                                                    cx.theme().colors().text_muted.opacity(0.6),
+                                                ))
+                                                .child(
+                                                    Label::new(commit_time)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .into_element(),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div().max_w_96().child(
+                                        Label::new(
+                                            commit_message
+                                                .split('\n')
+                                                .next()
+                                                .unwrap_or_default()
+                                                .to_string(),
+                                        )
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .text_ellipsis(),
+                                    ),
+                                ),
+                        )
                     }
+
+                    BranchEntry::NewBranch { name } => el.child(
+                        h_flex()
+                            .gap_1()
+                            .child(Label::new("Create Branch:"))
+                            .child(Label::new(name.to_string()).buffer_font(cx)),
+                    ),
                 }),
         )
     }
