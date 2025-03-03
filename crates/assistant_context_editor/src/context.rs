@@ -568,6 +568,12 @@ pub enum XmlTagKind {
     Operation,
 }
 
+// Simple structure to represent a shell command in the text
+pub struct ShellCommand {
+    pub command: String,
+    pub range: Range<text::Anchor>,
+}
+
 pub struct AssistantContext {
     id: ContextId,
     timestamp: clock::Lamport,
@@ -597,6 +603,7 @@ pub struct AssistantContext {
     language_registry: Arc<LanguageRegistry>,
     patches: Vec<AssistantPatch>,
     xml_tags: Vec<XmlTag>,
+    shell_commands: Vec<ShellCommand>,
     project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
 }
@@ -701,6 +708,7 @@ impl AssistantContext {
             slash_commands,
             patches: Vec::new(),
             xml_tags: Vec::new(),
+            shell_commands: Vec::new(),
             prompt_builder,
         };
 
@@ -1172,6 +1180,11 @@ impl AssistantContext {
             language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
+                
+                // Detect shell commands when buffer is edited
+                let buffer_snapshot = self.buffer.read(cx).text_snapshot();
+                detect_shell_commands(&buffer_snapshot, self);
+                
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -1392,37 +1405,21 @@ impl AssistantContext {
 
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).text_snapshot();
-        let mut row_ranges = self
-            .edits_since_last_parse
-            .consume()
-            .into_iter()
-            .map(|edit| {
-                let start_row = buffer.offset_to_point(edit.new.start).row;
-                let end_row = buffer.offset_to_point(edit.new.end).row + 1;
-                start_row..end_row
-            })
-            .peekable();
-
-        let mut removed_parsed_slash_command_ranges = Vec::new();
-        let mut updated_parsed_slash_commands = Vec::new();
-        let mut removed_patches = Vec::new();
-        let mut updated_patches = Vec::new();
-        while let Some(mut row_range) = row_ranges.next() {
-            while let Some(next_row_range) = row_ranges.peek() {
-                if row_range.end >= next_row_range.start {
-                    row_range.end = next_row_range.end;
-                    row_ranges.next();
-                } else {
-                    break;
-                }
-            }
-
-            let start = buffer.anchor_before(Point::new(row_range.start, 0));
-            let end = buffer.anchor_after(Point::new(
-                row_range.end - 1,
-                buffer.line_len(row_range.end - 1),
-            ));
-
+        
+        // Get the edits from the subscription
+        let edits = self.edits_since_last_parse.consume();
+        
+        // Process edits if there are any
+        if !edits.is_empty() {
+            let mut removed_parsed_slash_command_ranges = Vec::new();
+            let mut updated_parsed_slash_commands = Vec::new();
+            let mut removed_patches = Vec::new();
+            let mut updated_patches = Vec::new();
+            
+            // Process the entire buffer for simplicity
+            let start = buffer.anchor_at(0, text::Bias::Left);
+            let end = buffer.anchor_at(buffer.len(), text::Bias::Right);
+            
             self.reparse_slash_commands_in_range(
                 start..end,
                 &buffer,
@@ -1430,7 +1427,7 @@ impl AssistantContext {
                 &mut removed_parsed_slash_command_ranges,
                 cx,
             );
-            self.invalidate_pending_slash_commands(&buffer, cx);
+            
             self.reparse_patches_in_range(
                 start..end,
                 &buffer,
@@ -1438,23 +1435,28 @@ impl AssistantContext {
                 &mut removed_patches,
                 cx,
             );
+            
+            // Emit events if needed
+            if !updated_parsed_slash_commands.is_empty() || !removed_parsed_slash_command_ranges.is_empty() {
+                cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
+                    removed: removed_parsed_slash_command_ranges,
+                    updated: updated_parsed_slash_commands,
+                });
+            }
+            
+            if !updated_patches.is_empty() || !removed_patches.is_empty() {
+                cx.emit(ContextEvent::PatchesUpdated {
+                    removed: removed_patches,
+                    updated: updated_patches,
+                });
+            }
         }
-
-        if !updated_parsed_slash_commands.is_empty()
-            || !removed_parsed_slash_command_ranges.is_empty()
-        {
-            cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
-                removed: removed_parsed_slash_command_ranges,
-                updated: updated_parsed_slash_commands,
-            });
-        }
-
-        if !updated_patches.is_empty() || !removed_patches.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated {
-                removed: removed_patches,
-                updated: updated_patches,
-            });
-        }
+        
+        self.invalidate_pending_slash_commands(&buffer, cx);
+        
+        // Detect shell commands after other parsing
+        let buffer_snapshot = self.buffer.read(cx).text_snapshot();
+        detect_shell_commands(&buffer_snapshot, self);
     }
 
     fn reparse_slash_commands_in_range(
@@ -3405,7 +3407,10 @@ fn format_shell_code_blocks(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
     }
     
     for (start, end, command) in blocks.iter().rev() {
-        let formatted = format!("\n┌─────────────┐\n│ {} ▶ │\n└─────────────┘\n", command);
+        // Just use indentation without the play icon
+        // The actual IconName::Play component would be added by the UI layer
+        // when it renders this content
+        let formatted = format!("    {}", command);
         buffer.edit([(*start..*end, formatted)], None, cx);
     }
 }
@@ -3415,4 +3420,45 @@ fn find_next_pattern(text: &str, patterns: &[&str]) -> Option<usize> {
     patterns.iter()
         .filter_map(|pat| text.find(pat))
         .min()
+}
+
+// Detect shell commands in the buffer and store them in context
+fn detect_shell_commands(buffer_snapshot: &text::BufferSnapshot, context: &mut AssistantContext) {
+    // Store the text once to avoid temporary value issues
+    let text = buffer_snapshot.text();
+    
+    let mut commands = Vec::new();
+    let mut pos = 0;
+    
+    while let Some(start_idx) = find_next_pattern(&text[pos..], &["```sh", "```bash", "``` sh", "``` bash"]) {
+        let block_start = pos + start_idx;
+        
+        if let Some(line_end) = text[block_start..].find('\n') {
+            let content_start = block_start + line_end + 1;
+            
+            if let Some(end_marker) = text[content_start..].find("```") {
+                let content_end = content_start + end_marker;
+                let block_end = content_end + 3;
+                
+                let command = text[content_start..content_end].trim();
+                
+                // Create text anchors for the range
+                let start_anchor = buffer_snapshot.anchor_at(block_start, text::Bias::Left);
+                let end_anchor = buffer_snapshot.anchor_at(block_end, text::Bias::Right);
+                
+                commands.push(ShellCommand {
+                    command: command.to_string(),
+                    range: Range { start: start_anchor, end: end_anchor },
+                });
+                
+                pos = block_end;
+            } else {
+                pos = block_start + 4;
+            }
+        } else {
+            pos = block_start + 4;
+        }
+    }
+    
+    context.shell_commands = commands;
 }
