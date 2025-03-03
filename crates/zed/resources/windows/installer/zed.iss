@@ -1389,7 +1389,7 @@ begin
   end;
 end;
 
-function GetAppMutex(): string;
+function GetAppMutex(Param: string): string;
 begin
   if WizardSilent() then
     Result := ''
