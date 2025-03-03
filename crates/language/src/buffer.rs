@@ -110,7 +110,7 @@ pub struct Buffer {
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
-    parsing_in_background: bool,
+    reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -964,7 +964,7 @@ impl Buffer {
             file,
             capability,
             syntax_map,
-            parsing_in_background: false,
+            reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
             parse_status: async_watch::channel(ParseStatus::Idle),
@@ -1420,7 +1420,7 @@ impl Buffer {
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
-        self.parsing_in_background
+        self.reparse.is_some()
     }
 
     /// Indicates whether the buffer contains any regions that may be
@@ -1458,7 +1458,7 @@ impl Buffer {
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
-        if self.parsing_in_background {
+        if self.reparse.is_some() {
             return;
         }
         let language = if let Some(language) = self.language.clone() {
@@ -1492,10 +1492,10 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
+                self.reparse = None;
             }
             Err(parse_task) => {
-                self.parsing_in_background = true;
-                cx.spawn(move |this, mut cx| async move {
+                self.reparse = Some(cx.spawn(move |this, mut cx| async move {
                     let new_syntax_map = parse_task.await;
                     this.update(&mut cx, move |this, cx| {
                         let grammar_changed =
@@ -1511,14 +1511,13 @@ impl Buffer {
                             || grammar_changed
                             || this.version.changed_since(&parsed_version);
                         this.did_finish_parsing(new_syntax_map, cx);
-                        this.parsing_in_background = false;
+                        this.reparse = None;
                         if parse_again {
                             this.reparse(cx);
                         }
                     })
                     .ok();
-                })
-                .detach();
+                }));
             }
         }
     }
