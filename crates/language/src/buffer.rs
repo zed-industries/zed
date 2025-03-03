@@ -1,4 +1,5 @@
 pub mod search;
+pub mod words;
 
 pub use crate::{
     diagnostic_set::DiagnosticSet,
@@ -69,6 +70,7 @@ use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{debug_panic, maybe, RangeExt};
+use words::Words;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -108,6 +110,8 @@ pub struct Buffer {
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
+    // TODO kb allow disabling it via the config
+    words: Option<Words>,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
@@ -981,6 +985,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
+            words: Some(Words::new(snapshot)),
             _subscriptions: Vec::new(),
         }
     }
@@ -2250,11 +2255,17 @@ impl Buffer {
     }
 
     fn did_edit(&mut self, old_version: &clock::Global, was_dirty: bool, cx: &mut Context<Self>) {
-        if self.edits_since::<usize>(old_version).next().is_none() {
+        let edits = self.edits_since::<Point>(old_version).collect::<Vec<_>>();
+        if edits.is_empty() {
             return;
         }
 
         self.reparse(cx);
+        if let Some(mut words) = self.words.take() {
+            let snapshot = self.text_snapshot();
+            words.schedule_update(snapshot, edits, cx);
+            self.words = Some(words);
+        }
 
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
