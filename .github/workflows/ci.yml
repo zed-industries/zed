@@ -767,6 +767,16 @@ jobs:
     runs-on: hosted-windows-2
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [windows_tests]
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ secrets.ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ secrets.CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ secrets.ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
@@ -795,60 +805,9 @@ jobs:
       - name: Install trusted signing
         uses: ./.github/actions/install_trusted_signing
 
-      - name: Build Zed and dll
+      - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: |
-          cargo build --release --package zed --package cli
-          Copy-Item -Path ".\target\release\zed.exe" -Destination ".\crates\zed\resources\windows\Zed.exe" -Force
-          Copy-Item -Path ".\target\release\cli.exe" -Destination ".\crates\zed\resources\windows\cli.exe" -Force
-          $channel = $env:RELEASE_CHANNEL
-          switch ($channel) {
-            "stable" {
-              cargo build --release --features stable --no-default-features --package explorer_command_injector
-            }
-            "preview" {
-              cargo build --release --features preview --no-default-features --package explorer_command_injector
-            }
-            default {
-              cargo build --release --package explorer_command_injector
-            }
-          }
-          Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination ".\crates\zed\resources\windows\zed_explorer_command_injector.dll" -Force
-
-      - name: Make appx for dll
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/make-appx-for-dll.ps1
-
-      - name: Sign Zed binary, dll and appx
-        uses: azure/trusted-signing-action@v0.5.1
-        with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ secrets.ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.ACCOUNT_NAME }}
-          certificate-profile-name: ${{ secrets.CERT_PROFILE_NAME }}
-          files-folder: ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
-          files-folder-filter: exe,dll,appx
-
-      - name: Collect files
-        run: |
-          $windowsDir = ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
-          mkdir -p $windowsDir\installer\appx -ErrorAction Ignore
-          Move-Item -Path "$windowsDir\zed_explorer_command_injector.appx" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.appx" -Force
-          Move-Item -Path "$windowsDir\zed_explorer_command_injector.dll" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.dll" -Force
-          mkdir -p "$windowsDir\installer\bin" -ErrorAction Ignore
-          Move-Item -Path "$windowsDir\cli.exe" -Destination "$windowsDir\installer\bin\zed.exe" -Force
-
-      - name: Run Inno Setup
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ENDPOINT: ${{ secrets.ENDPOINT }}
-          ACCOUNT_NAME: ${{ secrets.ACCOUNT_NAME }}
-          CERT_PROFILE_NAME: ${{ secrets.CERT_PROFILE_NAME }}
-        run: ./script/bundle-windows.ps1
+        run: script/bundle-windows.ps1
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@v2
