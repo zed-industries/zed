@@ -648,11 +648,19 @@
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
+    // One of: ["right", "left", "hidden"]
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
-    // Whether to always show the close button on tabs.
-    "always_show_close_button": false,
+    // Controls the appearance behavior of the tab's close button.
+    //
+    // 1. Show it just upon hovering the tab. (default)
+    //     "hover"
+    // 2. Show it persistently.
+    //     "always"
+    // 3. Never show it, even if hovering it.
+    //     "hidden"
+    "show_close_button": "hover",
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)

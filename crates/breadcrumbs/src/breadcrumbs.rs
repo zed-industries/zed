@@ -82,7 +82,7 @@ impl Render for Breadcrumbs {
             text_style.color = Color::Muted.color(cx);
 
             StyledText::new(segment.text.replace('\n', "⏎"))
-                .with_highlights(&text_style, segment.highlights.unwrap_or_default())
+                .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
                 .into_any()
         });
         let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {

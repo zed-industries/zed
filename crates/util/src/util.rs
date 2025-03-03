@@ -332,7 +332,7 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 if let Some(target) = target.get_mut(&key) {
                     merge_json_value_into(value, target);
                 } else {
-                    target.insert(key.clone(), value);
+                    target.insert(key, value);
                 }
             }
         }
@@ -360,7 +360,7 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
             if let Some(target) = target_object.get_mut(&key) {
                 merge_non_null_json_value_into(value, target);
             } else if !value.is_null() {
-                target_object.insert(key.clone(), value);
+                target_object.insert(key, value);
             }
         }
     } else if !source.is_null() {

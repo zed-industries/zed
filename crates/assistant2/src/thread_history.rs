@@ -33,9 +33,9 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_prev(
+    pub fn select_previous(
         &mut self,
-        _: &menu::SelectPrev,
+        _: &menu::SelectPrevious,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -166,7 +166,7 @@ impl Render for ThreadHistory {
             .overflow_y_scroll()
             .size_full()
             .p_1()
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))

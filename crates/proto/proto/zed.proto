@@ -331,43 +331,49 @@ message Envelope {
         GetRemotesResponse get_remotes_response = 307;
         Pull pull = 308;
 
-        BreakpointsForFile breakpoints_for_file = 309;
-        UpdateDebugAdapter update_debug_adapter = 310;
-        ShutdownDebugClient shutdown_debug_client = 311;
-        SetDebugClientCapabilities set_debug_client_capabilities = 312;
-        DapNextRequest dap_next_request = 313;
-        DapStepInRequest dap_step_in_request = 314;
-        DapStepOutRequest dap_step_out_request = 315;
-        DapStepBackRequest dap_step_back_request = 316;
-        DapContinueRequest dap_continue_request = 317;
-        DapContinueResponse dap_continue_response = 318;
-        DapPauseRequest dap_pause_request = 319;
-        DapDisconnectRequest dap_disconnect_request = 320;
-        DapTerminateThreadsRequest dap_terminate_threads_request = 321;
-        DapTerminateRequest dap_terminate_request = 322;
-        DapRestartRequest dap_restart_request = 323;
-        UpdateThreadStatus update_thread_status = 324;
-        VariablesRequest variables_request = 325;
-        DapVariables dap_variables = 326;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 327;
-        IgnoreBreakpointState ignore_breakpoint_state = 328;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 329;
-        DapModulesRequest dap_modules_request = 330;
-        DapModulesResponse dap_modules_response = 331;
-        DapLoadedSourcesRequest dap_loaded_sources_request = 332;
-        DapLoadedSourcesResponse dap_loaded_sources_response = 333;
-        DapStackTraceRequest dap_stack_trace_request = 334;
-        DapStackTraceResponse dap_stack_trace_response = 335;
-        DapScopesRequest dap_scopes_request = 336;
-        DapScopesResponse dap_scopes_response = 337;
-        DapSetVariableValueRequest dap_set_variable_value_request = 338;
-        DapSetVariableValueResponse dap_set_variable_value_response = 339;
-        DapEvaluateRequest dap_evaluate_request = 340;
-        DapEvaluateResponse dap_evaluate_response = 341;
-        DapCompletionRequest dap_completion_request = 342;
-        DapCompletionResponse dap_completion_response = 343;
-        DapThreadsRequest dap_threads_request = 344;
-        DapThreadsResponse dap_threads_response = 345;// current max
+        ApplyCodeActionKind apply_code_action_kind = 309;
+        ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
+
+        RemoteMessageResponse remote_message_response = 311;
+
+        BreakpointsForFile breakpoints_for_file = 312;
+        UpdateDebugAdapter update_debug_adapter = 313;
+        ShutdownDebugClient shutdown_debug_client = 314;
+        SetDebugClientCapabilities set_debug_client_capabilities = 315;
+        DapNextRequest dap_next_request = 316;
+        DapStepInRequest dap_step_in_request = 317;
+        DapStepOutRequest dap_step_out_request = 318;
+        DapStepBackRequest dap_step_back_request = 319;
+        DapContinueRequest dap_continue_request = 320;
+        DapContinueResponse dap_continue_response = 321;
+        DapPauseRequest dap_pause_request = 322;
+        DapDisconnectRequest dap_disconnect_request = 323;
+        DapTerminateThreadsRequest dap_terminate_threads_request = 324;
+        DapTerminateRequest dap_terminate_request = 325;
+        DapRestartRequest dap_restart_request = 326;
+        UpdateThreadStatus update_thread_status = 327;
+        VariablesRequest variables_request = 328;
+        DapVariables dap_variables = 329;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 330;
+        IgnoreBreakpointState ignore_breakpoint_state = 331;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 332;
+        DapModulesRequest dap_modules_request = 333;
+        DapModulesResponse dap_modules_response = 334;
+        DapLoadedSourcesRequest dap_loaded_sources_request = 335;
+        DapLoadedSourcesResponse dap_loaded_sources_response = 336;
+        DapStackTraceRequest dap_stack_trace_request = 337;
+        DapStackTraceResponse dap_stack_trace_response = 338;
+        DapScopesRequest dap_scopes_request = 339;
+        DapScopesResponse dap_scopes_response = 340;
+        DapSetVariableValueRequest dap_set_variable_value_request = 341;
+        DapSetVariableValueResponse dap_set_variable_value_response = 342;
+        DapEvaluateRequest dap_evaluate_request = 343;
+        DapEvaluateResponse dap_evaluate_response = 344;
+        DapCompletionRequest dap_completion_request = 345;
+        DapCompletionResponse dap_completion_response = 346;
+        DapThreadsRequest dap_threads_request = 347;
+        DapThreadsResponse dap_threads_response = 348;// current max
+
     }
 
     reserved 87 to 88;
@@ -954,6 +960,16 @@ message ChannelBufferVersion {
     uint64 channel_id = 1;
     repeated VectorClockEntry version = 2;
     uint64 epoch = 3;
+}
+
+message ApplyCodeActionKind {
+    uint64 project_id = 1;
+    string kind = 2;
+    repeated uint64 buffer_ids = 3;
+}
+
+message ApplyCodeActionKindResponse {
+    ProjectTransaction transaction = 1;
 }
 
 enum FormatTrigger {
@@ -3438,4 +3454,9 @@ message Pull {
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
+}
+
+message RemoteMessageResponse {
+    string stdout = 1;
+    string stderr = 2;
 }

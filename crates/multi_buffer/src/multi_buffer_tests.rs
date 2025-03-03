@@ -1999,8 +1999,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-    let base_id_1 = diff_1.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
-    let base_id_2 = diff_2.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
+    let base_id_1 = diff_1.read_with(cx, |diff, _| diff.base_text().remote_id());
+    let base_id_2 = diff_2.read_with(cx, |diff, _| diff.base_text().remote_id());
 
     let buffer_lines = (0..=snapshot.max_row().0)
         .map(|row| {
@@ -2034,6 +2034,25 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             Some((id_2, "".into())),
         ]
     );
+
+    let buffer_ids_by_range = [
+        (Point::new(0, 0)..Point::new(0, 0), &[id_1] as &[_]),
+        (Point::new(0, 0)..Point::new(2, 0), &[id_1]),
+        (Point::new(2, 0)..Point::new(2, 0), &[id_1]),
+        (Point::new(3, 0)..Point::new(3, 0), &[id_1]),
+        (Point::new(8, 0)..Point::new(9, 0), &[id_1]),
+        (Point::new(8, 0)..Point::new(10, 0), &[id_1, id_2]),
+        (Point::new(9, 0)..Point::new(9, 0), &[id_2]),
+    ];
+    for (range, buffer_ids) in buffer_ids_by_range {
+        assert_eq!(
+            snapshot
+                .buffer_ids_for_range(range.clone())
+                .collect::<Vec<_>>(),
+            buffer_ids,
+            "buffer_ids_for_range({range:?}"
+        );
+    }
 
     assert_position_translation(&snapshot);
     assert_line_indents(&snapshot);
@@ -2221,8 +2240,7 @@ impl ReferenceMultibuffer {
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
             let diff = self.diffs.get(&buffer.remote_id()).unwrap().read(cx);
-            // let diff = diff.snapshot.clone();
-            let base_buffer = diff.base_text().unwrap();
+            let base_buffer = diff.base_text();
 
             let mut offset = buffer_range.start;
             let mut hunks = diff

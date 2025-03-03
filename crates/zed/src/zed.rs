@@ -41,7 +41,7 @@ use paths::{
 };
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
@@ -1117,11 +1117,14 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                                 NotificationId::unique::<OpenLogError>(),
                                 cx,
                                 |cx| {
-                                    cx.new(|_| {
-                                        MessageNotification::new(format!(
-                                            "Unable to access/open log file at path {:?}",
-                                            paths::log_file().as_path()
-                                        ))
+                                    cx.new(|cx| {
+                                        MessageNotification::new(
+                                            format!(
+                                                "Unable to access/open log file at path {:?}",
+                                                paths::log_file().as_path()
+                                            ),
+                                            cx,
+                                        )
                                     })
                                 },
                             );
@@ -1137,6 +1140,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         let editor = cx.new(|cx| {
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                            editor.set_read_only(true);
                             editor.set_breadcrumb_header(format!(
                                 "Last {} lines in {}",
                                 MAX_LINES,
@@ -1325,8 +1329,8 @@ fn show_keymap_file_json_error(
     let message: SharedString =
         format!("JSON parse error in keymap file. Bindings not reloaded.\n\n{error}").into();
     show_app_notification(notification_id, cx, move |cx| {
-        cx.new(|_cx| {
-            MessageNotification::new(message.clone())
+        cx.new(|cx| {
+            MessageNotification::new(message.clone(), cx)
                 .primary_message("Open Keymap File")
                 .primary_on_click(|window, cx| {
                     window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
@@ -1383,8 +1387,8 @@ fn show_markdown_app_notification<F>(
                 let parsed_markdown = parsed_markdown.clone();
                 let primary_button_message = primary_button_message.clone();
                 let primary_button_on_click = primary_button_on_click.clone();
-                cx.new(move |_cx| {
-                    MessageNotification::new_from_builder(move |window, cx| {
+                cx.new(move |cx| {
+                    MessageNotification::new_from_builder(cx, move |window, cx| {
                         gpui::div()
                             .text_xs()
                             .child(markdown_preview::markdown_renderer::render_parsed_markdown(
@@ -1443,8 +1447,8 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
                 return;
             }
             show_app_notification(id, cx, move |cx| {
-                cx.new(|_cx| {
-                    MessageNotification::new(format!("Invalid user settings file\n{error}"))
+                cx.new(|cx| {
+                    MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
                         .primary_message("Open Settings File")
                         .primary_icon(IconName::Settings)
                         .primary_on_click(|window, cx| {
@@ -1597,7 +1601,7 @@ fn open_local_file(
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
-            cx.new(|_| MessageNotification::new("This project has no folders open."))
+            cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
         })
     }
 }
@@ -1640,6 +1644,7 @@ fn open_telemetry_log_file(
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
                         let mut editor = Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                        editor.set_read_only(true);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
                     })),
@@ -4130,6 +4135,8 @@ mod tests {
                     | "vim::PushLiteral"
                     | "vim::Number"
                     | "vim::SelectRegister"
+                    | "git::StageAndNext"
+                    | "git::UnstageAndNext"
                     | "terminal::SendText"
                     | "terminal::SendKeystroke"
                     | "app_menu::OpenApplicationMenu"

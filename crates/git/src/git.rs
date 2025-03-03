@@ -35,15 +35,23 @@ pub struct Push {
     pub options: Option<PushOptions>,
 }
 
-impl_actions!(git, [Push]);
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct StageAndNext {
+    pub whole_excerpt: bool,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct UnstageAndNext {
+    pub whole_excerpt: bool,
+}
+
+impl_actions!(git, [Push, StageAndNext, UnstageAndNext]);
 
 actions!(
     git,
     [
         // per-hunk
         ToggleStaged,
-        StageAndNext,
-        UnstageAndNext,
         // per-file
         StageFile,
         UnstageFile,
@@ -56,6 +64,7 @@ actions!(
         Pull,
         Fetch,
         Commit,
+        ExpandCommitEditor,
     ]
 );
 action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);

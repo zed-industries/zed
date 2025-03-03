@@ -47,7 +47,9 @@ use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-use notifications::{simple_message_notification::MessageNotification, DetachAndPromptErr};
+use notifications::{
+    simple_message_notification::MessageNotification, DetachAndPromptErr, Notifications,
+};
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
@@ -833,7 +835,7 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(NotificationId, AnyView)>,
+    notifications: Notifications,
     project: Entity<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, PeerId>,
@@ -938,7 +940,7 @@ impl Workspace {
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
                     cx,
-                    |cx| cx.new(|_| MessageNotification::new(message.clone())),
+                    |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
                 ),
 
                 project::Event::HideToast { notification_id } => {
@@ -955,7 +957,11 @@ impl Workspace {
                     this.show_notification(
                         NotificationId::composite::<LanguageServerPrompt>(id as usize),
                         cx,
-                        |cx| cx.new(|_| notifications::LanguageServerPrompt::new(request.clone())),
+                        |cx| {
+                            cx.new(|cx| {
+                                notifications::LanguageServerPrompt::new(request.clone(), cx)
+                            })
+                        },
                     );
                 }
 
@@ -5258,8 +5264,8 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
                     |cx| {
-                        cx.new(|_| {
-                            MessageNotification::new("Failed to load the database file.")
+                        cx.new(|cx| {
+                            MessageNotification::new("Failed to load the database file.", cx)
                                 .primary_message("File an Issue")
                                 .primary_icon(IconName::Plus)
                                 .primary_on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))

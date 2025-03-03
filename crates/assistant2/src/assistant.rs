@@ -27,7 +27,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{actions, App};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::Settings as _;
 
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};

@@ -19,14 +19,14 @@ use crate::{
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint,
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
-    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown,
     PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
     FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
@@ -206,7 +206,7 @@ impl EditorElement {
         register_action(editor, window, Editor::backspace);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
-        register_action(editor, window, Editor::tab_prev);
+        register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
         register_action(editor, window, Editor::autoindent);
@@ -435,6 +435,13 @@ impl EditorElement {
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format_selections(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            if let Some(task) = editor.organize_imports(action, window, cx) {
                 task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
@@ -4429,6 +4436,8 @@ impl EditorElement {
     }
 
     fn paint_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        let is_light = cx.theme().appearance().is_light();
+
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -4448,7 +4457,7 @@ impl EditorElement {
                             hunk_bounds,
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            DiffHunkSecondaryStatus::None,
+                            DiffHunkStatus::modified_none(),
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
@@ -4460,19 +4469,19 @@ impl EditorElement {
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_added,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Modified => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_deleted,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Deleted => (
                             Bounds::new(
@@ -4484,19 +4493,18 @@ impl EditorElement {
                             ),
                             cx.theme().colors().version_control_deleted,
                             Corners::all(1. * line_height),
-                            status.secondary,
+                            *status,
                         ),
                     }),
                 };
 
-                if let Some((hunk_bounds, background_color, corner_radii, secondary_status)) =
+                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
                     hunk_to_paint
                 {
-                    let background_color = if secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.opacity(0.3)
-                    } else {
-                        background_color.opacity(1.0)
-                    };
+                    if secondary_status.has_secondary_hunk() {
+                        background_color =
+                            background_color.opacity(if is_light { 0.2 } else { 0.32 });
+                    }
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
@@ -5190,9 +5198,15 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match &hunk.status().kind {
-                                            DiffHunkStatusKind::Added => theme.status().created,
-                                            DiffHunkStatusKind::Modified => theme.status().modified,
-                                            DiffHunkStatusKind::Deleted => theme.status().deleted,
+                                            DiffHunkStatusKind::Added => {
+                                                theme.colors().version_control_added
+                                            }
+                                            DiffHunkStatusKind::Modified => {
+                                                theme.colors().version_control_modified
+                                            }
+                                            DiffHunkStatusKind::Deleted => {
+                                                theme.colors().version_control_deleted
+                                            }
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -6789,12 +6803,14 @@ impl Element for EditorElement {
                         .editor
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
+                    let is_light = cx.theme().appearance().is_light();
+
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
 
-                        let staged_opacity = 0.10;
+                        let staged_opacity = if is_light { 0.14 } else { 0.10 };
                         let unstaged_opacity = 0.04;
 
                         let background_color = match diff_status.kind {
@@ -6807,12 +6823,11 @@ impl Element for EditorElement {
                                 continue;
                             }
                         };
-                        let background_color =
-                            if diff_status.secondary == DiffHunkSecondaryStatus::None {
-                                background_color.opacity(staged_opacity)
-                            } else {
-                                background_color.opacity(unstaged_opacity)
-                            };
+                        let background_color = if diff_status.has_secondary_hunk() {
+                            background_color.opacity(unstaged_opacity)
+                        } else {
+                            background_color.opacity(staged_opacity)
+                        };
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
@@ -8902,65 +8917,62 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .when(status.secondary == DiffHunkSecondaryStatus::None, |el| {
-            el.child(
-                Button::new("unstage", "Unstage")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Unstage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+        .child(if status.has_secondary_hunk() {
+            Button::new(("stage", row as u64), "Stage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Stage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                true,
+                                &[hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    false,
-                                    &[hunk_range.start..hunk_range.start],
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    }),
-            )
-        })
-        .when(status.secondary != DiffHunkSecondaryStatus::None, |el| {
-            el.child(
-                Button::new("stage", "Stage")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Stage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+                            );
+                        });
+                    }
+                })
+        } else {
+            Button::new(("unstage", row as u64), "Unstage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Unstage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                false,
+                                &[hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    true,
-                                    &[hunk_range.start..hunk_range.start],
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    }),
-            )
+                            );
+                        });
+                    }
+                })
         })
         .child(
             Button::new("discard", "Restore")
@@ -9000,7 +9012,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Next Hunk",
-                                    &GoToHunk,
+                                    &GoToHunk::default(),
                                     &focus_handle,
                                     window,
                                     cx,
@@ -9014,8 +9026,9 @@ fn diff_hunk_controls(
                                     let snapshot = editor.snapshot(window, cx);
                                     let position =
                                         hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                                    editor
-                                        .go_to_hunk_after_position(&snapshot, position, window, cx);
+                                    editor.go_to_hunk_after_or_before_position(
+                                        &snapshot, position, true, true, window, cx,
+                                    );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
                             }
@@ -9031,7 +9044,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
-                                    &GoToPrevHunk,
+                                    &GoToPreviousHunk::default(),
                                     &focus_handle,
                                     window,
                                     cx,
@@ -9045,7 +9058,9 @@ fn diff_hunk_controls(
                                     let snapshot = editor.snapshot(window, cx);
                                     let point =
                                         hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                    editor.go_to_hunk_before_position(&snapshot, point, window, cx);
+                                    editor.go_to_hunk_after_or_before_position(
+                                        &snapshot, point, false, true, window, cx,
+                                    );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
                             }
