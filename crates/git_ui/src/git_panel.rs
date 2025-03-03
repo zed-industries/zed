@@ -1858,6 +1858,32 @@ impl GitPanel {
         }
     }
 
+    pub fn configure_commit_button(&self, cx: &Context<Self>) -> (bool, &'static str) {
+        if self.has_unstaged_conflicts() {
+            (false, "You must resolve conflicts before committing")
+        } else if !self.has_staged_changes() && !self.has_tracked_changes() {
+            (
+                false,
+                "You must have either staged changes or tracked files to commit",
+            )
+        } else if self.pending_commit.is_some() {
+            (false, "Commit in progress")
+        } else if self.commit_editor.read(cx).is_empty(cx) {
+            (false, "No commit message")
+        } else if !self.has_write_access(cx) {
+            (false, "You do not have write access to this project")
+        } else {
+            (
+                true,
+                if self.has_staged_changes() {
+                    "Commit"
+                } else {
+                    "Commit Tracked"
+                },
+            )
+        }
+    }
+
     pub fn render_footer(
         &self,
         window: &mut Window,
@@ -1868,19 +1894,10 @@ impl GitPanel {
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         if let Some(active_repo) = active_repository {
-            let editor = self.commit_editor.clone();
-            let can_commit = self.can_commit()
-                && self.pending_commit.is_none()
-                && !editor.read(cx).is_empty(cx)
-                && self.has_write_access(cx);
+            let (can_commit, tooltip) = self.configure_commit_button(cx);
 
             let enable_coauthors = self.render_co_authors(cx);
 
-            let tooltip = if self.has_staged_changes() {
-                "git commit"
-            } else {
-                "git commit --all"
-            };
             let title = if self.has_staged_changes() {
                 "Commit"
             } else {
@@ -1938,13 +1955,17 @@ impl GitPanel {
                                 .child(
                                     panel_filled_button(title)
                                         .tooltip(move |window, cx| {
-                                            Tooltip::for_action_in(
-                                                tooltip,
-                                                &Commit,
-                                                &editor_focus_handle,
-                                                window,
-                                                cx,
-                                            )
+                                            if can_commit {
+                                                Tooltip::for_action_in(
+                                                    tooltip,
+                                                    &Commit,
+                                                    &editor_focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            } else {
+                                                Tooltip::simple(tooltip, cx)
+                                            }
                                         })
                                         .disabled(!can_commit || self.modal_open)
                                         .on_click({
