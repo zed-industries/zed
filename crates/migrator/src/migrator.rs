@@ -742,10 +742,10 @@ fn replace_tab_close_button_setting_value(
     if parent_object_name == "tabs" && setting_name == "always_show_close_button" {
         match setting_value {
             "true" => {
-                return Some((setting_value_range, format!("\"always\"")));
+                return Some((setting_value_range, "\"always\"".to_string()));
             }
             "false" => {
-                return Some((setting_value_range, format!("\"hover\"")));
+                return Some((setting_value_range, "\"hover\"".to_string()));
             }
             _ => {}
         }
