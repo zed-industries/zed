@@ -231,12 +231,8 @@ impl AssistantPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // If the context picker is deployed, we do not want to interfere with the dismiss event
-        if self
-            .message_editor
-            .read(cx)
-            .is_any_context_picker_deployed()
-        {
+        // If the context picker is deployed, we do not want to interfere with the cancel event
+        if self.message_editor.read(cx).is_any_picker_deployed(cx) {
             cx.propagate();
             return;
         }

@@ -73,6 +73,10 @@ impl LanguageModelSelector {
         }
     }
 
+    pub fn is_deployed(&self) -> bool {
+        self.popover_menu_handle.is_deployed()
+    }
+
     pub fn toggle_model_selector(
         &mut self,
         _: &ToggleModelSelector,

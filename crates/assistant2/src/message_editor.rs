@@ -140,9 +140,10 @@ impl MessageEditor {
         self.send_to_model(RequestKind::Chat, window, cx);
     }
 
-    pub fn is_any_context_picker_deployed(&self) -> bool {
+    pub fn is_any_picker_deployed(&self, cx: &App) -> bool {
         self.context_picker_menu_handle.is_deployed()
             || self.inline_context_picker_menu_handle.is_deployed()
+            || self.model_selector.read(cx).selector.read(cx).is_deployed()
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
@@ -257,9 +258,7 @@ impl MessageEditor {
     }
 
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
-        if self.context_picker_menu_handle.is_deployed()
-            || self.inline_context_picker_menu_handle.is_deployed()
-        {
+        if self.is_any_picker_deployed(cx) {
             cx.propagate();
         } else {
             self.context_strip.focus_handle(cx).focus(window);
