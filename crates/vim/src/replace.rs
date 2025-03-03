@@ -170,8 +170,9 @@ impl Vim {
     pub fn clear_exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, _, cx| {
-            editor.clear_highlights::<VimExchange>(cx);
+            editor.clear_background_highlights::<VimExchange>(cx);
         });
+        self.clear_operator(window, cx);
     }
 
     pub fn exchange_motion(
@@ -482,5 +483,28 @@ mod test {
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x t r w c x i w");
         cx.assert_state("hello ˇworld", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_clear_exchange_clears_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇirrelevant", Mode::Normal);
+        cx.simulate_keystrokes("c x c");
+
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_clear_exchange(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("c x i w c x c");
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert_eq!(0, highlights.len());
+        });
     }
 }
