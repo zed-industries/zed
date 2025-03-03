@@ -2338,7 +2338,10 @@ impl GitPanel {
         window: &Window,
         _: &Context<Self>,
     ) -> AnyElement {
+        let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
+
         h_flex()
+            .id(id)
             .h(self.list_item_height(window))
             .w_full()
             .items_end()
@@ -2477,9 +2480,9 @@ impl GitPanel {
             Color::Muted
         };
 
-        let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
+        let id: ElementId = ElementId::Name(format!("entry_{}_{}", display_name, ix).into());
         let checkbox_id: ElementId =
-            ElementId::Name(format!("entry_checkbox_{}", display_name).into());
+            ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
         let is_entry_staged = self.entry_is_staged(entry);
         let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
@@ -2501,6 +2504,14 @@ impl GitPanel {
             .gap(DynamicSpacing::Base04.rems(cx))
             .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
             .active(|this| this.bg(cx.theme().colors().ghost_element_active))
+            .border_1()
+            .map(|this| {
+                this.border_color(if selected {
+                    cx.theme().colors().border_selected
+                } else {
+                    gpui::transparent_black()
+                })
+            })
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
