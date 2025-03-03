@@ -3884,7 +3884,7 @@ mod tests {
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
-        use workspace::ActivatePrevItem;
+        use workspace::ActivatePreviousItem;
 
         app_state
             .fs
@@ -3925,7 +3925,7 @@ mod tests {
                 workspace.register_action(|_, _: &A, _window, _cx| {});
                 workspace.register_action(|_, _: &B, _window, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousPane, _window, _cx| {});
-                workspace.register_action(|_, _: &ActivatePrevItem, _window, _cx| {});
+                workspace.register_action(|_, _: &ActivatePreviousItem, _window, _cx| {});
                 cx.notify();
             })
             .unwrap();
@@ -3974,7 +3974,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("{", &ActivatePrevItem)],
+            vec![("backspace", &B), ("{", &ActivatePreviousItem)],
             line!(),
         );
     }

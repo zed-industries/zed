@@ -2,7 +2,7 @@
   {
     "bindings": {
       "ctrl-alt-s": "zed::OpenSettings",
-      "ctrl-{": "pane::ActivatePrevItem",
+      "ctrl-{": "pane::ActivatePreviousItem",
       "ctrl-}": "pane::ActivateNextItem"
     }
   },

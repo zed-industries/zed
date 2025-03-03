@@ -784,8 +784,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("bp", "revious"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("bp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -794,8 +794,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
         VimCommand::new(("tabnew", ""), workspace::NewFile),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("tabp", "revious"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("tabN", "ext"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(
             ("tabc", "lose"),
             workspace::CloseActiveItem {
