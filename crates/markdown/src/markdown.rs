@@ -1,6 +1,12 @@
 pub mod parser;
 
-use crate::parser::CodeBlockKind;
+use std::collections::HashMap;
+use std::iter;
+use std::mem;
+use std::ops::Range;
+use std::rc::Rc;
+use std::sync::Arc;
+
 use gpui::{
     actions, point, quad, AnyElement, App, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
     Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla,
@@ -11,11 +17,11 @@ use gpui::{
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 use pulldown_cmark::Alignment;
-
-use std::{collections::HashMap, iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
 use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
+
+use crate::parser::CodeBlockKind;
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
