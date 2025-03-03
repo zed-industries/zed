@@ -144,6 +144,7 @@ actions!(
         NewFileSplitHorizontal,
         NewSearch,
         NewTerminal,
+        NewDiagnostics,
         NewWindow,
         Open,
         OpenFiles,
