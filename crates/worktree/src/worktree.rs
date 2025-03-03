@@ -4304,6 +4304,7 @@ impl BackgroundScanner {
             }
 
             let ancestor_dot_git = ancestor.join(*DOT_GIT);
+            log::debug!("considering ancestor: {ancestor_dot_git:?}");
             // Check whether the directory or file called `.git` exists (in the
             // case of worktrees it's a file.)
             if self
@@ -4312,21 +4313,26 @@ impl BackgroundScanner {
                 .await
                 .is_ok_and(|metadata| metadata.is_some())
             {
+                log::debug!(".git path exists");
                 if index != 0 {
                     // We canonicalize, since the FS events use the canonicalized path.
                     if let Some(ancestor_dot_git) =
                         self.fs.canonicalize(&ancestor_dot_git).await.log_err()
                     {
+                        let location_in_repo = root_abs_path
+                            .as_path()
+                            .strip_prefix(ancestor)
+                            .unwrap()
+                            .into();
+                        log::debug!(
+                            "inserting parent git repo for this worktree: {location_in_repo:?}"
+                        );
                         // We associate the external git repo with our root folder and
                         // also mark where in the git repo the root folder is located.
                         let local_repository = self.state.lock().insert_git_repository_for_path(
                             WorkDirectory::AboveProject {
                                 absolute_path: ancestor.into(),
-                                location_in_repo: root_abs_path
-                                    .as_path()
-                                    .strip_prefix(ancestor)
-                                    .unwrap()
-                                    .into(),
+                                location_in_repo,
                             },
                             ancestor_dot_git.clone().into(),
                             self.fs.as_ref(),
@@ -4341,8 +4347,12 @@ impl BackgroundScanner {
 
                 // Reached root of git repository.
                 break;
+            } else {
+                log::debug!(".git path doesn't exist");
             }
         }
+
+        log::debug!("containing git repository: {containing_git_repository:?}");
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
