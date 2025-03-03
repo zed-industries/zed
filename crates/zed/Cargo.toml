@@ -123,6 +123,7 @@ theme_selector.workspace = true
 time.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
+ui_prompt.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true

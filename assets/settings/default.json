@@ -136,6 +136,11 @@
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
+  // Whether to use the system provided dialogs for prompts, such as confirmation
+  // prompts.
+  // When set to false, Zed will use its built-in prompts. Note that on Linux,
+  // this option is ignored and Zed will always use the built-in prompts.
+  "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Cursor shape for the default editor.
