@@ -106,6 +106,8 @@ impl ProtoConversion for dap_types::Variable {
             named_variables: payload.named_variables,
             indexed_variables: payload.indexed_variables,
             memory_reference: payload.memory_reference,
+            declaration_location_reference: None, // TODO
+            value_location_reference: None,       // TODO
         }
     }
 }
@@ -463,6 +465,7 @@ impl ProtoConversion for dap_types::OutputEvent {
                 .and_then(proto::DapOutputEventGroup::from_i32)
                 .map(OutputEventGroup::from_proto),
             data: None,
+            location_reference: None,
         }
     }
 }

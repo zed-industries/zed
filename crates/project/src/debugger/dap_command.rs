@@ -990,6 +990,7 @@ impl DapCommand for SetVariableValueCommand {
             named_variables: message.named_variables,
             indexed_variables: message.indexed_variables,
             memory_reference: message.memory_reference,
+            value_location_reference: None, // TODO
         })
     }
 }
@@ -1489,6 +1490,7 @@ impl DapCommand for EvaluateCommand {
             named_variables: message.named_variables,
             indexed_variables: message.indexed_variables,
             memory_reference: message.memory_reference.clone(),
+            value_location_reference: None, //TODO
         })
     }
 
@@ -1585,6 +1587,7 @@ fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
         supports_memory_event: Some(false),
         supports_args_can_be_interpreted_by_shell: Some(false),
         supports_start_debugging_request: Some(true),
+        supports_ansistyling: Some(false),
     }
 }
 

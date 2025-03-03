@@ -1357,6 +1357,7 @@ impl Session {
                     line: None,
                     column: None,
                     data: None,
+                    location_reference: None,
                 });
 
                 // TODO(debugger): only invalidate variables & scopes
