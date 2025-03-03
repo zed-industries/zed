@@ -126,6 +126,6 @@ impl RenderOnce for HighlightedLabel {
         text_style.color = self.base.color.color(cx);
 
         self.base
-            .child(StyledText::new(self.label).with_highlights(&text_style, highlights))
+            .child(StyledText::new(self.label).with_default_highlights(&text_style, highlights))
     }
 }

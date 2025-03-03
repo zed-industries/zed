@@ -236,6 +236,8 @@ messages!(
     (ExpandAllForProjectEntryResponse, Foreground),
     (Follow, Foreground),
     (FollowResponse, Foreground),
+    (ApplyCodeActionKind, Foreground),
+    (ApplyCodeActionKindResponse, Foreground),
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
@@ -449,6 +451,7 @@ messages!(
     (GetRemotes, Background),
     (GetRemotesResponse, Background),
     (Pull, Background),
+    (RemoteMessageResponse, Background),
 );
 
 request_messages!(
@@ -472,6 +475,7 @@ request_messages!(
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
+    (ApplyCodeActionKind, ApplyCodeActionKindResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
     (GetCachedEmbeddings, GetCachedEmbeddingsResponse),
@@ -586,10 +590,10 @@ request_messages!(
     (GitReset, Ack),
     (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
-    (Push, Ack),
-    (Fetch, Ack),
+    (Push, RemoteMessageResponse),
+    (Fetch, RemoteMessageResponse),
     (GetRemotes, GetRemotesResponse),
-    (Pull, Ack),
+    (Pull, RemoteMessageResponse),
 );
 
 entity_messages!(
@@ -610,6 +614,7 @@ entity_messages!(
     ExpandProjectEntry,
     ExpandAllForProjectEntry,
     FindSearchCandidates,
+    ApplyCodeActionKind,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,

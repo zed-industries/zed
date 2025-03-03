@@ -1,24 +1,26 @@
-use std::any::{Any, TypeId};
-
-use ::git::UnstageAndNext;
+use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    actions::{GoToHunk, GoToPrevHunk},
+    actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
     Editor, EditorEvent, ToPoint,
 };
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
-use git::{status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll};
+use git::{
+    status::FileStatus, ShowCommitEditor, StageAll, StageAndNext, ToggleStaged, UnstageAll,
+    UnstageAndNext,
+};
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
     EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{git::GitStore, Project, ProjectPath};
+use std::any::{Any, TypeId};
 use theme::ActiveTheme;
 use ui::{prelude::*, vertical_divider, Tooltip};
 use util::ResultExt as _;
@@ -28,8 +30,6 @@ use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
 };
-
-use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 
 actions!(git, [Diff]);
 
@@ -230,14 +230,16 @@ impl ProjectDiff {
         let mut has_unstaged_hunks = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
             match hunk.secondary_status {
-                DiffHunkSecondaryStatus::HasSecondaryHunk => {
+                DiffHunkSecondaryStatus::HasSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
                     has_unstaged_hunks = true;
                 }
                 DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
                     has_staged_hunks = true;
                     has_unstaged_hunks = true;
                 }
-                DiffHunkSecondaryStatus::None => {
+                DiffHunkSecondaryStatus::None
+                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
                     has_staged_hunks = true;
                 }
             }
@@ -378,13 +380,10 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let diff_hunk_ranges = if diff.base_text().is_none() {
-            vec![Point::zero()..snapshot.max_point()]
-        } else {
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-                .collect::<Vec<_>>()
-        };
+        let diff_hunk_ranges = diff
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+            .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -815,7 +814,9 @@ impl Render for ProjectDiffToolbar {
                             Button::new("stage", "Stage")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Stage",
-                                    &StageAndNext,
+                                    &StageAndNext {
+                                        whole_excerpt: false,
+                                    },
                                     &focus_handle,
                                 ))
                                 // don't actually disable the button so it's mashable
@@ -825,14 +826,22 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&StageAndNext, window, cx)
+                                    this.dispatch_action(
+                                        &StageAndNext {
+                                            whole_excerpt: false,
+                                        },
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                         .child(
                             Button::new("unstage", "Unstage")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Unstage",
-                                    &UnstageAndNext,
+                                    &UnstageAndNext {
+                                        whole_excerpt: false,
+                                    },
                                     &focus_handle,
                                 ))
                                 .color(if button_states.unstage {
@@ -841,7 +850,13 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&UnstageAndNext, window, cx)
+                                    this.dispatch_action(
+                                        &UnstageAndNext {
+                                            whole_excerpt: false,
+                                        },
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                     }),
@@ -855,12 +870,20 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to previous hunk",
-                                &GoToPrevHunk,
+                                &GoToPreviousHunk {
+                                    center_cursor: false,
+                                },
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToPrevHunk, window, cx)
+                                this.dispatch_action(
+                                    &GoToPreviousHunk {
+                                        center_cursor: true,
+                                    },
+                                    window,
+                                    cx,
+                                )
                             })),
                     )
                     .child(
@@ -868,12 +891,20 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to next hunk",
-                                &GoToHunk,
+                                &GoToHunk {
+                                    center_cursor: false,
+                                },
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToHunk, window, cx)
+                                this.dispatch_action(
+                                    &GoToHunk {
+                                        center_cursor: true,
+                                    },
+                                    window,
+                                    cx,
+                                )
                             })),
                     ),
             )
@@ -922,11 +953,11 @@ impl Render for ProjectDiffToolbar {
                             .disabled(!button_states.commit)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Commit",
-                                &Commit,
+                                &ShowCommitEditor,
                                 &focus_handle,
                             ))
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Commit, window, cx);
+                                this.dispatch_action(&ShowCommitEditor, window, cx);
                             })),
                     ),
             )
@@ -971,7 +1002,7 @@ mod tests {
             path!("/project"),
             json!({
                 ".git": {},
-                "foo": "FOO\n",
+                "foo.txt": "FOO\n",
             }),
         )
         .await;
@@ -985,11 +1016,15 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo".into(), "foo\n".into())],
+            &[("foo.txt".into(), "foo\n".into())],
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt".into(), "foo\n".into())],
         );
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.statuses = HashMap::from_iter([(
-                "foo".into(),
+                "foo.txt".into(),
                 TrackedStatus {
                     index_status: StatusCode::Unmodified,
                     worktree_status: StatusCode::Modified,
@@ -1020,7 +1055,7 @@ mod tests {
 
         assert_state_with_diff(&editor, cx, &"ˇ".unindent());
 
-        let text = String::from_utf8(fs.read_file_sync("/project/foo").unwrap()).unwrap();
+        let text = String::from_utf8(fs.read_file_sync("/project/foo.txt").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
     }
 
