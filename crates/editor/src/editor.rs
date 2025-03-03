@@ -6781,7 +6781,7 @@ impl Editor {
                 .first_line_preview();
 
                 let styled_text = gpui::StyledText::new(highlighted_edits.text)
-                    .with_highlights(&style.text, highlighted_edits.highlights);
+                    .with_default_highlights(&style.text, highlighted_edits.highlights);
 
                 let preview = h_flex()
                     .gap_1()
@@ -18007,7 +18007,7 @@ pub fn diagnostic_block_renderer(
             )
             .child(buttons(&diagnostic))
             .child(div().flex().flex_shrink_0().child(
-                StyledText::new(text_without_backticks.clone()).with_highlights(
+                StyledText::new(text_without_backticks.clone()).with_default_highlights(
                     &text_style,
                     code_ranges.iter().map(|range| {
                         (

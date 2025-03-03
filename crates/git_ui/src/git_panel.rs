@@ -1,5 +1,6 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel_settings::StatusStyle;
+use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
 use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -12,8 +13,8 @@ use editor::{
     ShowScrollbar,
 };
 use git::repository::{
-    Branch, CommitDetails, CommitSummary, PushOptions, Remote, ResetMode, Upstream,
-    UpstreamTracking, UpstreamTrackingStatus,
+    Branch, CommitDetails, CommitSummary, PushOptions, Remote, RemoteCommandOutput, ResetMode,
+    Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
@@ -43,6 +44,7 @@ use ui::{
     PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
+
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId},
@@ -283,6 +285,7 @@ impl GitPanel {
             let commit_editor = cx.new(|cx| {
                 commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
             });
+
             commit_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
             });
@@ -1330,62 +1333,114 @@ impl GitPanel {
         };
         let guard = self.start_remote_operation();
         let fetch = repo.read(cx).fetch();
-        cx.spawn(|_, _| async move {
-            fetch.await??;
+        cx.spawn(|this, mut cx| async move {
+            let remote_message = fetch.await?;
             drop(guard);
+            this.update(&mut cx, |this, cx| {
+                match remote_message {
+                    Ok(remote_message) => {
+                        this.show_remote_output(RemoteAction::Fetch, remote_message, cx);
+                    }
+                    Err(e) => {
+                        this.show_err_toast(e, cx);
+                    }
+                }
+
+                anyhow::Ok(())
+            })
+            .ok();
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
 
     fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let Some(branch) = repo.read(cx).current_branch() else {
+            return;
+        };
+        let branch = branch.clone();
         let guard = self.start_remote_operation();
         let remote = self.get_current_remote(window, cx);
         cx.spawn(move |this, mut cx| async move {
-            let remote = remote.await?;
+            let remote = match remote.await {
+                Ok(Some(remote)) => remote,
+                Ok(None) => {
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::error!("Failed to get current remote: {}", e);
+                    this.update(&mut cx, |this, cx| this.show_err_toast(e, cx))
+                        .ok();
+                    return Ok(());
+                }
+            };
 
-            this.update(&mut cx, |this, cx| {
-                let Some(repo) = this.active_repository.clone() else {
-                    return Err(anyhow::anyhow!("No active repository"));
-                };
+            let pull = repo.update(&mut cx, |repo, _cx| {
+                repo.pull(branch.name.clone(), remote.name.clone())
+            })?;
 
-                let Some(branch) = repo.read(cx).current_branch() else {
-                    return Err(anyhow::anyhow!("No active branch"));
-                };
-
-                Ok(repo.read(cx).pull(branch.name.clone(), remote.name))
-            })??
-            .await??;
-
+            let remote_message = pull.await?;
             drop(guard);
+
+            this.update(&mut cx, |this, cx| match remote_message {
+                Ok(remote_message) => {
+                    this.show_remote_output(RemoteAction::Pull, remote_message, cx)
+                }
+                Err(err) => this.show_err_toast(err, cx),
+            })
+            .ok();
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
 
     fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let Some(branch) = repo.read(cx).current_branch() else {
+            return;
+        };
+        let branch = branch.clone();
         let guard = self.start_remote_operation();
         let options = action.options;
         let remote = self.get_current_remote(window, cx);
+
         cx.spawn(move |this, mut cx| async move {
-            let remote = remote.await?;
+            let remote = match remote.await {
+                Ok(Some(remote)) => remote,
+                Ok(None) => {
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::error!("Failed to get current remote: {}", e);
+                    this.update(&mut cx, |this, cx| this.show_err_toast(e, cx))
+                        .ok();
+                    return Ok(());
+                }
+            };
 
-            this.update(&mut cx, |this, cx| {
-                let Some(repo) = this.active_repository.clone() else {
-                    return Err(anyhow::anyhow!("No active repository"));
-                };
+            let push = repo.update(&mut cx, |repo, _cx| {
+                repo.push(branch.name.clone(), remote.name.clone(), options)
+            })?;
 
-                let Some(branch) = repo.read(cx).current_branch() else {
-                    return Err(anyhow::anyhow!("No active branch"));
-                };
-
-                Ok(repo
-                    .read(cx)
-                    .push(branch.name.clone(), remote.name, options))
-            })??
-            .await??;
+            let remote_output = push.await?;
 
             drop(guard);
+
+            this.update(&mut cx, |this, cx| match remote_output {
+                Ok(remote_message) => {
+                    this.show_remote_output(RemoteAction::Push(remote), remote_message, cx);
+                }
+                Err(e) => {
+                    this.show_err_toast(e, cx);
+                }
+            })?;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -1395,7 +1450,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<Remote>> {
+    ) -> impl Future<Output = Result<Option<Remote>>> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
@@ -1418,7 +1473,7 @@ impl GitPanel {
             if current_remotes.len() == 0 {
                 return Err(anyhow::anyhow!("No active remote"));
             } else if current_remotes.len() == 1 {
-                return Ok(current_remotes.pop().unwrap());
+                return Ok(Some(current_remotes.pop().unwrap()));
             } else {
                 let current_remotes: Vec<_> = current_remotes
                     .into_iter()
@@ -1436,9 +1491,9 @@ impl GitPanel {
                     })?
                     .await?;
 
-                return Ok(Remote {
+                Ok(selection.map(|selection| Remote {
                     name: current_remotes[selection].clone(),
-                });
+                }))
             }
         }
     }
@@ -1789,16 +1844,40 @@ impl GitPanel {
         };
         let notif_id = NotificationId::Named("git-operation-error".into());
 
-        let message = e.to_string();
-        workspace.update(cx, |workspace, cx| {
-            let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
+        let mut message = e.to_string().trim().to_string();
+        let toast;
+        if message.matches("Authentication failed").count() >= 1 {
+            message = format!(
+                "{}\n\n{}",
+                message, "Please set your credentials via the CLI"
+            );
+            toast = Toast::new(notif_id, message);
+        } else {
+            toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
                 window.dispatch_action(workspace::OpenLog.boxed_clone(), cx);
             });
+        }
+        workspace.update(cx, |workspace, cx| {
             workspace.show_toast(toast, cx);
         });
     }
 
-    fn render_spinner(&self) -> Option<impl IntoElement> {
+    fn show_remote_output(&self, action: RemoteAction, info: RemoteCommandOutput, cx: &mut App) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let notification_id = NotificationId::Named("git-remote-info".into());
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_notification(notification_id.clone(), cx, |cx| {
+                let workspace = cx.weak_entity();
+                cx.new(|cx| RemoteOutputToast::new(action, info, notification_id, workspace, cx))
+            });
+        });
+    }
+
+    pub fn render_spinner(&self) -> Option<impl IntoElement> {
         (!self.pending_remote_operations.borrow().is_empty()).then(|| {
             Icon::new(IconName::ArrowCircle)
                 .size(IconSize::XSmall)
@@ -2274,9 +2353,10 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
-
-        let show = repo.read(cx).show(sha);
-        cx.spawn(|_, _| async move { show.await? })
+        repo.update(cx, |repo, cx| {
+            let show = repo.show(sha);
+            cx.spawn(|_, _| async move { show.await? })
+        })
     }
 
     fn deploy_entry_context_menu(
