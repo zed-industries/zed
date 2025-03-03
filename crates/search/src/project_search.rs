@@ -1440,9 +1440,9 @@ impl ProjectSearchBar {
         self.cycle_field(Direction::Next, window, cx);
     }
 
-    fn tab_previous(
+    fn backtab(
         &mut self,
-        _: &editor::actions::TabPrevious,
+        _: &editor::actions::Backtab,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2095,7 +2095,7 @@ impl Render for ProjectSearchBar {
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|this, action, window, cx| {
-                this.tab_previous(action, window, cx);
+                this.backtab(action, window, cx);
                 cx.stop_propagation();
             }))
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))

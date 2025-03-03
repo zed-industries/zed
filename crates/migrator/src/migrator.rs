@@ -92,6 +92,7 @@ const KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS: MigrationPatterns = &[
     ),
     (ACTION_STRING_PATTERN, rename_string_action),
     (CONTEXT_PREDICATE_PATTERN, rename_context_key),
+    (ACTION_ARRAY_PATTERN, replace_first_string_of_array),
 ];
 
 static KEYMAP_MIGRATION_TRANSFORMATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -265,6 +266,30 @@ static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(||
     ])
 });
 
+// ["editor::GoToPrevHunk", { "center_cursor": true }] -> ["editor::GoToPreviousHunk", { "center_cursor": true }]
+fn replace_first_string_of_array(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let array_ix = query.capture_index_for_name("array")?;
+    let action_name_ix = query.capture_index_for_name("action_name")?;
+    let action_name = contents.get(
+        mat.nodes_for_capture_index(action_name_ix)
+            .next()?
+            .byte_range(),
+    )?;
+
+    let replacement = STRING_OF_ARRAY_REPLACE.get(action_name)?;
+    let replacement_as_string = format!("\"{replacement}\"");
+    let range_to_replace = mat.nodes_for_capture_index(array_ix).next()?.byte_range();
+
+    Some((range_to_replace, replacement_as_string))
+}
+
+static STRING_OF_ARRAY_REPLACE: LazyLock<HashMap<&str, &str>> =
+    LazyLock::new(|| HashMap::from_iter([("editor::GoToPrevHunk", "editor::GoToPreviousHunk")]));
+
 const ACTION_ARGUMENT_OBJECT_PATTERN: &str = r#"(document
     (array
         (object
@@ -424,6 +449,15 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
             "editor::ToggleInlineCompletions",
             "editor::ToggleEditPrediction",
         ),
+        (
+            "editor::GoToPrevDiagnostic",
+            "editor::GoToPreviousDiagnostic",
+        ),
+        ("editor::ContextMenuPrev", "editor::ContextMenuPrevious"),
+        ("search::SelectPrevMatch", "search::SelectPreviousMatch"),
+        ("file_finder::SelectPrev", "file_finder::SelectPrevious"),
+        ("menu::SelectPrev", "menu::SelectPrevious"),
+        ("editor::TabPrev", "editor::Backtab"),
     ])
 });
 
