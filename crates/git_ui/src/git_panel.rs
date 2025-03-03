@@ -3364,7 +3364,6 @@ impl RenderOnce for PanelRepoFooter {
             .justify_between()
             .child(
                 h_flex()
-                    .debug_below()
                     .flex_1()
                     .overflow_hidden()
                     .items_center()
@@ -3375,12 +3374,7 @@ impl RenderOnce for PanelRepoFooter {
                                 .color(Color::Muted),
                         ),
                     )
-                    .child(
-                        div()
-                            .max_w(relative(0.25))
-                            .overflow_hidden()
-                            .child(repo_selector),
-                    )
+                    .child(repo_selector)
                     .when_some(branch.clone(), |this, _| {
                         this.child(
                             div()
@@ -3389,12 +3383,7 @@ impl RenderOnce for PanelRepoFooter {
                                 .child("/"),
                         )
                     })
-                    .child(
-                        div()
-                            .max_w(relative(0.25))
-                            .overflow_hidden()
-                            .child(branch_selector),
-                    ),
+                    .child(branch_selector),
             )
             .child(
                 h_flex()
