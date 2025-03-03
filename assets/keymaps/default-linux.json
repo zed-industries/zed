@@ -150,7 +150,8 @@
     "bindings": {
       "alt-]": "editor::NextEditPrediction",
       "alt-[": "editor::PreviousEditPrediction",
-      "alt-right": "editor::AcceptPartialEditPrediction"
+      "alt-right": "editor::AcceptNextWordEditPrediction",
+      "alt-down": "editor::AcceptNextLineEditPrediction"
     }
   },
   {

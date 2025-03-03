@@ -464,6 +464,10 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
             "editor::AcceptPartialInlineCompletion",
             "editor::AcceptPartialEditPrediction",
         ),
+        (
+            "editor::AcceptPartialEditPrediction",
+            "editor::AcceptNextWordEditPrediction",
+        ),
         ("editor::ShowInlineCompletion", "editor::ShowEditPrediction"),
         (
             "editor::AcceptInlineCompletion",
