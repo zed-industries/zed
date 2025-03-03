@@ -330,6 +330,10 @@ enum OpenBuffer {
 
 pub enum BufferStoreEvent {
     BufferAdded(Entity<Buffer>),
+    BufferOpened {
+        buffer: Entity<Buffer>,
+        project_path: ProjectPath,
+    },
     BufferDropped(BufferId),
     BufferChangedFilePath {
         buffer: Entity<Buffer>,
@@ -1290,6 +1294,13 @@ impl BufferStore {
         }
     }
 
+    fn as_local(&self) -> Option<&LocalBufferStore> {
+        match &self.state {
+            BufferStoreState::Local(state) => Some(state),
+            _ => None,
+        }
+    }
+
     fn as_local_mut(&mut self) -> Option<&mut LocalBufferStore> {
         match &mut self.state {
             BufferStoreState::Local(state) => Some(state),
@@ -1317,6 +1328,11 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path, cx) {
+            cx.emit(BufferStoreEvent::BufferOpened {
+                buffer: buffer.clone(),
+                project_path,
+            });
+
             return Task::ready(Ok(buffer));
         }
 
@@ -1340,12 +1356,18 @@ impl BufferStore {
                     .insert(
                         cx.spawn(move |this, mut cx| async move {
                             let load_result = load_buffer.await;
-                            this.update(&mut cx, |this, _cx| {
+                            this.update(&mut cx, |this, cx| {
                                 // Record the fact that the buffer is no longer loading.
                                 this.loading_buffers.remove(&project_path);
-                            })
-                            .ok();
-                            load_result.map_err(Arc::new)
+
+                                let buffer = load_result.map_err(Arc::new)?;
+                                cx.emit(BufferStoreEvent::BufferOpened {
+                                    buffer: buffer.clone(),
+                                    project_path,
+                                });
+
+                                Ok(buffer)
+                            })?
                         })
                         .shared(),
                     )
@@ -1780,6 +1802,11 @@ impl BufferStore {
             let task = task.clone();
             (path, async move { task.await.map_err(|e| anyhow!("{e}")) })
         })
+    }
+
+    pub fn buffer_id_for_project_path(&self, project_path: &ProjectPath) -> Option<&BufferId> {
+        self.as_local()
+            .and_then(|state| state.local_buffer_ids_by_path.get(project_path))
     }
 
     pub fn get_by_path(&self, path: &ProjectPath, cx: &App) -> Option<Entity<Buffer>> {
