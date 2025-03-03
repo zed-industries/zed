@@ -659,7 +659,6 @@ impl Element for MarkdownElement {
                                 div()
                                     .id(("table", range.start))
                                     .flex()
-                                    .px_0p5()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_md()
@@ -671,7 +670,10 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::TableHead => {
                             builder.push_div(
-                                div().border_b_1().border_color(cx.theme().colors().border),
+                                div()
+                                    .flex()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border),
                                 range,
                                 markdown_end,
                             );
@@ -681,10 +683,14 @@ impl Element for MarkdownElement {
                             });
                         }
                         MarkdownTag::TableRow => {
-                            builder.push_text("\n", range.start);
+                            builder.push_div(
+                                div().h_flex().justify_between().px_1().py_0p5(),
+                                range,
+                                markdown_end,
+                            );
                         }
                         MarkdownTag::TableCell => {
-                            builder.push_text("|", range.start);
+                            builder.push_div(div().flex().px_1(), range, markdown_end);
                         }
                         _ => log::error!("unsupported markdown tag {:?}", tag),
                     }
@@ -764,9 +770,11 @@ impl Element for MarkdownElement {
                         builder.pop_text_style();
                     }
                     MarkdownTagEnd::TableRow => {
-                        builder.push_text("|", range.start);
+                        builder.pop_div();
                     }
-                    MarkdownTagEnd::TableCell => {}
+                    MarkdownTagEnd::TableCell => {
+                        builder.pop_div();
+                    }
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text(parsed) => {
