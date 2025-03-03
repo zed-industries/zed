@@ -134,6 +134,8 @@ impl ActiveThread {
             base_text_style: text_style,
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            table_overflow_x_scroll: true,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
                     top: Some(Length::Definite(rems(0.).into())),

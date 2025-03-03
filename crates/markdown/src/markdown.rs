@@ -27,6 +27,7 @@ use crate::parser::CodeBlockKind;
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
     pub code_block: StyleRefinement,
+    pub code_block_overflow_x_scroll: bool,
     pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
@@ -35,6 +36,7 @@ pub struct MarkdownStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
+    pub table_overflow_x_scroll: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -42,6 +44,7 @@ impl Default for MarkdownStyle {
         Self {
             base_text_style: Default::default(),
             code_block: Default::default(),
+            code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
             block_quote: Default::default(),
             link: Default::default(),
@@ -50,6 +53,7 @@ impl Default for MarkdownStyle {
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
             heading: Default::default(),
+            table_overflow_x_scroll: false,
         }
     }
 }
@@ -604,13 +608,20 @@ impl Element for MarkdownElement {
                                 None
                             };
 
-                            let mut d = div().w_full().rounded_lg();
-                            d.style().refine(&self.style.code_block);
+                            let mut code_block = div()
+                                .id(("code-block", range.start))
+                                .flex()
+                                .rounded_lg()
+                                .when(self.style.code_block_overflow_x_scroll, |mut code_block| {
+                                    code_block.style().restrict_scroll_to_axis = Some(true);
+                                    code_block.overflow_x_scroll()
+                                });
+                            code_block.style().refine(&self.style.code_block);
                             if let Some(code_block_text_style) = &self.style.code_block.text {
                                 builder.push_text_style(code_block_text_style.to_owned());
                             }
                             builder.push_code_block(language);
-                            builder.push_div(d, range, markdown_end);
+                            builder.push_div(code_block, range, markdown_end);
                         }
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
@@ -670,7 +681,10 @@ impl Element for MarkdownElement {
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_md()
-                                    .overflow_x_scroll(),
+                                    .when(self.style.table_overflow_x_scroll, |mut table| {
+                                        table.style().restrict_scroll_to_axis = Some(true);
+                                        table.overflow_x_scroll()
+                                    }),
                                 range,
                                 markdown_end,
                             );
