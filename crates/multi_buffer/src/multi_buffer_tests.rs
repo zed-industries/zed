@@ -2543,7 +2543,6 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             56..=85 if needs_diff_calculation => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     for buffer in multibuffer.all_buffers() {
-                        let id = buffer.read(cx).remote_id();
                         let snapshot = buffer.read(cx).snapshot();
                         multibuffer.diff_for(snapshot.remote_id()).unwrap().update(
                             cx,
