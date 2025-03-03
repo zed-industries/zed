@@ -232,7 +232,11 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) {
         // If the context picker is deployed, we do not want to interfere with the dismiss event
-        if self.message_editor.read(cx).is_context_picker_deployed() {
+        if self
+            .message_editor
+            .read(cx)
+            .is_any_context_picker_deployed()
+        {
             cx.propagate();
             return;
         }

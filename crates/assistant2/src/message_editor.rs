@@ -140,8 +140,9 @@ impl MessageEditor {
         self.send_to_model(RequestKind::Chat, window, cx);
     }
 
-    pub fn is_context_picker_deployed(&self) -> bool {
+    pub fn is_any_context_picker_deployed(&self) -> bool {
         self.context_picker_menu_handle.is_deployed()
+            || self.inline_context_picker_menu_handle.is_deployed()
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
