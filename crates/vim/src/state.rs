@@ -2,20 +2,27 @@ use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{UseSystemClipboard, Vim, VimSettings};
+use crate::{ToggleRegistersView, UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
 use gpui::{
-    Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
+    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Global, Render, Task, WeakEntity,
 };
 use language::Point;
+use picker::{Picker, PickerDelegate};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
-use ui::{Context, KeyBinding, SharedString};
+use ui::{
+    h_flex, rems, v_flex, Context, IntoElement, KeyBinding, Label, ListItem, ListItemSpacing,
+    ParentElement, SharedString, Styled, Toggleable, Window,
+};
+use util::ResultExt;
 use workspace::searchable::Direction;
+use workspace::{ModalView, Workspace};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -212,6 +219,11 @@ impl VimGlobals {
                 return;
             };
             Vim::globals(cx).observe_action(action.boxed_clone())
+        })
+        .detach();
+
+        cx.observe_new(|workspace: &mut Workspace, window, _| {
+            RegistersView::register(workspace, window);
         })
         .detach();
 
@@ -560,5 +572,170 @@ impl Operator {
             | Operator::OppositeCase
             | Operator::ToggleComments => false,
         }
+    }
+}
+
+struct RegisterMatch {
+    name: char,
+    contents: String,
+}
+
+pub struct RegistersViewDelegate {
+    // select_last: bool,
+    registers_view: WeakEntity<RegistersView>,
+    selected_index: usize,
+    // pane: WeakEntity<Pane>,
+    // project: Entity<Project>,
+    matches: Vec<RegisterMatch>,
+}
+
+impl PickerDelegate for RegistersViewDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        Arc::default()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
+        "All registers are empty".into()
+    }
+
+    fn update_matches(
+        &mut self,
+        _: String,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> gpui::Task<()> {
+        self.matches.clear();
+
+        for (name, register) in cx.global::<VimGlobals>().registers.iter() {
+            self.matches.push(RegisterMatch {
+                name: *name,
+                contents: register.text.to_string(),
+            })
+        }
+
+        self.matches.sort_by_key(|r| r.name);
+
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.registers_view
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.registers_view
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let register_match = self
+            .matches
+            .get(ix)
+            .expect("Invalid matches state: no element for index {ix}");
+
+        let max_length = 28;
+
+        let contents = if register_match.contents.len() > max_length {
+            register_match
+                .contents
+                .clone()
+                .split_at(max_length - 3)
+                .0
+                .to_owned()
+                + "..."
+        } else {
+            register_match.contents.clone()
+        };
+        let contents: String = contents
+            .chars()
+            .map(|c| match c {
+                '\t' => "\\t".to_string(),
+                '\n' => "\\n".to_string(),
+                '\r' => "\\r".to_string(),
+                _ => c.to_string(),
+            })
+            .collect();
+        Some(
+            ListItem::new(ix)
+                .spacing(ListItemSpacing::Sparse)
+                .inset(true)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .py_px()
+                        .justify_between()
+                        .child(Label::new(register_match.name.to_string().clone()))
+                        .child(Label::new(contents)),
+                ),
+        )
+    }
+}
+
+pub struct RegistersView {
+    picker: Entity<Picker<RegistersViewDelegate>>,
+}
+
+impl ModalView for RegistersView {}
+
+impl RegistersView {
+    fn register(workspace: &mut Workspace, _window: Option<&mut Window>) {
+        workspace.register_action(|workspace, _: &ToggleRegistersView, window, cx| {
+            Self::toggle(workspace, window, cx);
+        });
+    }
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+        let Some(previous_focus_handle) = window.focused(cx) else {
+            return;
+        };
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            RegistersView::new(previous_focus_handle, window, cx)
+        });
+    }
+    fn new(_: FocusHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let delegate = RegistersViewDelegate {
+            selected_index: 0,
+            matches: vec![],
+            registers_view: cx.entity().downgrade(),
+        };
+
+        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
+        Self { picker }
+    }
+}
+
+impl EventEmitter<DismissEvent> for RegistersView {}
+impl Focusable for RegistersView {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+impl Render for RegistersView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().w(rems(18.)).child(self.picker.clone())
     }
 }
