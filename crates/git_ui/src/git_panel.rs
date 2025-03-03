@@ -210,6 +210,7 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
+    marked_entries: Vec<usize>,
     show_scrollbar: bool,
     tracked_count: usize,
     tracked_staged_count: usize,
@@ -337,6 +338,7 @@ impl GitPanel {
                 scroll_handle,
                 scrollbar_state,
                 selected_entry: None,
+                marked_entries: Vec::new(),
                 show_scrollbar: false,
                 tracked_count: 0,
                 tracked_staged_count: 0,
@@ -2453,6 +2455,7 @@ impl GitPanel {
 
         let repo_path = entry.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
+        let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry.status;
         let has_conflict = status.is_conflicted();
@@ -2481,6 +2484,8 @@ impl GitPanel {
         };
 
         let id: ElementId = ElementId::Name(format!("entry_{}_{}", display_name, ix).into());
+        let checkbox_wrapper_id: ElementId =
+            ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", display_name, ix).into());
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
@@ -2493,6 +2498,39 @@ impl GitPanel {
 
         let handle = cx.weak_entity();
 
+        let selected_bg_alpha = 0.08;
+        let marked_bg_alpha = 0.12;
+        let state_opacity_step = 0.04;
+
+        let base_bg = match (selected, marked) {
+            (true, true) => cx
+                .theme()
+                .status()
+                .info
+                .alpha(selected_bg_alpha + marked_bg_alpha),
+            (true, false) => cx.theme().status().info.alpha(selected_bg_alpha),
+            (false, true) => cx.theme().status().info.alpha(marked_bg_alpha),
+            _ => cx.theme().colors().ghost_element_background,
+        };
+
+        let hover_bg = if selected {
+            cx.theme()
+                .status()
+                .info
+                .alpha(selected_bg_alpha + state_opacity_step)
+        } else {
+            cx.theme().colors().ghost_element_hover
+        };
+
+        let active_bg = if selected {
+            cx.theme()
+                .status()
+                .info
+                .alpha(selected_bg_alpha + state_opacity_step * 2.0)
+        } else {
+            cx.theme().colors().ghost_element_active
+        };
+
         h_flex()
             .id(id)
             .h(self.list_item_height(window))
@@ -2502,16 +2540,9 @@ impl GitPanel {
             .overflow_hidden()
             .flex_none()
             .gap(DynamicSpacing::Base04.rems(cx))
-            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
-            .active(|this| this.bg(cx.theme().colors().ghost_element_active))
-            .border_1()
-            .map(|this| {
-                this.border_color(if selected {
-                    cx.theme().colors().border_selected
-                } else {
-                    gpui::transparent_black()
-                })
-            })
+            .bg(base_bg)
+            .hover(|this| this.bg(hover_bg))
+            .active(|this| this.bg(active_bg))
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
@@ -2547,31 +2578,41 @@ impl GitPanel {
             //     },
             // ))
             .child(
-                Checkbox::new(checkbox_id, is_staged)
-                    .disabled(!has_write_access)
-                    .fill()
-                    .placeholder(!self.has_staged_changes() && !self.has_conflicts())
-                    .elevation(ElevationIndex::Surface)
-                    .on_click({
-                        let entry = entry.clone();
-                        cx.listener(move |this, _, window, cx| {
-                            this.toggle_staged_for_entry(
-                                &GitListEntry::GitStatusEntry(entry.clone()),
-                                window,
-                                cx,
-                            );
-                            cx.stop_propagation();
-                        })
-                    })
-                    .tooltip(move |window, cx| {
-                        let tooltip_name = if is_entry_staged.unwrap_or(false) {
-                            "Unstage"
-                        } else {
-                            "Stage"
-                        };
+                div()
+                    .id(checkbox_wrapper_id)
+                    .flex_none()
+                    .occlude()
+                    .cursor_pointer()
+                    .child(
+                        Checkbox::new(checkbox_id, is_staged)
+                            .disabled(!has_write_access)
+                            .fill()
+                            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
+                            .elevation(ElevationIndex::Surface)
+                            .on_click({
+                                let entry = entry.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    if !has_write_access {
+                                        return;
+                                    }
+                                    this.toggle_staged_for_entry(
+                                        &GitListEntry::GitStatusEntry(entry.clone()),
+                                        window,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                })
+                            })
+                            .tooltip(move |window, cx| {
+                                let tooltip_name = if is_entry_staged.unwrap_or(false) {
+                                    "Unstage"
+                                } else {
+                                    "Stage"
+                                };
 
-                        Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
-                    }),
+                                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+                            }),
+                    ),
             )
             .child(git_status_icon(status, cx))
             .child(
@@ -2595,60 +2636,6 @@ impl GitPanel {
                     ),
             )
             .into_any_element()
-
-        // ListItem::new(ix)
-        //     .spacing(ListItemSpacing::Dense)
-        //     .start_slot(
-        //         h_flex()
-        //             .h(self.list_item_height(window))
-        //             .items_center()
-        //             .overflow_hidden()
-        //             .id(("start-slot", ix))
-        //             .gap(DynamicSpacing::Base04.rems(cx))
-
-        //     )
-        //     .toggle_state(selected)
-        //     .focused(selected && self.focus_handle(cx).is_focused(window))
-        //     .disabled(!has_write_access)
-        //     .on_click({
-        //         cx.listener(move |this, event: &ClickEvent, window, cx| {
-        //             this.selected_entry = Some(ix);
-        //             cx.notify();
-        //             if event.modifiers().secondary() {
-        //                 this.open_file(&Default::default(), window, cx)
-        //             } else {
-        //                 this.open_diff(&Default::default(), window, cx);
-        //             }
-        //         })
-        //     })
-        //     .on_secondary_mouse_down(cx.listener(
-        //         move |this, event: &MouseDownEvent, window, cx| {
-        //             this.deploy_entry_context_menu(event.position, ix, window, cx);
-        //             cx.stop_propagation();
-        //         },
-        //     ))
-        //     .child(
-        //         h_flex()
-        //             .h(self.list_item_height(window))
-        //             .items_center()
-        //             .overflow_hidden()
-        //             .when_some(repo_path.parent(), |this, parent| {
-        //                 let parent_str = parent.to_string_lossy();
-        //                 if !parent_str.is_empty() {
-        //                     this.child(
-        //                         self.entry_label(format!("{}/", parent_str), path_color)
-        //                             .when(status.is_deleted(), |this| this.strikethrough()),
-        //                     )
-        //                 } else {
-        //                     this
-        //                 }
-        //             })
-        //             .child(
-        //                 self.entry_label(display_name.clone(), label_color)
-        //                     .when(status.is_deleted(), |this| this.strikethrough()),
-        //             ),
-        //     )
-        //     .into_any_element()
     }
 
     fn has_write_access(&self, cx: &App) -> bool {
