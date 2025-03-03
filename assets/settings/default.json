@@ -1298,6 +1298,11 @@
     // "semi": false,
     // "singleQuote": true
   },
+  // Settings for auto-closing of JSX tags.
+  "jsx_tag_auto_close": {
+    // // Whether to auto-close JSX tags.
+    // "enabled": true
+  },
   // LSP Specific settings.
   "lsp": {
     // Specify the LSP name as a key here.
