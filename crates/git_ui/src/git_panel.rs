@@ -18,7 +18,14 @@ use git::repository::{
 };
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
-use gpui::*;
+use gpui::{
+    actions, anchored, deferred, hsla, percentage, point, uniform_list, Action, Animation,
+    AnimationExt as _, AnyView, BoxShadow, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Point, PromptLevel,
+    ScrollStrategy, Stateful, Subscription, Task, Transformation, UniformListScrollHandle,
+    WeakEntity,
+};
 use itertools::Itertools;
 use language::{Buffer, File};
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -35,6 +42,7 @@ use settings::Settings as _;
 use smallvec::smallvec;
 use std::cell::RefCell;
 use std::future::Future;
+use std::path::Path;
 use std::rc::Rc;
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -63,7 +71,12 @@ actions!(
     ]
 );
 
-fn prompt<T>(msg: &str, detail: Option<&str>, window: &mut Window, cx: &mut App) -> Task<Result<T>>
+fn prompt<T>(
+    msg: &str,
+    detail: Option<&str>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<anyhow::Result<T>>
 where
     T: IntoEnumIterator + VariantNames + 'static,
 {
@@ -165,6 +178,7 @@ impl GitListEntry {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
+    pub(crate) worktree_path: Arc<Path>,
     pub(crate) status: FileStatus,
     pub(crate) is_staged: Option<bool>,
 }
@@ -1457,7 +1471,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<Option<Remote>>> {
+    ) -> impl Future<Output = anyhow::Result<Option<Remote>>> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
@@ -1694,10 +1708,8 @@ impl GitPanel {
             return;
         };
 
-        // First pass - collect all paths
         let repo = repo.read(cx);
 
-        // Second pass - create entries with proper depth calculation
         for entry in repo.status() {
             let is_conflict = repo.has_conflict(&entry.repo_path);
             let is_new = entry.status.is_created();
@@ -1711,8 +1723,12 @@ impl GitPanel {
                 continue;
             }
 
+            let Some(worktree_path) = repo.repository_entry.unrelativize(&entry.repo_path) else {
+                continue;
+            };
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
+                worktree_path,
                 status: entry.status,
                 is_staged,
             };
@@ -2363,7 +2379,7 @@ impl GitPanel {
         &self,
         sha: &str,
         cx: &mut Context<Self>,
-    ) -> Task<Result<CommitDetails>> {
+    ) -> Task<anyhow::Result<CommitDetails>> {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
@@ -2448,12 +2464,12 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> AnyElement {
         let display_name = entry
-            .repo_path
+            .worktree_path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| entry.repo_path.to_string_lossy().into_owned());
+            .unwrap_or_else(|| entry.worktree_path.to_string_lossy().into_owned());
 
-        let repo_path = entry.repo_path.clone();
+        let worktree_path = entry.worktree_path.clone();
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -2619,7 +2635,7 @@ impl GitPanel {
                 h_flex()
                     .items_center()
                     .overflow_hidden()
-                    .when_some(repo_path.parent(), |this, parent| {
+                    .when_some(worktree_path.parent(), |this, parent| {
                         let parent_str = parent.to_string_lossy();
                         if !parent_str.is_empty() {
                             this.child(
