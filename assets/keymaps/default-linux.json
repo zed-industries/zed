@@ -779,6 +779,7 @@
   {
     "context": "Picker > Editor",
     "bindings": {
+      "escape": "menu::Cancel",
       "up": "menu::SelectPrev",
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
