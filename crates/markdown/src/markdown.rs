@@ -666,7 +666,8 @@ impl Element for MarkdownElement {
                                 range,
                                 markdown_end,
                             );
-                            builder.push_div(div().v_flex(), range, markdown_end);
+                            // This inner `v_flex` is so the table rows will stack vertically without disrupting the `overflow_x_scroll`.
+                            builder.push_div(div().v_flex().flex_grow(), range, markdown_end);
                         }
                         MarkdownTag::TableHead => {
                             builder.push_div(
