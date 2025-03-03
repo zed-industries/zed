@@ -5805,6 +5805,7 @@ pub trait WorktreeModelHandle {
     #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events_in_root_git_repository<'a>(
         &self,
+        expected_status_change: bool,
         cx: &'a mut gpui::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()>;
 }
@@ -5858,23 +5859,24 @@ impl WorktreeModelHandle for Entity<Worktree> {
     #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events_in_root_git_repository<'a>(
         &self,
+        expected_status_change: bool,
         cx: &'a mut gpui::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()> {
         let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
-        let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
+        let (fs, root_path, mut status_scan_id) = self.update(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
             let root_entry = tree.root_git_entry().unwrap();
             let local_repo_entry = tree.get_local_repo(&root_entry).unwrap();
             (
                 tree.fs.clone(),
                 local_repo_entry.dot_git_dir_abs_path.clone(),
-                local_repo_entry.git_dir_scan_id,
+                local_repo_entry.status_scan_id,
             )
         });
 
-        let scan_id_increased = |tree: &mut Worktree, git_dir_scan_id: &mut usize| {
+        let status_scan_id_increased = |tree: &mut Worktree, status_scan_id: &mut usize| {
             let root_entry = tree.root_git_entry().unwrap();
             let local_repo_entry = tree
                 .as_local()
@@ -5882,8 +5884,8 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .get_local_repo(&root_entry)
                 .unwrap();
 
-            if local_repo_entry.git_dir_scan_id > *git_dir_scan_id {
-                *git_dir_scan_id = local_repo_entry.git_dir_scan_id;
+            if local_repo_entry.status_scan_id > *status_scan_id {
+                *status_scan_id = local_repo_entry.status_scan_id;
                 true
             } else {
                 false
@@ -5895,19 +5897,23 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| {
-                scan_id_increased(tree, &mut git_dir_scan_id)
-            })
-            .await;
+            if expected_status_change {
+                cx.condition(&tree, |tree, _| {
+                    status_scan_id_increased(tree, &mut status_scan_id)
+                })
+                .await;
+            }
 
             fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| {
-                scan_id_increased(tree, &mut git_dir_scan_id)
-            })
-            .await;
+            if expected_status_change {
+                cx.condition(&tree, |tree, _| {
+                    status_scan_id_increased(tree, &mut status_scan_id)
+                })
+                .await;
+            }
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;

@@ -2766,7 +2766,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     .unwrap();
 
     tree.flush_fs_events(cx).await;
-    tree.flush_fs_events_in_root_git_repository(cx).await;
+    tree.flush_fs_events_in_root_git_repository(false, cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
     cx.executor().run_until_parked();
@@ -2798,7 +2798,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     // Meaning: we don't produce any FS events for files inside the project.
     git_add(E_TXT, &repo);
     git_commit("Second commit", &repo);
-    tree.flush_fs_events_in_root_git_repository(cx).await;
+    tree.flush_fs_events_in_root_git_repository(false, cx).await;
     cx.executor().run_until_parked();
 
     tree.read_with(cx, |tree, _cx| {
