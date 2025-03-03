@@ -681,9 +681,9 @@ impl Element for MarkdownElement {
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_md()
-                                    .when(self.style.table_overflow_x_scroll, |mut code_block| {
-                                        code_block.style().restrict_scroll_to_axis = Some(true);
-                                        code_block.overflow_x_scroll()
+                                    .when(self.style.table_overflow_x_scroll, |mut table| {
+                                        table.style().restrict_scroll_to_axis = Some(true);
+                                        table.overflow_x_scroll()
                                     }),
                                 range,
                                 markdown_end,
