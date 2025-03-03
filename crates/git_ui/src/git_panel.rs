@@ -2274,7 +2274,7 @@ impl GitPanel {
     ) -> impl IntoElement {
         let entry_count = self.entries.len();
 
-        v_flex()
+        h_flex()
             .size_full()
             .flex_grow()
             .overflow_hidden()
