@@ -336,10 +336,14 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, window: &mut Window, cx: &mut Context<Self>) {
+        self.slash_menu_handle.hide(cx);
+        self.language_model_selector_menu_handle.hide(cx);
         self.send_to_model(RequestType::Chat, window, cx);
     }
 
     fn edit(&mut self, _: &Edit, window: &mut Window, cx: &mut Context<Self>) {
+        self.slash_menu_handle.hide(cx);
+        self.language_model_selector_menu_handle.hide(cx);
         self.send_to_model(RequestType::SuggestEdits, window, cx);
     }
 
