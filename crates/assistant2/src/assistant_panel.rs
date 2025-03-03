@@ -609,7 +609,7 @@ impl AssistantPanel {
                     .id("title")
                     .overflow_x_scroll()
                     .px(DynamicSpacing::Base08.rems(cx))
-                    .child(Label::new(title).text_ellipsis()),
+                    .child(Label::new(title).truncate()),
             )
             .child(
                 h_flex()
