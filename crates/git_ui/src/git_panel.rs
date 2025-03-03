@@ -40,8 +40,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, ListItem, ListItemSpacing,
-    PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, PopoverButton, PopoverMenu,
+    Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 
@@ -210,6 +210,7 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
+    marked_entries: Vec<usize>,
     show_scrollbar: bool,
     tracked_count: usize,
     tracked_staged_count: usize,
@@ -337,6 +338,7 @@ impl GitPanel {
                 scroll_handle,
                 scrollbar_state,
                 selected_entry: None,
+                marked_entries: Vec::new(),
                 show_scrollbar: false,
                 tracked_count: 0,
                 tracked_staged_count: 0,
@@ -2077,7 +2079,7 @@ impl GitPanel {
                                         .on_click(cx.listener({
                                             move |_, _, window, cx| {
                                                 window.dispatch_action(
-                                                    git::ExpandCommitEditor.boxed_clone(),
+                                                    git::ShowCommitEditor.boxed_clone(),
                                                     cx,
                                                 )
                                             }
@@ -2309,7 +2311,7 @@ impl GitPanel {
                     }
                 })
                 .size_full()
-                .with_sizing_behavior(ListSizingBehavior::Infer)
+                .with_sizing_behavior(ListSizingBehavior::Auto)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .track_scroll(self.scroll_handle.clone()),
             )
@@ -2326,6 +2328,10 @@ impl GitPanel {
         Label::new(label.into()).color(color).single_line()
     }
 
+    fn list_item_height(&self) -> Rems {
+        rems(1.75)
+    }
+
     fn render_list_header(
         &self,
         ix: usize,
@@ -2334,18 +2340,21 @@ impl GitPanel {
         _: &Window,
         _: &Context<Self>,
     ) -> AnyElement {
-        div()
+        let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
+
+        h_flex()
+            .id(id)
+            .h(self.list_item_height())
             .w_full()
+            .items_end()
+            .px(rems(0.75)) // ~12px
+            .pb(rems(0.3125)) // ~ 5px
             .child(
-                ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .disabled(true)
-                    .child(
-                        Label::new(header.title())
-                            .color(Color::Muted)
-                            .size(LabelSize::Small)
-                            .single_line(),
-                    ),
+                Label::new(header.title())
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel)
+                    .single_line(),
             )
             .into_any_element()
     }
@@ -2435,7 +2444,7 @@ impl GitPanel {
         ix: usize,
         entry: &GitStatusEntry,
         has_write_access: bool,
-        window: &Window,
+        _: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let display_name = entry
@@ -2446,6 +2455,7 @@ impl GitPanel {
 
         let repo_path = entry.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
+        let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry.status;
         let has_conflict = status.is_conflicted();
@@ -2473,7 +2483,11 @@ impl GitPanel {
             Color::Muted
         };
 
-        let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
+        let id: ElementId = ElementId::Name(format!("entry_{}_{}", display_name, ix).into());
+        let checkbox_wrapper_id: ElementId =
+            ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", display_name, ix).into());
+        let checkbox_id: ElementId =
+            ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
         let is_entry_staged = self.entry_is_staged(entry);
         let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
@@ -2482,84 +2496,143 @@ impl GitPanel {
             is_staged = ToggleState::Selected;
         }
 
-        let checkbox = Checkbox::new(id, is_staged)
-            .disabled(!has_write_access)
-            .fill()
-            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
-            .elevation(ElevationIndex::Surface)
-            .on_click({
-                let entry = entry.clone();
-                cx.listener(move |this, _, window, cx| {
-                    this.toggle_staged_for_entry(
-                        &GitListEntry::GitStatusEntry(entry.clone()),
-                        window,
-                        cx,
-                    );
-                    cx.stop_propagation();
-                })
-            });
+        let handle = cx.weak_entity();
 
-        let start_slot = h_flex()
-            .id(("start-slot", ix))
-            .gap(DynamicSpacing::Base04.rems(cx))
-            .child(checkbox.tooltip(move |window, cx| {
-                let tooltip_name = if is_entry_staged.unwrap_or(false) {
-                    "Unstage"
-                } else {
-                    "Stage"
-                };
+        let selected_bg_alpha = 0.08;
+        let marked_bg_alpha = 0.12;
+        let state_opacity_step = 0.04;
 
-                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
-            }))
-            .child(git_status_icon(status, cx))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                // prevent the list item active state triggering when toggling checkbox
-                cx.stop_propagation();
-            });
+        let base_bg = match (selected, marked) {
+            (true, true) => cx
+                .theme()
+                .status()
+                .info
+                .alpha(selected_bg_alpha + marked_bg_alpha),
+            (true, false) => cx.theme().status().info.alpha(selected_bg_alpha),
+            (false, true) => cx.theme().status().info.alpha(marked_bg_alpha),
+            _ => cx.theme().colors().ghost_element_background,
+        };
 
-        div()
+        let hover_bg = if selected {
+            cx.theme()
+                .status()
+                .info
+                .alpha(selected_bg_alpha + state_opacity_step)
+        } else {
+            cx.theme().colors().ghost_element_hover
+        };
+
+        let active_bg = if selected {
+            cx.theme()
+                .status()
+                .info
+                .alpha(selected_bg_alpha + state_opacity_step * 2.0)
+        } else {
+            cx.theme().colors().ghost_element_active
+        };
+
+        h_flex()
+            .id(id)
+            .h(self.list_item_height())
             .w_full()
+            .items_center()
+            .px(rems(0.75)) // ~12px
+            .overflow_hidden()
+            .flex_none()
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .bg(base_bg)
+            .hover(|this| this.bg(hover_bg))
+            .active(|this| this.bg(active_bg))
+            .on_click({
+                cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    this.selected_entry = Some(ix);
+                    cx.notify();
+                    if event.modifiers().secondary() {
+                        this.open_file(&Default::default(), window, cx)
+                    } else {
+                        this.open_diff(&Default::default(), window, cx);
+                    }
+                })
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                move |event: &MouseDownEvent, window, cx| {
+                    // why isn't this happening automatically? we are passing MouseButton::Right to `on_mouse_down`?
+                    if event.button != MouseButton::Right {
+                        return;
+                    }
+
+                    let Some(this) = handle.upgrade() else {
+                        return;
+                    };
+                    this.update(cx, |this, cx| {
+                        this.deploy_entry_context_menu(event.position, ix, window, cx);
+                    });
+                    cx.stop_propagation();
+                },
+            )
+            // .on_secondary_mouse_down(cx.listener(
+            //     move |this, event: &MouseDownEvent, window, cx| {
+            //         this.deploy_entry_context_menu(event.position, ix, window, cx);
+            //         cx.stop_propagation();
+            //     },
+            // ))
             .child(
-                ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .start_slot(start_slot)
-                    .toggle_state(selected)
-                    .focused(selected && self.focus_handle(cx).is_focused(window))
-                    .disabled(!has_write_access)
-                    .on_click({
-                        cx.listener(move |this, event: &ClickEvent, window, cx| {
-                            this.selected_entry = Some(ix);
-                            cx.notify();
-                            if event.modifiers().secondary() {
-                                this.open_file(&Default::default(), window, cx)
-                            } else {
-                                this.open_diff(&Default::default(), window, cx);
-                            }
-                        })
-                    })
-                    .on_secondary_mouse_down(cx.listener(
-                        move |this, event: &MouseDownEvent, window, cx| {
-                            this.deploy_entry_context_menu(event.position, ix, window, cx);
-                            cx.stop_propagation();
-                        },
-                    ))
+                div()
+                    .id(checkbox_wrapper_id)
+                    .flex_none()
+                    .occlude()
+                    .cursor_pointer()
                     .child(
-                        h_flex()
-                            .when_some(repo_path.parent(), |this, parent| {
-                                let parent_str = parent.to_string_lossy();
-                                if !parent_str.is_empty() {
-                                    this.child(
-                                        self.entry_label(format!("{}/", parent_str), path_color)
-                                            .when(status.is_deleted(), |this| this.strikethrough()),
-                                    )
-                                } else {
-                                    this
-                                }
+                        Checkbox::new(checkbox_id, is_staged)
+                            .disabled(!has_write_access)
+                            .fill()
+                            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
+                            .elevation(ElevationIndex::Surface)
+                            .on_click({
+                                let entry = entry.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    if !has_write_access {
+                                        return;
+                                    }
+                                    this.toggle_staged_for_entry(
+                                        &GitListEntry::GitStatusEntry(entry.clone()),
+                                        window,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                })
                             })
-                            .child(
-                                self.entry_label(display_name.clone(), label_color)
+                            .tooltip(move |window, cx| {
+                                let tooltip_name = if is_entry_staged.unwrap_or(false) {
+                                    "Unstage"
+                                } else {
+                                    "Stage"
+                                };
+
+                                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+                            }),
+                    ),
+            )
+            .child(git_status_icon(status, cx))
+            .child(
+                h_flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .when_some(repo_path.parent(), |this, parent| {
+                        let parent_str = parent.to_string_lossy();
+                        if !parent_str.is_empty() {
+                            this.child(
+                                self.entry_label(format!("{}/", parent_str), path_color)
                                     .when(status.is_deleted(), |this| this.strikethrough()),
-                            ),
+                            )
+                        } else {
+                            this
+                        }
+                    })
+                    .child(
+                        self.entry_label(display_name.clone(), label_color)
+                            .when(status.is_deleted(), |this| this.strikethrough()),
                     ),
             )
             .into_any_element()

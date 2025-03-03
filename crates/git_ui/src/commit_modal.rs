@@ -2,7 +2,7 @@
 
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
-use git::{Commit, ExpandCommitEditor};
+use git::{Commit, ShowCommitEditor};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use project::Project;
 use ui::{prelude::*, KeybindingHint, PopoverButton, Tooltip, TriggerablePopover};
@@ -110,7 +110,7 @@ struct RestoreDock {
 
 impl CommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
+        workspace.register_action(|workspace, _: &ShowCommitEditor, window, cx| {
             let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
                 return;
             };
