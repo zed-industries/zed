@@ -46,12 +46,16 @@ impl Render for RunningState {
         if let Some((thread, _)) = threads.first().filter(|_| self.thread.is_none()) {
             self.select_thread(ThreadId(thread.id), thread.name.clone(), window, cx);
         }
-
         let thread_status = self
             .thread
             .as_ref()
             .map(|(thread_id, _)| self.session.read(cx).thread_status(*thread_id))
             .unwrap_or(ThreadStatus::Exited);
+
+        self.variable_list.update(cx, |this, cx| {
+            this.disabled(thread_status != ThreadStatus::Stopped, cx);
+        });
+
         let is_terminated = self.session.read(cx).is_terminated();
         let active_thread_item = &self.active_thread_item;
 

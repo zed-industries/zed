@@ -18,33 +18,27 @@ pub(crate) struct VariableState {
     is_expanded: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ScopeState {
-    is_expanded: bool,
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) struct VariablePath {
-    pub base: VariableReference,
     pub indices: Arc<[VariableReference]>,
 }
 
 #[derive(Debug)]
-enum VariableListEntry {
-    Scope((dap::Scope, ScopeState)),
-    Variable((dap::Variable, VariablePath, VariableState)),
+struct Variable {
+    dap: dap::Variable,
+    path: VariablePath,
 }
 
 pub struct VariableList {
-    entries: Vec<VariableListEntry>,
-    scope_states: HashMap<StackFrameId, ScopeState>,
+    entries: Vec<Variable>,
     variable_states: HashMap<VariablePath, VariableState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list: ListState,
     session: Entity<Session>,
-    _selection: Option<VariableListEntry>,
+    _selection: Option<Variable>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
+    disabled: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -82,12 +76,8 @@ impl VariableList {
         )
         .detach();
 
-        let _subscriptions = vec![
-            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.subscribe(&session, |this, _, _, cx| {
-                this.build_entries(cx);
-            }),
-        ];
+        let _subscriptions =
+            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
 
         Self {
             list,
@@ -97,9 +87,24 @@ impl VariableList {
             selected_stack_frame_id: None,
             _selection: None,
             open_context_menu: None,
+            disabled: false,
             entries: Default::default(),
-            scope_states: Default::default(),
             variable_states: Default::default(),
+        }
+    }
+
+    // Thread changing
+    // On SetVariable Response
+    // Invalidation Event that matches our thread_id or stack frame id
+    //
+    // when continuing a thread, change its state -> mark variable list as read_only
+    pub(super) fn invalidate(&mut self) {}
+
+    pub(super) fn disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        let old_disabled = std::mem::take(&mut self.disabled);
+        self.disabled = disabled;
+        if old_disabled != disabled {
+            cx.notify();
         }
     }
 
@@ -112,68 +117,137 @@ impl VariableList {
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
             session.scopes(stack_frame_id, cx).iter().cloned().collect()
         });
+        let mut stack = scopes
+            .into_iter()
+            .rev()
+            .map(|scope| {
+                (
+                    scope.variables_reference,
+                    None,
+                    vec![scope.variables_reference],
+                )
+            })
+            .collect::<Vec<_>>(); //
 
-        fn inner(
-            this: &mut VariableList,
-            variable_reference: VariableReference,
-            indices: &mut Vec<u64>,
-            entries: &mut Vec<VariableListEntry>,
-            cx: &mut Context<VariableList>,
-        ) {
-            for variable in this
-                .session
-                .update(cx, |session, cx| session.variables(variable_reference, cx))
-            {
-                let child_ref = variable.variables_reference;
-                let depth = indices.len() + 1;
+        while let Some((variable_reference, dap, indices)) = stack.pop() {
+            // Adding childern scope: [x, y, z]
+            // iterate over x: [a, b, c]
+            // add a to list
+            // iterate over a: []
+            let path = VariablePath {
+                indices: indices.clone().into(),
+            };
 
-                let var_path = VariablePath {
-                    base: child_ref,
-                    indices: Arc::from(indices.clone()),
-                };
+            let var_state = self
+                .variable_states
+                .entry(path.clone())
+                .or_insert(VariableState {
+                    depth: path.indices.len(),
+                    is_expanded: dap.is_none(),
+                });
 
-                let var_state =
-                    *this
-                        .variable_states
-                        .entry(var_path.clone())
-                        .or_insert(VariableState {
-                            depth,
-                            is_expanded: false,
-                        });
+            if let Some(dap) = dap {
+                entries.push(Variable { dap, path });
+                // This entry is not a scope, but a variable; add it to the list.
+            }
+            // Add children to the processing queue
 
-                entries.push(VariableListEntry::Variable((variable, var_path, var_state)));
-
-                indices.push(child_ref);
-                if var_state.is_expanded {
-                    inner(this, child_ref, indices, entries, cx);
-                }
-                indices.pop();
+            if var_state.is_expanded {
+                let children = self
+                    .session
+                    .update(cx, |session, cx| session.variables(variable_reference, cx));
+                stack.extend(children.into_iter().rev().map(|child| {
+                    let mut indices = indices.clone();
+                    indices.push(child.variables_reference);
+                    (child.variables_reference, Some(child), indices)
+                }));
             }
         }
-        let mut indices = Vec::new();
-
-        for scope in scopes.iter().cloned() {
-            let state = *self
-                .scope_states
-                .entry(scope.variables_reference)
-                .or_insert(ScopeState { is_expanded: true });
-
-            let scope_ref = scope.variables_reference;
-
-            entries.push(VariableListEntry::Scope((scope, state)));
-
-            indices.push(scope_ref);
-
-            if state.is_expanded {
-                inner(self, scope_ref, &mut indices, &mut entries, cx);
-            }
-            indices.pop();
-        }
-
         self.entries = entries;
         self.list.reset(self.entries.len());
         cx.notify();
     }
+
+    // fn build_entries(&mut self, cx: &mut Context<Self>) {
+    //     let Some(stack_frame_id) = self.selected_stack_frame_id else {
+    //         return;
+    //     };
+
+    //     let mut entries = vec![];
+    //     let scopes: Vec<_> = self.session.update(cx, |session, cx| {
+    //         session.scopes(stack_frame_id, cx).iter().cloned().collect()
+    //     });
+
+    //     fn inner(
+    //         this: &mut VariableList,
+    //         variable_reference: VariableReference,
+    //         indices: &mut Vec<u64>,
+    //         entries: &mut Vec<Variable>,
+    //         cx: &mut Context<VariableList>,
+    //     ) {
+    //         // stack
+    //         // var  stack.push(var)
+    //         // for child in var {
+    //         //   stack.push(child)
+    //         //   re iterate  over stack
+    //         // }
+    //         // while let Some(var) = stack.pop() {
+    //         //     for child in var {
+    //         //         stack.push(child)
+    //         //     }
+    //         // }
+
+    //         for variable in this
+    //             .session
+    //             .update(cx, |session, cx| session.variables(variable_reference, cx))
+    //         {
+    //             let child_ref = variable.variables_reference;
+    //             let depth = indices.len();
+
+    //             let var_path = VariablePath {
+    //                 base: child_ref,
+    //                 indices: Arc::from(indices.clone()),
+    //             };
+
+    //             let var_state =
+    //                 *this
+    //                     .variable_states
+    //                     .entry(var_path.clone())
+    //                     .or_insert(VariableState {
+    //                         depth,
+    //                         is_expanded: false,
+    //                     });
+
+    //             let variable = Variable {
+    //                 dap: variable,
+    //                 path: var_path,
+    //                 state: var_state,
+    //             };
+
+    //             entries.push(variable);
+
+    //             indices.push(child_ref);
+    //             if var_state.is_expanded {
+    //                 inner(this, child_ref, indices, entries, cx);
+    //             }
+    //             indices.pop();
+    //         }
+    //     }
+    //     let mut indices = Vec::new();
+
+    //     for scope in scopes.iter().cloned() {
+    //         let scope_ref = scope.variables_reference;
+
+    //         indices.push(scope_ref);
+    //         inner(self, scope_ref, &mut indices, &mut entries, cx);
+    //         indices.pop();
+    //     }
+
+    //     self.entries = entries;
+    //     dbg!(&self.entries);
+    //     self.list.reset(self.entries.len());
+    //     cx.notify();
+    // }
 
     fn handle_stack_frame_list_events(
         &mut self,
@@ -194,44 +268,23 @@ impl VariableList {
     pub fn completion_variables(&self, _cx: &mut Context<Self>) -> Vec<dap::Variable> {
         self.entries
             .iter()
-            .filter_map(|entry| match entry {
-                VariableListEntry::Variable((variable, ..)) => Some(variable.clone()),
-                _ => None,
-            })
+            .map(|variable| variable.dap.clone())
             .collect()
     }
 
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(entry) = self.entries.get(ix) else {
+        let Some((entry, state)) = self
+            .entries
+            .get(ix)
+            .and_then(|entry| Some(entry).zip(self.variable_states.get(&entry.path)))
+        else {
             debug_panic!("Trying to render entry in variable list that has an out of bounds index");
             return div().into_any_element();
         };
 
         // todo(debugger) pass a valid value for is selected
-        let is_selected = false;
 
-        match entry {
-            VariableListEntry::Scope((scope, state)) => {
-                self.render_scope(scope.clone(), *state, is_selected, cx)
-            }
-            VariableListEntry::Variable((variable, var_path, state)) => self.render_variable(
-                variable.clone(),
-                var_path.to_owned(),
-                *state,
-                is_selected,
-                cx,
-            ),
-        }
-    }
-
-    fn toggle_scope(&mut self, scope_ref: VariableReference, cx: &mut Context<Self>) {
-        let Some(entry) = self.scope_states.get_mut(&scope_ref) else {
-            debug_panic!("Trying to toggle scope in variable list that has an no state");
-            return;
-        };
-
-        entry.is_expanded = !entry.is_expanded;
-        self.build_entries(cx);
+        self.render_variable(entry, *state, false, cx)
     }
 
     pub(crate) fn toggle_variable(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
@@ -416,13 +469,13 @@ impl VariableList {
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
-        variable: dap::Variable,
-        var_path: VariablePath,
+        variable: &Variable,
         state: VariableState,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let var_ref = variable.variables_reference;
+        dbg!("rendering variable", variable);
+        let var_ref = variable.dap.variables_reference;
         let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
             colors.hover
@@ -438,7 +491,7 @@ impl VariableList {
         div()
             .id(SharedString::from(format!(
                 "variable-{}-{}",
-                variable.name, state.depth
+                variable.dap.name, state.depth
             )))
             .group("variable_list_entry")
             .border_1()
@@ -464,15 +517,16 @@ impl VariableList {
             .child(
                 ListItem::new(SharedString::from(format!(
                     "variable-item-{}-{}",
-                    variable.name, state.depth
+                    variable.dap.name, state.depth
                 )))
+                .disabled(self.disabled)
                 .selectable(false)
                 .indent_level(state.depth as usize)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
-                        let var_path = var_path.clone();
+                        let var_path = variable.path.clone();
                         move |this, _, _window, cx| {
                             this.session.update(cx, |session, cx| {
                                 session.variables(var_ref, cx);
@@ -502,63 +556,14 @@ impl VariableList {
                     h_flex()
                         .gap_1()
                         .text_ui_sm(cx)
-                        .child(variable.name.clone())
+                        .child(variable.dap.name.clone())
                         .child(
                             div()
                                 .text_ui_xs(cx)
                                 .text_color(cx.theme().colors().text_muted)
-                                .child(variable.value.replace("\n", " ").clone()),
+                                .child(variable.dap.value.replace("\n", " ").clone()),
                         ),
                 ),
-            )
-            .into_any()
-    }
-
-    fn render_scope(
-        &self,
-        scope: dap::Scope,
-        state: ScopeState,
-        is_selected: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let var_ref = scope.variables_reference;
-
-        let colors = _get_entry_color(cx);
-        let bg_hover_color = if !is_selected {
-            colors.hover
-        } else {
-            colors.default
-        };
-        let border_color = if is_selected {
-            colors.marked_active
-        } else {
-            colors.default
-        };
-
-        div()
-            .id(var_ref as usize)
-            .group("variable_list_entry")
-            .border_1()
-            .border_r_2()
-            .border_color(border_color)
-            .flex()
-            .w_full()
-            .h_full()
-            .hover(|style| style.bg(bg_hover_color))
-            .on_click(cx.listener({
-                move |_this, _, _window, cx| {
-                    cx.notify();
-                }
-            }))
-            .child(
-                ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
-                    .selectable(false)
-                    .indent_level(1)
-                    .indent_step_size(px(20.))
-                    .always_show_disclosure_icon(true)
-                    .toggle(state.is_expanded)
-                    .on_toggle(cx.listener(move |this, _, _, cx| this.toggle_scope(var_ref, cx)))
-                    .child(div().text_ui(cx).w_full().child(scope.name.clone())),
             )
             .into_any()
     }
@@ -572,6 +577,8 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.build_entries(cx);
+
         v_flex()
             .key_context("VariableList")
             .id("variable-list")

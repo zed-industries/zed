@@ -198,6 +198,8 @@ impl StackFrameList {
             let buffer = this
                 .update(&mut cx, |this, cx| {
                     this.workspace.update(cx, |workspace, cx| {
+                        // todo(debugger): This will cause an error if we hit a breakpoint that is outside the project
+                        // open local buffer can't find a worktree_id because there is none
                         workspace
                             .project()
                             .update(cx, |this, cx| this.open_local_buffer(abs_path.clone(), cx))
@@ -225,7 +227,6 @@ impl StackFrameList {
             })???
             .await?;
 
-            // TODO(debugger): make this work again
             this.update(&mut cx, |this, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();
