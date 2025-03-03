@@ -362,7 +362,10 @@ jobs:
 
       # TODO: Remove this
       - name: Test
-        run: ls "C:\Program Files (x86)\Windows Kits\10\bin"
+        run: |
+          Install-Module -Name TrustedSigning -RequiredVersion 0.5.3 -Force -Repository PSGallery
+          $params = @{}
+          Invoke-TrustedSigning $params
 
       # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
       - name: Copy Git Repo to Dev Drive
@@ -862,7 +865,12 @@ jobs:
       startsWith(github.ref, 'refs/tags/v')
       && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     needs:
-      [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, bundle-windows-x64]
+      [
+        bundle-mac,
+        bundle-linux-x86_x64,
+        bundle-linux-aarch64,
+        bundle-windows-x64,
+      ]
     runs-on:
       - self-hosted
       - bundle
