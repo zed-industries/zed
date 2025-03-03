@@ -10,6 +10,7 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
+use pulldown_cmark::Alignment;
 
 use std::{collections::HashMap, iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
@@ -654,7 +655,8 @@ impl Element for MarkdownElement {
                             }
                         }
                         MarkdownTag::MetadataBlock(_) => {}
-                        MarkdownTag::Table(_alignments) => {
+                        MarkdownTag::Table(alignments) => {
+                            builder.table_alignments = alignments.clone();
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
@@ -692,7 +694,17 @@ impl Element for MarkdownElement {
                             );
                         }
                         MarkdownTag::TableCell => {
-                            builder.push_div(div().flex().px_1(), range, markdown_end);
+                            let column_count = builder.table_alignments.len();
+
+                            builder.push_div(
+                                div()
+                                    .flex()
+                                    .px_1()
+                                    .w(relative(1. / column_count as f32))
+                                    .truncate(),
+                                range,
+                                markdown_end,
+                            );
                         }
                         _ => log::error!("unsupported markdown tag {:?}", tag),
                     }
@@ -766,6 +778,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
                         builder.pop_div();
+                        builder.table_alignments.clear();
                     }
                     MarkdownTagEnd::TableHead => {
                         builder.pop_div();
@@ -923,6 +936,7 @@ struct MarkdownElementBuilder {
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
+    table_alignments: Vec<Alignment>,
     syntax_theme: Arc<SyntaxTheme>,
 }
 
@@ -949,6 +963,7 @@ impl MarkdownElementBuilder {
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
+            table_alignments: Vec::new(),
             syntax_theme,
         }
     }
