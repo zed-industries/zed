@@ -236,6 +236,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#bfbdb6ff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#628b80ff",
             "font_style": null,
@@ -249,6 +254,11 @@
           "label": {
             "color": "#5ac1feff",
             "font_style": null,
+            "font_weight": null
+          },
+          "link": {
+            "color": "#fe8f40ff",
+            "font_style": "italic",
             "font_weight": null
           },
           "link_text": {
@@ -306,13 +316,23 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
+          "punctuation.markup": {
             "color": "#a6a5a0ff",
             "font_style": null,
             "font_weight": null
           },
           "punctuation.special": {
             "color": "#d2a6ffff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "raw": {
+            "color": "#fe8f40ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
+            "color": "#5ac1feff",
             "font_style": null,
             "font_weight": null
           },
@@ -607,6 +627,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#5c6166ff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#8ca7c2ff",
             "font_style": null,
@@ -620,6 +645,11 @@
           "label": {
             "color": "#3b9ee5ff",
             "font_style": null,
+            "font_weight": null
+          },
+          "link": {
+            "color": "#f98d3fff",
+            "font_style": "italic",
             "font_weight": null
           },
           "link_text": {
@@ -677,13 +707,23 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
+          "punctuation.markup": {
             "color": "#73777bff",
             "font_style": null,
             "font_weight": null
           },
           "punctuation.special": {
             "color": "#a37accff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "raw": {
+            "color": "#f98d3fff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
+            "color": "#3b9ee5ff",
             "font_style": null,
             "font_weight": null
           },
@@ -978,6 +1018,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#cccac2ff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#7399a3ff",
             "font_style": null,
@@ -991,6 +1036,11 @@
           "label": {
             "color": "#72cffeff",
             "font_style": null,
+            "font_weight": null
+          },
+          "link": {
+            "color": "#fead66ff",
+            "font_style": "italic",
             "font_weight": null
           },
           "link_text": {
@@ -1048,13 +1098,23 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
+          "punctuation.markup": {
             "color": "#b4b3aeff",
             "font_style": null,
             "font_weight": null
           },
           "punctuation.special": {
             "color": "#dfbfffff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "raw": {
+            "color": "#fead66ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
+            "color": "#72cffeff",
             "font_style": null,
             "font_weight": null
           },
