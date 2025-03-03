@@ -2127,6 +2127,7 @@ impl Interactivity {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
+            let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
@@ -2139,7 +2140,7 @@ impl Interactivity {
                     if overflow.x == Overflow::Scroll {
                         if !delta.x.is_zero() {
                             delta_x = delta.x;
-                        } else if overflow.y != Overflow::Scroll {
+                        } else if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll {
                             delta_x = delta.y;
                         }
                     }
@@ -2147,7 +2148,7 @@ impl Interactivity {
                     if overflow.y == Overflow::Scroll {
                         if !delta.y.is_zero() {
                             delta_y = delta.y;
-                        } else if overflow.x != Overflow::Scroll {
+                        } else if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll {
                             delta_y = delta.x;
                         }
                     }
