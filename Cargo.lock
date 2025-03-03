@@ -5419,6 +5419,7 @@ dependencies = [
  "panel",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "schemars",
  "serde",
