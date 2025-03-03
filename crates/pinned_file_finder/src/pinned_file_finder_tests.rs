@@ -3,7 +3,7 @@ use std::{assert_eq, future::IntoFuture, path::Path, time::Duration};
 use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use menu::{Confirm, SelectNext, SelectPrev};
+use menu::{Confirm, SelectNext};
 use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
 use util::path;
@@ -2059,7 +2059,7 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
     // Switch to navigating with other shortcuts
     // Don't open file on modifiers release
     cx.simulate_modifiers_change(Modifiers::control());
-    cx.dispatch_action(menu::SelectPrev);
+    cx.dispatch_action(menu::SelectPrevious);
     cx.simulate_modifiers_change(Modifiers::none());
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
