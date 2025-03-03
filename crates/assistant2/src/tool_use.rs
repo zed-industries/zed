@@ -84,6 +84,17 @@ impl ToolUseState {
         tool_uses
     }
 
+    pub fn tool_results_for_message(&self, message_id: MessageId) -> Vec<&LanguageModelToolResult> {
+        let empty = Vec::new();
+
+        self.tool_uses_by_user_message
+            .get(&message_id)
+            .unwrap_or(&empty)
+            .iter()
+            .filter_map(|tool_use_id| self.tool_results.get(&tool_use_id))
+            .collect()
+    }
+
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_uses_by_user_message
             .get(&message_id)
