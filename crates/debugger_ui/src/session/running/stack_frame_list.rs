@@ -125,6 +125,7 @@ impl StackFrameList {
         self.thread_id
     }
 
+    // zed . --debug-config="{}"
     fn build_entries(
         &mut self,
         select_first_stack_frame: bool,
@@ -147,7 +148,7 @@ impl StackFrameList {
                         entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
                     }
 
-                    current_stack_frame = Some(&stack_frame.dap);
+                    current_stack_frame.get_or_insert(&stack_frame.dap);
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
                 }
             }

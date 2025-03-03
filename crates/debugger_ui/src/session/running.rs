@@ -271,7 +271,9 @@ impl Render for RunningState {
                                             this
                                         }),
                                     )
-                                    .disabled(has_no_threads),
+                                    .disabled(
+                                        has_no_threads || thread_status != ThreadStatus::Stopped,
+                                    ),
                                 ),
                             ),
                     )

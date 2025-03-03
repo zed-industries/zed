@@ -10,7 +10,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
-use collections::{HashMap, HashSet, IndexMap};
+use collections::{HashMap, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::OutputEventCategory;
 use dap::{
@@ -79,7 +79,7 @@ pub enum ThreadStatus {
 #[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
-    stack_frame_ids: HashSet<StackFrameId>,
+    stack_frame_ids: IndexSet<StackFrameId>,
     _has_stopped: bool,
 }
 
@@ -856,8 +856,6 @@ impl Session {
     /// This function should be called after changing state not before
     fn invalidate(&mut self, cx: &mut Context<Self>) {
         self.requests.clear();
-        self.modules.clear();
-        self.loaded_sources.clear();
         cx.notify();
     }
 
@@ -1204,21 +1202,28 @@ impl Session {
                     levels: None,
                 },
                 move |this, stack_frames, cx| {
+                    for frame in stack_frames.iter() {
+                        this.invalidate_state(
+                            &ScopesCommand {
+                                stack_frame_id: frame.id,
+                            }
+                            .into(),
+                        );
+                    }
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
                         thread.stack_frame_ids =
                             stack_frames.iter().map(|frame| frame.id).collect();
                     });
+                    debug_assert!(
+                        matches!(entry, indexmap::map::Entry::Occupied(_)),
+                        "Sent request for thread_id that doesn't exist"
+                    );
 
                     this.stack_frames.extend(
                         stack_frames
                             .into_iter()
                             .cloned()
                             .map(|frame| (frame.id, StackFrame::from(frame))),
-                    );
-
-                    debug_assert!(
-                        matches!(entry, indexmap::map::Entry::Occupied(_)),
-                        "Sent request for thread_id that doesn't exist"
                     );
 
                     cx.emit(SessionEvent::Invalidate);

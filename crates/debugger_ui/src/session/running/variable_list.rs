@@ -76,8 +76,10 @@ impl VariableList {
         )
         .detach();
 
-        let _subscriptions =
-            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
+        let _subscriptions = vec![
+            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
+            cx.subscribe(&session, |this, _, _, cx| this.build_entries(cx)),
+        ];
 
         Self {
             list,
@@ -98,7 +100,7 @@ impl VariableList {
     // Invalidation Event that matches our thread_id or stack frame id
     //
     // when continuing a thread, change its state -> mark variable list as read_only
-    pub(super) fn invalidate(&mut self) {}
+    pub(super) fn _invalidate(&mut self) {}
 
     pub(super) fn disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
         let old_disabled = std::mem::take(&mut self.disabled);
@@ -244,7 +246,6 @@ impl VariableList {
     //     }
 
     //     self.entries = entries;
-    //     dbg!(&self.entries);
     //     self.list.reset(self.entries.len());
     //     cx.notify();
     // }
@@ -474,7 +475,6 @@ impl VariableList {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        dbg!("rendering variable", variable);
         let var_ref = variable.dap.variables_reference;
         let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
