@@ -2340,6 +2340,7 @@ impl GitPanel {
     ) -> AnyElement {
         h_flex()
             .h(self.list_item_height(window))
+            .w_full()
             .items_end()
             .px(rems(0.75)) // ~12px
             .pb(rems(0.3125)) // ~ 5px
@@ -2477,6 +2478,8 @@ impl GitPanel {
         };
 
         let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
+        let checkbox_id: ElementId =
+            ElementId::Name(format!("entry_checkbox_{}", display_name).into());
 
         let is_entry_staged = self.entry_is_staged(entry);
         let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
@@ -2485,13 +2488,19 @@ impl GitPanel {
             is_staged = ToggleState::Selected;
         }
 
+        let handle = cx.weak_entity();
+
         h_flex()
             .id(id)
             .h(self.list_item_height(window))
+            .w_full()
             .items_center()
             .px(rems(0.75)) // ~12px
             .overflow_hidden()
+            .flex_none()
             .gap(DynamicSpacing::Base04.rems(cx))
+            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            .active(|this| this.bg(cx.theme().colors().ghost_element_active))
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
@@ -2503,10 +2512,23 @@ impl GitPanel {
                     }
                 })
             })
-            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                self.deploy_entry_context_menu(event.position, ix, window, cx);
-                cx.stop_propagation();
-            })
+            .on_mouse_down(
+                MouseButton::Right,
+                move |event: &MouseDownEvent, window, cx| {
+                    // why isn't this happening automatically? we are passing MouseButton::Right to `on_mouse_down`?
+                    if event.button != MouseButton::Right {
+                        return;
+                    }
+
+                    let Some(this) = handle.upgrade() else {
+                        return;
+                    };
+                    this.update(cx, |this, cx| {
+                        this.deploy_entry_context_menu(event.position, ix, window, cx);
+                    });
+                    cx.stop_propagation();
+                },
+            )
             // .on_secondary_mouse_down(cx.listener(
             //     move |this, event: &MouseDownEvent, window, cx| {
             //         this.deploy_entry_context_menu(event.position, ix, window, cx);
@@ -2514,7 +2536,7 @@ impl GitPanel {
             //     },
             // ))
             .child(
-                Checkbox::new(id, is_staged)
+                Checkbox::new(checkbox_id, is_staged)
                     .disabled(!has_write_access)
                     .fill()
                     .placeholder(!self.has_staged_changes() && !self.has_conflicts())
