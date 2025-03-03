@@ -1,6 +1,12 @@
 pub mod parser;
 
-use crate::parser::CodeBlockKind;
+use std::collections::HashMap;
+use std::iter;
+use std::mem;
+use std::ops::Range;
+use std::rc::Rc;
+use std::sync::Arc;
+
 use gpui::{
     actions, point, quad, AnyElement, App, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
     Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla,
@@ -10,11 +16,12 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-
-use std::{collections::HashMap, iter, mem, ops::Range, rc::Rc, sync::Arc};
+use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
 use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
+
+use crate::parser::CodeBlockKind;
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
@@ -654,6 +661,57 @@ impl Element for MarkdownElement {
                             }
                         }
                         MarkdownTag::MetadataBlock(_) => {}
+                        MarkdownTag::Table(alignments) => {
+                            builder.table_alignments = alignments.clone();
+                            builder.push_div(
+                                div()
+                                    .id(("table", range.start))
+                                    .flex()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .rounded_md()
+                                    .overflow_x_scroll(),
+                                range,
+                                markdown_end,
+                            );
+                            // This inner `v_flex` is so the table rows will stack vertically without disrupting the `overflow_x_scroll`.
+                            builder.push_div(div().v_flex().flex_grow(), range, markdown_end);
+                        }
+                        MarkdownTag::TableHead => {
+                            builder.push_div(
+                                div()
+                                    .flex()
+                                    .justify_between()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border),
+                                range,
+                                markdown_end,
+                            );
+                            builder.push_text_style(TextStyleRefinement {
+                                font_weight: Some(FontWeight::BOLD),
+                                ..Default::default()
+                            });
+                        }
+                        MarkdownTag::TableRow => {
+                            builder.push_div(
+                                div().h_flex().justify_between().px_1().py_0p5(),
+                                range,
+                                markdown_end,
+                            );
+                        }
+                        MarkdownTag::TableCell => {
+                            let column_count = builder.table_alignments.len();
+
+                            builder.push_div(
+                                div()
+                                    .flex()
+                                    .px_1()
+                                    .w(relative(1. / column_count as f32))
+                                    .truncate(),
+                                range,
+                                markdown_end,
+                            );
+                        }
                         _ => log::error!("unsupported markdown tag {:?}", tag),
                     }
                 }
@@ -722,6 +780,21 @@ impl Element for MarkdownElement {
                         if builder.code_block_stack.is_empty() {
                             builder.pop_text_style()
                         }
+                    }
+                    MarkdownTagEnd::Table => {
+                        builder.pop_div();
+                        builder.pop_div();
+                        builder.table_alignments.clear();
+                    }
+                    MarkdownTagEnd::TableHead => {
+                        builder.pop_div();
+                        builder.pop_text_style();
+                    }
+                    MarkdownTagEnd::TableRow => {
+                        builder.pop_div();
+                    }
+                    MarkdownTagEnd::TableCell => {
+                        builder.pop_div();
                     }
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
@@ -869,6 +942,7 @@ struct MarkdownElementBuilder {
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
+    table_alignments: Vec<Alignment>,
     syntax_theme: Arc<SyntaxTheme>,
 }
 
@@ -895,6 +969,7 @@ impl MarkdownElementBuilder {
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
+            table_alignments: Vec::new(),
             syntax_theme,
         }
     }
