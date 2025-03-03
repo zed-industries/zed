@@ -1844,11 +1844,20 @@ impl GitPanel {
         };
         let notif_id = NotificationId::Named("git-operation-error".into());
 
-        let message = e.to_string();
-        workspace.update(cx, |workspace, cx| {
-            let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
+        let mut message = e.to_string().trim().to_string();
+        let toast;
+        if message.matches("Authentication failed").count() >= 1 {
+            message = format!(
+                "{}\n\n{}",
+                message, "Please set your credentials via the CLI"
+            );
+            toast = Toast::new(notif_id, message);
+        } else {
+            toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
                 window.dispatch_action(workspace::OpenLog.boxed_clone(), cx);
             });
+        }
+        workspace.update(cx, |workspace, cx| {
             workspace.show_toast(toast, cx);
         });
     }

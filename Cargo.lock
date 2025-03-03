@@ -5353,6 +5353,7 @@ dependencies = [
  "serde_json",
  "smol",
  "sum_tree",
+ "tempfile",
  "text",
  "time",
  "unindent",
