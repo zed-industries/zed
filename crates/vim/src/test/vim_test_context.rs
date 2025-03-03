@@ -24,6 +24,10 @@ impl VimTestContext {
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
+            language::init(cx);
+            editor::init_settings(cx);
+            project::Project::init_settings(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -56,22 +60,26 @@ impl VimTestContext {
         )
     }
 
+    pub fn init_keybindings(enabled: bool, cx: &mut App) {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
+        });
+        let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+            "keymaps/default-macos.json",
+            cx,
+        )
+        .unwrap();
+        cx.bind_keys(default_key_bindings);
+        if enabled {
+            let vim_key_bindings =
+                settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+            cx.bind_keys(vim_key_bindings);
+        }
+    }
+
     pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
         cx.update(|_, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
-            });
-            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
-                "keymaps/default-macos.json",
-                cx,
-            )
-            .unwrap();
-            cx.bind_keys(default_key_bindings);
-            if enabled {
-                let vim_key_bindings =
-                    settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
-                cx.bind_keys(vim_key_bindings);
-            }
+            Self::init_keybindings(enabled, cx);
         });
 
         // Setup search toolbars and keypress hook

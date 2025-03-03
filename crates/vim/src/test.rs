@@ -7,7 +7,8 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    actions::DeleteLine, display_map::DisplayRow, DisplayPoint, Editor, EditorMode, MultiBuffer,
+    actions::DeleteLine, display_map::DisplayRow, test::editor_test_context::EditorTestContext,
+    DisplayPoint, Editor, EditorMode, MultiBuffer,
 };
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
@@ -1714,11 +1715,11 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestContext::new(cx, true).await;
-    let old_editor = cx.editor.clone();
-
-    let multi_buffer_editor = cx.new_window_entity(|window, cx| {
-        let project = old_editor.read(cx).project.clone();
+    VimTestContext::init(cx);
+    cx.update(|cx| {
+        VimTestContext::init_keybindings(true, cx);
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
         let multi_buffer = MultiBuffer::build_multi(
             [
                 ("111\n222\n333\n444\n", vec![Point::row_range(0..2)]),
@@ -1731,7 +1732,7 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         let mut editor = Editor::new(
             EditorMode::Full,
             multi_buffer.clone(),
-            project,
+            None,
             true,
             window,
             cx,
@@ -1747,7 +1748,8 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
 
         editor
     });
-    cx.editor = multi_buffer_editor;
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    cx.focus(&editor);
 
     cx.assert_excerpts_with_selections(indoc! {"
         [EXCERPT]
@@ -1761,7 +1763,7 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         [FOLDED]
         "
     });
-    cx.simulate_keystroke("down");
+    cx.simulate_keystroke("j");
     cx.assert_excerpts_with_selections(indoc! {"
         [EXCERPT]
         [FOLDED]
@@ -1770,6 +1772,141 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         bbb
         [EXCERPT]
         [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        ˇ[EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.simulate_keystroke("k");
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇaaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("shift-g");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        "
+    });
+    cx.simulate_keystrokes("g g");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.update_editor(|editor, _, cx| {
+        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        editor.fold_buffer(buffer_ids[1], cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystrokes("2 j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
         [EXCERPT]
         [FOLDED]
         "
