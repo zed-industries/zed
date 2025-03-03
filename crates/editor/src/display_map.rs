@@ -1167,6 +1167,78 @@ impl DisplaySnapshot {
         DisplayRow(longest_row.0)
     }
 
+    pub fn is_empty_block(&self, buffer_row: MultiBufferRow) -> bool {
+        let max_row = self.buffer_snapshot.max_row();
+        if buffer_row >= max_row {
+            return false;
+        }
+    
+        let language = self.buffer_snapshot
+            .language_at(Point::new(buffer_row.0, 0))
+            .map(|l| l.name().to_string());
+    
+        let (start_pattern, end_pattern) = match language.as_deref() {
+            Some("JavaScript") | Some("TypeScript") | Some("Rust") | Some("C") | 
+            Some("C++") | Some("Java") | Some("Swift") => ("{", "}"),
+            Some("Python") => (":", "{"),
+            Some("Ruby") => ("do", "end"),
+            Some("HTML") | Some("XML") => (">", "</"),
+            _ => ("{", "}"),
+        };
+    
+        let start = MultiBufferPoint::new(buffer_row.0, 0);
+        let end = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
+        let current_line_text: String = self.buffer_snapshot
+            .text_for_range(start..end)
+            .collect();
+    
+        let current_line = current_line_text.trim();
+        if !current_line.ends_with(start_pattern) {
+            return false;
+        }
+    
+        if language.as_deref() == Some("Python") {
+            let current_indent = self.line_indent_for_buffer_row(buffer_row);
+            let mut row = buffer_row.0 + 1;
+            
+            while row <= max_row.0 {
+                let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
+                let line_text = {
+                    let start = MultiBufferPoint::new(row, 0);
+                    let end = MultiBufferPoint::new(row, self.buffer_snapshot.line_len(MultiBufferRow(row)));
+                    self.buffer_snapshot.text_for_range(start..end).collect::<String>()
+                };
+                
+                if !line_text.trim().is_empty() {
+                    if line_indent.raw_len() <= current_indent.raw_len() {
+                        return true;
+                    }
+                    return false;
+                }
+                row += 1;
+            }
+            return true;
+        }
+    
+        let mut row = buffer_row.0 + 1;
+        while row <= max_row.0 {
+            let line_start = MultiBufferPoint::new(row, 0);
+            let line_end = MultiBufferPoint::new(row, self.buffer_snapshot.line_len(MultiBufferRow(row)));
+            let line_text: String = self.buffer_snapshot
+                .text_for_range(line_start..line_end)
+                .collect();
+            
+            if line_text.trim().is_empty() {
+                row += 1;
+                continue;
+            }
+            
+            return line_text.trim() == end_pattern;
+        }
+    
+        false
+    }
+
     pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_row();
         if buffer_row >= max_row {
