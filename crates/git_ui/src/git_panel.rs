@@ -3365,7 +3365,6 @@ impl RenderOnce for PanelRepoFooter {
             .child(
                 h_flex()
                     .flex_1()
-                    .overflow_hidden()
                     .items_center()
                     .child(
                         div().child(
