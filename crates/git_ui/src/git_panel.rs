@@ -17,7 +17,7 @@ use git::{Push, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
 use language::{Buffer, File};
-use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
 use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
 use project::{
@@ -557,7 +557,12 @@ impl GitPanel {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let item_count = self.entries.len();
         if item_count == 0 {
             return;
@@ -2669,7 +2674,7 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))

@@ -1,7 +1,7 @@
 use crate::{
     buffer_search::Deploy, BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery,
-    ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
-    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -90,7 +90,7 @@ pub fn init(cx: &mut App) {
         );
         register_workspace_action(
             workspace,
-            move |search_bar, action: &SelectPrevMatch, window, cx| {
+            move |search_bar, action: &SelectPreviousMatch, window, cx| {
                 search_bar.select_prev_match(action, window, cx)
             },
         );
@@ -1439,9 +1439,9 @@ impl ProjectSearchBar {
         self.cycle_field(Direction::Next, window, cx);
     }
 
-    fn tab_previous(
+    fn backtab(
         &mut self,
-        _: &editor::actions::TabPrev,
+        _: &editor::actions::Backtab,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1696,7 +1696,7 @@ impl ProjectSearchBar {
 
     fn select_prev_match(
         &mut self,
-        _: &SelectPrevMatch,
+        _: &SelectPreviousMatch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1895,7 +1895,7 @@ impl Render for ProjectSearchBar {
                         move |window, cx| {
                             Tooltip::for_action_in(
                                 "Go To Previous Match",
-                                &SelectPrevMatch,
+                                &SelectPreviousMatch,
                                 &focus_handle,
                                 window,
                                 cx,
@@ -2094,7 +2094,7 @@ impl Render for ProjectSearchBar {
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|this, action, window, cx| {
-                this.tab_previous(action, window, cx);
+                this.backtab(action, window, cx);
                 cx.stop_propagation();
             }))
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))

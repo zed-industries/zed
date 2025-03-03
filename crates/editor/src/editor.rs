@@ -7165,7 +7165,7 @@ impl Editor {
         });
     }
 
-    pub fn tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn backtab(&mut self, _: &Backtab, window: &mut Window, cx: &mut Context<Self>) {
         if self.move_to_prev_snippet_tabstop(window, cx) {
             return;
         }
@@ -9201,7 +9201,7 @@ impl Editor {
 
     pub fn context_menu_prev(
         &mut self,
-        _: &ContextMenuPrev,
+        _: &ContextMenuPrevious,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -11228,7 +11228,7 @@ impl Editor {
 
     fn go_to_prev_diagnostic(
         &mut self,
-        _: &GoToPrevDiagnostic,
+        _: &GoToPreviousDiagnostic,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -11411,7 +11411,12 @@ impl Editor {
         hunk
     }
 
-    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, window: &mut Window, cx: &mut Context<Self>) {
+    fn go_to_prev_hunk(
+        &mut self,
+        _: &GoToPreviousHunk,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
         self.go_to_hunk_before_position(&snapshot, selection.head(), window, cx);

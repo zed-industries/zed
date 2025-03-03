@@ -827,10 +827,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
         VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).range(wrap_count),
-        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("cp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("cN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
+        VimCommand::new(("lp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("lN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)

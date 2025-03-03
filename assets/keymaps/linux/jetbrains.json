@@ -9,8 +9,18 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl->": ["zed::IncreaseBufferFontSize", { "persist": true }],
-      "ctrl-<": ["zed::DecreaseBufferFontSize", { "persist": true }],
+      "ctrl->": [
+        "zed::IncreaseBufferFontSize",
+        {
+          "persist": true
+        }
+      ],
+      "ctrl-<": [
+        "zed::DecreaseBufferFontSize",
+        {
+          "persist": true
+        }
+      ],
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-d": "editor::DuplicateSelection",
       "ctrl-y": "editor::DeleteLine",
@@ -23,9 +33,24 @@
       // "ctrl--": "editor::Fold", // TODO: `ctrl-numpad--` (numpad not implemented)
       // "ctrl-+": "editor::UnfoldLines", // TODO: `ctrl-numpad+` (numpad not implemented)
       "alt-shift-g": "editor::SplitSelectionIntoLines",
-      "alt-j": ["editor::SelectNext", { "replace_newest": false }],
-      "alt-shift-j": ["editor::SelectPrevious", { "replace_newest": false }],
-      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": true }],
+      "alt-j": [
+        "editor::SelectNext",
+        {
+          "replace_newest": false
+        }
+      ],
+      "alt-shift-j": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": false
+        }
+      ],
+      "ctrl-/": [
+        "editor::ToggleComments",
+        {
+          "advance_downwards": true
+        }
+      ],
       "ctrl-w": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-w": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
@@ -41,9 +66,9 @@
       "ctrl-shift-b": "editor::GoToTypeDefinition",
       "ctrl-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
-      "shift-f2": "editor::GoToPrevDiagnostic",
+      "shift-f2": "editor::GoToPreviousDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
-      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "ctrl-alt-shift-up": "editor::GoToPreviousHunk",
       "ctrl-alt-z": "git::Restore",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
@@ -84,9 +109,24 @@
     "context": "ProjectPanel",
     "bindings": {
       "enter": "project_panel::Open",
-      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
-      "delete": ["project_panel::Trash", { "skip_prompt": false }],
-      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "backspace": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "delete": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "shift-delete": [
+        "project_panel::Delete",
+        {
+          "skip_prompt": false
+        }
+      ],
       "shift-f6": "project_panel::Rename"
     }
   }

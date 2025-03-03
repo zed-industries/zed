@@ -44,7 +44,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(file_finder, [SelectPrev, ToggleMenu]);
+actions!(file_finder, [SelectPrevious, ToggleMenu]);
 
 impl ModalView for FileFinder {
     fn on_before_dismiss(
@@ -199,9 +199,14 @@ impl FileFinder {
         }
     }
 
-    fn handle_select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_select_prev(
+        &mut self,
+        _: &SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.init_modifiers = Some(window.modifiers());
-        window.dispatch_action(Box::new(menu::SelectPrev), cx);
+        window.dispatch_action(Box::new(menu::SelectPrevious), cx);
     }
 
     fn handle_toggle_menu(&mut self, _: &ToggleMenu, window: &mut Window, cx: &mut Context<Self>) {

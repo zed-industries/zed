@@ -26,7 +26,7 @@ use gpui::{
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
-use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
@@ -1027,7 +1027,7 @@ impl ProjectPanel {
         });
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(edit_state) = &self.edit_state {
             if edit_state.processing_filename.is_none() {
                 self.filename_editor.update(cx, |editor, cx| {
@@ -4433,7 +4433,7 @@ impl Render for ProjectPanel {
                 }))
                 .key_context(self.dispatch_context(window, cx))
                 .on_action(cx.listener(Self::select_next))
-                .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::select_previous))
                 .on_action(cx.listener(Self::select_first))
                 .on_action(cx.listener(Self::select_last))
                 .on_action(cx.listener(Self::select_parent))
@@ -7521,7 +7521,7 @@ mod tests {
         );
         cx.update(|window, cx| {
             panel.update(cx, |this, cx| {
-                this.select_prev(&Default::default(), window, cx);
+                this.select_previous(&Default::default(), window, cx);
             })
         });
         assert_eq!(
@@ -7578,7 +7578,7 @@ mod tests {
         // ESC clears out all marks
         cx.update(|window, cx| {
             panel.update(cx, |this, cx| {
-                this.select_prev(&SelectPrev, window, cx);
+                this.select_previous(&SelectPrevious, window, cx);
                 this.select_next(&SelectNext, window, cx);
             })
         });
@@ -7596,8 +7596,8 @@ mod tests {
         cx.update(|window, cx| {
             panel.update(cx, |this, cx| {
                 this.cut(&Cut, window, cx);
-                this.select_prev(&SelectPrev, window, cx);
-                this.select_prev(&SelectPrev, window, cx);
+                this.select_previous(&SelectPrevious, window, cx);
+                this.select_previous(&SelectPrevious, window, cx);
 
                 this.paste(&Paste, window, cx);
                 // this.expand_selected_entry(&ExpandSelectedEntry, cx);

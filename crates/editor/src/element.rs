@@ -18,7 +18,7 @@ use crate::{
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint,
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
-    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt,
     RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt,
     ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
@@ -193,7 +193,7 @@ impl EditorElement {
         register_action(editor, window, Editor::backspace);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
-        register_action(editor, window, Editor::tab_prev);
+        register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
         register_action(editor, window, Editor::autoindent);
@@ -8830,7 +8830,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
-                                    &GoToPrevHunk,
+                                    &GoToPreviousHunk,
                                     &focus_handle,
                                     window,
                                     cx,

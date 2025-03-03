@@ -2854,7 +2854,7 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
          four
     "});
 
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         «oneˇ» «twoˇ»
         three
@@ -2874,7 +2874,7 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
         ˇ» four
     "});
 
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         t«hree
@@ -2899,7 +2899,7 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
         ˇ    three
             four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -2933,13 +2933,13 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         three
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         \t«oneˇ» «twoˇ»
         three
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         «oneˇ» «twoˇ»
         three
@@ -2964,13 +2964,13 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         \t\tt«hree
         ˇ»four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         \tt«hree
         ˇ»four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         t«hree
@@ -2983,7 +2983,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         ˇthree
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -2995,7 +2995,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         \tˇthree
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -3100,7 +3100,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
             "},
             cx,
         );
-        editor.tab_prev(&TabPrev, window, cx);
+        editor.backtab(&Backtab, window, cx);
         assert_text_with_selections(
             &mut editor,
             indoc! {"
@@ -10764,7 +10764,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10773,7 +10773,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10782,7 +10782,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10791,7 +10791,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10871,7 +10871,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Fourth diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
@@ -10880,7 +10880,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Third diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -10889,7 +10889,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Second diagnostic, same place
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -10898,7 +10898,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // First diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abcˇ def: i32) -> u32 {
@@ -10907,7 +10907,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Wrapped over, fourth diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
@@ -11073,7 +11073,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         //Wrap around the top of the buffer
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+            editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
         }
     });
 
@@ -11093,7 +11093,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+        editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
     });
 
     cx.assert_editor_state(
@@ -11112,7 +11112,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+        editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
     });
 
     cx.assert_editor_state(
@@ -11132,7 +11132,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
 
     cx.update_editor(|editor, window, cx| {
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+            editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
         }
     });
 
@@ -11867,7 +11867,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
-        editor.context_menu_prev(&ContextMenuPrev, window, cx);
+        editor.context_menu_prev(&ContextMenuPrevious, window, cx);
     });
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -12057,7 +12057,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     resolved_items.lock().clear();
 
     cx.update_editor(|editor, window, cx| {
-        editor.context_menu_prev(&ContextMenuPrev, window, cx);
+        editor.context_menu_prev(&ContextMenuPrevious, window, cx);
     });
     cx.run_until_parked();
     // Completions that have already been resolved are skipped.

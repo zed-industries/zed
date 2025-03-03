@@ -8,8 +8,18 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl->": ["zed::IncreaseBufferFontSize", { "persist": true }],
-      "ctrl-<": ["zed::DecreaseBufferFontSize", { "persist": true }],
+      "ctrl->": [
+        "zed::IncreaseBufferFontSize",
+        {
+          "persist": true
+        }
+      ],
+      "ctrl-<": [
+        "zed::DecreaseBufferFontSize",
+        {
+          "persist": true
+        }
+      ],
       "ctrl-shift-j": "editor::JoinLines",
       "cmd-d": "editor::DuplicateSelection",
       "cmd-backspace": "editor::DeleteLine",
@@ -21,9 +31,24 @@
       "cmd--": "editor::Fold",
       "cmd-+": "editor::UnfoldLines",
       "alt-shift-g": "editor::SplitSelectionIntoLines",
-      "ctrl-g": ["editor::SelectNext", { "replace_newest": false }],
-      "ctrl-cmd-g": ["editor::SelectPrevious", { "replace_newest": false }],
-      "cmd-/": ["editor::ToggleComments", { "advance_downwards": true }],
+      "ctrl-g": [
+        "editor::SelectNext",
+        {
+          "replace_newest": false
+        }
+      ],
+      "ctrl-cmd-g": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": false
+        }
+      ],
+      "cmd-/": [
+        "editor::ToggleComments",
+        {
+          "advance_downwards": true
+        }
+      ],
       "alt-up": "editor::SelectLargerSyntaxNode",
       "alt-down": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
@@ -39,9 +64,9 @@
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
-      "shift-f2": "editor::GoToPrevDiagnostic",
+      "shift-f2": "editor::GoToPreviousDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
-      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "ctrl-alt-shift-up": "editor::GoToPreviousHunk",
       "cmd-home": "editor::MoveToBeginning",
       "cmd-end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
@@ -61,7 +86,7 @@
   {
     "context": "BufferSearchBar > Editor",
     "bindings": {
-      "shift-enter": "search::SelectPrevMatch"
+      "shift-enter": "search::SelectPreviousMatch"
     }
   },
   {
@@ -87,10 +112,30 @@
     "context": "ProjectPanel",
     "bindings": {
       "enter": "project_panel::Open",
-      "cmd-backspace": ["project_panel::Trash", { "skip_prompt": false }],
-      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
-      "delete": ["project_panel::Trash", { "skip_prompt": false }],
-      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "cmd-backspace": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "backspace": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "delete": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "shift-delete": [
+        "project_panel::Delete",
+        {
+          "skip_prompt": false
+        }
+      ],
       "shift-f6": "project_panel::Rename"
     }
   }
