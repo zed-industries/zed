@@ -314,7 +314,7 @@ where
                         )
                         .child(
                             Label::new("Create your custom command")
-                                .size(LabelSize::XSmall)
+                                .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
                         .into_any_element()
