@@ -280,8 +280,8 @@ const ACTION_STRING_OF_ARRAY_PATTERN: &str = r#"(document
                             key: (string)
                             value: ((array
                                 . (string (string_content) @action_name)
-                                . _
-                                .)) @array
+                                )
+                            )
                         )
                     )
                 )
@@ -304,12 +304,11 @@ fn replace_first_string_of_array(
             .byte_range(),
     )?;
     let replacement = STRING_OF_ARRAY_REPLACE.get(action_name)?;
-    let replacement_as_string = format!("\"{replacement}\"");
     let range_to_replace = mat
         .nodes_for_capture_index(action_name_ix)
         .next()?
         .byte_range();
-    Some((range_to_replace, replacement_as_string))
+    Some((range_to_replace, replacement.to_string()))
 }
 
 static STRING_OF_ARRAY_REPLACE: LazyLock<HashMap<&str, &str>> =
@@ -486,17 +485,17 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
     ])
 });
 
-const CONTEXT_PREDICATE_PATTERN: &str = r#"
-(array
-    (object
-        (pair
-            key: (string (string_content) @name)
-            value: (string (string_content) @context_predicate)
+const CONTEXT_PREDICATE_PATTERN: &str = r#"(document
+    (array
+        (object
+            (pair
+                key: (string (string_content) @name)
+                value: (string (string_content) @context_predicate)
+            )
         )
     )
-)
-(#eq? @name "context")
-"#;
+    (#eq? @name "context")
+)"#;
 
 fn rename_context_key(
     contents: &str,
