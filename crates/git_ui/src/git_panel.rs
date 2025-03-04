@@ -1173,6 +1173,18 @@ impl GitPanel {
         }
     }
 
+    fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
+        let message = self.commit_editor.read(cx).text(cx);
+
+        if !message.is_empty() {
+            return Some(message);
+        }
+
+        self.suggested_commit_message
+            .clone()
+            .filter(|message| !message.is_empty())
+    }
+
     pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
@@ -1194,11 +1206,13 @@ impl GitPanel {
             return;
         }
 
-        let mut message = self.commit_editor.read(cx).text(cx);
-        if message.trim().is_empty() {
+        let commit_message = self.custom_or_suggested_commit_message(cx);
+
+        let Some(mut message) = commit_message else {
             self.commit_editor.read(cx).focus_handle(cx).focus(window);
             return;
-        }
+        };
+
         if self.add_coauthors {
             self.fill_co_authors(&mut message, cx);
         }
@@ -1329,7 +1343,7 @@ impl GitPanel {
             Some("Update")
         } else {
             None
-        };
+        }?;
 
         let file_name = git_status_entry
             .repo_path
@@ -1337,17 +1351,18 @@ impl GitPanel {
             .unwrap_or_default()
             .to_string_lossy();
 
-        Some(format!("{} {}", action_text?, file_name))
+        Some(format!("{} {}", action_text, file_name))
     }
 
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
-        let suggested_commit_message = self.suggest_commit_message();
-        let suggested_commit_message = suggested_commit_message
+        self.suggested_commit_message = self.suggest_commit_message();
+        let placeholder_text = self
+            .suggested_commit_message
             .as_deref()
             .unwrap_or("Enter commit message");
 
         self.commit_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(Arc::from(suggested_commit_message), cx)
+            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
         });
 
         cx.notify();
@@ -1973,7 +1988,9 @@ impl GitPanel {
             )
         } else if self.pending_commit.is_some() {
             (false, "Commit in progress")
-        } else if self.commit_editor.read(cx).is_empty(cx) {
+        } else if self.suggested_commit_message.is_none()
+            && self.commit_editor.read(cx).is_empty(cx)
+        {
             (false, "No commit message")
         } else if !self.has_write_access(cx) {
             (false, "You do not have write access to this project")

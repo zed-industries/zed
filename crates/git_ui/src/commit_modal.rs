@@ -163,7 +163,7 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
-        let suggested_message = panel.suggest_commit_message();
+        let suggested_commit_message = panel.suggest_commit_message();
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
@@ -174,19 +174,11 @@ impl CommitModal {
 
         let commit_message = commit_editor.read(cx).text(cx);
 
-        if let Some(suggested_message) = suggested_message {
+        if let Some(suggested_commit_message) = suggested_commit_message {
             if commit_message.is_empty() {
                 commit_editor.update(cx, |editor, cx| {
-                    editor.set_text(suggested_message, window, cx);
-                    editor.select_all(&Default::default(), window, cx);
+                    editor.set_placeholder_text(suggested_commit_message, cx);
                 });
-            } else {
-                if commit_message.as_str().trim() == suggested_message.trim() {
-                    commit_editor.update(cx, |editor, cx| {
-                        // select the message to make it easy to delete
-                        editor.select_all(&Default::default(), window, cx);
-                    });
-                }
             }
         }
 
