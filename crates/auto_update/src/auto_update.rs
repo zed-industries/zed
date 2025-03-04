@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
+use std::str::FromStr;
 use std::{
     env::{
         self,
@@ -514,12 +515,12 @@ impl AutoUpdater {
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
         // If updated, show a notification.
         // For example, ```if updated...```
-        this.update(&mut cx, |this, cx| {
-            this.set_should_show_update_notification(true, cx)
-                .detach_and_log_err(cx);
-            // this.status = AutoUpdateStatus::Updated { binary_path };
-            cx.notify();
-        })?;
+        // this.update(&mut cx, |this, cx| {
+        //     this.set_should_show_update_notification(true, cx)
+        //         .detach_and_log_err(cx);
+        //     // this.status = AutoUpdateStatus::Updated { binary_path };
+        //     cx.notify();
+        // })?;
 
         // let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
         //     this.status = AutoUpdateStatus::Checking;
@@ -564,6 +565,7 @@ impl AutoUpdater {
 
         let downloaded_asset = installer_dir.join("Installer.exe");
         // download_release(&downloaded_asset, release, client, &cx).await?;
+        download_release(&downloaded_asset, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing; // Ready to install
@@ -572,6 +574,13 @@ impl AutoUpdater {
 
         // Notify the user that the update is ready to install, and provide a button to restart then install it.
         // Installer.exe
+        let binary_path = std::env::current_exe()?;
+        this.update(&mut cx, |this, cx| {
+            this.set_should_show_update_notification(true, cx)
+                .detach_and_log_err(cx);
+            this.status = AutoUpdateStatus::Updated { binary_path };
+            cx.notify();
+        })?;
 
         Ok(())
     }
@@ -662,6 +671,7 @@ fn build_remote_server_update_request_body(cx: &AsyncApp) -> Result<UpdateReques
     })
 }
 
+#[cfg(not(target_os = "windows"))]
 async fn download_release(
     target_path: &Path,
     release: JsonRelease,
@@ -697,6 +707,31 @@ async fn download_release(
     let mut response = client.get(&release.url, request_body, true).await?;
     smol::io::copy(response.body_mut(), &mut target_file).await?;
     log::info!("downloaded update. path:{:?}", target_path);
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+async fn download_release(
+    target_path: &Path,
+    // release: JsonRelease,
+    // client: Arc<HttpClientWithUrl>,
+    cx: &AsyncApp,
+) -> Result<()> {
+    // TODO:
+    smol::fs::copy(
+        "C:\\zjk\\projects\\zed\\target\\ZedEditorUserSetup-x64-0.174.2.exe",
+        target_path,
+    )
+    .await
+    .unwrap();
+    // Write 0.174.2 to versions.txt
+    smol::fs::write(
+        &target_path.parent().unwrap().join("versions.txt"),
+        "0.174.2",
+    )
+    .await
+    .unwrap();
 
     Ok(())
 }
@@ -817,29 +852,62 @@ async fn install_release_macos(
     Ok(running_app_path)
 }
 
-pub fn check_pending_installation() -> bool {
+pub fn check_pending_installation(app_version: &SemanticVersion) -> bool {
+    println!("check_pending_installation");
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
     else {
+        println!("No installer_path");
         return false;
     };
+    println!("installer_path: {:?}", installer_path);
     let installer_exe = installer_path.join("Installer.exe");
     if !installer_exe.exists() {
+        println!("No installer_exe");
         return false;
     }
+    println!("installer_exe: {:?}", installer_exe);
     let flag_file = installer_path.join("versions.txt");
+    println!("flag_file: {:?}, {}", flag_file, flag_file.exists());
     if flag_file.exists() {
-        if let Some(_last_line) = std::fs::read_to_string(&flag_file)
+        println!("flag_file: {:?}", flag_file);
+        if let Some(last_line) = std::fs::read_to_string(&flag_file)
             .ok()
             .and_then(|s| s.lines().last().map(|s| s.to_string()))
         {
-            // todo(windows)
-            // Check version here
-            std::fs::remove_dir_all(installer_path).ok();
-            return false;
+            println!("last_line: {:?}", last_line);
+            match SemanticVersion::from_str(&last_line) {
+                Ok(pending_installer_version) => {
+                    println!(
+                        "pending_installer_version: {}, {}, {}",
+                        pending_installer_version,
+                        app_version,
+                        pending_installer_version <= *app_version
+                    );
+                    if pending_installer_version <= *app_version {
+                        let ret = std::fs::remove_dir_all(installer_path);
+                        println!("remove_dir_all: {:?}", ret);
+                        return false;
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "Invalid version info from updates\\versions.txt: {}, {:?}",
+                        last_line,
+                        e
+                    );
+                    println!(
+                        "Invalid version info from updates\\versions.txt: {}, {:?}",
+                        last_line, e
+                    );
+                    std::fs::remove_dir_all(installer_path).ok();
+                    return false;
+                }
+            }
         }
     }
+    println!("Start installer");
     let _ = Command::new(installer_exe).arg("/SILENT").spawn();
     true
 }
