@@ -22,7 +22,6 @@ use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
 use futures::{channel::mpsc, select_biased, StreamExt};
-use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
@@ -430,10 +429,7 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
-                let entity = cx.entity();
-                let project = workspace.project().clone();
-                let app_state = workspace.app_state().clone();
-                let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
+                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, cx);
                 workspace.add_panel(git_panel, window, cx);
             });
         })?;
