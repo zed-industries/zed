@@ -613,9 +613,26 @@
     }
   },
   {
+    "context": "AssistantPanel2 && prompt_editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "assistant2::NewPromptEditor",
+      "cmd-alt-t": "assistant2::NewThread"
+    }
+  },
+  {
     "context": "MessageEditor > Editor",
     "bindings": {
       "enter": "assistant2::Chat"
+    }
+  },
+  {
+    "context": "EditMessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
     }
   },
   {

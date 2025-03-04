@@ -71,7 +71,7 @@ impl RemoteOutputToast {
             }
         });
 
-        let message;
+        let mut message: SharedString;
         let remote;
 
         match action {
@@ -86,19 +86,32 @@ impl RemoteOutputToast {
 
             RemoteAction::Push(remote_ref) => {
                 message = output.stdout.trim().to_string().into();
-                let remote_message = get_remote_lines(&output.stderr);
-                let finder = LinkFinder::new();
-                let links = finder
-                    .links(&remote_message)
-                    .filter(|link| *link.kind() == LinkKind::Url)
-                    .map(|link| link.start()..link.end())
-                    .collect_vec();
+                if message.is_empty() {
+                    message = output.stderr.trim().to_string().into();
+                    if message.is_empty() {
+                        message = "Push Successful".into();
+                    }
+                    remote = None;
+                } else {
+                    let remote_message = get_remote_lines(&output.stderr);
 
-                remote = Some(InfoFromRemote {
-                    name: remote_ref.name,
-                    remote_text: remote_message.into(),
-                    links,
-                });
+                    remote = if remote_message.is_empty() {
+                        None
+                    } else {
+                        let finder = LinkFinder::new();
+                        let links = finder
+                            .links(&remote_message)
+                            .filter(|link| *link.kind() == LinkKind::Url)
+                            .map(|link| link.start()..link.end())
+                            .collect_vec();
+
+                        Some(InfoFromRemote {
+                            name: remote_ref.name,
+                            remote_text: remote_message.into(),
+                            links,
+                        })
+                    }
+                }
             }
         }
 

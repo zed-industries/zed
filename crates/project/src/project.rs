@@ -524,6 +524,12 @@ enum EntitySubscription {
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
 }
 
+#[derive(Debug, Clone)]
+pub struct DirectoryItem {
+    pub path: PathBuf,
+    pub is_dir: bool,
+}
+
 #[derive(Clone)]
 pub enum DirectoryLister {
     Project(Entity<Project>),
@@ -552,10 +558,10 @@ impl DirectoryLister {
                 return worktree.read(cx).abs_path().to_string_lossy().to_string();
             }
         };
-        "~/".to_string()
+        format!("~{}", std::path::MAIN_SEPARATOR_STR)
     }
 
-    pub fn list_directory(&self, path: String, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
+    pub fn list_directory(&self, path: String, cx: &mut App) -> Task<Result<Vec<DirectoryItem>>> {
         match self {
             DirectoryLister::Project(project) => {
                 project.update(cx, |project, cx| project.list_directory(path, cx))
@@ -568,8 +574,12 @@ impl DirectoryLister {
                     let query = Path::new(expanded.as_ref());
                     let mut response = fs.read_dir(query).await?;
                     while let Some(path) = response.next().await {
-                        if let Some(file_name) = path?.file_name() {
-                            results.push(PathBuf::from(file_name.to_os_string()));
+                        let path = path?;
+                        if let Some(file_name) = path.file_name() {
+                            results.push(DirectoryItem {
+                                path: PathBuf::from(file_name.to_os_string()),
+                                is_dir: fs.is_dir(&path).await,
+                            });
                         }
                     }
                     Ok(results)
@@ -3491,7 +3501,7 @@ impl Project {
         &self,
         query: String,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<PathBuf>>> {
+    ) -> Task<Result<Vec<DirectoryItem>>> {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
         } else if let Some(session) = self.ssh_client.as_ref() {
@@ -3499,12 +3509,23 @@ impl Project {
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
                 path: path_buf.to_proto(),
+                config: Some(proto::ListRemoteDirectoryConfig { is_dir: true }),
             };
 
             let response = session.read(cx).proto_client().request(request);
             cx.background_spawn(async move {
-                let response = response.await?;
-                Ok(response.entries.into_iter().map(PathBuf::from).collect())
+                let proto::ListRemoteDirectoryResponse {
+                    entries,
+                    entry_info,
+                } = response.await?;
+                Ok(entries
+                    .into_iter()
+                    .zip(entry_info)
+                    .map(|(entry, info)| DirectoryItem {
+                        path: PathBuf::from(entry),
+                        is_dir: info.is_dir,
+                    })
+                    .collect())
             })
         } else {
             Task::ready(Err(anyhow!("cannot list directory in remote project")))
@@ -4310,16 +4331,26 @@ impl Project {
             .buffer_for_id(buffer_id, cx)?
             .read(cx)
             .project_path(cx)?;
-        self.git_store
-            .read(cx)
-            .all_repositories()
-            .into_iter()
-            .find_map(|repo| {
-                Some((
-                    repo.clone(),
-                    repo.read(cx).repository_entry.relativize(&path.path).ok()?,
-                ))
-            })
+
+        let mut found: Option<(Entity<Repository>, RepoPath)> = None;
+        for repo_handle in self.git_store.read(cx).all_repositories() {
+            let repo = repo_handle.read(cx);
+            if repo.worktree_id != path.worktree_id {
+                continue;
+            }
+            let Ok(relative_path) = repo.repository_entry.relativize(&path.path) else {
+                continue;
+            };
+            if found
+                .as_ref()
+                .is_some_and(|(found, _)| repo.contains_sub_repo(found, cx))
+            {
+                continue;
+            }
+            found = Some((repo_handle.clone(), relative_path))
+        }
+
+        found
     }
 }
 

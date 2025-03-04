@@ -12,9 +12,9 @@ use futures::FutureExt as _;
 use gpui::{
     prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
 };
-use heed::types::SerdeBincode;
+use heed::types::{SerdeBincode, SerdeJson};
 use heed::Database;
-use language_model::Role;
+use language_model::{LanguageModelToolUseId, Role};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
@@ -113,6 +113,24 @@ impl ThreadStore {
                         id: message.id,
                         role: message.role,
                         text: message.text.clone(),
+                        tool_uses: thread
+                            .tool_uses_for_message(message.id)
+                            .into_iter()
+                            .map(|tool_use| SavedToolUse {
+                                id: tool_use.id,
+                                name: tool_use.name,
+                                input: tool_use.input,
+                            })
+                            .collect(),
+                        tool_results: thread
+                            .tool_results_for_message(message.id)
+                            .into_iter()
+                            .map(|tool_result| SavedToolResult {
+                                tool_use_id: tool_result.tool_use_id.clone(),
+                                is_error: tool_result.is_error,
+                                content: tool_result.content.clone(),
+                            })
+                            .collect(),
                     })
                     .collect(),
             };
@@ -239,11 +257,29 @@ pub struct SavedThread {
     pub messages: Vec<SavedMessage>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SavedMessage {
     pub id: MessageId,
     pub role: Role,
     pub text: String,
+    #[serde(default)]
+    pub tool_uses: Vec<SavedToolUse>,
+    #[serde(default)]
+    pub tool_results: Vec<SavedToolResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SavedToolUse {
+    pub id: LanguageModelToolUseId,
+    pub name: SharedString,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SavedToolResult {
+    pub tool_use_id: LanguageModelToolUseId,
+    pub is_error: bool,
+    pub content: Arc<str>,
 }
 
 struct GlobalThreadsDatabase(
@@ -255,7 +291,7 @@ impl Global for GlobalThreadsDatabase {}
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerdeBincode<SavedThread>>,
+    threads: Database<SerdeBincode<ThreadId>, SerdeJson<SavedThread>>,
 }
 
 impl ThreadsDatabase {
@@ -270,7 +306,7 @@ impl ThreadsDatabase {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
+                let database_path = paths::support_dir().join("threads/threads-db.1.mdb");
                 async move { ThreadsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))

@@ -1618,6 +1618,15 @@ impl BlockSnapshot {
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
+    pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
+        cursor.seek(&row, Bias::Right, &());
+        let Some(transform) = cursor.item() else {
+            return false;
+        };
+        matches!(transform.block, Some(Block::FoldedBuffer { .. }))
+    }
+
     pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
