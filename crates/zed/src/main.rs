@@ -642,11 +642,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     if let Some(action_index) = request.dock_menu_action {
-        cx.spawn(|cx| async move {
-            println!("Dock menu action {} detected!", action_index);
-            cx.update(|cx| cx.perform_dock_menu_action(action_index))
-        })
-        .detach_and_log_err(cx);
+        cx.perform_dock_menu_action(action_index);
         return;
     }
 
