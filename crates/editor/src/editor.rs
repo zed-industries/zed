@@ -12965,13 +12965,18 @@ impl Editor {
             }
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-            let buffer_ids: HashSet<_> = multi_buffer_snapshot
-                .ranges_to_buffer_ranges(self.selections.disjoint_anchor_ranges())
-                .map(|(snapshot, _, _)| snapshot.remote_id())
+            let buffer_ids: HashSet<_> = self
+                .selections
+                .disjoint_anchor_ranges()
+                .flat_map(|range| multi_buffer_snapshot.buffer_ids_for_range(range))
                 .collect();
 
+            let should_unfold = buffer_ids
+                .iter()
+                .any(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
+
             for buffer_id in buffer_ids {
-                if self.is_buffer_folded(buffer_id, cx) {
+                if should_unfold {
                     self.unfold_buffer(buffer_id, cx);
                 } else {
                     self.fold_buffer(buffer_id, cx);
