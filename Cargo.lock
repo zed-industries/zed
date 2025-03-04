@@ -11889,6 +11889,7 @@ dependencies = [
  "assistant_tool",
  "gpui",
  "mlua",
+ "project",
  "regex",
  "schemars",
  "serde",

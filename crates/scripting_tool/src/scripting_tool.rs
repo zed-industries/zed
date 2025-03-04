@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use assistant_tool::{Tool, ToolRegistry};
-use gpui::{App, AppContext as _, Task, WeakEntity, Window};
+use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
 use mlua::{Function, Lua, MultiValue, Result, UserData, UserDataMethods};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -81,7 +81,13 @@ string being a match that was found within the file)."#.into()
             Err(err) => return Task::ready(Err(err.into())),
             Ok(input) => input,
         };
+
+        let worktree_store = workspace.update(cx, |workspace, cx| {
+            workspace.project().read(cx).worktree_store()
+        });
+        let lua_interpreter = cx.new(|cx| LuaInterpreter::new(worktree_store, cx));
         let lua_script = input.lua_script;
+
         cx.background_spawn(async move {
             let fs_changes = HashMap::new();
             let output = run_sandboxed_lua(&lua_script, fs_changes, root_dir)
@@ -128,11 +134,15 @@ fn search(
     lua: &Lua,
     _fs_changes: Rc<RefCell<HashMap<PathBuf, Vec<u8>>>>,
     root_dir: PathBuf,
+    interpreter: Entity<LuaInterpreter>,
+    cx: &mut Context<LuaInterpreter>,
 ) -> Result<Function> {
     lua.create_function(move |lua, regex: String| {
         use mlua::Table;
         use regex::Regex;
         use std::fs;
+
+        let cx = cx;
 
         // Function to recursively search directory
         let search_regex = match Regex::new(&regex) {
@@ -599,37 +609,51 @@ fn io_open(
     })
 }
 
-/// Runs a Lua script in a sandboxed environment and returns the printed lines
-pub fn run_sandboxed_lua(
-    script: &str,
-    fs_changes: HashMap<PathBuf, Vec<u8>>,
-    root_dir: PathBuf,
-) -> Result<ScriptOutput> {
-    let lua = Lua::new();
-    lua.set_memory_limit(2 * 1024 * 1024 * 1024)?; // 2 GB
-    let globals = lua.globals();
+struct LuaInterpreter {
+    worktree_store: WeakEntity<WorktreeStore>,
+}
 
-    // Track the lines the Lua script prints out.
-    let printed_lines = Rc::new(RefCell::new(Vec::new()));
-    let fs = Rc::new(RefCell::new(fs_changes));
+impl LuaInterpreter {
+    pub fn new(worktree_store: WeakEntity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+        Self { worktree_store }
+    }
 
-    globals.set("sb_print", print(&lua, printed_lines.clone())?)?;
-    globals.set("search", search(&lua, fs.clone(), root_dir.clone())?)?;
-    globals.set("sb_io_open", io_open(&lua, fs.clone(), root_dir)?)?;
-    globals.set("user_script", script)?;
+    pub fn run_sandboxed_script(
+        &self,
+        script: &str,
+        fs_changes: HashMap<PathBuf, Vec<u8>>,
+        root_dir: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Result<ScriptOutput> {
+        let lua = Lua::new();
+        lua.set_memory_limit(2 * 1024 * 1024 * 1024)?; // 2 GB
+        let globals = lua.globals();
 
-    lua.load(SANDBOX_PREAMBLE).exec()?;
+        // Track the lines the Lua script prints out.
+        let printed_lines = Rc::new(RefCell::new(Vec::new()));
+        let fs = Rc::new(RefCell::new(fs_changes));
 
-    drop(lua); // Necessary so the Rc'd values get decremented.
+        globals.set("sb_print", print(&lua, printed_lines.clone())?)?;
+        globals.set(
+            "search",
+            search(&lua, fs.clone(), root_dir.clone(), cx.entity(), cx)?,
+        )?;
+        globals.set("sb_io_open", io_open(&lua, fs.clone(), root_dir)?)?;
+        globals.set("user_script", script)?;
 
-    Ok(ScriptOutput {
-        printed_lines: Rc::try_unwrap(printed_lines)
-            .expect("There are still other references to printed_lines")
-            .into_inner(),
-        fs_changes: Rc::try_unwrap(fs)
-            .expect("There are still other references to fs_changes")
-            .into_inner(),
-    })
+        lua.load(SANDBOX_PREAMBLE).exec()?;
+
+        drop(lua); // Necessary so the Rc'd values get decremented.
+
+        Ok(ScriptOutput {
+            printed_lines: Rc::try_unwrap(printed_lines)
+                .expect("There are still other references to printed_lines")
+                .into_inner(),
+            fs_changes: Rc::try_unwrap(fs)
+                .expect("There are still other references to fs_changes")
+                .into_inner(),
+        })
+    }
 }
 
 pub struct ScriptOutput {
