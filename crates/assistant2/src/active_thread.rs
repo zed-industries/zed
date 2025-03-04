@@ -4,9 +4,9 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    list, AbsoluteLength, AnyElement, App, DefiniteLength, EdgesRefinement, Empty, Entity, Length,
-    ListAlignment, ListOffset, ListState, StyleRefinement, Subscription, TextStyleRefinement,
-    UnderlineStyle, WeakEntity,
+    list, AbsoluteLength, AnyElement, App, DefiniteLength, EdgesRefinement, Empty, Entity,
+    Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
+    TextStyleRefinement, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -146,6 +146,14 @@ impl ActiveThread {
 
         let markdown = self.render_markdown(text.into(), window, cx);
         self.rendered_messages_by_id.insert(*id, markdown);
+    }
+
+    fn deleted_message(&mut self, id: &MessageId) {
+        let Some(index) = self.messages.iter().position(|msg| msg == id) else {
+            return;
+        };
+        self.list_state.splice(index..index + 1, 0);
+        self.rendered_messages_by_id.remove(id);
     }
 
     fn render_markdown(
@@ -291,6 +299,18 @@ impl ActiveThread {
 
                 cx.notify();
             }
+            ThreadEvent::MessageDeleted(message_id) => {
+                self.deleted_message(message_id);
+
+                //TODO: Ensure that we drop previous thread store tasks that are still running
+                self.thread_store
+                    .update(cx, |thread_store, cx| {
+                        thread_store.save_thread(&self.thread, cx)
+                    })
+                    .detach_and_log_err(cx);
+
+                cx.notify();
+            }
             ThreadEvent::UsePendingTools => {
                 let pending_tool_uses = self
                     .thread
@@ -339,6 +359,95 @@ impl ActiveThread {
         }
     }
 
+    fn start_editing_message(
+        &mut self,
+        message_id: MessageId,
+        message_text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = cx.new(|cx| {
+            MultiBuffer::singleton(cx.new(|cx| Buffer::local(message_text.clone(), cx)), cx)
+        });
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight { max_lines: 8 },
+                buffer,
+                None,
+                false,
+                window,
+                cx,
+            );
+            editor.focus_handle(cx).focus(window);
+            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+            editor
+        });
+        self.editing_message = Some((
+            message_id,
+            EditMessageState {
+                editor: editor.clone(),
+            },
+        ));
+        cx.notify();
+    }
+
+    fn cancel_editing_message(&mut self, cx: &mut Context<Self>) {
+        self.editing_message.take();
+        cx.notify();
+    }
+
+    fn confirm_editing_message(&mut self, cx: &mut Context<Self>) {
+        let Some((message_id, state)) = self.editing_message.take() else {
+            return;
+        };
+        let edited_text = state.editor.read(cx).text(cx);
+        self.thread.update(cx, |thread, cx| {
+            thread.edit_message(message_id, Role::User, edited_text, cx);
+            for message_id in self.messages_after(message_id) {
+                thread.delete_message(*message_id, cx);
+            }
+        });
+
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        if provider
+            .as_ref()
+            .map_or(false, |provider| provider.must_accept_terms(cx))
+        {
+            cx.notify();
+            return;
+        }
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let Some(model) = model_registry.active_model() else {
+            return;
+        };
+
+        self.thread.update(cx, |thread, cx| {
+            thread.send_to_model(model, RequestKind::Chat, false, cx)
+        });
+        cx.notify();
+    }
+
+    fn last_user_message(&self, cx: &Context<Self>) -> Option<MessageId> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|message_id| {
+                self.thread
+                    .read(cx)
+                    .message(**message_id)
+                    .map_or(false, |message| message.role == Role::User)
+            })
+            .cloned()
+    }
+
+    fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
+        self.messages
+            .iter()
+            .position(|id| *id == message_id)
+            .map(|index| &self.messages[index + 1..])
+            .unwrap_or(&[])
+    }
+
     fn render_message(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -358,37 +467,32 @@ impl ActiveThread {
             return Empty.into_any();
         }
 
+        let allow_editing_message =
+            message.role == Role::User && self.last_user_message(cx) == Some(message_id);
+
         let is_editing_message = matches!(self.editing_message, Some((id, _)) if id == message_id);
 
-        let message_content = match &self.editing_message {
-            Some((id, state)) if *id == message_id => div()
-                .id("edit-message-container")
-                .py_1()
-                .px_2()
-                .child(
-                    v_flex()
-                        .bg(colors.editor_background)
-                        .rounded_md()
-                        .child(state.editor.clone()),
-                )
-                .into_any_element(),
-            _ => v_flex()
-                .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
-                .when_some(context, |parent, context| {
-                    if !context.is_empty() {
-                        parent.child(
-                            h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                context
-                                    .into_iter()
-                                    .map(|context| ContextPill::added(context, false, false, None)),
-                            ),
-                        )
-                    } else {
-                        parent
-                    }
-                })
-                .into_any_element(),
-        };
+        let message_content = v_flex()
+            .child(if is_editing_message {
+                div()
+                    .p_2p5()
+                    .child(self.editing_message.as_ref().unwrap().1.editor.clone())
+            } else {
+                div().p_2p5().text_ui(cx).child(markdown.clone())
+            })
+            .when_some(context, |parent, context| {
+                if !context.is_empty() {
+                    parent.child(
+                        h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                            context
+                                .into_iter()
+                                .map(|context| ContextPill::added(context, false, false, None)),
+                        ),
+                    )
+                } else {
+                    parent
+                }
+            });
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -425,27 +529,27 @@ impl ActiveThread {
                                                 .color(Color::Muted),
                                         ),
                                 )
-                                .child(if is_editing_message {
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Button::new("cancel-edit-message", "Cancel").on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.cancel_editing_message(cx);
-                                                }),
+                                .when(is_editing_message, |this| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Button::new("cancel-edit-message", "Cancel")
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.cancel_editing_message(cx);
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("confirm-edit-message", "Regenerate")
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.confirm_editing_message(cx);
+                                                    })),
                                             ),
-                                        )
-                                        .child(
-                                            Button::new("confirm-edit-message", "Regenerate")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.confirm_editing_message(cx);
-                                                })),
-                                        )
-                                        .into_any_element()
-                                } else {
-                                    Button::new("edit-message", "Edit")
-                                        .icon(IconName::Pencil)
-                                        .on_click(cx.listener({
+                                    )
+                                })
+                                .when(!is_editing_message && allow_editing_message, |this| {
+                                    this.child(Button::new("edit-message", "Edit").on_click(
+                                        cx.listener({
                                             let message_text = message.text.clone();
                                             move |this, _, window, cx| {
                                                 this.start_editing_message(
@@ -455,8 +559,8 @@ impl ActiveThread {
                                                     cx,
                                                 );
                                             }
-                                        }))
-                                        .into_any_element()
+                                        }),
+                                    ))
                                 }),
                         )
                         .child(message_content),
@@ -486,50 +590,6 @@ impl ActiveThread {
         };
 
         styled_message.into_any()
-    }
-
-    fn start_editing_message(
-        &mut self,
-        message_id: MessageId,
-        message_text: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let buffer = cx.new(|cx| {
-            MultiBuffer::singleton(cx.new(|cx| Buffer::local(message_text.clone(), cx)), cx)
-        });
-        self.editing_message = Some((
-            message_id,
-            EditMessageState {
-                editor: cx.new(|cx| {
-                    Editor::new(
-                        editor::EditorMode::AutoHeight { max_lines: 8 },
-                        buffer,
-                        None,
-                        false,
-                        window,
-                        cx,
-                    )
-                }),
-            },
-        ));
-        cx.notify();
-    }
-
-    fn cancel_editing_message(&mut self, cx: &mut Context<Self>) {
-        self.editing_message.take();
-        cx.notify();
-    }
-
-    fn confirm_editing_message(&mut self, cx: &mut Context<Self>) {
-        let Some((message_id, state)) = self.editing_message.take() else {
-            return;
-        };
-        let edited_text = state.editor.read(cx).text(cx);
-        self.thread.update(cx, |thread, cx| {
-            thread.edit_message(message_id, Role::User, edited_text, cx)
-        });
-        cx.notify();
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {

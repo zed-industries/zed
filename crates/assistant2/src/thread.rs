@@ -247,6 +247,16 @@ impl Thread {
         true
     }
 
+    pub fn delete_message(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self.messages.iter().position(|message| message.id == id) else {
+            return false;
+        };
+        self.messages.remove(index);
+        self.context_by_message.remove(&id);
+        cx.emit(ThreadEvent::MessageDeleted(id));
+        true
+    }
+
     /// Returns the representation of this [`Thread`] in a textual form.
     ///
     /// This is the representation we use when attaching a thread as context to another thread.
@@ -586,6 +596,7 @@ pub enum ThreadEvent {
     StreamedAssistantText(MessageId, String),
     MessageAdded(MessageId),
     MessageEdited(MessageId),
+    MessageDeleted(MessageId),
     SummaryChanged,
     UsePendingTools,
     ToolFinished {
