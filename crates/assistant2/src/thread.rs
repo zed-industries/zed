@@ -99,7 +99,13 @@ impl Thread {
         tools: Arc<ToolWorkingSet>,
         _cx: &mut Context<Self>,
     ) -> Self {
-        let next_message_id = MessageId(saved.messages.len());
+        let next_message_id = MessageId(
+            saved
+                .messages
+                .last()
+                .map(|message| message.id.0 + 1)
+                .unwrap_or(0),
+        );
         let tool_use = ToolUseState::from_saved_messages(&saved.messages);
 
         Self {
