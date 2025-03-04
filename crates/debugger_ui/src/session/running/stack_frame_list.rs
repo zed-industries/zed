@@ -28,7 +28,6 @@ pub struct StackFrameList {
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     current_stack_frame_id: StackFrameId,
-    _fetch_stack_frames_task: Option<Task<Result<()>>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -73,7 +72,6 @@ impl StackFrameList {
             _subscription,
             thread_id: None,
             entries: Default::default(),
-            _fetch_stack_frames_task: None,
             current_stack_frame_id: Default::default(),
         }
     }
@@ -125,7 +123,6 @@ impl StackFrameList {
         self.thread_id
     }
 
-    // zed . --debug-config="{}"
     fn build_entries(
         &mut self,
         select_first_stack_frame: bool,

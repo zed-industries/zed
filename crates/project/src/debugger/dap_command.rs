@@ -17,7 +17,6 @@ use util::ResultExt;
 pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
-    const CACHEABLE: bool = false;
 
     fn is_supported(_capabilities: &Capabilities) -> bool {
         true
@@ -33,6 +32,8 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
 
 pub(crate) trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send + proto::RequestMessage;
+    const CACHEABLE: bool = false;
+
     #[allow(dead_code)]
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId;
 
@@ -844,7 +845,6 @@ pub struct VariablesCommand {
 impl LocalDapCommand for VariablesCommand {
     type Response = Vec<Variable>;
     type DapRequest = dap::requests::Variables;
-    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::VariablesArguments {
@@ -866,6 +866,7 @@ impl LocalDapCommand for VariablesCommand {
 
 impl DapCommand for VariablesCommand {
     type ProtoRequest = proto::VariablesRequest;
+    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
@@ -1068,7 +1069,6 @@ pub(crate) struct ModulesCommand;
 impl LocalDapCommand for ModulesCommand {
     type Response = Vec<dap::Module>;
     type DapRequest = dap::requests::Modules;
-    const CACHEABLE: bool = true;
 
     fn is_supported(capabilities: &Capabilities) -> bool {
         capabilities.supports_modules_request.unwrap_or_default()
@@ -1091,6 +1091,7 @@ impl LocalDapCommand for ModulesCommand {
 
 impl DapCommand for ModulesCommand {
     type ProtoRequest = proto::DapModulesRequest;
+    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
@@ -1142,7 +1143,6 @@ pub(crate) struct LoadedSourcesCommand;
 impl LocalDapCommand for LoadedSourcesCommand {
     type Response = Vec<dap::Source>;
     type DapRequest = dap::requests::LoadedSources;
-    const CACHEABLE: bool = true;
 
     fn is_supported(capabilities: &Capabilities) -> bool {
         capabilities
@@ -1163,6 +1163,7 @@ impl LocalDapCommand for LoadedSourcesCommand {
 
 impl DapCommand for LoadedSourcesCommand {
     type ProtoRequest = proto::DapLoadedSourcesRequest;
+    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
@@ -1218,7 +1219,6 @@ pub(crate) struct StackTraceCommand {
 impl LocalDapCommand for StackTraceCommand {
     type Response = Vec<dap::StackFrame>;
     type DapRequest = dap::requests::StackTrace;
-    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::StackTraceArguments {
@@ -1239,6 +1239,7 @@ impl LocalDapCommand for StackTraceCommand {
 
 impl DapCommand for StackTraceCommand {
     type ProtoRequest = proto::DapStackTraceRequest;
+    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapStackTraceRequest {
@@ -1291,7 +1292,6 @@ pub(crate) struct ScopesCommand {
 impl LocalDapCommand for ScopesCommand {
     type Response = Vec<dap::Scope>;
     type DapRequest = dap::requests::Scopes;
-    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::ScopesArguments {
@@ -1309,6 +1309,7 @@ impl LocalDapCommand for ScopesCommand {
 
 impl DapCommand for ScopesCommand {
     type ProtoRequest = proto::DapScopesRequest;
+    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapScopesRequest {
@@ -1348,7 +1349,6 @@ impl DapCommand for ScopesCommand {
 impl LocalDapCommand for super::session::CompletionsQuery {
     type Response = dap::CompletionsResponse;
     type DapRequest = dap::requests::Completions;
-    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::CompletionsArguments {
@@ -1374,6 +1374,7 @@ impl LocalDapCommand for super::session::CompletionsQuery {
 }
 impl DapCommand for super::session::CompletionsQuery {
     type ProtoRequest = proto::DapCompletionRequest;
+    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapCompletionRequest {
@@ -1515,7 +1516,6 @@ pub(crate) struct ThreadsCommand;
 impl LocalDapCommand for ThreadsCommand {
     type Response = Vec<dap::Thread>;
     type DapRequest = dap::requests::Threads;
-    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         ()
@@ -1531,6 +1531,7 @@ impl LocalDapCommand for ThreadsCommand {
 
 impl DapCommand for ThreadsCommand {
     type ProtoRequest = proto::DapThreadsRequest;
+    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapThreadsRequest {
@@ -1690,7 +1691,6 @@ pub(super) struct LocationsCommand {
 impl LocalDapCommand for LocationsCommand {
     type Response = dap::LocationsResponse;
     type DapRequest = dap::requests::Locations;
-    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::LocationsArguments {
@@ -1708,6 +1708,7 @@ impl LocalDapCommand for LocationsCommand {
 
 impl DapCommand for LocationsCommand {
     type ProtoRequest = proto::DapThreadsRequest;
+    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(_: &Self::ProtoRequest) -> SessionId {
         todo!()
