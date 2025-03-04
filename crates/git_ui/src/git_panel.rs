@@ -191,7 +191,6 @@ pub struct GitPanel {
     pending_remote_operations: RemoteOperations,
     pub(crate) active_repository: Option<Entity<Repository>>,
     commit_editor: Entity<Editor>,
-    pub(crate) suggested_commit_message: Option<String>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     current_modifiers: Modifiers,
@@ -319,7 +318,6 @@ impl GitPanel {
                 remote_operation_id: 0,
                 active_repository,
                 commit_editor,
-                suggested_commit_message: None,
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
                 current_modifiers: window.modifiers(),
@@ -1180,7 +1178,7 @@ impl GitPanel {
             return Some(message.to_string());
         }
 
-        self.suggested_commit_message
+        self.suggest_commit_message()
             .clone()
             .filter(|message| !message.trim().is_empty())
     }
@@ -1355,9 +1353,8 @@ impl GitPanel {
     }
 
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
-        self.suggested_commit_message = self.suggest_commit_message();
-        let placeholder_text = self
-            .suggested_commit_message
+        let suggested_commit_message = self.suggest_commit_message();
+        let placeholder_text = suggested_commit_message
             .as_deref()
             .unwrap_or("Enter commit message");
 
@@ -1699,7 +1696,7 @@ impl GitPanel {
                     git_panel.commit_editor = cx.new(|cx| {
                         commit_message_editor(
                             buffer,
-                            git_panel.suggested_commit_message.as_deref(),
+                            git_panel.suggest_commit_message().as_deref(),
                             git_panel.project.clone(),
                             true,
                             window,

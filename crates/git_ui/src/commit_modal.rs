@@ -337,6 +337,7 @@ impl CommitModal {
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
+
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
         self.git_panel
             .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
