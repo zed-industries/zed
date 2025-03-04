@@ -56,8 +56,8 @@ pub enum DiffHunkSecondaryStatus {
 /// A diff hunk resolved to rows in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk {
-    /// The buffer range, expressed in terms of rows.
-    pub row_range: Range<u32>,
+    /// The buffer range as points.
+    pub range: Range<Point>,
     /// The range in the buffer to which this hunk corresponds.
     pub buffer_range: Range<Anchor>,
     /// The range in the buffer's diff base text to which this hunk corresponds.
@@ -417,7 +417,7 @@ impl BufferDiffInner {
             }
 
             return Some(DiffHunk {
-                row_range: start_point.row..end_point.row,
+                range: start_point..end_point,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: start_anchor..end_anchor,
                 secondary_status,
@@ -443,14 +443,9 @@ impl BufferDiffInner {
 
             let hunk = cursor.item()?;
             let range = hunk.buffer_range.to_point(buffer);
-            let end_row = if range.end.column > 0 {
-                range.end.row + 1
-            } else {
-                range.end.row
-            };
 
             Some(DiffHunk {
-                row_range: range.start.row..end_row,
+                range,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
                 // The secondary status is not used by callers of this method.
@@ -1137,12 +1132,10 @@ pub fn assert_hunks<Iter>(
     let actual_hunks = diff_hunks
         .map(|hunk| {
             (
-                hunk.row_range.clone(),
+                hunk.range.clone(),
                 &diff_base[hunk.diff_base_byte_range.clone()],
                 buffer
-                    .text_for_range(
-                        Point::new(hunk.row_range.start, 0)..Point::new(hunk.row_range.end, 0),
-                    )
+                    .text_for_range(hunk.range.clone())
                     .collect::<String>(),
                 hunk.status(),
             )
@@ -1151,7 +1144,14 @@ pub fn assert_hunks<Iter>(
 
     let expected_hunks: Vec<_> = expected_hunks
         .iter()
-        .map(|(r, s, h, status)| (r.clone(), *s, h.to_string(), *status))
+        .map(|(r, old_text, new_text, status)| {
+            (
+                Point::new(r.start, 0)..Point::new(r.end, 0),
+                *old_text,
+                new_text.to_string(),
+                *status,
+            )
+        })
         .collect();
 
     assert_eq!(actual_hunks, expected_hunks);
