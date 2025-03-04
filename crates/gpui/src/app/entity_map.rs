@@ -191,7 +191,7 @@ pub(crate) struct Lease<'a, T> {
     entity_type: PhantomData<T>,
 }
 
-impl<'a, T: 'static> core::ops::Deref for Lease<'a, T> {
+impl<T: 'static> core::ops::Deref for Lease<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -199,13 +199,13 @@ impl<'a, T: 'static> core::ops::Deref for Lease<'a, T> {
     }
 }
 
-impl<'a, T: 'static> core::ops::DerefMut for Lease<'a, T> {
+impl<T: 'static> core::ops::DerefMut for Lease<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.entity.as_mut().unwrap().downcast_mut().unwrap()
     }
 }
 
-impl<'a, T> Drop for Lease<'a, T> {
+impl<T> Drop for Lease<'_, T> {
     fn drop(&mut self) {
         if self.entity.is_some() && !panicking() {
             panic!("Leases must be ended with EntityMap::end_lease")

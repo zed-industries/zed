@@ -836,7 +836,7 @@ impl SyntaxSnapshot {
     }
 
     #[cfg(test)]
-    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer> {
+    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer<'a>> {
         self.layers_for_range(0..buffer.len(), buffer, true)
             .collect()
     }
@@ -1142,7 +1142,7 @@ impl<'a> SyntaxMapMatches<'a> {
     }
 }
 
-impl<'a> SyntaxMapCapturesLayer<'a> {
+impl SyntaxMapCapturesLayer<'_> {
     fn advance(&mut self) {
         self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures[*ix]);
     }
@@ -1157,7 +1157,7 @@ impl<'a> SyntaxMapCapturesLayer<'a> {
     }
 }
 
-impl<'a> SyntaxMapMatchesLayer<'a> {
+impl SyntaxMapMatchesLayer<'_> {
     fn advance(&mut self) {
         if let Some(mat) = self.matches.next() {
             self.next_captures.clear();
@@ -1740,7 +1740,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
     }
 }
 
-impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for SyntaxLayerPosition {
+impl SeekTarget<'_, SyntaxLayerSummary, SyntaxLayerSummary> for SyntaxLayerPosition {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
         Ord::cmp(&self.depth, &cursor_location.max_depth)
             .then_with(|| {
@@ -1758,16 +1758,14 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for SyntaxLayerP
     }
 }
 
-impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for ChangeStartPosition {
+impl SeekTarget<'_, SyntaxLayerSummary, SyntaxLayerSummary> for ChangeStartPosition {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, text: &BufferSnapshot) -> Ordering {
         Ord::cmp(&self.depth, &cursor_location.max_depth)
             .then_with(|| self.position.cmp(&cursor_location.range.end, text))
     }
 }
 
-impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
-    for SyntaxLayerPositionBeforeChange
-{
+impl SeekTarget<'_, SyntaxLayerSummary, SyntaxLayerSummary> for SyntaxLayerPositionBeforeChange {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
         if self.change.cmp(cursor_location, buffer).is_le() {
             Ordering::Less
@@ -1869,7 +1867,7 @@ struct LogPoint(Point);
 struct LogAnchorRange<'a>(&'a Range<Anchor>, &'a text::BufferSnapshot);
 struct LogChangedRegions<'a>(&'a ChangeRegionSet, &'a text::BufferSnapshot);
 
-impl<'a> fmt::Debug for LogIncludedRanges<'a> {
+impl fmt::Debug for LogIncludedRanges<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list()
             .entries(self.0.iter().map(|range| {
@@ -1881,14 +1879,14 @@ impl<'a> fmt::Debug for LogIncludedRanges<'a> {
     }
 }
 
-impl<'a> fmt::Debug for LogAnchorRange<'a> {
+impl fmt::Debug for LogAnchorRange<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let range = self.0.to_point(self.1);
         (LogPoint(range.start)..LogPoint(range.end)).fmt(f)
     }
 }
 
-impl<'a> fmt::Debug for LogChangedRegions<'a> {
+impl fmt::Debug for LogChangedRegions<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list()
             .entries(

@@ -93,7 +93,7 @@ impl ComponentPreview {
         &self,
         ix: usize,
         window: &mut Window,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let component = self.get_component(ix);
 
@@ -226,3 +226,7 @@ impl Item for ComponentPreview {
         f(*event)
     }
 }
+
+// TODO: impl serializable item for component preview so it will restore with the workspace
+// ref: https://github.com/zed-industries/zed/blob/32201ac70a501e63dfa2ade9c00f85aea2d4dd94/crates/image_viewer/src/image_viewer.rs#L199
+// Use `ImageViewer` as a model for how to do it, except it'll be even simpler

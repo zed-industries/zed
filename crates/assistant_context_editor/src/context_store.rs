@@ -16,7 +16,7 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, 
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use regex::Regex;
 use rpc::AnyProtoClient;
 use std::sync::LazyLock;

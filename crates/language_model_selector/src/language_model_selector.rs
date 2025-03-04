@@ -401,9 +401,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .pl_0p5()
                         .w(px(240.))
                         .child(
-                            div().max_w_40().child(
-                                Label::new(model_info.model.name().0.clone()).text_ellipsis(),
-                            ),
+                            div()
+                                .max_w_40()
+                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
                         )
                         .child(
                             h_flex()

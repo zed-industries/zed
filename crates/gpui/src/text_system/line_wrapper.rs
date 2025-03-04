@@ -543,14 +543,6 @@ mod tests {
                 background_color: None,
             };
 
-            impl TextRun {
-                fn with_len(&self, len: usize) -> Self {
-                    let mut this = self.clone();
-                    this.len = len;
-                    this
-                }
-            }
-
             let text = "aa bbb cccc ddddd eeee".into();
             let lines = text_system
                 .shape_text(

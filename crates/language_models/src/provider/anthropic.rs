@@ -1,3 +1,4 @@
+use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
 use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
@@ -24,7 +25,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
@@ -803,12 +804,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ANTHROPIC_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:",
-            "- Create one at:",
-            "- Paste your API key below and hit enter to use the assistant:",
-        ];
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -817,17 +812,20 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(
+                            InstructionListItem::new(
+                                "Create one by visiting",
+                                Some("Anthropic's settings"),
+                                Some("https://console.anthropic.com/settings/keys")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                        )
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()
@@ -844,7 +842,8 @@ impl Render for ConfigurationView {
                     Label::new(
                         format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .into_any()
         } else {

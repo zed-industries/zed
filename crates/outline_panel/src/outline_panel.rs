@@ -37,7 +37,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
-use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, Project, ProjectItem};
@@ -1148,7 +1148,7 @@ impl OutlinePanel {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             self.cached_entries
                 .iter()
@@ -4911,7 +4911,7 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::open))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_parent))
@@ -5851,7 +5851,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.select_prev(&SelectPrev, window, cx);
+            outline_panel.select_previous(&SelectPrevious, window, cx);
             outline_panel.open(&Open, window, cx);
         });
         cx.executor()
@@ -6138,7 +6138,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6165,7 +6165,7 @@ outline: struct OutlineEntryExcerpt
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6192,7 +6192,7 @@ outline: struct OutlineEntryExcerpt
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6219,7 +6219,7 @@ outline: struct OutlineEntryExcerpt
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6246,7 +6246,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()

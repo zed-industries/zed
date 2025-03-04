@@ -37,6 +37,13 @@ pub struct SelectToBeginningOfLine {
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct DeleteToBeginningOfLine {
+    #[serde(default)]
+    pub(super) stop_at_indent: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MovePageUp {
     #[serde(default)]
     pub(super) center_cursor: bool,
@@ -190,6 +197,20 @@ pub struct DeleteToPreviousWordStart {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GoToHunk {
+    #[serde(default)]
+    pub center_cursor: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GoToPreviousHunk {
+    #[serde(default)]
+    pub center_cursor: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct FoldAtLevel(pub u32);
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -212,12 +233,15 @@ impl_actions!(
         ComposeCompletion,
         ConfirmCodeAction,
         ConfirmCompletion,
+        DeleteToBeginningOfLine,
         DeleteToNextWordEnd,
         DeleteToPreviousWordStart,
         ExpandExcerpts,
         ExpandExcerptsDown,
         ExpandExcerptsUp,
         FoldAt,
+        GoToHunk,
+        GoToPreviousHunk,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -257,7 +281,7 @@ gpui::actions!(
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
-        ContextMenuPrev,
+        ContextMenuPrevious,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
@@ -276,7 +300,6 @@ gpui::actions!(
         CutToEndOfLine,
         Delete,
         DeleteLine,
-        DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
         DeleteToPreviousSubwordStart,
@@ -300,11 +323,9 @@ gpui::actions!(
         GoToDefinition,
         GoToDefinitionSplit,
         GoToDiagnostic,
-        GoToHunk,
         GoToImplementation,
         GoToImplementationSplit,
-        GoToPrevDiagnostic,
-        GoToPrevHunk,
+        GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
         HalfPageDown,
@@ -348,6 +369,7 @@ gpui::actions!(
         OpenPermalinkToLine,
         OpenSelectionsInMultibuffer,
         OpenUrl,
+        OrganizeImports,
         Outdent,
         AutoIndent,
         PageDown,
@@ -398,7 +420,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,
-        TabPrev,
+        Backtab,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,

@@ -61,7 +61,7 @@ impl RenderOnce for Facepile {
 }
 
 impl ComponentPreview for Facepile {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let faces: [&'static str; 6] = [
             "https://avatars.githubusercontent.com/u/326587?s=60&v=4",
             "https://avatars.githubusercontent.com/u/2280405?s=60&v=4",

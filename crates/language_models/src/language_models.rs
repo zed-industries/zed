@@ -8,6 +8,7 @@ use provider::deepseek::DeepSeekLanguageModelProvider;
 
 pub mod provider;
 mod settings;
+pub mod ui;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;

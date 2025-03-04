@@ -15,10 +15,9 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure};
 use workspace::Workspace;
 
-use crate::thread::{
-    MessageId, RequestKind, Thread, ThreadError, ThreadEvent, ToolUse, ToolUseStatus,
-};
+use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
+use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
@@ -135,6 +134,8 @@ impl ActiveThread {
             base_text_style: text_style,
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            table_overflow_x_scroll: true,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
                     top: Some(Length::Definite(rems(0.).into())),
@@ -255,12 +256,7 @@ impl ActiveThread {
                         let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
 
                         self.thread.update(cx, |thread, cx| {
-                            thread.insert_tool_output(
-                                tool_use.assistant_message_id,
-                                tool_use.id.clone(),
-                                task,
-                                cx,
-                            );
+                            thread.insert_tool_output(tool_use.id.clone(), task, cx);
                         });
                     }
                 }
@@ -276,8 +272,15 @@ impl ActiveThread {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         self.thread.update(cx, |thread, cx| {
-                            // Insert an empty user message to contain the tool results.
-                            thread.insert_user_message("", Vec::new(), cx);
+                            // Insert a user message to contain the tool results.
+                            thread.insert_user_message(
+                                // TODO: Sending up a user message without any content results in the model sending back
+                                // responses that also don't have any content. We currently don't handle this case well,
+                                // so for now we provide some text to keep the model on track.
+                                "Here are the tool results.",
+                                Vec::new(),
+                                cx,
+                            );
                             thread.send_to_model(model, RequestKind::Chat, true, cx);
                         });
                     }
@@ -301,10 +304,7 @@ impl ActiveThread {
         let colors = cx.theme().colors();
 
         // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User
-            && message.text.is_empty()
-            && self.thread.read(cx).message_has_tool_results(message_id)
-        {
+        if message.role == Role::User && self.thread.read(cx).message_has_tool_results(message_id) {
             return Empty.into_any();
         }
 

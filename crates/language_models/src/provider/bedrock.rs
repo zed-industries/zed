@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::ui::InstructionListItem;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::Region;
@@ -37,7 +38,7 @@ use settings::{Settings, SettingsStore};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
 use crate::AllLanguageModelSettings;
@@ -954,23 +955,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const IAM_CONSOLE_URL: &str = "https://us-east-1.console.aws.amazon.com/iam/home";
-        const BEDROCK_DOCS_URL: &str =
-            "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html";
-        const BEDROCK_MODEL_CATALOG: &str =
-            "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess";
-        const INSTRUCTIONS: [&str; 5] = [
-            "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
-            "- Create a user and security credentials here:",
-            "- Grant that user permissions according to this documentation:",
-            "- Go to the console and select the models you would like access to:",
-            "- Fill the fields below and hit enter to use the assistant:",
-        ];
-        const BEDROCK_MODEL_CATALOG_LABEL: &str = "Bedrock Model Catalog";
-        const BEDROCK_IAM_DOCS: &str = "Prerequisites";
-
         let env_var_set = self.state.read(cx).credentials_from_env;
-
         let bg_color = cx.theme().colors().editor_background;
         let border_color = cx.theme().colors().border_variant;
         let input_base_styles = || {
@@ -990,33 +975,34 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(ConfigurationView::save_credentials))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().flex_wrap().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("iam_console", IAM_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
+                .child(Label::new("To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(
+                            InstructionListItem::new(
+                                "Start by",
+                                Some("creating a user and security credentials"),
+                                Some("https://us-east-1.console.aws.amazon.com/iam/home")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::new(
+                                "Grant that user permissions according to this documentation:",
+                                Some("Prerequisites"),
+                                Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::new(
+                                "Select the models you would like access to:",
+                                Some("Bedrock Model Catalog"),
+                                Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::text_only("Fill the fields below and hit enter to start using the assistant")
+                        )
                 )
-                )
-                .child(h_flex().flex_wrap().child(Label::new(INSTRUCTIONS[2])).child(
-                    Button::new("bedrock_iam_docs", BEDROCK_IAM_DOCS)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _window, cx| cx.open_url(BEDROCK_DOCS_URL))
-                ))
-                .child(h_flex().flex_wrap().child(Label::new(INSTRUCTIONS[3])).child(
-                    Button::new("bedrock_model_catalog", BEDROCK_MODEL_CATALOG_LABEL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _window, cx| cx.open_url(BEDROCK_MODEL_CATALOG))
-                ))
-                .child(Label::new(INSTRUCTIONS[4]))
                 .child(
                     v_flex()
                         .my_2()
@@ -1050,7 +1036,8 @@ impl Render for ConfigurationView {
                     Label::new(
                         format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
                     )
-                        .size(LabelSize::Small),
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                 )
                 .into_any()
         } else {

@@ -1,0 +1,33 @@
+[package]
+name = "prompt_store"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/prompt_store.rs"
+
+[dependencies]
+anyhow.workspace = true
+assets.workspace = true
+chrono.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+handlebars.workspace = true
+heed.workspace = true
+language.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+rope.workspace = true
+serde.workspace = true
+text.workspace = true
+util.workspace = true
+uuid.workspace = true

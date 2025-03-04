@@ -47,6 +47,10 @@ impl RepositorySelector {
         }
     }
 
+    pub(crate) fn repositories_len(&self, cx: &App) -> usize {
+        self.picker.read(cx).delegate.repository_entries.len()
+    }
+
     fn handle_project_git_event(
         &mut self,
         git_store: &Entity<GitStore>,

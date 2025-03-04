@@ -649,7 +649,7 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 }
 
-impl<'a, T> Context<'a, T> {
+impl<T> Context<'_, T> {
     /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
     pub fn emit<Evt>(&mut self, event: Evt)
     where
@@ -664,7 +664,7 @@ impl<'a, T> Context<'a, T> {
     }
 }
 
-impl<'a, T> AppContext for Context<'a, T> {
+impl<T> AppContext for Context<'_, T> {
     type Result<U> = U;
 
     fn new<U: 'static>(

@@ -2,7 +2,7 @@
   {
     "bindings": {
       "ctrl-alt-s": "zed::OpenSettings",
-      "ctrl-{": "pane::ActivatePrevItem",
+      "ctrl-{": "pane::ActivatePreviousItem",
       "ctrl-}": "pane::ActivateNextItem"
     }
   },
@@ -41,9 +41,9 @@
       "ctrl-shift-b": "editor::GoToTypeDefinition",
       "ctrl-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
-      "shift-f2": "editor::GoToPrevDiagnostic",
-      "ctrl-alt-shift-down": "editor::GoToHunk",
-      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "shift-f2": "editor::GoToPreviousDiagnostic",
+      "ctrl-alt-shift-down": ["editor::GoToHunk", { "center_cursor": true }],
+      "ctrl-alt-shift-up": ["editor::GoToPreviousHunk", { "center_cursor": true }],
       "ctrl-alt-z": "git::Restore",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",

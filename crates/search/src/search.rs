@@ -30,7 +30,7 @@ actions!(
         ToggleReplace,
         ToggleSelection,
         SelectNextMatch,
-        SelectPrevMatch,
+        SelectPreviousMatch,
         SelectAllMatches,
         NextHistoryQuery,
         PreviousHistoryQuery,

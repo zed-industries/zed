@@ -370,7 +370,7 @@ fn render_markdown_code_block(
     cx: &mut RenderContext,
 ) -> AnyElement {
     let body = if let Some(highlights) = parsed.highlights.as_ref() {
-        StyledText::new(parsed.contents.clone()).with_highlights(
+        StyledText::new(parsed.contents.clone()).with_default_highlights(
             &cx.buffer_text_style,
             highlights.iter().filter_map(|(range, highlight_id)| {
                 highlight_id
@@ -468,7 +468,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         InteractiveText::new(
                             element_id,
                             StyledText::new(parsed.contents.clone())
-                                .with_highlights(&text_style, highlights),
+                                .with_default_highlights(&text_style, highlights),
                         )
                         .tooltip({
                             let links = links.clone();
@@ -513,12 +513,16 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let image_element = div()
                     .id(element_id)
                     .cursor_pointer()
-                    .child(img(ImageSource::Resource(image_resource)).with_fallback({
-                        let alt_text = image.alt_text.clone();
-                        {
-                            move || div().children(alt_text.clone()).into_any_element()
-                        }
-                    }))
+                    .child(
+                        img(ImageSource::Resource(image_resource))
+                            .max_w_full()
+                            .with_fallback({
+                                let alt_text = image.alt_text.clone();
+                                {
+                                    move || div().children(alt_text.clone()).into_any_element()
+                                }
+                            }),
+                    )
                     .tooltip({
                         let link = image.link.clone();
                         move |_, cx| {

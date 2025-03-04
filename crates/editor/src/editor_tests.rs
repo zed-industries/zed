@@ -7,7 +7,7 @@ use crate::{
     },
     JoinLines,
 };
-use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
@@ -1514,6 +1514,10 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         stop_at_indent: true,
     };
 
+    let delete_to_beg = DeleteToBeginningOfLine {
+        stop_at_indent: false,
+    };
+
     let move_to_end = MoveToEndOfLine {
         stop_at_soft_wraps: true,
     };
@@ -1672,7 +1676,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+        editor.delete_to_beginning_of_line(&delete_to_beg, window, cx);
         assert_eq!(editor.display_text(cx), "\n");
         assert_eq!(
             editor.selections.display_ranges(cx),
@@ -1775,6 +1779,107 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
             vec![DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),],
             editor.selections.display_ranges(cx)
         );
+    });
+}
+
+#[gpui::test]
+fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: true,
+        stop_at_indent: true,
+    };
+
+    let select_to_beg = SelectToBeginningOfLine {
+        stop_at_soft_wraps: true,
+        stop_at_indent: true,
+    };
+
+    let delete_to_beg = DeleteToBeginningOfLine {
+        stop_at_indent: true,
+    };
+
+    let move_to_end = MoveToEndOfLine {
+        stop_at_soft_wraps: false,
+    };
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("abc\n  def", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 4),
+            ]);
+        });
+
+        // Moving to the beginning of the line should put the first cursor at the beginning of the line,
+        // and the second cursor at the first non-whitespace character in the line.
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
+            ]
+        );
+
+        // Moving to the beginning of the line again should be a no-op for the first cursor,
+        // and should move the second cursor to the beginning of the line.
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+            ]
+        );
+
+        // Moving to the beginning of the line again should still be a no-op for the first cursor,
+        // and should move the second cursor back to the first non-whitespace character in the line.
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
+            ]
+        );
+
+        // Selecting to the beginning of the line should select to the beginning of the line for the first cursor,
+        // and to the first non-whitespace character in the line for the second cursor.
+        editor.move_to_end_of_line(&move_to_end, window, cx);
+        editor.move_left(&MoveLeft, window, cx);
+        editor.select_to_beginning_of_line(&select_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 2),
+            ]
+        );
+
+        // Selecting to the beginning of the line again should be a no-op for the first cursor,
+        // and should select to the beginning of the line for the second cursor.
+        editor.select_to_beginning_of_line(&select_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 0),
+            ]
+        );
+
+        // Deleting to the beginning of the line should delete to the beginning of the line for the first cursor,
+        // and should delete to the first non-whitespace character in the line for the second cursor.
+        editor.move_to_end_of_line(&move_to_end, window, cx);
+        editor.move_left(&MoveLeft, window, cx);
+        editor.delete_to_beginning_of_line(&delete_to_beg, window, cx);
+        assert_eq!(editor.text(cx), "c\n  f");
     });
 }
 
@@ -2295,7 +2400,13 @@ async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("one «two threeˇ» four");
     cx.update_editor(|editor, window, cx| {
-        editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+        editor.delete_to_beginning_of_line(
+            &DeleteToBeginningOfLine {
+                stop_at_indent: false,
+            },
+            window,
+            cx,
+        );
         assert_eq!(editor.text(cx), " four");
     });
 }
@@ -2854,7 +2965,7 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
          four
     "});
 
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         «oneˇ» «twoˇ»
         three
@@ -2874,7 +2985,7 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
         ˇ» four
     "});
 
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         t«hree
@@ -2899,7 +3010,7 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
         ˇ    three
             four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -2933,13 +3044,13 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         three
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         \t«oneˇ» «twoˇ»
         three
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         «oneˇ» «twoˇ»
         three
@@ -2964,13 +3075,13 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         \t\tt«hree
         ˇ»four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         \tt«hree
         ˇ»four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         t«hree
@@ -2983,7 +3094,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         ˇthree
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -2995,7 +3106,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
         \tˇthree
         four
     "});
-    cx.update_editor(|e, window, cx| e.tab_prev(&TabPrev, window, cx));
+    cx.update_editor(|e, window, cx| e.backtab(&Backtab, window, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -3100,7 +3211,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
             "},
             cx,
         );
-        editor.tab_prev(&TabPrev, window, cx);
+        editor.backtab(&Backtab, window, cx);
         assert_text_with_selections(
             &mut editor,
             indoc! {"
@@ -7876,6 +7987,157 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
+            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
+        ))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.ts"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    )));
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.ts"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(
+            "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n",
+            window,
+            cx,
+        )
+    });
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_code_action_kind(
+                project.clone(),
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    fake_server
+        .handle_request::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+            );
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Organize Imports".to_string(),
+                    kind: Some(lsp::CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                params.text_document.uri.clone(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(1, 0),
+                                        lsp::Position::new(2, 0),
+                                    ),
+                                    "".to_string(),
+                                )],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )]))
+        })
+        .next()
+        .await;
+    cx.executor().start_waiting();
+    format.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "import { a } from 'module';\n\nconst x = a;\n"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(
+            "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n",
+            window,
+            cx,
+        )
+    });
+    // Ensure we don't lock if code action hangs.
+    fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_code_action_kind(
+                project,
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.executor().advance_clock(super::CODE_ACTION_TIMEOUT);
+    cx.executor().start_waiting();
+    format.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n"
+    );
+}
+
+#[gpui::test]
 async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -10764,7 +11026,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10773,7 +11035,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10782,7 +11044,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10791,7 +11053,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -10871,7 +11133,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Fourth diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
@@ -10880,7 +11142,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Third diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -10889,7 +11151,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Second diagnostic, same place
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -10898,7 +11160,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // First diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abcˇ def: i32) -> u32 {
@@ -10907,7 +11169,7 @@ async fn cycle_through_same_place_diagnostics(
 
     // Wrapped over, fourth diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
@@ -11151,7 +11413,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         //Wrap around the bottom of the buffer
         for _ in 0..3 {
-            editor.go_to_next_hunk(&GoToHunk, window, cx);
+            editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
         }
     });
 
@@ -11173,7 +11435,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         //Wrap around the top of the buffer
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+            editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
         }
     });
 
@@ -11193,7 +11455,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+        editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
     });
 
     cx.assert_editor_state(
@@ -11212,7 +11474,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+        editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
     });
 
     cx.assert_editor_state(
@@ -11232,7 +11494,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
 
     cx.update_editor(|editor, window, cx| {
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
+            editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
         }
     });
 
@@ -11256,7 +11518,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     });
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk, window, cx);
+        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
     });
 
     cx.assert_editor_state(
@@ -11967,7 +12229,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
-        editor.context_menu_prev(&ContextMenuPrev, window, cx);
+        editor.context_menu_prev(&ContextMenuPrevious, window, cx);
     });
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -12157,7 +12419,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     resolved_items.lock().clear();
 
     cx.update_editor(|editor, window, cx| {
-        editor.context_menu_prev(&ContextMenuPrev, window, cx);
+        editor.context_menu_prev(&ContextMenuPrevious, window, cx);
     });
     cx.run_until_parked();
     // Completions that have already been resolved are skipped.
@@ -12404,7 +12666,7 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
+        vec![DiffHunkStatusKind::Added, DiffHunkStatusKind::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -12442,7 +12704,7 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
+        vec![DiffHunkStatusKind::Added, DiffHunkStatusKind::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -12489,11 +12751,11 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    «ˇ// something on bottom»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12541,10 +12803,7 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-        ],
+        vec![DiffHunkStatusKind::Modified, DiffHunkStatusKind::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12571,10 +12830,7 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-        ],
+        vec![DiffHunkStatusKind::Modified, DiffHunkStatusKind::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12603,12 +12859,12 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row9;
                    struct Row1011;ˇ"#},
         vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12686,10 +12942,7 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12712,10 +12965,7 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12740,10 +12990,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12768,9 +13015,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
+            DiffHunkStatusKind::Deleted,
+            DiffHunkStatusKind::Deleted,
+            DiffHunkStatusKind::Deleted,
         ],
         indoc! {r#"struct Row;
                    struct Row1;
@@ -13278,7 +13525,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk, window, cx);
+        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
     });
     executor.run_until_parked();
@@ -13300,7 +13547,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
 
     cx.update_editor(|editor, window, cx| {
         for _ in 0..2 {
-            editor.go_to_next_hunk(&GoToHunk, window, cx);
+            editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
             editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
         }
     });
@@ -13323,7 +13570,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk, window, cx);
+        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
     });
     executor.run_until_parked();
@@ -16687,14 +16934,13 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
 #[track_caller]
 fn assert_hunk_revert(
     not_reverted_text_with_selections: &str,
-    expected_hunk_statuses_before: Vec<DiffHunkStatus>,
+    expected_hunk_statuses_before: Vec<DiffHunkStatusKind>,
     expected_reverted_text_with_selections: &str,
     base_text: &str,
     cx: &mut EditorLspTestContext,
 ) {
     cx.set_state(not_reverted_text_with_selections);
     cx.set_head_text(base_text);
-    cx.clear_index_text();
     cx.executor().run_until_parked();
 
     let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
@@ -16702,7 +16948,7 @@ fn assert_hunk_revert(
         let reverted_hunk_statuses = snapshot
             .buffer_snapshot
             .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
-            .map(|hunk| hunk.status())
+            .map(|hunk| hunk.status().kind)
             .collect::<Vec<_>>();
 
         editor.git_restore(&Default::default(), window, cx);

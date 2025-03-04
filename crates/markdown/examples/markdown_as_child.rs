@@ -84,6 +84,7 @@ pub fn main() {
                         selection
                     },
                     heading: Default::default(),
+                    ..Default::default()
                 };
                 let markdown = cx.new(|cx| {
                     Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)

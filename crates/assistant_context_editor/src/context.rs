@@ -27,7 +27,7 @@ use language_model::{
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{

@@ -47,7 +47,7 @@
     "context": "BufferSearchBar",
     "bindings": {
       "ctrl-s": "search::SelectNextMatch",
-      "ctrl-shift-s": "search::SelectPrevMatch"
+      "ctrl-shift-s": "search::SelectPreviousMatch"
     }
   },
   {

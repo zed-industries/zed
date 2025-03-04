@@ -411,7 +411,7 @@ async fn stream_completion(
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.first().is_none()
+                                if response.choices.is_empty()
                                     || response.choices.first().unwrap().finish_reason.is_some()
                                 {
                                     None

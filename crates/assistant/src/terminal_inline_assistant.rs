@@ -20,7 +20,7 @@ use language_model::{
     LanguageModelRequestMessage, Role,
 };
 use language_model_selector::{InlineLanguageModelSelector, LanguageModelSelector};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,

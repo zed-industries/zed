@@ -218,6 +218,7 @@ pub enum IconName {
     Github,
     Globe,
     GitBranch,
+    GitBranchSmall,
     Hash,
     HistoryRerun,
     Indicator,
@@ -236,6 +237,7 @@ pub enum IconName {
     Menu,
     MessageBubbles,
     MessageCircle,
+    Cloud,
     Mic,
     MicMute,
     Microscope,
@@ -492,7 +494,7 @@ impl RenderOnce for IconWithIndicator {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Icon {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

@@ -16,7 +16,7 @@ use language_model::{
     report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, Role,
 };
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use std::sync::Arc;
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;

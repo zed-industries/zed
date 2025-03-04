@@ -999,7 +999,7 @@ impl std::ops::DerefMut for BlockPoint {
     }
 }
 
-impl<'a> Deref for BlockMapReader<'a> {
+impl Deref for BlockMapReader<'_> {
     type Target = BlockSnapshot;
 
     fn deref(&self) -> &Self::Target {
@@ -1007,13 +1007,13 @@ impl<'a> Deref for BlockMapReader<'a> {
     }
 }
 
-impl<'a> DerefMut for BlockMapReader<'a> {
+impl DerefMut for BlockMapReader<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.snapshot
     }
 }
 
-impl<'a> BlockMapReader<'a> {
+impl BlockMapReader<'_> {
     pub fn row_for_block(&self, block_id: CustomBlockId) -> Option<BlockRow> {
         let block = self.blocks.iter().find(|block| block.id == block_id)?;
         let buffer_row = block
@@ -1053,7 +1053,7 @@ impl<'a> BlockMapReader<'a> {
     }
 }
 
-impl<'a> BlockMapWriter<'a> {
+impl BlockMapWriter<'_> {
     pub fn insert(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
@@ -1618,6 +1618,15 @@ impl BlockSnapshot {
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
+    pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
+        cursor.seek(&row, Bias::Right, &());
+        let Some(transform) = cursor.item() else {
+            return false;
+        };
+        matches!(transform.block, Some(Block::FoldedBuffer { .. }))
+    }
+
     pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
@@ -1740,7 +1749,7 @@ impl BlockSnapshot {
     }
 }
 
-impl<'a> BlockChunks<'a> {
+impl BlockChunks<'_> {
     /// Go to the next transform
     fn advance(&mut self) {
         self.input_chunk = Chunk::default();
@@ -1856,7 +1865,7 @@ impl<'a> Iterator for BlockChunks<'a> {
     }
 }
 
-impl<'a> Iterator for BlockRows<'a> {
+impl Iterator for BlockRows<'_> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1952,7 +1961,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
     }
 }
 
-impl<'a> Deref for BlockContext<'a, '_> {
+impl Deref for BlockContext<'_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {

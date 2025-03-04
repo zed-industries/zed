@@ -114,10 +114,10 @@ impl PickerStory {
     pub fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             cx.bind_keys([
-                KeyBinding::new("up", menu::SelectPrev, Some("picker")),
+                KeyBinding::new("up", menu::SelectPrevious, Some("picker")),
                 KeyBinding::new("pageup", menu::SelectFirst, Some("picker")),
                 KeyBinding::new("shift-pageup", menu::SelectFirst, Some("picker")),
-                KeyBinding::new("ctrl-p", menu::SelectPrev, Some("picker")),
+                KeyBinding::new("ctrl-p", menu::SelectPrevious, Some("picker")),
                 KeyBinding::new("down", menu::SelectNext, Some("picker")),
                 KeyBinding::new("pagedown", menu::SelectLast, Some("picker")),
                 KeyBinding::new("shift-pagedown", menu::SelectFirst, Some("picker")),

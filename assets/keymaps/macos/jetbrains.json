@@ -1,7 +1,7 @@
 [
   {
     "bindings": {
-      "cmd-{": "pane::ActivatePrevItem",
+      "cmd-{": "pane::ActivatePreviousItem",
       "cmd-}": "pane::ActivateNextItem"
     }
   },
@@ -39,9 +39,9 @@
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
-      "shift-f2": "editor::GoToPrevDiagnostic",
-      "ctrl-alt-shift-down": "editor::GoToHunk",
-      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "shift-f2": "editor::GoToPreviousDiagnostic",
+      "ctrl-alt-shift-down": ["editor::GoToHunk", { "center_cursor": true }],
+      "ctrl-alt-shift-up": ["editor::GoToPreviousHunk", { "center_cursor": true }],
       "cmd-home": "editor::MoveToBeginning",
       "cmd-end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
@@ -61,7 +61,7 @@
   {
     "context": "BufferSearchBar > Editor",
     "bindings": {
-      "shift-enter": "search::SelectPrevMatch"
+      "shift-enter": "search::SelectPreviousMatch"
     }
   },
   {

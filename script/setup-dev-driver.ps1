@@ -1,16 +1,26 @@
 # Configures a drive for testing in CI.
-# todo(windows)
-# The current version of the Windows runner is 10.0.20348 which does not support DevDrive option.
-# Ref: https://learn.microsoft.com/en-us/windows/dev-drive/
 
 # Currently, total CI requires almost 45GB of space, here we are creating a 100GB drive.
 $Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 100GB |
                     Mount-VHD -Passthru |
                     Initialize-Disk -Passthru |
                     New-Partition -AssignDriveLetter -UseMaximumSize |
-                    Format-Volume -FileSystem ReFS -Confirm:$false -Force
+                    Format-Volume -DevDrive -Confirm:$false -Force
 
 $Drive = "$($Volume.DriveLetter):"
+
+# Designate the Dev Drive as trusted
+# See https://learn.microsoft.com/en-us/windows/dev-drive/#how-do-i-designate-a-dev-drive-as-trusted
+fsutil devdrv trust $Drive
+
+# There is no virus on the Dev Drive!
+# Windows Defender is the wolf in antivirus wool, slowing your PC like a digital fool!
+# See https://learn.microsoft.com/en-us/windows/dev-drive/#how-do-i-configure-additional-filters-on-dev-drive
+fsutil devdrv enable /disallowAv
+
+# Remount so the changes take effect
+Dismount-VHD -Path C:/zed_dev_drive.vhdx
+Mount-VHD -Path C:/zed_dev_drive.vhdx
 
 # Show some debug information
 Write-Output $Volume
