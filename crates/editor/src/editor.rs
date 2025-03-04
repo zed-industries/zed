@@ -2877,7 +2877,7 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
-                    let snapshot_settings = snapshot.settings_at(selection.start, cx);
+                    let snapshot_settings = snapshot.language_settings_at(selection.start, cx);
                     let autoclose = self.use_autoclose && snapshot_settings.use_autoclose;
                     let auto_surround =
                         self.use_auto_surround && snapshot_settings.use_auto_surround;
@@ -2942,7 +2942,7 @@ impl Editor {
                         }
 
                         let always_treat_brackets_as_autoclosed = snapshot
-                            .settings_at(selection.start, cx)
+                            .language_settings_at(selection.start, cx)
                             .always_treat_brackets_as_autoclosed;
                         if always_treat_brackets_as_autoclosed
                             && is_bracket_pair_end
@@ -3225,7 +3225,7 @@ impl Editor {
                                     return None;
                                 }
 
-                                if !multi_buffer.settings_at(0, cx).extend_comment_on_newline {
+                                if !multi_buffer.language_settings(cx).extend_comment_on_newline {
                                     return None;
                                 }
 
@@ -3554,7 +3554,7 @@ impl Editor {
                 }
 
                 let always_treat_brackets_as_autoclosed = buffer
-                    .settings_at(selection.start, cx)
+                    .language_settings_at(selection.start, cx)
                     .always_treat_brackets_as_autoclosed;
 
                 if !always_treat_brackets_as_autoclosed {
@@ -7328,7 +7328,7 @@ impl Editor {
             }
 
             // Otherwise, insert a hard or soft tab.
-            let settings = buffer.settings_at(cursor, cx);
+            let settings = buffer.language_settings_at(cursor, cx);
             let tab_size = if settings.hard_tabs {
                 IndentSize::tab()
             } else {
@@ -7392,7 +7392,7 @@ impl Editor {
         delta_for_start_row: u32,
         cx: &App,
     ) -> u32 {
-        let settings = buffer.settings_at(selection.start, cx);
+        let settings = buffer.language_settings_at(selection.start, cx);
         let tab_size = settings.tab_size.get();
         let indent_kind = if settings.hard_tabs {
             IndentKind::Tab
@@ -7472,7 +7472,7 @@ impl Editor {
             let buffer = self.buffer.read(cx);
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
-                let settings = buffer.settings_at(selection.start, cx);
+                let settings = buffer.language_settings_at(selection.start, cx);
                 let tab_size = settings.tab_size.get();
                 let mut rows = selection.spanned_rows(false, &display_map);
 
@@ -8484,7 +8484,7 @@ impl Editor {
                 continue;
             }
 
-            let tab_size = buffer.settings_at(selection.head(), cx).tab_size;
+            let tab_size = buffer.language_settings_at(selection.head(), cx).tab_size;
 
             // Since not all lines in the selection may be at the same indent
             // level, choose the indent size that is the most common between all
@@ -8530,7 +8530,7 @@ impl Editor {
                 inside_comment = true;
             }
 
-            let language_settings = buffer.settings_at(selection.head(), cx);
+            let language_settings = buffer.language_settings_at(selection.head(), cx);
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
                 RewrapBehavior::InComments => inside_comment,
                 RewrapBehavior::InSelections => !selection.is_empty(),
@@ -8586,7 +8586,7 @@ impl Editor {
             };
 
             let wrap_column = buffer
-                .settings_at(Point::new(start_row, 0), cx)
+                .language_settings_at(Point::new(start_row, 0), cx)
                 .preferred_line_length as usize;
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
@@ -8772,8 +8772,9 @@ impl Editor {
 
                 this.buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.read(cx);
-                    auto_indent_on_paste =
-                        snapshot.settings_at(cursor_offset, cx).auto_indent_on_paste;
+                    auto_indent_on_paste = snapshot
+                        .language_settings_at(cursor_offset, cx)
+                        .auto_indent_on_paste;
 
                     let mut start_offset = 0;
                     let mut edits = Vec::new();
@@ -14082,12 +14083,16 @@ impl Editor {
             return wrap_guides;
         }
 
-        let settings = self.buffer.read(cx).settings_at(0, cx);
+        let settings = self.buffer.read(cx).language_settings(cx);
         if settings.show_wrap_guides {
-            if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
-                wrap_guides.push((soft_wrap as usize, true));
-            } else if let SoftWrap::Bounded(soft_wrap) = self.soft_wrap_mode(cx) {
-                wrap_guides.push((soft_wrap as usize, true));
+            match self.soft_wrap_mode(cx) {
+                SoftWrap::Column(soft_wrap) => {
+                    wrap_guides.push((soft_wrap as usize, true));
+                }
+                SoftWrap::Bounded(soft_wrap) => {
+                    wrap_guides.push((soft_wrap as usize, true));
+                }
+                SoftWrap::GitDiff | SoftWrap::None | SoftWrap::EditorWidth => {}
             }
             wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
         }
@@ -14096,7 +14101,7 @@ impl Editor {
     }
 
     pub fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
-        let settings = self.buffer.read(cx).settings_at(0, cx);
+        let settings = self.buffer.read(cx).language_settings(cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
             language_settings::SoftWrap::PreferLine | language_settings::SoftWrap::None => {
@@ -14195,7 +14200,7 @@ impl Editor {
         let currently_enabled = self.should_show_indent_guides().unwrap_or_else(|| {
             self.buffer
                 .read(cx)
-                .settings_at(0, cx)
+                .language_settings(cx)
                 .indent_guides
                 .enabled
         });
@@ -15844,7 +15849,7 @@ impl Editor {
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)
-            .settings_at(0, cx)
+            .language_settings(cx)
             .show_edit_predictions;
 
         let project = project.read(cx);

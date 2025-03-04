@@ -2307,7 +2307,27 @@ impl MultiBuffer {
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn settings_at<'a, T: ToOffset>(&self, point: T, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+        let buffer_id = self
+            .snapshot
+            .borrow()
+            .excerpts
+            .first()
+            .map(|excerpt| excerpt.buffer.remote_id());
+        buffer_id
+            .and_then(|buffer_id| self.buffer(buffer_id))
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+            })
+            .unwrap_or_else(move || self.language_settings_at(0, cx))
+    }
+
+    pub fn language_settings_at<'a, T: ToOffset>(
+        &'a self,
+        point: T,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
@@ -4259,7 +4279,7 @@ impl MultiBufferSnapshot {
     pub fn indent_and_comment_for_line(&self, row: MultiBufferRow, cx: &App) -> String {
         let mut indent = self.indent_size_for_line(row).chars().collect::<String>();
 
-        if self.settings_at(0, cx).extend_comment_on_newline {
+        if self.language_settings(cx).extend_comment_on_newline {
             if let Some(language_scope) = self.language_scope_at(Point::new(row.0, 0)) {
                 let delimiters = language_scope.line_comment_prefixes();
                 for delimiter in delimiters {
@@ -5592,7 +5612,21 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
-    pub fn settings_at<'a, T: ToOffset>(
+    fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+        self.excerpts
+            .first()
+            .map(|excerpt| &excerpt.buffer)
+            .map(|buffer| {
+                language_settings(
+                    buffer.language().map(|language| language.name()),
+                    buffer.file(),
+                    cx,
+                )
+            })
+            .unwrap_or_else(move || self.language_settings_at(0, cx))
+    }
+
+    pub fn language_settings_at<'a, T: ToOffset>(
         &'a self,
         point: T,
         cx: &'a App,
