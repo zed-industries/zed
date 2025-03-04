@@ -492,7 +492,8 @@ impl RunningState {
         self.thread = Some((thread_id, thread_name));
 
         self.stack_frame_list
-            .update(cx, |list, cx| list.refresh(window, cx))
+            .update(cx, |list, cx| list.refresh(window, cx));
+        cx.notify();
     }
 
     fn clear_highlights(&self, _cx: &mut Context<Self>) {

@@ -772,6 +772,7 @@ impl Session {
                     }
                 }
                 self.invalidate_state(&ThreadsCommand.into());
+                cx.notify();
             }
             Events::Output(event) => {
                 if event
