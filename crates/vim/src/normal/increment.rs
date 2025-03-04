@@ -280,13 +280,24 @@ fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<P
             word.push(ch);
         } else if begin.is_some() {
             end = Some(offset);
-            break;
+            let word_lower = word.to_lowercase();
+            if BOOLEAN_PAIRS
+                .iter()
+                .any(|(a, b)| word_lower == *a || word_lower == *b)
+            {
+                return Some((
+                    begin.unwrap().to_point(snapshot)..end.unwrap().to_point(snapshot),
+                    word,
+                ));
+            }
+            begin = None;
+            end = None;
+            word = String::new();
         } else if ch == '\n' {
             break;
         }
         offset += ch.len_utf8();
     }
-
     if let Some(begin) = begin {
         let end = end.unwrap_or(offset);
         let word_lower = word.to_lowercase();
@@ -297,7 +308,6 @@ fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<P
             return Some((begin.to_point(snapshot)..end.to_point(snapshot), word));
         }
     }
-
     None
 }
 
