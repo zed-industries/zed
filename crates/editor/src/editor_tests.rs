@@ -16867,6 +16867,11 @@ mod autoclose_tags {
     );
 
     check!(
+        test_autocloses_fragment,
+        "<ˇ" + ">" => "<>ˇ</>"
+    );
+
+    check!(
         test_does_not_include_type_argument_in_autoclose_tag_name,
         "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
     );

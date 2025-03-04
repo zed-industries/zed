@@ -706,6 +706,7 @@ pub struct JsxTagAutoCloseConfig {
     pub open_tag_node_name: String,
     pub close_tag_node_name: String,
     pub jsx_element_node_name: String,
+    pub tag_name_node_name: String,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)

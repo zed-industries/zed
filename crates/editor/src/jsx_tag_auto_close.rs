@@ -3,7 +3,7 @@ use gpui::{Context, Entity};
 use multi_buffer::MultiBuffer;
 use std::ops::Range;
 
-use language::{BufferSnapshot, JsxTagAutoCloseConfig};
+use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node};
 use text::Anchor;
 
 use crate::Editor;
@@ -12,6 +12,12 @@ pub struct JsxTagCompletionState {
     edit_index: usize,
     open_tag_range: Range<usize>,
 }
+
+/// Index of the named child within an open or close tag
+/// that corresponds to the tag name
+/// Note that this is not configurable, i.e. we assume the first
+/// named child of a tag node is the tag name
+const TS_NODE_TAG_NAME_CHILD_INDEX: usize = 0;
 
 pub(crate) fn should_auto_close(
     buffer: &BufferSnapshot,
@@ -97,11 +103,12 @@ pub(crate) fn generate_auto_close_edits(
             continue;
         };
         assert!(open_tag.grammar_name() == config.open_tag_node_name);
-        let tag_name_range = open_tag
-            .child_by_field_name("name")
-            .map_or(0..0, |node| node.byte_range());
+        let tag_name = open_tag
+            .named_child(TS_NODE_TAG_NAME_CHILD_INDEX)
+            .map_or("".to_string(), |node| {
+                buffer.text_for_range(node.byte_range()).collect::<String>()
+            });
 
-        let tag_name = buffer.text_for_range(tag_name_range).collect::<String>();
         {
             let mut tree_root_node = open_tag;
             // todo! child_with_descendant
@@ -122,6 +129,18 @@ pub(crate) fn generate_auto_close_edits(
 
             let mut cursor = tree_root_node.walk();
 
+            let tag_node_name_equals = |node: &Node, tag_node_name: &str, name: &str| {
+                let is_empty = name.len() == 0;
+                if let Some(node_name) = node.named_child(TS_NODE_TAG_NAME_CHILD_INDEX) {
+                    if node_name.kind() != tag_node_name {
+                        return is_empty;
+                    }
+                    let range = node_name.byte_range();
+                    return buffer.text_for_range(range).equals_str(name);
+                }
+                return is_empty;
+            };
+
             // todo! use cursor for more efficient traversal
             // if child -> go to child
             // else if next sibling -> go to next sibling
@@ -129,20 +148,12 @@ pub(crate) fn generate_auto_close_edits(
             // if parent == tree_root_node -> break
             while let Some(node) = stack.pop() {
                 if node.kind() == config.open_tag_node_name {
-                    if node.child_by_field_name("name").map_or(false, |node| {
-                        buffer
-                            .text_for_range(node.byte_range())
-                            .equals_str(&tag_name)
-                    }) {
+                    if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
                         unclosed_open_tag_count += 1;
                     }
                     continue;
                 } else if node.kind() == config.close_tag_node_name {
-                    if node.child_by_field_name("name").map_or(false, |node| {
-                        buffer
-                            .text_for_range(node.byte_range())
-                            .equals_str(&tag_name)
-                    }) {
+                    if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
                         unclosed_open_tag_count -= 1;
                     }
                     continue;
