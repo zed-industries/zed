@@ -19,6 +19,16 @@ pub struct JsxTagCompletionState {
 /// named child of a tag node is the tag name
 const TS_NODE_TAG_NAME_CHILD_INDEX: usize = 0;
 
+/// Maximum number of parent elements to walk back when checking if an open tag
+/// is already closed.
+///
+/// Note: this is arbitrarily chosen. It is used to prevent walking the entire tree
+/// in large documents, in addition to making sure malformed subtrees outside of a
+/// reasonable scope do not interfere with checking if a tag is already closed
+///
+/// See the comment in `generate_auto_close_edits` for more details
+const ALREADY_CLOSED_PARENT_ELEMENT_WALK_BACK_LIMIT: usize = 2;
+
 pub(crate) fn should_auto_close(
     buffer: &BufferSnapshot,
     edited_ranges: &[Range<usize>],
@@ -106,21 +116,79 @@ pub(crate) fn generate_auto_close_edits(
         assert!(open_tag.grammar_name() == config.open_tag_node_name);
         let tag_name = open_tag
             .named_child(TS_NODE_TAG_NAME_CHILD_INDEX)
+            .filter(|node| node.kind() == config.tag_name_node_name)
             .map_or("".to_string(), |node| {
                 buffer.text_for_range(node.byte_range()).collect::<String>()
             });
 
+        /*
+         * Naive check to see if the tag is already closed
+         * Essentially all we do is count the number of open and close tags
+         * with the same tag name as the open tag just entered by the user
+         * The search is limited to some scope determined by
+         * `ALREADY_CLOSED_PARENT_ELEMENT_WALK_BACK_LIMIT`
+         *
+         * The limit is preferable to walking up the tree until we find a non-tag node,
+         * and then checking the entire tree, as this is unnecessarily expensive, and
+         * risks false positives
+         * eg. a `</div>` tag without a corresponding opening tag exists 25 lines away
+         *     and the user typed in `<div>`, intuitively we still want to auto-close it because
+         *     the other `</div>` tag is almost certainly not supposed to be the closing tag for the
+         *     current element
+         *
+         * We have to walk up the tree some amount because tree-sitters error correction is not
+         * designed to handle this case, and usually does not represent the tree structure
+         * in the way we might expect,
+         * eg.  during testing with the following tree in a TSX file
+         *      (where `|` is the cursor and the user just typed `>`)
+         *      ```
+         *      <div>
+         *          <div>|
+         *      </div>
+         *      ```
+         *     tree-sitter represented the tree as
+         *      (
+         *          (jsx_element
+         *              (jsx_opening_element
+         *                  "<div>")
+         *          )
+         *          (jsx_element
+         *              (jsx_opening_element
+         *                  "<div>") // <- cursor is here
+         *              (jsx_closing_element
+         *                  "</div>")
+         *          )
+         *      )
+         *     so if we only walked to the first `jsx_element` node,
+         *     we would mistakenly identify the div entered by the
+         *     user as already being closed, despite this clearly
+         *     being false
+         *
+         * The errors with the tree-sitter tree caused by error correction,
+         * are also why the naive algorithm was chosen, as the alternative
+         * approach would be to maintain or construct a full parse tree
+         * that better represents errors in a way that we can simply check
+         * the enclosing scope of the entered tag for a closing tag
+         * This is far more complex and expensive, and was deemed impractical
+         * given that the naive algorithm is sufficient in the majority of cases.
+         */
         {
             let mut tree_root_node = open_tag;
             let mut found_non_tag_root = false;
+            let mut parent_element_node_count = 0;
             // todo! child_with_descendant
             while let Some(parent) = tree_root_node.parent() {
                 tree_root_node = parent;
-                if parent.is_error()
-                    || (parent.kind() != config.jsx_element_node_name
-                        && parent.kind() != config.open_tag_node_name)
-                {
+                let is_element = parent.kind() == config.jsx_element_node_name;
+                let is_error = parent.is_error();
+                if is_error || !is_element {
                     found_non_tag_root = true;
+                    break;
+                }
+                if is_element {
+                    parent_element_node_count += 1;
+                }
+                if parent_element_node_count == ALREADY_CLOSED_PARENT_ELEMENT_WALK_BACK_LIMIT {
                     break;
                 }
             }
