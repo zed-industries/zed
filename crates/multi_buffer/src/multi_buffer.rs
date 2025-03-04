@@ -3861,14 +3861,14 @@ impl MultiBufferSnapshot {
             let Some(diff) = self.diffs.get(&excerpt.buffer_id) else {
                 continue;
             };
-            for hunk in
-                diff.hunks_intersecting_range_rev(excerpt.range.context.clone(), &excerpt.buffer)
-            {
-                let start =
-                    Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
-                        .to_point(&self);
-                return Some(MultiBufferRow(start.row));
-            }
+            let mut hunks =
+                diff.hunks_intersecting_range_rev(excerpt.range.context.clone(), &excerpt.buffer);
+            let Some(hunk) = hunks.next() else {
+                continue;
+            };
+            let start = Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
+                .to_point(&self);
+            return Some(MultiBufferRow(start.row));
         }
     }
 
