@@ -1004,8 +1004,8 @@ mod tests {
                 [
                     {
                         "bindings": {
-                            "ctrl-q": ["editor::GoToHunk", { "center_cursor": true } ],
-                            "ctrl-w": ["editor::GoToPreviousHunk", { "center_cursor": true } ]
+                            "ctrl-q": ["editor::GoToHunk", { "center_cursor": true }],
+                            "ctrl-w": ["editor::GoToPreviousHunk", { "center_cursor": true }]
                         }
                     }
                 ]
