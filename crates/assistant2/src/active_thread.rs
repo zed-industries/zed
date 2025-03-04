@@ -452,6 +452,19 @@ impl ActiveThread {
             .unwrap_or(&[])
     }
 
+    fn handle_cancel_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_editing_message(&menu::Cancel, window, cx);
+    }
+
+    fn handle_regenerate_click(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_editing_message(&menu::Confirm, window, cx);
+    }
+
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
