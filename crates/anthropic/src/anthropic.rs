@@ -59,6 +59,8 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         if id.starts_with("claude-3-5-sonnet") {
             Ok(Self::Claude3_5Sonnet)
+        } else if id.starts_with("claude-3-7-sonnet") {
+            Ok(Self::Claude3_7Sonnet)
         } else if id.starts_with("claude-3-5-haiku") {
             Ok(Self::Claude3_5Haiku)
         } else if id.starts_with("claude-3-opus") {
@@ -75,6 +77,7 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Model::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Model::Claude3Opus => "claude-3-opus-latest",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
@@ -85,6 +88,7 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
             Self::Claude3Opus => "Claude 3 Opus",
@@ -116,6 +120,7 @@ impl Model {
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet
@@ -127,7 +132,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> u32 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
-            Self::Claude3_5Sonnet | Self::Claude3_5Haiku => 8_192,
+            Self::Claude3_5Sonnet | Self::Claude3_7Sonnet | Self::Claude3_5Haiku => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -137,6 +142,7 @@ impl Model {
     pub fn default_temperature(&self) -> f32 {
         match self {
             Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet

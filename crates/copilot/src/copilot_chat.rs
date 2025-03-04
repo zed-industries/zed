@@ -47,7 +47,11 @@ pub enum Model {
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
-            Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
+            Self::Gpt4o
+            | Self::Gpt4
+            | Self::Gpt3_5Turbo
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet => true,
             Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
         }
     }
@@ -60,6 +64,7 @@ impl Model {
             "o1" => Ok(Self::O1),
             "o3-mini" => Ok(Self::O3Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
+            "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
             "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
@@ -73,6 +78,7 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
+            Self::Claude3_7Sonnet => "claude-3-7-sonnet",
             Self::Gemini20Flash => "gemini-2.0-flash-001",
         }
     }
@@ -85,6 +91,7 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
+            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
         }
     }

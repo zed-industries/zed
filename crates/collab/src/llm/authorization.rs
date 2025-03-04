@@ -27,7 +27,7 @@ fn authorize_access_to_model(
     }
 
     if provider == LanguageModelProvider::Anthropic {
-        if model == "claude-3-5-sonnet" {
+        if model == "claude-3-5-sonnet" || model == "claude-3-7-sonnet" {
             return Ok(());
         }
 
@@ -249,6 +249,7 @@ mod tests {
                 Plan::ZedPro,
                 LanguageModelProvider::Anthropic,
                 "claude-3-5-sonnet",
+                "claude-3-7-sonnet",
                 true,
             ),
             // Free plan should have access to claude-3.5-sonnet
@@ -256,6 +257,7 @@ mod tests {
                 Plan::Free,
                 LanguageModelProvider::Anthropic,
                 "claude-3-5-sonnet",
+                "claude-3-7-sonnet",
                 true,
             ),
             // Pro plan should NOT have access to other Anthropic models

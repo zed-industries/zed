@@ -307,6 +307,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
+                anthropic::Model::Claude3_7Sonnet.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
             );
         }
 
