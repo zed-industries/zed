@@ -71,11 +71,11 @@ string being a match that was found within the file)."#.into()
         });
         let root_dir = match root_dir {
             Ok(root_dir) => root_dir,
-            Err(err) => return Task::ready(Err(err.into())),
+            Err(err) => return Task::ready(Err(err)),
         };
         let root_dir = match root_dir {
             Ok(root_dir) => root_dir,
-            Err(err) => return Task::ready(Err(err.into())),
+            Err(err) => return Task::ready(Err(err)),
         };
         let input = match serde_json::from_value::<ScriptingToolInput>(input) {
             Err(err) => return Task::ready(Err(err.into())),
@@ -302,10 +302,8 @@ fn io_open(
             let entries = match std::fs::read_dir(&path) {
                 Ok(entries) => {
                     let mut entry_names = Vec::new();
-                    for entry_result in entries {
-                        if let Ok(entry) = entry_result {
-                            entry_names.push(entry.file_name().to_string_lossy().into_owned());
-                        }
+                    for entry in entries.flatten() {
+                        entry_names.push(entry.file_name().to_string_lossy().into_owned());
                     }
                     entry_names
                 }
@@ -742,7 +740,7 @@ impl ScriptOutput {
                 let path_str = path.to_string_lossy();
                 let mut diff = format!("diff --git a/{} b/{}\n", path_str, path_str);
                 diff.push_str("new file mode 100644\n");
-                diff.push_str(&format!("--- /dev/null\n"));
+                diff.push_str("--- /dev/null\n");
                 diff.push_str(&format!("+++ b/{}\n", path_str));
 
                 let lines: Vec<&str> = content_str.lines().collect();

@@ -21,5 +21,4 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 workspace.workspace = true
-util.workspace = true
 regex.workspace = true
