@@ -1,6 +1,5 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
-use futures::channel::oneshot::Receiver;
 use gpui::{AppContext, Entity, TestAppContext, VisualTestContext};
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -25,9 +24,12 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
                 "a3": "A3",
                 "dir1": {},
                 "dir2": {
-                    "dir3": {
-                        "b": "B"
-                    }
+                    "c": "C",
+                    "d1": "D1",
+                    "d2": "D2",
+                    "d3": "D3",
+                    "dir3": {},
+                    "dir4": {}
                 }
             }),
         )
@@ -39,25 +41,47 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
 
     let query = path!("/root");
     insert_query(query, &picker, cx).await;
-    let canditates = collect_match_candidates(&picker, cx);
-    println!("{:?}", canditates);
-    let completion = confirm_completion(query, &picker, cx);
-    println!("{:?}", completion);
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["root"]);
 
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
-    let canditates = collect_match_candidates(&picker, cx);
-    println!("{:?}", canditates);
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec!["a1", "a2", "a3", "dir1", "dir2"]
+    );
 
     let query = path!("/root/a");
     insert_query(query, &picker, cx).await;
-    let canditates = collect_match_candidates(&picker, cx);
-    println!("{:?}", canditates);
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec!["a1", "a2", "a3"]
+    );
 
     let query = path!("/root/d");
     insert_query(query, &picker, cx).await;
-    let canditates = collect_match_candidates(&picker, cx);
-    println!("{:?}", canditates);
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
+
+    let query = path!("/root/dir2");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir2"]);
+
+    let query = path!("/root/dir2/");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec!["c", "d1", "d2", "d3", "dir3", "dir4"]
+    );
+
+    let query = path!("/root/dir2/d");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec!["d1", "d2", "d3", "dir3", "dir4"]
+    );
+
+    let query = path!("/root/dir2/di");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir3", "dir4"]);
 
     // let query = path!("/root/d");
     // let result = query_path_prompt_result(&query, &picker, cx).await;
