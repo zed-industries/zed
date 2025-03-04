@@ -20,7 +20,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
-use util::command::new_std_command;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
 
@@ -111,6 +110,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
+        client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
@@ -625,6 +625,29 @@ impl GitStore {
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
+        })
+    }
+
+    async fn handle_check_for_pushed_commits(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CheckForPushedCommits>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::CheckForPushedCommitsResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let branches = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.check_for_pushed_commits()
+            })?
+            .await??;
+        Ok(proto::CheckForPushedCommitsResponse {
+            pushed_to: branches
+                .into_iter()
+                .map(|commit| commit.to_string())
+                .collect(),
         })
     }
 
@@ -1425,37 +1448,27 @@ impl Repository {
         })
     }
 
-    pub fn get_merge_bases(&self) -> oneshot::Receiver<Result<Vec<Remote>>> {
+    pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
         self.send_job(|repo| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
-                    git_repository.on_merge_bases()
-                }
+                GitRepo::Local(git_repository) => git_repository.check_for_pushed_commit(),
                 GitRepo::Remote {
                     project_id,
                     client,
                     worktree_id,
                     work_directory_id,
                 } => {
-                    todo!()
-                    // let response = client
-                    //     .request(proto::GetRemotes {
-                    //         project_id: project_id.0,
-                    //         worktree_id: worktree_id.to_proto(),
-                    //         work_directory_id: work_directory_id.to_proto(),
-                    //         branch_name,
-                    //     })
-                    //     .await?;
+                    let response = client
+                        .request(proto::CheckForPushedCommits {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                        })
+                        .await?;
 
-                    // let remotes = response
-                    //     .remotes
-                    //     .into_iter()
-                    //     .map(|remotes| git::repository::Remote {
-                    //         name: remotes.name.into(),
-                    //     })
-                    //     .collect();
+                    let branches = response.pushed_to.into_iter().map(Into::into).collect();
 
-                    // Ok(remotes)
+                    Ok(branches)
                 }
             }
         })

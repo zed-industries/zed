@@ -1265,21 +1265,7 @@ impl GitPanel {
             return;
         };
 
-        // TODO: Use git merge-base to find the upstream and main branch split
-        // let confirmation = Task::ready(true);
-        // let confirmation = if self.commit_editor.read(cx).is_empty(cx) {
-        //     Task::ready(true)
-        // } else {
-        //     let prompt = window.prompt(
-        //         PromptLevel::Warning,
-        //         "Uncomitting will replace the current commit message with the previous commit's message",
-        //         None,
-        //         &["Ok", "Cancel"],
-        //         cx,
-        //     );
-        //     cx.spawn(|_, _| async move { prompt.await.is_ok_and(|i| i == 0) })
-        // };
-        let confirmation = self.warn_on_merge_bases(window, cx);
+        let confirmation = self.check_for_pushed_commits(window, cx);
         let prior_head = self.load_commit_details("HEAD", cx);
 
         let task = cx.spawn_in(window, |this, mut cx| async move {
@@ -1315,13 +1301,12 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    fn warn_on_merge_bases(
+    fn check_for_pushed_commits(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<bool>> {
+    ) -> impl Future<Output = Result<bool, anyhow::Error>> {
         let repo = self.active_repository.clone();
-        let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
 
         async move {
@@ -1329,33 +1314,31 @@ impl GitPanel {
                 return Err(anyhow::anyhow!("No active repository"));
             };
 
-            let merge_bases: Vec<Remote> = repo
-                .update(&mut cx, |repo, _| repo.get_merge_bases())?
+            let pushed_to: Vec<SharedString> = repo
+                .update(&mut cx, |repo, _| repo.check_for_pushed_commits())?
                 .await??;
 
-            eprintln!("merge bases: {merge_bases:?}");
-            if merge_bases.is_empty() {
+            if pushed_to.is_empty() {
                 Ok(true)
             } else {
-                let choices = vec!["cancel".into(), "go ahead".into()];
-                let selection = cx
-                    .update(|window, cx| {
-                        picker_prompt::prompt(
-                            &format!(
-                                "Are you sure you want to uncommit? currently on merge base with: {}",
-                                merge_bases.into_iter().map(|r| r.name).join(", ")
-                            ),
-                            choices,
-                            workspace,
-                            window,
-                            cx,
-                        )
-                    })?
+                #[derive(strum::EnumIter, strum::VariantNames)]
+                #[strum(serialize_all = "title_case")]
+                enum CancelUncommit {
+                    Uncommit,
+                    Cancel,
+                }
+                let detail = format!(
+                    "This commit was already pushed to {}.",
+                    pushed_to.into_iter().join(", ")
+                );
+                let result = cx
+                    .update(|window, cx| prompt("Are you sure?", Some(&detail), window, cx))?
                     .await?;
 
-                Ok(selection
-                    .map(|selection| selection != 0)
-                    .unwrap_or_default())
+                match result {
+                    CancelUncommit::Cancel => Ok(false),
+                    CancelUncommit::Uncommit => Ok(true),
+                }
             }
         }
     }

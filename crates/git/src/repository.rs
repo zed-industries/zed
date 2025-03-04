@@ -205,14 +205,8 @@ pub trait GitRepository: Send + Sync {
 
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
 
-    /// returns a list of remotes for which HEAD is equal to the merge-base
-    /// with that remote's HEAD. equivalent to this shell script:
-    /// ```sh
-    /// git remote | xargs -I{} -- sh -c \
-    ///   'echo -n "{}: "; git merge-base HEAD $(git symbolic-ref refs/remotes/{}/HEAD)' |
-    ///   grep $(git rev-parse HEAD)
-    /// ```
-    fn on_merge_bases(&self) -> Result<Vec<Remote>>;
+    /// returns a list of remote branches that contain HEAD
+    fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -790,56 +784,52 @@ impl GitRepository for RealGitRepository {
         }
     }
 
-    fn on_merge_bases(&self) -> Result<Vec<Remote>> {
+    fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>> {
         let working_directory = self.working_directory()?;
-
-        let output = new_std_command(&self.git_binary_path)
-            .current_dir(&working_directory)
-            .args(["rev-parse", "HEAD"])
-            .output()?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to get HEAD:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        let head = String::from_utf8(output.stdout)?.trim().to_owned();
-
-        let output = new_std_command(&self.git_binary_path)
-            .current_dir(&working_directory)
-            .args(["remote"])
-            .output()?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to get remotes:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
-        let mut matching_remotes = vec![];
-        for remote in String::from_utf8(output.stdout)?.lines() {
+        let git_cmd = |args: &[&str]| -> Result<String> {
             let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
-                .args(["symbolic-ref", &format!("refs/remotes/{remote}/HEAD")])
+                .args(args)
                 .output()?;
-            if !output.status.success() {
-                continue; // remotes that you haven't fetched from don't have this ref
+            if output.status.success() {
+                Ok(String::from_utf8(output.stdout)?)
+            } else {
+                Err(anyhow!(String::from_utf8_lossy(&output.stderr).to_string()))
             }
-            let remote_head = String::from_utf8(output.stdout)?.trim().to_owned();
+        };
 
-            let output = new_std_command(&self.git_binary_path)
-                .current_dir(&working_directory)
-                .args(["merge-base", &head, &remote_head])
-                .output()?;
-            let merge_base = String::from_utf8(output.stdout)?.trim().to_owned();
-            if output.status.success() && merge_base == head {
-                matching_remotes.push(Remote {
-                    name: remote.to_owned().into(),
-                });
+        let head = git_cmd(&["rev-parse", "HEAD"])
+            .context("Failed to get HEAD")?
+            .trim()
+            .to_owned();
+
+        let mut remote_branches = vec![];
+        let mut add_if_matching = |remote_head: &str| {
+            if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]) {
+                if merge_base.trim() == head {
+                    if let Some(s) = remote_head.strip_prefix("refs/remotes/") {
+                        remote_branches.push(s.to_owned().into());
+                    }
+                }
+            }
+        };
+
+        // check the main branch of each remote
+        let remotes = git_cmd(&["remote"]).context("Failed to get remotes")?;
+        for remote in remotes.lines() {
+            if let Ok(remote_head) =
+                git_cmd(&["symbolic-ref", &format!("refs/remotes/{remote}/HEAD")])
+            {
+                add_if_matching(remote_head.trim());
             }
         }
 
-        Ok(matching_remotes)
+        // ... and the remote branch that the checked-out one is tracking
+        if let Ok(remote_head) = git_cmd(&["rev-parse", "--symbolic-full-name", "@{u}"]) {
+            add_if_matching(remote_head.trim());
+        }
+
+        Ok(remote_branches)
     }
 }
 
@@ -1059,7 +1049,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn on_merge_bases(&self) -> Result<Vec<Remote>> {
+    fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>> {
         unimplemented!()
     }
 }

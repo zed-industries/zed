@@ -336,6 +336,9 @@ message Envelope {
         GitGetBranches git_get_branches = 312;
         GitCreateBranch git_create_branch = 313;
         GitChangeBranch git_change_branch = 314; // current max
+
+        CheckForPushedCommits check_for_pushed_commits = 315;
+        CheckForPushedCommitsResponse check_for_pushed_commits_response = 316; // current max
     }
 
     reserved 87 to 88;
@@ -2874,4 +2877,14 @@ message GitChangeBranch {
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
     string branch_name = 4;
+}
+
+message CheckForPushedCommits {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message CheckForPushedCommitsResponse {
+  repeated string pushed_to = 1;
 }
