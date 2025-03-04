@@ -5,7 +5,7 @@ use collections::HashSet;
 use editor::{
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
-    Editor, EditorEvent, ToPoint,
+    Editor, EditorEvent,
 };
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
@@ -192,6 +192,19 @@ impl ProjectDiff {
         self.move_to_path(path_key, window, cx)
     }
 
+    pub fn active_path(&self, cx: &App) -> Option<ProjectPath> {
+        let editor = self.editor.read(cx);
+        let position = editor.selections.newest_anchor().head();
+        let multi_buffer = editor.buffer().read(cx);
+        let (_, buffer, _) = multi_buffer.excerpt_containing(position, cx)?;
+
+        let file = buffer.read(cx).file()?;
+        Some(ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
+    }
+
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
@@ -271,41 +284,26 @@ impl ProjectDiff {
 
     fn handle_editor_event(
         &mut self,
-        editor: &Entity<Editor>,
+        _: &Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            EditorEvent::ScrollPositionChanged { .. } => editor.update(cx, |editor, cx| {
-                let anchor = editor.scroll_manager.anchor().anchor;
-                let multibuffer = self.multibuffer.read(cx);
-                let snapshot = multibuffer.snapshot(cx);
-                let mut point = anchor.to_point(&snapshot);
-                point.row = (point.row + 1).min(snapshot.max_row().0);
-                point.column = 0;
-
-                let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(point, cx)
-                else {
-                    return;
-                };
-                let Some(project_path) = buffer
-                    .read(cx)
-                    .file()
-                    .map(|file| (file.worktree_id(cx), file.path().clone()))
-                else {
+            EditorEvent::SelectionsChanged { local: true } => {
+                let Some(project_path) = self.active_path(cx) else {
                     return;
                 };
                 self.workspace
                     .update(cx, |workspace, cx| {
                         if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
                             git_panel.update(cx, |git_panel, cx| {
-                                git_panel.select_entry_by_path(project_path.into(), window, cx)
+                                git_panel.select_entry_by_path(project_path, window, cx)
                             })
                         }
                     })
                     .ok();
-            }),
+            }
             _ => {}
         }
     }
