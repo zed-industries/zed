@@ -579,6 +579,22 @@ impl ThemeSettings {
         clamp_font_size(font_size)
     }
 
+    /// Returns the buffer font size, read from the settings.
+    ///
+    /// The real buffer font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::buffer_font_size`] to get the real font size.
+    pub fn buffer_font_size_settings(&self) -> Pixels {
+        self.buffer_font_size
+    }
+
+    /// Returns the UI font size, read from the settings.
+    ///
+    /// The real UI font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::ui_font_size`] to get the real font size.
+    pub fn ui_font_size_settings(&self) -> Pixels {
+        self.ui_font_size
+    }
+
     // TODO: Rename: `line_height` -> `buffer_line_height`
     /// Returns the buffer's line height.
     pub fn line_height(&self) -> f32 {
