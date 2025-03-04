@@ -73,7 +73,7 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 
-use ::git::{status::FileStatus, Restore};
+use ::git::Restore;
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -11488,14 +11488,13 @@ impl Editor {
         }
     }
 
-    fn go_to_next_hunk(&mut self, action: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
+    fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
         self.go_to_hunk_after_or_before_position(
             &snapshot,
             selection.head(),
-            true,
-            action.center_cursor,
+            Direction::Next,
             window,
             cx,
         );
@@ -11505,12 +11504,11 @@ impl Editor {
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
-        after: bool,
-        scroll_center: bool,
+        direction: Direction,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        let hunk = if after {
+        let hunk = if direction == Direction::Next {
             self.hunk_after_position(snapshot, position)
         } else {
             self.hunk_before_position(snapshot, position)
@@ -11518,11 +11516,7 @@ impl Editor {
 
         if let Some(hunk) = &hunk {
             let destination = Point::new(hunk.row_range.start.0, 0);
-            let autoscroll = if scroll_center {
-                Autoscroll::center()
-            } else {
-                Autoscroll::fit()
-            };
+            let autoscroll = Autoscroll::center();
 
             self.unfold_ranges(&[destination..destination], false, false, cx);
             self.change_selections(Some(autoscroll), window, cx, |s| {
@@ -11552,7 +11546,7 @@ impl Editor {
 
     fn go_to_prev_hunk(
         &mut self,
-        action: &GoToPreviousHunk,
+        _: &GoToPreviousHunk,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -11561,8 +11555,7 @@ impl Editor {
         self.go_to_hunk_after_or_before_position(
             &snapshot,
             selection.head(),
-            false,
-            action.center_cursor,
+            Direction::Prev,
             window,
             cx,
         );
@@ -13639,20 +13632,20 @@ impl Editor {
 
     pub fn stage_and_next(
         &mut self,
-        action: &::git::StageAndNext,
+        _: &::git::StageAndNext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.do_stage_or_unstage_and_next(true, action.whole_excerpt, window, cx);
+        self.do_stage_or_unstage_and_next(true, window, cx);
     }
 
     pub fn unstage_and_next(
         &mut self,
-        action: &::git::UnstageAndNext,
+        _: &::git::UnstageAndNext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.do_stage_or_unstage_and_next(false, action.whole_excerpt, window, cx);
+        self.do_stage_or_unstage_and_next(false, window, cx);
     }
 
     pub fn stage_or_unstage_diff_hunks(
@@ -13674,102 +13667,33 @@ impl Editor {
     fn do_stage_or_unstage_and_next(
         &mut self,
         stage: bool,
-        whole_excerpt: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+        let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
 
         if ranges.iter().any(|range| range.start != range.end) {
             self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
             return;
         }
 
-        if !whole_excerpt {
-            let snapshot = self.snapshot(window, cx);
-            let newest_range = self.selections.newest::<Point>(cx).range();
+        let snapshot = self.snapshot(window, cx);
+        let newest_range = self.selections.newest::<Point>(cx).range();
 
-            let run_twice = snapshot
-                .hunks_for_ranges([newest_range])
-                .first()
-                .is_some_and(|hunk| {
-                    let next_line = Point::new(hunk.row_range.end.0 + 1, 0);
-                    self.hunk_after_position(&snapshot, next_line)
-                        .is_some_and(|other| other.row_range == hunk.row_range)
-                });
+        let run_twice = snapshot
+            .hunks_for_ranges([newest_range])
+            .first()
+            .is_some_and(|hunk| {
+                let next_line = Point::new(hunk.row_range.end.0 + 1, 0);
+                self.hunk_after_position(&snapshot, next_line)
+                    .is_some_and(|other| other.row_range == hunk.row_range)
+            });
 
-            if run_twice {
-                self.go_to_next_hunk(
-                    &GoToHunk {
-                        center_cursor: true,
-                    },
-                    window,
-                    cx,
-                );
-            }
-        } else if !self.buffer().read(cx).is_singleton() {
-            self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
-
-            if let Some((excerpt_id, buffer, range)) = self.active_excerpt(cx) {
-                if buffer.read(cx).is_empty() {
-                    let buffer = buffer.read(cx);
-                    let Some(file) = buffer.file() else {
-                        return;
-                    };
-                    let project_path = project::ProjectPath {
-                        worktree_id: file.worktree_id(cx),
-                        path: file.path().clone(),
-                    };
-                    let Some(project) = self.project.as_ref() else {
-                        return;
-                    };
-
-                    let Some(repo) = project.read(cx).git_store().read(cx).active_repository()
-                    else {
-                        return;
-                    };
-
-                    repo.update(cx, |repo, cx| {
-                        let Some(repo_path) = repo.project_path_to_repo_path(&project_path) else {
-                            return;
-                        };
-                        let Some(status) = repo.repository_entry.status_for_path(&repo_path) else {
-                            return;
-                        };
-                        if stage && status.status == FileStatus::Untracked {
-                            repo.stage_entries(vec![repo_path], cx)
-                                .detach_and_log_err(cx);
-                            return;
-                        }
-                    })
-                }
-                ranges = vec![multi_buffer::Anchor::range_in_buffer(
-                    excerpt_id,
-                    buffer.read(cx).remote_id(),
-                    range,
-                )];
-                self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
-                let snapshot = self.buffer().read(cx).snapshot(cx);
-                let mut point = ranges.last().unwrap().end.to_point(&snapshot);
-                if point.row < snapshot.max_row().0 {
-                    point.row += 1;
-                    point.column = 0;
-                    point = snapshot.clip_point(point, Bias::Right);
-                    self.change_selections(Some(Autoscroll::top_relative(6)), window, cx, |s| {
-                        s.select_ranges([point..point]);
-                    });
-                }
-                return;
-            }
+        if run_twice {
+            self.go_to_next_hunk(&GoToHunk, window, cx);
         }
         self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
-        self.go_to_next_hunk(
-            &GoToHunk {
-                center_cursor: true,
-            },
-            window,
-            cx,
-        );
+        self.go_to_next_hunk(&GoToHunk, window, cx);
     }
 
     fn do_stage_or_unstage(
