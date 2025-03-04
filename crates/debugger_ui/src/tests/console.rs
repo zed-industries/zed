@@ -61,6 +61,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -74,6 +75,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -116,6 +118,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -129,6 +132,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -216,6 +220,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -229,6 +234,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: Some(dap::OutputEventGroup::Start),
+            location_reference: None,
         }))
         .await;
 
@@ -242,6 +248,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -255,6 +262,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -268,6 +276,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: Some(dap::OutputEventGroup::Start),
+            location_reference: None,
         }))
         .await;
 
@@ -281,6 +290,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -294,6 +304,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -307,6 +318,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: Some(dap::OutputEventGroup::End),
+            location_reference: None,
         }))
         .await;
 
@@ -320,6 +332,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: Some(dap::OutputEventGroup::StartCollapsed),
+            location_reference: None,
         }))
         .await;
 
@@ -333,6 +346,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -346,6 +360,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -359,6 +374,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: Some(dap::OutputEventGroup::End),
+            location_reference: None,
         }))
         .await;
 
@@ -372,6 +388,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: None,
+            location_reference: None,
         }))
         .await;
 
@@ -385,6 +402,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
             line: None,
             column: None,
             group: Some(dap::OutputEventGroup::End),
+            location_reference: None,
         }))
         .await;
 
@@ -571,6 +589,8 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
             named_variables: None,
             indexed_variables: None,
             memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
         },
         Variable {
             name: "variable2".into(),
@@ -582,6 +602,8 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
             named_variables: None,
             indexed_variables: None,
             memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
         },
     ]));
 
@@ -596,6 +618,8 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
             named_variables: None,
             indexed_variables: None,
             memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
         },
         Variable {
             name: "nested2".into(),
@@ -607,6 +631,8 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
             named_variables: None,
             indexed_variables: None,
             memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
         },
     ];
 
@@ -620,6 +646,8 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
         named_variables: None,
         indexed_variables: None,
         memory_reference: None,
+        declaration_location_reference: None,
+        value_location_reference: None,
     }];
 
     client
@@ -663,6 +691,7 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
                     named_variables: None,
                     indexed_variables: None,
                     memory_reference: None,
+                    value_location_reference: None,
                 })
             }
         })
@@ -696,7 +725,6 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
                     .update(cx, |variable_list, cx| {
                         variable_list.toggle_variable(
                             &VariablePath {
-                                base: scopes[0].variables_reference,
                                 indices: Arc::from([scopes[0].variables_reference]),
                             },
                             cx,
