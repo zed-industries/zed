@@ -238,8 +238,8 @@
       "] x": "vim::SelectSmallerSyntaxNode",
       "] d": "editor::GoToDiagnostic",
       "[ d": "editor::GoToPreviousDiagnostic",
-      "] c": ["editor::GoToHunk", { "center_cursor": true }],
-      "[ c": ["editor::GoToPreviousHunk", { "center_cursor": true }],
+      "] c": "editor::GoToHunk",
+      "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments"
     }
   },
@@ -448,7 +448,10 @@
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
-      "p": "git::Restore" // "d p"
+      "shift-o": "git::ToggleStaged",
+      "p": "git::Restore", // "d p"
+      "u": "git::StageAndNext", // "d u"
+      "shift-u": "git::UnstageAndNext" // "d shift-u"
     }
   },
   {
