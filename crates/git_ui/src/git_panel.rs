@@ -1364,7 +1364,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn fetch(&mut self, _: &git::Fetch, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn fetch(&mut self, _: &git::Fetch, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1391,7 +1391,7 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1399,7 +1399,6 @@ impl GitPanel {
             return;
         };
         let branch = branch.clone();
-        let guard = self.start_remote_operation();
         let remote = self.get_current_remote(window, cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = match remote.await {
@@ -1414,6 +1413,10 @@ impl GitPanel {
                     return Ok(());
                 }
             };
+
+            let guard = this
+                .update(&mut cx, |this, _| this.start_remote_operation())
+                .ok();
 
             let pull = repo.update(&mut cx, |repo, _cx| {
                 repo.pull(branch.name.clone(), remote.name.clone())
@@ -1435,7 +1438,7 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1443,7 +1446,6 @@ impl GitPanel {
             return;
         };
         let branch = branch.clone();
-        let guard = self.start_remote_operation();
         let options = action.options;
         let remote = self.get_current_remote(window, cx);
 
@@ -1460,6 +1462,10 @@ impl GitPanel {
                     return Ok(());
                 }
             };
+
+            let guard = this
+                .update(&mut cx, |this, _| this.start_remote_operation())
+                .ok();
 
             let push = repo.update(&mut cx, |repo, _cx| {
                 repo.push(branch.name.clone(), remote.name.clone(), options)
@@ -2716,9 +2722,6 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::unstage_all))
             .on_action(cx.listener(Self::restore_tracked_files))
             .on_action(cx.listener(Self::clean_all))
-            .on_action(cx.listener(Self::fetch))
-            .on_action(cx.listener(Self::pull))
-            .on_action(cx.listener(Self::push))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
