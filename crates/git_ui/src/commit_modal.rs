@@ -115,15 +115,15 @@ impl CommitModal {
                 return;
             };
 
-            let (can_commit, conflict) = git_panel.update(cx, |git_panel, cx| {
-                let can_commit = git_panel.can_commit();
+            let (can_open_commit_editor, conflict) = git_panel.update(cx, |git_panel, cx| {
+                let can_open_commit_editor = git_panel.can_open_commit_editor();
                 let conflict = git_panel.has_unstaged_conflicts();
-                if can_commit {
+                if can_open_commit_editor {
                     git_panel.set_modal_open(true, cx);
                 }
-                (can_commit, conflict)
+                (can_open_commit_editor, conflict)
             });
-            if !can_commit {
+            if !can_open_commit_editor {
                 let message = if conflict {
                     "There are still conflicts. You must stage these before committing."
                 } else {
@@ -250,7 +250,7 @@ impl CommitModal {
     pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let git_panel = self.git_panel.clone();
 
-        let (branch, tooltip, commit_label, co_authors) =
+        let (branch, can_commit, tooltip, commit_label, co_authors) =
             self.git_panel.update(cx, |git_panel, cx| {
                 let branch = git_panel
                     .active_repository
@@ -262,10 +262,10 @@ impl CommitModal {
                             .map(|b| b.name.clone())
                     })
                     .unwrap_or_else(|| "<no branch>".into());
-                let (_, tooltip) = git_panel.configure_commit_button(cx);
+                let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
                 let title = git_panel.commit_button_title();
                 let co_authors = git_panel.render_co_authors(cx);
-                (branch, tooltip, title, co_authors)
+                (branch, can_commit, tooltip, title, co_authors)
             });
 
         let branch_picker_button = panel_button(branch)
@@ -300,9 +300,8 @@ impl CommitModal {
                 None
             };
 
-        let (panel_editor_focus_handle, can_commit) = git_panel.update(cx, |git_panel, cx| {
-            (git_panel.editor_focus_handle(cx), git_panel.can_commit())
-        });
+        let panel_editor_focus_handle =
+            git_panel.update(cx, |git_panel, cx| git_panel.editor_focus_handle(cx));
 
         let commit_button = panel_filled_button(commit_label)
             .tooltip(move |window, cx| {
