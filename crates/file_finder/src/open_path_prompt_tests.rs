@@ -82,32 +82,100 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     let query = path!("/root/dir2/di");
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir3", "dir4"]);
+}
 
-    // let query = path!("/root/d");
-    // let result = query_path_prompt_result(&query, &picker, cx).await;
-    // println!("{:?}", result);
+#[gpui::test]
+async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": "A",
+                "dir1": {},
+                "dir2": {
+                    "c": "C",
+                    "d": "D",
+                    "dir3": {},
+                    "dir4": {}
+                }
+            }),
+        )
+        .await;
 
-    // let query = path!("/root/a");
-    // let result = query_path_prompt_result(&query, &picker, cx).await;
-    // println!("{:?}", result);
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    // let query = path!("/root/dir2");
-    // let result = query_path_prompt_result(&query, &picker, cx).await;
-    // println!("{:?}", result);
+    let (picker, cx) = build_open_path_prompt(project, cx);
 
-    // let query = path!("/root/dir2/");
-    // // let result = query_path_prompt_result(&query, &picker, cx).await;
-    // picker
-    //     .update_in(cx, |f, window, cx| {
-    //         f.delegate.update_matches(query.to_string(), window, cx)
-    //     })
-    //     .await;
-    // let result = picker.update_in(cx, |f, window, cx| f.delegate.confirm(false, window, cx));
-    // println!("{:?}", rx.await);
+    let query = path!("/root");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(confirm_completion(query, 0, &picker, cx), path!("/root/"));
 
-    // let query = path!("/root/dir2/di");
-    // let result = query_path_prompt_result(&query, &picker, cx).await;
-    // println!("{:?}", result);
+    let query = path!("/root/");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(confirm_completion(query, 0, &picker, cx), path!("/root/a"));
+
+    let query = path!("/root/");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 1, &picker, cx),
+        path!("/root/dir1/")
+    );
+
+    let query = path!("/root/a");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(confirm_completion(query, 0, &picker, cx), path!("/root/a"));
+
+    let query = path!("/root/d");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 1, &picker, cx),
+        path!("/root/dir2/")
+    );
+
+    let query = path!("/root/dir2");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 0, &picker, cx),
+        path!("/root/dir2/")
+    );
+
+    let query = path!("/root/dir2/");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 0, &picker, cx),
+        path!("/root/dir2/c")
+    );
+
+    let query = path!("/root/dir2/");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 2, &picker, cx),
+        path!("/root/dir2/dir3/")
+    );
+
+    let query = path!("/root/dir2/d");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 0, &picker, cx),
+        path!("/root/dir2/d")
+    );
+
+    let query = path!("/root/dir2/d");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 1, &picker, cx),
+        path!("/root/dir2/dir3/")
+    );
+
+    let query = path!("/root/dir2/di");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        confirm_completion(query, 1, &picker, cx),
+        path!("/root/dir2/dir4/")
+    );
 }
 
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
@@ -161,11 +229,17 @@ async fn insert_query(
 
 fn confirm_completion(
     query: &str,
+    select: usize,
     picker: &Entity<Picker<OpenPathDelegate>>,
     cx: &mut VisualTestContext,
 ) -> String {
     picker
         .update_in(cx, |f, window, cx| {
+            let x = f.delegate.selected_index();
+            println!("selected_index: {:?}", x);
+            if x != select {
+                f.delegate.set_selected_index(select, window, cx);
+            }
             f.delegate.confirm_completion(query.to_string(), window, cx)
         })
         .unwrap()
