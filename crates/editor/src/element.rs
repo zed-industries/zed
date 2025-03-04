@@ -8877,7 +8877,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Next Hunk",
-                                    &GoToHunk::default(),
+                                    &GoToHunk,
                                     &focus_handle,
                                     window,
                                     cx,
