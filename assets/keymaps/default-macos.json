@@ -728,6 +728,14 @@
     }
   },
   {
+    "context": "VariableList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "left": "variable_list::CollapseSelectedEntry",
+      "right": "variable_list::ExpandSelectedEntry"
+    }
+  },
+  {
     "context": "GitPanel && ChangesList",
     "use_key_equivalents": true,
     "bindings": {

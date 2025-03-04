@@ -1432,6 +1432,7 @@ impl ShellExec {
                         reveal_target: RevealTarget::Dock,
                         hide: HideStrategy::Never,
                         shell,
+                        program: None,
                         show_summary: false,
                         show_command: false,
                     }),

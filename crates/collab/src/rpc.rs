@@ -428,7 +428,40 @@ impl Server {
                         app_state.config.openai_api_key.clone(),
                     )
                 }
-            });
+            })
+            .add_message_handler(update_breakpoints)
+            .add_message_handler(broadcast_project_message_from_host::<proto::SetActiveDebugLine>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RemoveActiveDebugLine>,
+            )
+            .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDebugAdapter>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::SetDebugClientCapabilities>,
+            )
+            .add_message_handler(broadcast_project_message_from_host::<proto::ShutdownDebugClient>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapNextRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapStepInRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapStepOutRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapStepBackRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapContinueRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapPauseRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapDisconnectRequest>)
+            .add_request_handler(
+                forward_mutating_project_request::<proto::DapTerminateThreadsRequest>,
+            )
+            .add_request_handler(forward_mutating_project_request::<proto::DapRestartRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapTerminateRequest>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::UpdateThreadStatus>)
+            .add_request_handler(forward_mutating_project_request::<proto::VariablesRequest>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::DapRestartStackFrameRequest>,
+            )
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::ToggleIgnoreBreakpoints>,
+            )
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::IgnoreBreakpointState>,
+            );
 
         Arc::new(server)
     }
@@ -1868,6 +1901,18 @@ fn join_project_internal(
             .trace_err();
     }
 
+    let breakpoints = project
+        .breakpoints
+        .iter()
+        .map(
+            |(project_path, breakpoint_set)| proto::SynchronizeBreakpoints {
+                project_id: project.id.0 as u64,
+                breakpoints: breakpoint_set.iter().map(|bp| bp.clone()).collect(),
+                project_path: Some(project_path.clone()),
+            },
+        )
+        .collect();
+
     // First, we send the metadata associated with each worktree.
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
@@ -1876,6 +1921,7 @@ fn join_project_internal(
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
         role: project.role.into(),
+        breakpoints,
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2062,7 +2108,7 @@ async fn update_worktree_settings(
     Ok(())
 }
 
-/// Notify other participants that a  language server has started.
+/// Notify other participants that a language server has started.
 async fn start_language_server(
     request: proto::StartLanguageServer,
     session: Session,
@@ -2099,6 +2145,29 @@ async fn update_language_server(
     broadcast(
         Some(session.connection_id),
         project_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    Ok(())
+}
+
+/// Notify other participants that breakpoints have changed.
+async fn update_breakpoints(
+    request: proto::SynchronizeBreakpoints,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .update_breakpoints(session.connection_id, &request)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
         |connection_id| {
             session
                 .peer
