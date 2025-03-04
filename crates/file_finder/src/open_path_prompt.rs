@@ -38,6 +38,23 @@ impl OpenPathDelegate {
             should_dismiss: true,
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn collect_match_candidates(&self) -> Vec<String> {
+        if let Some(state) = self.directory_state.as_ref() {
+            self.matches
+                .iter()
+                .filter_map(|&index| {
+                    state
+                        .match_candidates
+                        .get(index)
+                        .map(|candidate| candidate.path.string.clone())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 #[derive(Debug)]
