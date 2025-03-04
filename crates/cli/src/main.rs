@@ -521,30 +521,115 @@ mod flatpak {
     }
 }
 
-// todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
+    use anyhow::Context;
+    use release_channel::app_identifier;
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE},
+            Storage::FileSystem::{
+                CreateFileW, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING,
+            },
+            System::Threading::CreateMutexW,
+        },
+    };
+
     use crate::{Detect, InstalledApp};
     use std::io;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
 
-    struct App;
+    fn check_single_instance() -> bool {
+        let mutex = unsafe {
+            CreateMutexW(
+                None,
+                false,
+                &HSTRING::from(format!("{}-Instance-Mutex", app_identifier())),
+            )
+            .expect("Unable to create instance sync event")
+        };
+        let last_err = unsafe { GetLastError() };
+        let _ = unsafe { CloseHandle(mutex) };
+        last_err != ERROR_ALREADY_EXISTS
+    }
+
+    struct App(PathBuf);
+
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
-            unimplemented!()
+            format!(
+                "Zed {}{}{} – {}",
+                if *release_channel::RELEASE_CHANNEL_NAME == "stable" {
+                    "".to_string()
+                } else {
+                    format!("{} ", *release_channel::RELEASE_CHANNEL_NAME)
+                },
+                option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
+                self.0.display(),
+            )
         }
-        fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
-            unimplemented!()
+
+        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+            if check_single_instance() {
+                std::process::Command::new(self.0.clone())
+                    .arg(ipc_url)
+                    .spawn()?;
+            } else {
+                unsafe {
+                    let pipe = CreateFileW(
+                        &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
+                        GENERIC_WRITE.0,
+                        FILE_SHARE_MODE::default(),
+                        None,
+                        OPEN_EXISTING,
+                        FILE_FLAGS_AND_ATTRIBUTES::default(),
+                        None,
+                    )?;
+                    let message = ipc_url.as_bytes();
+                    let mut bytes_written = 0;
+                    WriteFile(pipe, Some(message), Some(&mut bytes_written), None)?;
+                    CloseHandle(pipe)?;
+                }
+            }
+            Ok(())
         }
-        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
-            unimplemented!()
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .arg("--foreground")
+                .spawn()?
+                .wait()
         }
     }
 
     impl Detect {
-        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            Ok(App)
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let path = if let Some(path) = path {
+                path.to_path_buf().canonicalize()?
+            } else {
+                let cli = std::env::current_exe()?;
+                let dir = cli.parent().context("no parent path for cli")?;
+
+                // ../Zed.exe is the standard, lib/zed is for MSYS2, ./zed.exe is for the target
+                // directory in development builds.
+                let possible_locations = ["../Zed.exe", "../lib/zed/zed-editor.exe", "./zed.exe"];
+                possible_locations
+                    .iter()
+                    .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
+                    .context(format!(
+                        "could not find any of: {}",
+                        possible_locations.join(", ")
+                    ))?
+            };
+
+            Ok(App(path))
         }
     }
 }

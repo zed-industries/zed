@@ -562,9 +562,7 @@ impl ProjectDiagnosticsEditor {
                                         )),
                                         height: diagnostic.message.matches('\n').count() as u32 + 1,
                                         style: BlockStyle::Fixed,
-                                        render: diagnostic_block_renderer(
-                                            diagnostic, None, true, true,
-                                        ),
+                                        render: diagnostic_block_renderer(diagnostic, None, true),
                                         priority: 0,
                                     });
                                 }
@@ -997,7 +995,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                         h_flex()
                             .gap_1()
                             .child(
-                                StyledText::new(message.clone()).with_highlights(
+                                StyledText::new(message.clone()).with_default_highlights(
                                     &cx.window.text_style(),
                                     code_ranges
                                         .iter()

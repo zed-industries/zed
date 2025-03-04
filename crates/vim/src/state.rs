@@ -45,9 +45,8 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
-            Mode::Normal | Mode::Insert | Mode::Replace => false,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
-            Mode::HelixNormal => false,
+            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
+            Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
 }
@@ -467,7 +466,6 @@ impl Clone for ReplayableAction {
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
-    pub initial_query: String,
 
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,

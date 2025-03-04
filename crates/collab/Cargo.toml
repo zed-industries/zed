@@ -97,6 +97,7 @@ extension.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
+git_ui = { workspace = true, features = ["test-support"] }
 git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 hyper.workspace = true
@@ -110,7 +111,7 @@ node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
-prompt_library.workspace = true
+prompt_store.workspace = true
 recent_projects = { workspace = true }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }

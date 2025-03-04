@@ -16,6 +16,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+clock.workspace = true
 futures.workspace = true
 git2.workspace = true
 gpui.workspace = true

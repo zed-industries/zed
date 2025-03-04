@@ -8,15 +8,16 @@ use gpui::{
     UnderlineStyle, WeakEntity,
 };
 use language::LanguageRegistry;
-use language_model::Role;
+use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, Disclosure};
 use workspace::Workspace;
 
-use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
+use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
+use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
@@ -28,6 +29,7 @@ pub struct ActiveThread {
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, Entity<Markdown>>,
+    expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
@@ -55,6 +57,7 @@ impl ActiveThread {
             thread: thread.clone(),
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
+            expanded_tool_uses: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.entity().downgrade();
                 move |ix, _: &mut Window, cx: &mut App| {
@@ -131,6 +134,8 @@ impl ActiveThread {
             base_text_style: text_style,
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            table_overflow_x_scroll: true,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
                     top: Some(Length::Definite(rems(0.).into())),
@@ -251,17 +256,36 @@ impl ActiveThread {
                         let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
 
                         self.thread.update(cx, |thread, cx| {
-                            thread.insert_tool_output(
-                                tool_use.assistant_message_id,
-                                tool_use.id.clone(),
-                                task,
-                                cx,
-                            );
+                            thread.insert_tool_output(tool_use.id.clone(), task, cx);
                         });
                     }
                 }
             }
-            ThreadEvent::ToolFinished { .. } => {}
+            ThreadEvent::ToolFinished { .. } => {
+                let all_tools_finished = self
+                    .thread
+                    .read(cx)
+                    .pending_tool_uses()
+                    .into_iter()
+                    .all(|tool_use| tool_use.status.is_error());
+                if all_tools_finished {
+                    let model_registry = LanguageModelRegistry::read_global(cx);
+                    if let Some(model) = model_registry.active_model() {
+                        self.thread.update(cx, |thread, cx| {
+                            // Insert a user message to contain the tool results.
+                            thread.insert_user_message(
+                                // TODO: Sending up a user message without any content results in the model sending back
+                                // responses that also don't have any content. We currently don't handle this case well,
+                                // so for now we provide some text to keep the model on track.
+                                "Here are the tool results.",
+                                Vec::new(),
+                                cx,
+                            );
+                            thread.send_to_model(model, RequestKind::Chat, true, cx);
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -276,7 +300,13 @@ impl ActiveThread {
         };
 
         let context = self.thread.read(cx).context_for_message(message_id);
+        let tool_uses = self.thread.read(cx).tool_uses_for_message(message_id);
         let colors = cx.theme().colors();
+
+        // Don't render user messages that are just there for returning tool results.
+        if message.role == Role::User && self.thread.read(cx).message_has_tool_results(message_id) {
+            return Empty.into_any();
+        }
 
         let message_content = v_flex()
             .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
@@ -332,7 +362,22 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => div().id(("message-container", ix)).child(message_content),
+            Role::Assistant => div()
+                .id(("message-container", ix))
+                .child(message_content)
+                .map(|parent| {
+                    if tool_uses.is_empty() {
+                        return parent;
+                    }
+
+                    parent.child(
+                        v_flex().children(
+                            tool_uses
+                                .into_iter()
+                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                        ),
+                    )
+                }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -342,6 +387,102 @@ impl ActiveThread {
         };
 
         styled_message.into_any()
+    }
+
+    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_open = self
+            .expanded_tool_uses
+            .get(&tool_use.id)
+            .copied()
+            .unwrap_or_default();
+
+        div().px_2p5().child(
+            v_flex()
+                .gap_1()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .py_0p5()
+                        .pl_1()
+                        .pr_2()
+                        .bg(cx.theme().colors().editor_foreground.opacity(0.02))
+                        .when(is_open, |element| element.border_b_1().rounded_t(px(6.)))
+                        .when(!is_open, |element| element.rounded(px(6.)))
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Disclosure::new("tool-use-disclosure", is_open).on_click(
+                                    cx.listener({
+                                        let tool_use_id = tool_use.id.clone();
+                                        move |this, _event, _window, _cx| {
+                                            let is_open = this
+                                                .expanded_tool_uses
+                                                .entry(tool_use_id.clone())
+                                                .or_insert(false);
+
+                                            *is_open = !*is_open;
+                                        }
+                                    }),
+                                ))
+                                .child(Label::new(tool_use.name)),
+                        )
+                        .child(
+                            Label::new(match tool_use.status {
+                                ToolUseStatus::Pending => "Pending",
+                                ToolUseStatus::Running => "Running",
+                                ToolUseStatus::Finished(_) => "Finished",
+                                ToolUseStatus::Error(_) => "Error",
+                            })
+                            .size(LabelSize::XSmall)
+                            .buffer_font(cx),
+                        ),
+                )
+                .map(|parent| {
+                    if !is_open {
+                        return parent;
+                    }
+
+                    parent.child(
+                        v_flex()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .py_1()
+                                    .px_2p5()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .child(Label::new("Input:"))
+                                    .child(Label::new(
+                                        serde_json::to_string_pretty(&tool_use.input)
+                                            .unwrap_or_default(),
+                                    )),
+                            )
+                            .map(|parent| match tool_use.status {
+                                ToolUseStatus::Finished(output) => parent.child(
+                                    v_flex()
+                                        .gap_0p5()
+                                        .py_1()
+                                        .px_2p5()
+                                        .child(Label::new("Result:"))
+                                        .child(Label::new(output)),
+                                ),
+                                ToolUseStatus::Error(err) => parent.child(
+                                    v_flex()
+                                        .gap_0p5()
+                                        .py_1()
+                                        .px_2p5()
+                                        .child(Label::new("Error:"))
+                                        .child(Label::new(err)),
+                                ),
+                                ToolUseStatus::Pending | ToolUseStatus::Running => parent,
+                            }),
+                    )
+                }),
+        )
     }
 }
 

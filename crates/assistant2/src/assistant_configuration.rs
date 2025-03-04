@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
+use gpui::{Action, AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use ui::{prelude::*, Divider, DividerColor, ElevationIndex};
 use zed_actions::assistant::DeployPromptLibrary;
@@ -158,8 +158,16 @@ impl Render for AssistantConfiguration {
             .child(
                 v_flex()
                     .p(DynamicSpacing::Base16.rems(cx))
-                    .gap_1()
-                    .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
+                            .child(
+                                Label::new("Create reusable prompts and tag which ones you want sent in every LLM interaction.")
+                                    .color(Color::Muted),
+                            ),
+                    )
                     .child(
                         Button::new("open-prompt-library", "Open Prompt Library")
                             .style(ButtonStyle::Filled)
@@ -168,8 +176,8 @@ impl Render for AssistantConfiguration {
                             .icon(IconName::Book)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
-                            .on_click(|_event, _window, cx| {
-                                cx.dispatch_action(&DeployPromptLibrary)
+                            .on_click(|_event, window, cx| {
+                                window.dispatch_action(DeployPromptLibrary.boxed_clone(), cx)
                             }),
                     ),
             )

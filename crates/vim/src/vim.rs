@@ -354,7 +354,7 @@ impl Vim {
         let editor = cx.entity().clone();
 
         cx.new(|cx| Vim {
-            mode: Mode::Normal,
+            mode: VimSettings::get_global(cx).default_mode,
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
@@ -1643,6 +1643,7 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
+    pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
@@ -1653,6 +1654,7 @@ struct VimSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
+    pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
@@ -1661,12 +1663,62 @@ struct VimSettingsContent {
     pub highlight_on_yank_duration: Option<u64>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeContent {
+    #[default]
+    Normal,
+    Insert,
+    Replace,
+    Visual,
+    VisualLine,
+    VisualBlock,
+    HelixNormal,
+}
+
+impl From<ModeContent> for Mode {
+    fn from(mode: ModeContent) -> Self {
+        match mode {
+            ModeContent::Normal => Self::Normal,
+            ModeContent::Insert => Self::Insert,
+            ModeContent::Replace => Self::Replace,
+            ModeContent::Visual => Self::Visual,
+            ModeContent::VisualLine => Self::VisualLine,
+            ModeContent::VisualBlock => Self::VisualBlock,
+            ModeContent::HelixNormal => Self::HelixNormal,
+        }
+    }
+}
+
 impl Settings for VimSettings {
     const KEY: Option<&'static str> = Some("vim");
 
     type FileContent = VimSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+        let settings: VimSettingsContent = sources.json_merge()?;
+
+        Ok(Self {
+            default_mode: settings
+                .default_mode
+                .ok_or_else(Self::missing_default)?
+                .into(),
+            toggle_relative_line_numbers: settings
+                .toggle_relative_line_numbers
+                .ok_or_else(Self::missing_default)?,
+            use_system_clipboard: settings
+                .use_system_clipboard
+                .ok_or_else(Self::missing_default)?,
+            use_multiline_find: settings
+                .use_multiline_find
+                .ok_or_else(Self::missing_default)?,
+            use_smartcase_find: settings
+                .use_smartcase_find
+                .ok_or_else(Self::missing_default)?,
+            custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
+            highlight_on_yank_duration: settings
+                .highlight_on_yank_duration
+                .ok_or_else(Self::missing_default)?,
+        })
     }
 }

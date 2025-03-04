@@ -784,8 +784,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("bp", "revious"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("bp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -794,8 +794,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
         VimCommand::new(("tabnew", ""), workspace::NewFile),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("tabp", "revious"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("tabN", "ext"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(
             ("tabc", "lose"),
             workspace::CloseActiveItem {
@@ -827,10 +827,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
         VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).range(wrap_count),
-        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("cp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("cN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
+        VimCommand::new(("lp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("lN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
