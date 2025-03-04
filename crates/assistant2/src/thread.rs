@@ -236,13 +236,12 @@ impl Thread {
         new_text: String,
         cx: &mut Context<Self>,
     ) -> bool {
-        // TODO: Use hashmap for lookup
-        // TODO: Handle context change?
         let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
             return false;
         };
         message.role = new_role;
         message.text = new_text;
+        self.touch_updated_at();
         cx.emit(ThreadEvent::MessageEdited(id));
         true
     }

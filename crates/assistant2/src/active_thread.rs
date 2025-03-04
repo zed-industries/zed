@@ -302,7 +302,6 @@ impl ActiveThread {
             ThreadEvent::MessageDeleted(message_id) => {
                 self.deleted_message(message_id);
 
-                //TODO: Ensure that we drop previous thread store tasks that are still running
                 self.thread_store
                     .update(cx, |thread_store, cx| {
                         thread_store.save_thread(&self.thread, cx)
