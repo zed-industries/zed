@@ -1329,12 +1329,25 @@ pub(crate) fn start_of_relative_buffer_row(
 
 fn up_down_buffer_rows(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
+    mut point: DisplayPoint,
     mut goal: SelectionGoal,
-    times: isize,
+    mut times: isize,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
+
+    while map.is_folded_buffer_header(point.row()) {
+        if times < 0 {
+            (point, _) = movement::up(map, point, goal, true, text_layout_details);
+            times += 1;
+        } else if times > 0 {
+            (point, _) = movement::down(map, point, goal, true, text_layout_details);
+            times -= 1;
+        } else {
+            break;
+        }
+    }
+
     let start = map.display_point_to_fold_point(point, Bias::Left);
     let begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot

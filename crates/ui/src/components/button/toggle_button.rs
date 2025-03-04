@@ -144,7 +144,7 @@ impl RenderOnce for ToggleButton {
 }
 
 impl ComponentPreview for ToggleButton {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

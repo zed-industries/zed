@@ -89,6 +89,16 @@ impl EditorTestContext {
         Path::new("/root")
     }
 
+    pub async fn for_editor_in(editor: Entity<Editor>, cx: &mut gpui::VisualTestContext) -> Self {
+        cx.focus(&editor);
+        Self {
+            window: cx.windows()[0],
+            cx: cx.clone(),
+            editor,
+            assertion_cx: AssertionContextManager::new(),
+        }
+    }
+
     pub async fn for_editor(editor: WindowHandle<Editor>, cx: &mut gpui::TestAppContext) -> Self {
         let editor_view = editor.root(cx).unwrap();
         Self {
@@ -381,6 +391,76 @@ impl EditorTestContext {
         assert_state_with_diff(&self.editor, &mut self.cx, &expected_diff_text);
     }
 
+    #[track_caller]
+    pub fn assert_excerpts_with_selections(&mut self, marked_text: &str) {
+        let expected_excerpts = marked_text
+            .strip_prefix("[EXCERPT]\n")
+            .unwrap()
+            .split("[EXCERPT]\n")
+            .collect::<Vec<_>>();
+
+        let (selections, excerpts) = self.update_editor(|editor, _, cx| {
+            let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+
+            let selections = editor.selections.disjoint_anchors();
+            let excerpts = multibuffer_snapshot
+                .excerpts()
+                .map(|(e_id, snapshot, range)| (e_id, snapshot.clone(), range))
+                .collect::<Vec<_>>();
+
+            (selections, excerpts)
+        });
+
+        assert_eq!(excerpts.len(), expected_excerpts.len());
+
+        for (ix, (excerpt_id, snapshot, range)) in excerpts.into_iter().enumerate() {
+            let is_folded = self
+                .update_editor(|editor, _, cx| editor.is_buffer_folded(snapshot.remote_id(), cx));
+            let (expected_text, expected_selections) =
+                marked_text_ranges(expected_excerpts[ix], true);
+            if expected_text == "[FOLDED]\n" {
+                assert!(is_folded, "excerpt {} should be folded", ix);
+                let is_selected = selections.iter().any(|s| s.head().excerpt_id == excerpt_id);
+                if expected_selections.len() > 0 {
+                    assert!(
+                        is_selected,
+                        "excerpt {} should be selected. Got {:?}",
+                        ix,
+                        self.editor_state()
+                    );
+                } else {
+                    assert!(!is_selected, "excerpt {} should not be selected", ix);
+                }
+                continue;
+            }
+            assert!(!is_folded, "excerpt {} should not be folded", ix);
+            assert_eq!(
+                snapshot
+                    .text_for_range(range.context.clone())
+                    .collect::<String>(),
+                expected_text
+            );
+
+            let selections = selections
+                .iter()
+                .filter(|s| s.head().excerpt_id == excerpt_id)
+                .map(|s| {
+                    let head = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
+                    let tail = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
+                    tail..head
+                })
+                .collect::<Vec<_>>();
+            // todo: selections that cross excerpt boundaries..
+            assert_eq!(
+                selections, expected_selections,
+                "excerpt {} has incorrect selections",
+                ix,
+            );
+        }
+    }
+
     /// Make an assertion about the editor's text and the ranges and directions
     /// of its selections using a string containing embedded range markers.
     ///
@@ -389,6 +469,17 @@ impl EditorTestContext {
     pub fn assert_editor_state(&mut self, marked_text: &str) {
         let (expected_text, expected_selections) = marked_text_ranges(marked_text, true);
         pretty_assertions::assert_eq!(self.buffer_text(), expected_text, "unexpected buffer text");
+        self.assert_selections(expected_selections, marked_text.to_string())
+    }
+
+    /// Make an assertion about the editor's text and the ranges and directions
+    /// of its selections using a string containing embedded range markers.
+    ///
+    /// See the `util::test::marked_text_ranges` function for more information.
+    #[track_caller]
+    pub fn assert_display_state(&mut self, marked_text: &str) {
+        let (expected_text, expected_selections) = marked_text_ranges(marked_text, true);
+        pretty_assertions::assert_eq!(self.display_text(), expected_text, "unexpected buffer text");
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 

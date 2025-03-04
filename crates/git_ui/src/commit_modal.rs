@@ -2,7 +2,7 @@
 
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
-use git::Commit;
+use git::{Commit, ShowCommitEditor};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use project::Project;
 use ui::{prelude::*, KeybindingHint, PopoverButton, Tooltip, TriggerablePopover};
@@ -110,17 +110,20 @@ struct RestoreDock {
 
 impl CommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &Commit, window, cx| {
+        workspace.register_action(|workspace, _: &ShowCommitEditor, window, cx| {
             let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
                 return;
             };
 
-            let (can_commit, conflict) = git_panel.update(cx, |git_panel, _cx| {
-                let can_commit = git_panel.can_commit();
+            let (can_open_commit_editor, conflict) = git_panel.update(cx, |git_panel, cx| {
+                let can_open_commit_editor = git_panel.can_open_commit_editor();
                 let conflict = git_panel.has_unstaged_conflicts();
-                (can_commit, conflict)
+                if can_open_commit_editor {
+                    git_panel.set_modal_open(true, cx);
+                }
+                (can_open_commit_editor, conflict)
             });
-            if !can_commit {
+            if !can_open_commit_editor {
                 let message = if conflict {
                     "There are still conflicts. You must stage these before committing."
                 } else {
@@ -131,6 +134,7 @@ impl CommitModal {
                     prompt.await.ok();
                 })
                 .detach();
+                return;
             }
 
             let dock = workspace.dock_at_position(git_panel.position(window, cx));
@@ -159,7 +163,7 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
-        let suggested_message = panel.suggest_commit_message();
+        let suggested_commit_message = panel.suggest_commit_message();
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
@@ -170,19 +174,11 @@ impl CommitModal {
 
         let commit_message = commit_editor.read(cx).text(cx);
 
-        if let Some(suggested_message) = suggested_message {
+        if let Some(suggested_commit_message) = suggested_commit_message {
             if commit_message.is_empty() {
                 commit_editor.update(cx, |editor, cx| {
-                    editor.set_text(suggested_message, window, cx);
-                    editor.select_all(&Default::default(), window, cx);
+                    editor.set_placeholder_text(suggested_commit_message, cx);
                 });
-            } else {
-                if commit_message.as_str().trim() == suggested_message.trim() {
-                    commit_editor.update(cx, |editor, cx| {
-                        // select the message to make it easy to delete
-                        editor.select_all(&Default::default(), window, cx);
-                    });
-                }
             }
         }
 
@@ -246,7 +242,7 @@ impl CommitModal {
     pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let git_panel = self.git_panel.clone();
 
-        let (branch, tooltip, commit_label, co_authors) =
+        let (branch, can_commit, tooltip, commit_label, co_authors) =
             self.git_panel.update(cx, |git_panel, cx| {
                 let branch = git_panel
                     .active_repository
@@ -258,18 +254,10 @@ impl CommitModal {
                             .map(|b| b.name.clone())
                     })
                     .unwrap_or_else(|| "<no branch>".into());
-                let tooltip = if git_panel.has_staged_changes() {
-                    "Commit staged changes"
-                } else {
-                    "Commit changes to tracked files"
-                };
-                let title = if git_panel.has_staged_changes() {
-                    "Commit"
-                } else {
-                    "Commit All"
-                };
+                let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
+                let title = git_panel.commit_button_title();
                 let co_authors = git_panel.render_co_authors(cx);
-                (branch, tooltip, title, co_authors)
+                (branch, can_commit, tooltip, title, co_authors)
             });
 
         let branch_picker_button = panel_button(branch)
@@ -304,9 +292,8 @@ impl CommitModal {
                 None
             };
 
-        let (panel_editor_focus_handle, can_commit) = git_panel.update(cx, |git_panel, cx| {
-            (git_panel.editor_focus_handle(cx), git_panel.can_commit())
-        });
+        let panel_editor_focus_handle =
+            git_panel.update(cx, |git_panel, cx| git_panel.editor_focus_handle(cx));
 
         let commit_button = panel_filled_button(commit_label)
             .tooltip(move |window, cx| {

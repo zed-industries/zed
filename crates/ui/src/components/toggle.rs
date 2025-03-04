@@ -510,7 +510,7 @@ impl RenderOnce for SwitchWithLabel {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Checkbox {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![
@@ -595,7 +595,7 @@ impl ComponentPreview for Checkbox {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Switch {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![
@@ -658,7 +658,7 @@ impl ComponentPreview for Switch {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for CheckboxWithLabel {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![example_group_with_title(

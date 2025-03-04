@@ -153,8 +153,8 @@ impl LlmApiToken {
         Self::fetch(self.0.write().await, client).await
     }
 
-    async fn fetch<'a>(
-        mut lock: RwLockWriteGuard<'a, Option<String>>,
+    async fn fetch(
+        mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &Arc<Client>,
     ) -> Result<String> {
         let response = client.request(proto::GetLlmToken {}).await?;

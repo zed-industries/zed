@@ -51,6 +51,7 @@ parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_library.workspace = true
+prompt_store.workspace = true
 proto.workspace = true
 rope.workspace = true
 schemars.workspace = true
