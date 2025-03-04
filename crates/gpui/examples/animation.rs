@@ -57,7 +57,6 @@ impl Render for AnimationExample {
                             .path(ARROW_CIRCLE_SVG)
                             .text_color(black())
                             .id("svg")
-                            .on_mouse_move(|_, _, _| {})
                             .on_hover(cx.listener(|this, hovered, _, cx| {
                                 this.hovered = *hovered;
                                 cx.notify();
