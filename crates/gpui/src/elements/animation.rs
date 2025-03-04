@@ -70,14 +70,14 @@ impl TransitionAnimation {
         }
     }
 
-    /// Sets he amount of time this animation should run for when transitioning from false to true.
+    /// Sets the amount of time this animation should run for when transitioning from false to true.
     /// When `None`, this transition isn't animated.
     pub fn forward(mut self, duration: Option<Duration>) -> Self {
         self.forward_duration = duration;
         self
     }
 
-    /// Sets he amount of time this animation should run for when transitioning from true to false.
+    /// Sets the amount of time this animation should run for when transitioning from true to false.
     /// When `None`, this transition isn't animated.
     pub fn backward(mut self, duration: Option<Duration>) -> Self {
         self.backward_duration = duration;
