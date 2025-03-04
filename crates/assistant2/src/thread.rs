@@ -252,6 +252,7 @@ impl Thread {
         };
         self.messages.remove(index);
         self.context_by_message.remove(&id);
+        self.touch_updated_at();
         cx.emit(ThreadEvent::MessageDeleted(id));
         true
     }
