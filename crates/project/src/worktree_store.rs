@@ -901,7 +901,7 @@ impl WorktreeStore {
 
         match worktree.read(cx) {
             Worktree::Local(local_worktree) => {
-                let branches = util::maybe!({
+                let repo = util::maybe!({
                     let worktree_error = |error| {
                         format!(
                             "{} for worktree {}",
@@ -919,11 +919,9 @@ impl WorktreeStore {
                         .with_context(|| worktree_error("No repository found"))?
                         .repo()
                         .clone();
-
-                    repo.branches()
+                    repo
                 });
-
-                Task::ready(branches)
+                cx.background_spawn(async move { repo.branches() })
             }
             Worktree::Remote(remote_worktree) => {
                 let request = remote_worktree.client().request(proto::GitBranches {
