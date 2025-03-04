@@ -575,6 +575,13 @@
       "cmd-k right": "pane::SplitRight"
     }
   },
+  // Allow user to trigger partial copilot completions
+  {
+    "context": "Editor && mode == full && copilot_suggestion",
+    "bindings": {
+      "cmd-right": "editor::AcceptPartialCopilotSuggestion"
+    }
+  },
   // Bindings that should be unified with bindings for more general actions
   {
     "context": "Editor && renaming",
