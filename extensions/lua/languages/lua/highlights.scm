@@ -76,7 +76,7 @@
  "and"
  "not"
  "or"
-] @operator
+] @keyword.operator
 
 [
   "+"
