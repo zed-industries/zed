@@ -1,5 +1,5 @@
 // Disable command line from opening on release mode
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod logger;
 mod reliability;
@@ -172,9 +172,10 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 fn main() {
     // Check if there is a pending installer
     // If there is, run the installer and exit
+    let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
     #[cfg(target_os = "windows")]
     {
-        if auto_update::check_pending_installation() {
+        if auto_update::check_pending_installation(&app_version) {
             return;
         }
     }
@@ -213,7 +214,6 @@ fn main() {
     let installation_id = app.background_executor().block(installation_id()).ok();
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
-    let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
 
