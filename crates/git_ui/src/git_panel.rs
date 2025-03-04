@@ -2007,10 +2007,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        let Some(active_repository) = self.active_repository.clone() else {
-            return None;
-        };
-
+        let active_repository = self.active_repository.clone()?;
         let can_open_commit_editor = self.can_open_commit_editor();
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let project = self.project.clone().read(cx);
