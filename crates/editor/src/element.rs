@@ -4414,10 +4414,19 @@ impl EditorElement {
                         background_color =
                             background_color.opacity(if is_light { 0.2 } else { 0.32 });
                     }
+
+                    // Flatten the background color with the editor color to prevent
+                    // elements below transparent hunks from showing through
+                    let flattened_background_color = cx
+                        .theme()
+                        .colors()
+                        .editor_background
+                        .blend(background_color);
+
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
-                        background_color,
+                        flattened_background_color,
                         Edges::default(),
                         transparent_black(),
                     ));
