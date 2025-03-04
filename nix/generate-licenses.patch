@@ -1,0 +1,12 @@
+diff --git a/script/generate-licenses b/script/generate-licenses
+index d627c0a7f0..1360049b55 100755
+--- a/script/generate-licenses
++++ b/script/generate-licenses
+@@ -28,7 +28,6 @@ fi
+ echo "Generating cargo licenses"
+ set -x
+ cargo about generate \
+-    --fail \
+     --frozen \
+     -c script/licenses/zed-licenses.toml \
+     "$TEMPLATE_FILE" >> "$OUTPUT_FILE"

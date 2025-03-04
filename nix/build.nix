@@ -30,6 +30,7 @@
   cargo-about,
   cargo-bundle,
   git,
+  livekit-libwebrtc,
   apple-sdk_15,
   darwin,
   darwinMinVersionHook,
@@ -61,10 +62,10 @@ let
     name = "source";
   };
   gpu-lib = if withGLES then libglvnd else vulkan-loader;
+  pname = "zed-editor";
+  version = "nightly";
   commonArgs = rec {
-    pname = "zed-editor";
-    version = "nightly";
-
+    inherit pname version;
     src = commonSrc;
 
     nativeBuildInputs =
@@ -121,11 +122,12 @@ let
       ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
       RELEASE_VERSION = version;
       RUSTFLAGS = if withGLES then "--cfg gles" else "";
+      LK_CUSTOM_WEBRTC = livekit-libwebrtc;
 
       # TODO: why are these not handled by the linker given that they're in buildInputs?
       NIX_LDFLAGS = "-rpath ${
         lib.makeLibraryPath [
-          vulkan-loader
+          gpu-lib
           wayland
         ]
       }";
@@ -138,43 +140,28 @@ craneLib.buildPackage (
   // {
     inherit cargoArtifacts;
 
-    patches = lib.optionals stdenv.hostPlatform.isDarwin [
-      # Livekit requires Swift 6
-      # We need this until livekit-rust sdk is used
-      # (fetchpatch {
-      #   url = "https://raw.githubusercontent.com/NixOS/nixpkgs/1fd02d90c6c097f91349df35da62d36c19359ba7/pkgs/by-name/ze/zed-editor/0002-disable-livekit-darwin.patch";
-      #   hash = "sha256-whZ7RaXv8hrVzWAveU3qiBnZSrvGNEHTuyNhxgMIo5w=";
-      # })
-    ];
+    patches =
+      [
+        ./generate-licenses.patch
+      ]
+      ++ lib.optionals stdenv.hostPlatform.isDarwin [
+        # Livekit requires Swift 6
+        # We need this until livekit-rust sdk is used
+        ../script/patches/use-cross-platform-livekit.patch
+      ];
 
-    cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
+    # Dynamically link WebRTC instead of static
+    postPatch = ''
+      substituteInPlace ../${pname}-${version}-vendor/webrtc-sys-*/build.rs \
+        --replace-fail "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+    '';
 
     dontUseCmakeConfigure = true;
     preBuild = ''
       bash script/generate-licenses
     '';
 
-    # todo: why isn't this also done on macOS?
-    postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
-      wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
-    '';
-
-    preCheck = ''
-      export HOME=$(mktemp -d);
-    '';
-
-    cargoTestExtraArgs =
-      "-- "
-      + lib.concatStringsSep " " (
-        [
-          # Flakey: unreliably fails on certain hosts (including Hydra)
-          "--skip=zed::tests::test_window_edit_state_restoring_enabled"
-        ]
-        ++ lib.optionals stdenv.hostPlatform.isLinux [
-          # Fails on certain hosts (including Hydra) for unclear reason
-          "--skip=test_open_paths_action"
-        ]
-      );
+    cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
 
     # TODO: override the cargo-bundle package with our fork, get rid of this
     installPhase =
@@ -240,6 +227,28 @@ craneLib.buildPackage (
 
           runHook postInstall
         '';
+
+    # todo: why isn't this also done on macOS?
+    postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
+      wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
+    '';
+
+    preCheck = ''
+      export HOME=$(mktemp -d);
+    '';
+
+    cargoTestExtraArgs =
+      "-- "
+      + lib.concatStringsSep " " (
+        [
+          # Flakey: unreliably fails on certain hosts (including Hydra)
+          "--skip=zed::tests::test_window_edit_state_restoring_enabled"
+        ]
+        ++ lib.optionals stdenv.hostPlatform.isLinux [
+          # Fails on certain hosts (including Hydra) for unclear reason
+          "--skip=test_open_paths_action"
+        ]
+      );
 
     meta = {
       description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
