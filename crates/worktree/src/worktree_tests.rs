@@ -3330,6 +3330,31 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+fn test_unrelativize() {
+    let work_directory = WorkDirectory::AboveProject {
+        absolute_path: Path::new("/projects/zed").into(),
+        location_in_repo: Path::new("crates/gpui").into(),
+    };
+
+    pretty_assertions::assert_eq!(
+        work_directory.try_unrelativize(&"crates/util/util.rs".into()),
+        None,
+    );
+
+    pretty_assertions::assert_eq!(
+        work_directory.unrelativize(&"crates/util/util.rs".into()),
+        Path::new("../util/util.rs").into()
+    );
+
+    pretty_assertions::assert_eq!(work_directory.try_unrelativize(&"README.md".into()), None,);
+
+    pretty_assertions::assert_eq!(
+        work_directory.unrelativize(&"README.md".into()),
+        Path::new("../../README.md").into()
+    );
+}
+
 #[track_caller]
 fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, GitSummary)]) {
     let mut traversal = snapshot

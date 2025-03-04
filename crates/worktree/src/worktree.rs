@@ -58,7 +58,7 @@ use std::{
     future::Future,
     mem::{self},
     ops::{Deref, DerefMut},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     pin::Pin,
     sync::{
         atomic::{self, AtomicU32, AtomicUsize, Ordering::SeqCst},
@@ -212,7 +212,11 @@ impl RepositoryEntry {
         self.work_directory.relativize(path)
     }
 
-    pub fn unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
+    pub fn try_unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
+        self.work_directory.try_unrelativize(path)
+    }
+
+    pub fn unrelativize(&self, path: &RepoPath) -> Arc<Path> {
         self.work_directory.unrelativize(path)
     }
 
@@ -490,7 +494,7 @@ impl WorkDirectory {
     }
 
     /// This is the opposite operation to `relativize` above
-    pub fn unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
+    pub fn try_unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
         match self {
             WorkDirectory::InProject { relative_path } => Some(relative_path.join(path).into()),
             WorkDirectory::AboveProject {
@@ -499,6 +503,25 @@ impl WorkDirectory {
                 // If we fail to strip the prefix, that means this status entry is
                 // external to this worktree, and we definitely won't have an entry_id
                 path.strip_prefix(location_in_repo).ok().map(Into::into)
+            }
+        }
+    }
+
+    pub fn unrelativize(&self, path: &RepoPath) -> Arc<Path> {
+        match self {
+            WorkDirectory::InProject { relative_path } => relative_path.join(path).into(),
+            WorkDirectory::AboveProject {
+                location_in_repo, ..
+            } => {
+                let mut location_in_repo = &**location_in_repo;
+                let mut parents = PathBuf::new();
+                loop {
+                    if let Ok(segment) = path.strip_prefix(location_in_repo) {
+                        return parents.join(segment).into();
+                    }
+                    location_in_repo = location_in_repo.parent().unwrap(); // XXX
+                    parents.push(Component::ParentDir);
+                }
             }
         }
     }
@@ -5508,7 +5531,7 @@ impl BackgroundScanner {
 
                 let mut new_entries_by_path = SumTree::new(&());
                 for (repo_path, status) in statuses.entries.iter() {
-                    let project_path = repository.work_directory.unrelativize(repo_path);
+                    let project_path = repository.work_directory.try_unrelativize(repo_path);
 
                     new_entries_by_path.insert_or_replace(
                         StatusEntry {

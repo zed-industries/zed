@@ -680,7 +680,7 @@ impl Repository {
     }
 
     pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
-        let path = self.repository_entry.unrelativize(path)?;
+        let path = self.repository_entry.try_unrelativize(path)?;
         Some((self.worktree_id, path).into())
     }
 
@@ -919,7 +919,7 @@ impl Repository {
         if let Some(buffer_store) = self.buffer_store(cx) {
             buffer_store.update(cx, |buffer_store, cx| {
                 for path in &entries {
-                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                    let Some(path) = self.repository_entry.try_unrelativize(path) else {
                         continue;
                     };
                     let project_path = (self.worktree_id, path).into();
@@ -988,7 +988,7 @@ impl Repository {
         if let Some(buffer_store) = self.buffer_store(cx) {
             buffer_store.update(cx, |buffer_store, cx| {
                 for path in &entries {
-                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                    let Some(path) = self.repository_entry.try_unrelativize(path) else {
                         continue;
                     };
                     let project_path = (self.worktree_id, path).into();

@@ -1752,9 +1752,7 @@ impl GitPanel {
                 continue;
             }
 
-            let Some(worktree_path) = repo.repository_entry.unrelativize(&entry.repo_path) else {
-                continue;
-            };
+            let worktree_path = repo.repository_entry.unrelativize(&entry.repo_path);
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
                 worktree_path,
@@ -3822,7 +3820,13 @@ mod tests {
                     worktree_path: Path::new("gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     is_staged: Some(false),
-                })
+                }),
+                GitListEntry::GitStatusEntry(GitStatusEntry {
+                    repo_path: "crates/util/util.rs".into(),
+                    worktree_path: Path::new("../util/util.rs").into(),
+                    status: StatusCode::Modified.worktree(),
+                    is_staged: Some(false),
+                },),
             ],
         )
     }
