@@ -1974,14 +1974,7 @@ impl GitPanel {
         } else if !self.has_write_access(cx) {
             (false, "You do not have write access to this project")
         } else {
-            (
-                true,
-                if self.has_staged_changes() {
-                    "Commit"
-                } else {
-                    "Commit Tracked"
-                },
-            )
+            (true, self.commit_button_title())
         }
     }
 
