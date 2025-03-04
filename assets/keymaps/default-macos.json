@@ -272,6 +272,15 @@
     }
   },
   {
+    "context": "EditMessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
     "context": "ContextStrip",
     "use_key_equivalents": true,
     "bindings": {

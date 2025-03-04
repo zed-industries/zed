@@ -627,6 +627,15 @@
     }
   },
   {
+    "context": "EditMessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
     "context": "ContextStrip",
     "bindings": {
       "up": "assistant2::FocusUp",
