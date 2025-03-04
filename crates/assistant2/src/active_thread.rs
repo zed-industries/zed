@@ -13,7 +13,7 @@ use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure};
+use ui::{prelude::*, Disclosure, KeyBinding};
 use workspace::Workspace;
 
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
@@ -66,8 +66,8 @@ impl ActiveThread {
             expanded_tool_uses: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.entity().downgrade();
-                move |ix, _: &mut Window, cx: &mut App| {
-                    this.update(cx, |this, cx| this.render_message(ix, cx))
+                move |ix, window: &mut Window, cx: &mut App| {
+                    this.update(cx, |this, cx| this.render_message(ix, window, cx))
                         .unwrap()
                 }
             }),
@@ -391,12 +391,17 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn cancel_editing_message(&mut self, cx: &mut Context<Self>) {
+    fn cancel_editing_message(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         self.editing_message.take();
         cx.notify();
     }
 
-    fn confirm_editing_message(&mut self, cx: &mut Context<Self>) {
+    fn confirm_editing_message(
+        &mut self,
+        _: &menu::Confirm,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some((message_id, state)) = self.editing_message.take() else {
             return;
         };
@@ -448,7 +453,7 @@ impl ActiveThread {
             .unwrap_or(&[])
     }
 
-    fn render_message(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
@@ -470,16 +475,25 @@ impl ActiveThread {
         let allow_editing_message =
             message.role == Role::User && self.last_user_message(cx) == Some(message_id);
 
-        let is_editing_message = matches!(self.editing_message, Some((id, _)) if id == message_id);
+        let edit_message_editor = self
+            .editing_message
+            .as_ref()
+            .filter(|(id, _)| *id == message_id)
+            .map(|(_, state)| state.editor.clone());
 
         let message_content = v_flex()
-            .child(if is_editing_message {
-                div()
-                    .p_2p5()
-                    .child(self.editing_message.as_ref().unwrap().1.editor.clone())
-            } else {
-                div().p_2p5().text_ui(cx).child(markdown.clone())
-            })
+            .child(
+                if let Some(edit_message_editor) = edit_message_editor.clone() {
+                    div()
+                        .key_context("EditMessageEditor")
+                        .on_action(cx.listener(Self::cancel_editing_message))
+                        .on_action(cx.listener(Self::confirm_editing_message))
+                        .p_2p5()
+                        .child(edit_message_editor)
+                } else {
+                    div().p_2p5().text_ui(cx).child(markdown.clone())
+                },
+            )
             .when_some(context, |parent, context| {
                 if !context.is_empty() {
                     parent.child(
@@ -529,39 +543,55 @@ impl ActiveThread {
                                                 .color(Color::Muted),
                                         ),
                                 )
-                                .when(is_editing_message, |this| {
-                                    this.child(
-                                        h_flex()
-                                            .gap_1()
-                                            .child(
-                                                Button::new("cancel-edit-message", "Cancel")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.cancel_editing_message(cx);
-                                                    })),
-                                            )
-                                            .child(
-                                                Button::new("confirm-edit-message", "Regenerate")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.confirm_editing_message(cx);
-                                                    })),
-                                            ),
-                                    )
-                                })
-                                .when(!is_editing_message && allow_editing_message, |this| {
-                                    this.child(Button::new("edit-message", "Edit").on_click(
-                                        cx.listener({
-                                            let message_text = message.text.clone();
-                                            move |this, _, window, cx| {
-                                                this.start_editing_message(
-                                                    message_id,
-                                                    message_text.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                        }),
-                                    ))
-                                }),
+                                .when_some(
+                                    edit_message_editor.clone(),
+                                    |this, edit_message_editor| {
+                                        let focus_handle = edit_message_editor.focus_handle(cx);
+                                        this.child(
+                                            h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Button::new("cancel-edit-message", "Cancel")
+                                                        .key_binding(KeyBinding::for_action_in(
+                                                            &menu::Cancel,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )),
+                                                )
+                                                .child(
+                                                    Button::new(
+                                                        "confirm-edit-message",
+                                                        "Regenerate",
+                                                    )
+                                                    .key_binding(KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )),
+                                                ),
+                                        )
+                                    },
+                                )
+                                .when(
+                                    edit_message_editor.is_none() && allow_editing_message,
+                                    |this| {
+                                        this.child(Button::new("edit-message", "Edit").on_click(
+                                            cx.listener({
+                                                let message_text = message.text.clone();
+                                                move |this, _, window, cx| {
+                                                    this.start_editing_message(
+                                                        message_id,
+                                                        message_text.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            }),
+                                        ))
+                                    },
+                                ),
                         )
                         .child(message_content),
                 ),
