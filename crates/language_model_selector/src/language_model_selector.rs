@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use feature_flags::ZedPro;
 use gpui::{
@@ -11,7 +11,7 @@ use language_model::{
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{
-    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverButton,
+    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverMenu,
     PopoverMenuHandle, Tooltip, TriggerablePopover,
 };
 use workspace::ShowConfiguration;
@@ -493,21 +493,26 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     }
 }
 
-pub struct InlineLanguageModelSelector {
-    selector: Entity<LanguageModelSelector>,
-}
-
-impl InlineLanguageModelSelector {
-    pub fn new(selector: Entity<LanguageModelSelector>) -> Self {
-        Self { selector }
-    }
-}
-
-impl RenderOnce for InlineLanguageModelSelector {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        PopoverButton::new(
-            self.selector,
-            gpui::Corner::TopRight,
+pub fn inline_language_model_selector(
+    f: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+) -> AnyElement {
+    let f = Rc::new(f);
+    PopoverMenu::new("popover-button")
+        .menu(move |window, cx| {
+            Some(cx.new(|cx| {
+                LanguageModelSelector::new(
+                    {
+                        let f = f.clone();
+                        move |model, cx| {
+                            f(model, cx);
+                        }
+                    },
+                    window,
+                    cx,
+                )
+            }))
+        })
+        .trigger_with_tooltip(
             IconButton::new("context", IconName::SettingsAlt)
                 .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
@@ -528,36 +533,45 @@ impl RenderOnce for InlineLanguageModelSelector {
                 )
             },
         )
-        .render(window, cx)
-    }
+        .anchor(gpui::Corner::TopRight)
+        // .when_some(menu_handle, |el, handle| el.with_handle(handle))
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(-2.0),
+        })
+        .into_any_element()
 }
 
-pub struct AssistantLanguageModelSelector {
-    focus_handle: FocusHandle,
-    selector: Entity<LanguageModelSelector>,
-}
+pub fn assistant_language_model_selector(
+    keybinding_target: FocusHandle,
+    menu_handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
+    cx: &App,
+    f: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+) -> AnyElement {
+    let active_model = LanguageModelRegistry::read_global(cx).active_model();
+    let model_name = match active_model {
+        Some(model) => model.name().0,
+        _ => SharedString::from("No model selected"),
+    };
 
-impl AssistantLanguageModelSelector {
-    pub fn new(focus_handle: FocusHandle, selector: Entity<LanguageModelSelector>) -> Self {
-        Self {
-            focus_handle,
-            selector,
-        }
-    }
-}
+    let f = Rc::new(f);
 
-impl RenderOnce for AssistantLanguageModelSelector {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let focus_handle = self.focus_handle.clone();
-        let model_name = match active_model {
-            Some(model) => model.name().0,
-            _ => SharedString::from("No model selected"),
-        };
-
-        PopoverButton::new(
-            self.selector.clone(),
-            Corner::BottomRight,
+    PopoverMenu::new("popover-button")
+        .menu(move |window, cx| {
+            Some(cx.new(|cx| {
+                LanguageModelSelector::new(
+                    {
+                        let f = f.clone();
+                        move |model, cx| {
+                            f(model, cx);
+                        }
+                    },
+                    window,
+                    cx,
+                )
+            }))
+        })
+        .trigger_with_tooltip(
             ButtonLike::new("active-model")
                 .style(ButtonStyle::Subtle)
                 .child(
@@ -578,12 +592,17 @@ impl RenderOnce for AssistantLanguageModelSelector {
                 Tooltip::for_action_in(
                     "Change Model",
                     &ToggleModelSelector,
-                    &focus_handle,
+                    &keybinding_target,
                     window,
                     cx,
                 )
             },
         )
-        .render(window, cx)
-    }
+        .anchor(Corner::BottomRight)
+        .when_some(menu_handle, |el, handle| el.with_handle(handle))
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(-2.0),
+        })
+        .into_any_element()
 }

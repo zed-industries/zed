@@ -37,7 +37,9 @@ use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
     Role,
 };
-use language_model_selector::{AssistantLanguageModelSelector, LanguageModelSelector};
+use language_model_selector::{
+    assistant_language_model_selector, LanguageModelSelector, ToggleModelSelector,
+};
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -195,7 +197,7 @@ pub struct ContextEditor {
     // the file is opened. In order to keep the worktree alive for the duration of the
     // context editor, we keep a reference here.
     dragged_file_worktrees: Vec<Entity<Worktree>>,
-    language_model_selector: Entity<LanguageModelSelector>,
+    language_model_selector: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 pub const DEFAULT_TAB_TITLE: &str = "New Chat";
@@ -249,21 +251,6 @@ impl ContextEditor {
             cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
         ];
 
-        let fs_clone = fs.clone();
-        let language_model_selector = cx.new(|cx| {
-            LanguageModelSelector::new(
-                move |model, cx| {
-                    update_settings_file::<AssistantSettings>(
-                        fs_clone.clone(),
-                        cx,
-                        move |settings, _| settings.set_model(model.clone()),
-                    );
-                },
-                window,
-                cx,
-            )
-        });
-
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
@@ -288,7 +275,7 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
-            language_model_selector,
+            language_model_selector: PopoverMenuHandle::default(),
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -2831,6 +2818,7 @@ impl Render for ContextEditor {
         } else {
             None
         };
+        let fs_clone = self.fs.clone();
 
         let language_model_selector = self.language_model_selector.clone();
         v_flex()
@@ -2845,10 +2833,8 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
-            .on_action(move |action, window, cx| {
-                language_model_selector.update(cx, |this, cx| {
-                    this.toggle_model_selector(action, window, cx);
-                })
+            .on_action(move |_: &ToggleModelSelector, window, cx| {
+                language_model_selector.toggle(window, cx);
             })
             .size_full()
             .children(self.render_notice(cx))
@@ -2887,14 +2873,18 @@ impl Render for ContextEditor {
                                 .gap_1()
                                 .child(self.render_inject_context_menu(cx))
                                 .child(ui::Divider::vertical())
-                                .child(div().pl_0p5().child({
-                                    let focus_handle = self.editor().focus_handle(cx).clone();
-                                    AssistantLanguageModelSelector::new(
-                                        focus_handle,
-                                        self.language_model_selector.clone(),
-                                    )
-                                    .render(window, cx)
-                                })),
+                                .child(div().pl_0p5().child(assistant_language_model_selector(
+                                    self.editor().focus_handle(cx),
+                                    Some(self.language_model_selector.clone()),
+                                    cx,
+                                    move |model, cx| {
+                                        update_settings_file::<AssistantSettings>(
+                                            fs_clone.clone(),
+                                            cx,
+                                            move |settings, _| settings.set_model(model.clone()),
+                                        );
+                                    },
+                                ))),
                         )
                         .child(
                             h_flex()

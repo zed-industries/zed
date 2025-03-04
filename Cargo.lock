@@ -7069,6 +7069,7 @@ name = "language_model_selector"
 version = "0.1.0"
 dependencies = [
  "feature_flags",
+ "fs",
  "gpui",
  "language_model",
  "log",
