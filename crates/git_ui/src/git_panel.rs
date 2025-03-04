@@ -1179,7 +1179,6 @@ impl GitPanel {
         }
 
         self.suggest_commit_message()
-            .clone()
             .filter(|message| !message.trim().is_empty())
     }
 
