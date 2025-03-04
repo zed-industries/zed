@@ -2241,8 +2241,11 @@ index 1234567..abcdef0 100644
                     panel_icon_button("undo", IconName::Undo)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
+                        .disabled(!commit.has_parent)
                         .tooltip(Tooltip::for_action_title(
-                            if self.has_staged_changes() {
+                            if !commit.has_parent {
+                                "Commit must have a parent to undo."
+                            } else if self.has_staged_changes() {
                                 "git reset HEAD^ --soft"
                             } else {
                                 "git reset HEAD^"
@@ -3559,6 +3562,7 @@ impl ComponentPreview for PanelRepoFooter {
                     sha: "abc123".into(),
                     subject: "Modify stuff".into(),
                     commit_timestamp: 1710932954,
+                    has_parent: true,
                 }),
             }
         }
@@ -3575,6 +3579,7 @@ impl ComponentPreview for PanelRepoFooter {
                     sha: "abc123".into(),
                     subject: "Modify stuff".into(),
                     commit_timestamp: 1710932954,
+                    has_parent: true,
                 }),
             }
         }

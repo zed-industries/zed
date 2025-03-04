@@ -885,6 +885,151 @@ impl WorktreeStore {
         Ok(())
     }
 
+    pub fn branches(
+        &self,
+        project_path: ProjectPath,
+        cx: &App,
+    ) -> Task<Result<Vec<git::repository::Branch>>> {
+        let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
+        };
+
+        match worktree.read(cx) {
+            Worktree::Local(local_worktree) => {
+                let branches = util::maybe!({
+                    let worktree_error = |error| {
+                        format!(
+                            "{} for worktree {}",
+                            error,
+                            local_worktree.abs_path().to_string_lossy()
+                        )
+                    };
+
+                    let entry = local_worktree
+                        .git_entry(project_path.path)
+                        .with_context(|| worktree_error("No git entry found"))?;
+
+                    let repo = local_worktree
+                        .get_local_repo(&entry)
+                        .with_context(|| worktree_error("No repository found"))?
+                        .repo()
+                        .clone();
+
+                    repo.branches()
+                });
+
+                Task::ready(branches)
+            }
+            Worktree::Remote(remote_worktree) => {
+                let request = remote_worktree.client().request(proto::GitBranches {
+                    project_id: remote_worktree.project_id(),
+                    repository: Some(proto::ProjectPath {
+                        worktree_id: project_path.worktree_id.to_proto(),
+                        path: project_path.path.to_proto(), // Root path
+                    }),
+                });
+
+                cx.background_spawn(async move {
+                    let response = request.await?;
+
+                    let branches = response
+                        .branches
+                        .into_iter()
+                        .map(|proto_branch| git::repository::Branch {
+                            is_head: proto_branch.is_head,
+                            name: proto_branch.name.into(),
+                            upstream: proto_branch.upstream.map(|upstream| {
+                                git::repository::Upstream {
+                                    ref_name: upstream.ref_name.into(),
+                                    tracking: upstream
+                                        .tracking
+                                        .map(|tracking| {
+                                            git::repository::UpstreamTracking::Tracked(
+                                                git::repository::UpstreamTrackingStatus {
+                                                    ahead: tracking.ahead as u32,
+                                                    behind: tracking.behind as u32,
+                                                },
+                                            )
+                                        })
+                                        .unwrap_or(git::repository::UpstreamTracking::Gone),
+                                }
+                            }),
+                            most_recent_commit: proto_branch.most_recent_commit.map(|commit| {
+                                git::repository::CommitSummary {
+                                    sha: commit.sha.into(),
+                                    subject: commit.subject.into(),
+                                    commit_timestamp: commit.commit_timestamp,
+                                    has_parent: true,
+                                }
+                            }),
+                        })
+                        .collect();
+
+                    Ok(branches)
+                })
+            }
+        }
+    }
+
+    pub fn update_or_create_branch(
+        &self,
+        repository: ProjectPath,
+        new_branch: String,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let Some(worktree) = self.worktree_for_id(repository.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
+        };
+
+        match worktree.read(cx) {
+            Worktree::Local(local_worktree) => {
+                let result = util::maybe!({
+                    let worktree_error = |error| {
+                        format!(
+                            "{} for worktree {}",
+                            error,
+                            local_worktree.abs_path().to_string_lossy()
+                        )
+                    };
+
+                    let entry = local_worktree
+                        .git_entry(repository.path)
+                        .with_context(|| worktree_error("No git entry found"))?;
+
+                    let repo = local_worktree
+                        .get_local_repo(&entry)
+                        .with_context(|| worktree_error("No repository found"))?
+                        .repo()
+                        .clone();
+
+                    if !repo.branch_exits(&new_branch)? {
+                        repo.create_branch(&new_branch)?;
+                    }
+
+                    repo.change_branch(&new_branch)?;
+                    Ok(())
+                });
+
+                Task::ready(result)
+            }
+            Worktree::Remote(remote_worktree) => {
+                let request = remote_worktree.client().request(proto::UpdateGitBranch {
+                    project_id: remote_worktree.project_id(),
+                    repository: Some(proto::ProjectPath {
+                        worktree_id: repository.worktree_id.to_proto(),
+                        path: repository.path.to_proto(), // Root path
+                    }),
+                    branch_name: new_branch,
+                });
+
+                cx.background_spawn(async move {
+                    request.await?;
+                    Ok(())
+                })
+            }
+        }
+    }
+
     async fn filter_paths(
         fs: &Arc<dyn Fs>,
         mut input: Receiver<MatchingEntry>,
