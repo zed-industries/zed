@@ -58,12 +58,20 @@ pub enum Color {
     Success,
     /// A color used to indicate a warning condition.
     Warning,
+    VersionControlAdded,
+    VersionControlModified,
+    VersionControlDeleted,
 }
 
 impl Color {
-    /// Returns the Color's HSLA value.
+    /// Returns the Color's HSLA value based on the current theme.
+    ///
+    /// Using this method over directly accessing it from the theme
+    /// allows us to dynamically adjust colors for accessibility and such.
     pub fn color(&self, cx: &App) -> Hsla {
-        match self {
+        let high_contrast_enabled = true;
+
+        let mut color = match self {
             Color::Default => cx.theme().colors().text,
             Color::Muted => cx.theme().colors().text_muted,
             Color::Created => cx.theme().status().created,
@@ -83,7 +91,26 @@ impl Color {
             Color::Success => cx.theme().status().success,
             Color::Warning => cx.theme().status().warning,
             Color::Custom(color) => *color,
+            Color::VersionControlAdded => cx.theme().colors().version_control_added,
+            Color::VersionControlModified => cx.theme().colors().version_control_modified,
+            Color::VersionControlDeleted => cx.theme().colors().version_control_deleted,
+        };
+
+        if high_contrast_enabled {
+            let start_green_hue = 70.0;
+            let end_green_hue = 150.0;
+            let start_blue_hue = 210.0;
+            let end_blue_hue = 270.0;
+            let hue = color.h * 360.0;
+
+            if hue > start_green_hue && hue < end_green_hue {
+                let ratio = (hue - start_green_hue) / (end_green_hue - start_green_hue);
+                let new_hue = start_blue_hue + ratio * (end_blue_hue - start_blue_hue);
+                color.h = new_hue / 360.0;
+            }
         }
+
+        color
     }
 }
 

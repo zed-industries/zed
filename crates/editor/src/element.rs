@@ -4367,7 +4367,7 @@ impl EditorElement {
                         );
                         Some((
                             hunk_bounds,
-                            cx.theme().colors().version_control_modified,
+                            Color::VersionControlModified.color(cx),
                             Corners::all(px(0.)),
                             DiffHunkStatus::modified_none(),
                         ))
@@ -4379,19 +4379,19 @@ impl EditorElement {
                     } => hitbox.as_ref().map(|hunk_hitbox| match status.kind {
                         DiffHunkStatusKind::Added => (
                             hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_added,
+                            Color::VersionControlAdded.color(cx),
                             Corners::all(px(0.)),
                             *status,
                         ),
                         DiffHunkStatusKind::Modified => (
                             hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_modified,
+                            Color::VersionControlModified.color(cx),
                             Corners::all(px(0.)),
                             *status,
                         ),
                         DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
                             hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_deleted,
+                            Color::VersionControlDeleted.color(cx),
                             Corners::all(px(0.)),
                             *status,
                         ),
@@ -4403,7 +4403,7 @@ impl EditorElement {
                                 ),
                                 size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
                             ),
-                            cx.theme().colors().version_control_deleted,
+                            Color::VersionControlDeleted.color(cx),
                             Corners::all(1. * line_height),
                             *status,
                         ),
@@ -5093,6 +5093,10 @@ impl EditorElement {
             let theme = cx.theme().clone();
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
 
+            let added_color = Color::VersionControlAdded.color(cx);
+            let modified_color = Color::VersionControlModified.color(cx);
+            let deleted_color = Color::VersionControlDeleted.color(cx);
+
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
                 Some(cx.spawn_in(window, |editor, mut cx| async move {
@@ -5116,15 +5120,9 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match &hunk.status().kind {
-                                            DiffHunkStatusKind::Added => {
-                                                theme.colors().version_control_added
-                                            }
-                                            DiffHunkStatusKind::Modified => {
-                                                theme.colors().version_control_modified
-                                            }
-                                            DiffHunkStatusKind::Deleted => {
-                                                theme.colors().version_control_deleted
-                                            }
+                                            DiffHunkStatusKind::Added => added_color,
+                                            DiffHunkStatusKind::Modified => modified_color,
+                                            DiffHunkStatusKind::Deleted => deleted_color,
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -6732,10 +6730,8 @@ impl Element for EditorElement {
                         };
 
                         let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted => {
-                                cx.theme().colors().version_control_deleted
-                            }
+                            DiffHunkStatusKind::Added => Color::VersionControlAdded.color(cx),
+                            DiffHunkStatusKind::Deleted => Color::VersionControlDeleted.color(cx),
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
