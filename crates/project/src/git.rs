@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
-use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
+use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
 
 pub struct GitStore {
     buffer_store: Entity<BufferStore>,
@@ -689,6 +689,33 @@ impl Repository {
 
     pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
         self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
+    }
+
+    // note: callers must verify these come from the same worktree
+    pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
+        let other_work_dir = &other.read(cx).repository_entry.work_directory;
+        match (&self.repository_entry.work_directory, other_work_dir) {
+            (WorkDirectory::InProject { .. }, WorkDirectory::AboveProject { .. }) => false,
+            (WorkDirectory::AboveProject { .. }, WorkDirectory::InProject { .. }) => true,
+            (
+                WorkDirectory::InProject {
+                    relative_path: this_path,
+                },
+                WorkDirectory::InProject {
+                    relative_path: other_path,
+                },
+            ) => other_path.starts_with(this_path),
+            (
+                WorkDirectory::AboveProject {
+                    absolute_path: this_path,
+                    ..
+                },
+                WorkDirectory::AboveProject {
+                    absolute_path: other_path,
+                    ..
+                },
+            ) => other_path.starts_with(this_path),
+        }
     }
 
     pub fn worktree_id_path_to_repo_path(
