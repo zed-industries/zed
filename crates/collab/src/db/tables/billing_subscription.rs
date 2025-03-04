@@ -12,6 +12,7 @@ pub struct Model {
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
     pub stripe_cancel_at: Option<DateTime>,
+    pub stripe_cancellation_reason: Option<StripeCancellationReason>,
     pub created_at: DateTime,
 }
 
@@ -72,4 +73,19 @@ impl StripeSubscriptionStatus {
             | Self::Paused => false,
         }
     }
+}
+
+/// The cancellation reason for a Stripe subscription.
+///
+/// [Stripe docs](https://docs.stripe.com/api/subscriptions/object#subscription_object-cancellation_details-reason)
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Hash, Serialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum StripeCancellationReason {
+    #[sea_orm(string_value = "cancellation_requested")]
+    CancellationRequested,
+    #[sea_orm(string_value = "payment_disputed")]
+    PaymentDisputed,
+    #[sea_orm(string_value = "payment_failed")]
+    PaymentFailed,
 }

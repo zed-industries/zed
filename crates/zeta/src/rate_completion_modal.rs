@@ -1,22 +1,14 @@
-use crate::{InlineCompletion, InlineCompletionRating, Zeta};
+use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
-use gpui::{
-    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    HighlightStyle, Model, StyledText, TextStyle, View, ViewContext,
-};
-use language::{language_settings, OffsetRangeExt};
-use settings::Settings;
+use gpui::{actions, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
+use language::language_settings;
 use std::time::Duration;
-use theme::ThemeSettings;
 use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
 use workspace::{ModalView, Workspace};
 
 actions!(
     zeta,
     [
-        RateCompletions,
-        ThumbsUp,
-        ThumbsDown,
         ThumbsUpActiveCompletion,
         ThumbsDownActiveCompletion,
         NextEdit,
@@ -26,69 +18,85 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
-        workspace.register_action(|workspace, _: &RateCompletions, cx| {
-            RateCompletionModal::toggle(workspace, cx);
-        });
-    })
-    .detach();
-}
-
 pub struct RateCompletionModal {
-    zeta: Model<Zeta>,
+    zeta: Entity<Zeta>,
     active_completion: Option<ActiveCompletion>,
     selected_index: usize,
     focus_handle: FocusHandle,
     _subscription: gpui::Subscription,
+    current_view: RateCompletionView,
 }
 
 struct ActiveCompletion {
     completion: InlineCompletion,
-    feedback_editor: View<Editor>,
+    feedback_editor: Entity<Editor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+enum RateCompletionView {
+    SuggestedEdits,
+    RawInput,
+}
+
+impl RateCompletionView {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::SuggestedEdits => "Suggested Edits",
+            Self::RawInput => "Recorded Events & Input",
+        }
+    }
 }
 
 impl RateCompletionModal {
-    pub fn toggle(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         if let Some(zeta) = Zeta::global(cx) {
-            workspace.toggle_modal(cx, |cx| RateCompletionModal::new(zeta, cx));
+            workspace.toggle_modal(window, cx, |_window, cx| RateCompletionModal::new(zeta, cx));
+
+            telemetry::event!("Rate Completion Modal Open", source = "Edit Prediction");
         }
     }
 
-    pub fn new(zeta: Model<Zeta>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(zeta: Entity<Zeta>, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&zeta, |_, _, cx| cx.notify());
+
         Self {
             zeta,
             selected_index: 0,
             focus_handle: cx.focus_handle(),
             active_completion: None,
             _subscription: subscription,
+            current_view: RateCompletionView::SuggestedEdits,
         }
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut Context<Self>) {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
-            self.zeta.read(cx).recent_completions().count(),
+            self.zeta.read(cx).shown_completions().count(),
         );
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_index = self.selected_index.saturating_sub(1);
         cx.notify();
     }
 
-    fn select_next_edit(&mut self, _: &NextEdit, cx: &mut ViewContext<Self>) {
+    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
         let next_index = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .skip(self.selected_index)
             .enumerate()
             .skip(1) // Skip straight to the next item
@@ -101,14 +109,14 @@ impl RateCompletionModal {
         }
     }
 
-    fn select_prev_edit(&mut self, _: &PreviousEdit, cx: &mut ViewContext<Self>) {
+    fn select_prev_edit(&mut self, _: &PreviousEdit, _: &mut Window, cx: &mut Context<Self>) {
         let zeta = self.zeta.read(cx);
-        let completions_len = zeta.recent_completions_len();
+        let completions_len = zeta.shown_completions_len();
 
         let prev_index = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .rev()
             .skip((completions_len - 1) - self.selected_index)
             .enumerate()
@@ -123,38 +131,22 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = 0;
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
-        self.selected_index = self.zeta.read(cx).recent_completions_len() - 1;
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_index = self.zeta.read(cx).shown_completions_len() - 1;
         cx.notify();
     }
 
-    fn thumbs_up(&mut self, _: &ThumbsUp, cx: &mut ViewContext<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            let completion = zeta
-                .recent_completions()
-                .skip(self.selected_index)
-                .next()
-                .cloned();
-
-            if let Some(completion) = completion {
-                zeta.rate_completion(
-                    &completion,
-                    InlineCompletionRating::Positive,
-                    "".to_string(),
-                    cx,
-                );
-            }
-        });
-        self.select_next_edit(&Default::default(), cx);
-        cx.notify();
-    }
-
-    fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, cx: &mut ViewContext<Self>) {
+    pub fn thumbs_up_active(
+        &mut self,
+        _: &ThumbsUpActiveCompletion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.zeta.update(cx, |zeta, cx| {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
@@ -170,14 +162,19 @@ impl RateCompletionModal {
             .active_completion
             .as_ref()
             .map(|completion| completion.completion.clone());
-        self.select_completion(current_completion, false, cx);
-        self.select_next_edit(&Default::default(), cx);
-        self.confirm(&Default::default(), cx);
+        self.select_completion(current_completion, false, window, cx);
+        self.select_next_edit(&Default::default(), window, cx);
+        self.confirm(&Default::default(), window, cx);
 
         cx.notify();
     }
 
-    fn thumbs_down_active(&mut self, _: &ThumbsDownActiveCompletion, cx: &mut ViewContext<Self>) {
+    pub fn thumbs_down_active(
+        &mut self,
+        _: &ThumbsDownActiveCompletion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(active) = &self.active_completion {
             if active.feedback_editor.read(cx).text(cx).is_empty() {
                 return;
@@ -197,56 +194,67 @@ impl RateCompletionModal {
             .active_completion
             .as_ref()
             .map(|completion| completion.completion.clone());
-        self.select_completion(current_completion, false, cx);
-        self.select_next_edit(&Default::default(), cx);
-        self.confirm(&Default::default(), cx);
+        self.select_completion(current_completion, false, window, cx);
+        self.select_next_edit(&Default::default(), window, cx);
+        self.confirm(&Default::default(), window, cx);
 
         cx.notify();
     }
 
-    fn focus_completions(&mut self, _: &FocusCompletions, cx: &mut ViewContext<Self>) {
-        cx.focus_self();
+    fn focus_completions(
+        &mut self,
+        _: &FocusCompletions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.focus_self(window);
         cx.notify();
     }
 
-    fn preview_completion(&mut self, _: &PreviewCompletion, cx: &mut ViewContext<Self>) {
+    fn preview_completion(
+        &mut self,
+        _: &PreviewCompletion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let completion = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .skip(self.selected_index)
             .take(1)
             .next()
             .cloned();
 
-        self.select_completion(completion, false, cx);
+        self.select_completion(completion, false, window, cx);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let completion = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .skip(self.selected_index)
             .take(1)
             .next()
             .cloned();
 
-        self.select_completion(completion, true, cx);
+        self.select_completion(completion, true, window, cx);
     }
 
     pub fn select_completion(
         &mut self,
         completion: Option<InlineCompletion>,
         focus: bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         // Avoid resetting completion rating if it's already selected.
         if let Some(completion) = completion.as_ref() {
             self.selected_index = self
                 .zeta
                 .read(cx)
-                .recent_completions()
+                .shown_completions()
                 .enumerate()
                 .find(|(_, completion_b)| completion.id == completion_b.id)
                 .map(|(ix, _)| ix)
@@ -256,7 +264,7 @@ impl RateCompletionModal {
             if let Some(prev_completion) = self.active_completion.as_ref() {
                 if completion.id == prev_completion.completion.id {
                     if focus {
-                        cx.focus_view(&prev_completion.feedback_editor);
+                        window.focus(&prev_completion.feedback_editor.focus_handle(cx));
                     }
                     return;
                 }
@@ -265,8 +273,8 @@ impl RateCompletionModal {
 
         self.active_completion = completion.map(|completion| ActiveCompletion {
             completion,
-            feedback_editor: cx.new_view(|cx| {
-                let mut editor = Editor::multi_line(cx);
+            feedback_editor: cx.new(|cx| {
+                let mut editor = Editor::multi_line(window, cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_line_numbers(false, cx);
                 editor.set_show_scrollbars(false, cx);
@@ -275,10 +283,10 @@ impl RateCompletionModal {
                 editor.set_show_runnables(false, cx);
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
-                editor.set_show_inline_completions(Some(false), cx);
+                editor.set_show_edit_predictions(Some(false), window, cx);
                 editor.set_placeholder_text("Add your feedback…", cx);
                 if focus {
-                    cx.focus_self();
+                    cx.focus_self(window);
                 }
                 editor
             }),
@@ -286,99 +294,131 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn render_active_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    fn render_view_nav(&self, cx: &Context<Self>) -> impl IntoElement {
+        h_flex()
+            .h_8()
+            .px_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().elevated_surface_background)
+            .gap_1()
+            .child(
+                Button::new(
+                    ElementId::Name("suggested-edits".into()),
+                    RateCompletionView::SuggestedEdits.name(),
+                )
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.current_view = RateCompletionView::SuggestedEdits;
+                    cx.notify();
+                }))
+                .toggle_state(self.current_view == RateCompletionView::SuggestedEdits),
+            )
+            .child(
+                Button::new(
+                    ElementId::Name("raw-input".into()),
+                    RateCompletionView::RawInput.name(),
+                )
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.current_view = RateCompletionView::RawInput;
+                    cx.notify();
+                }))
+                .toggle_state(self.current_view == RateCompletionView::RawInput),
+            )
+    }
+
+    fn render_suggested_edits(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
+        let active_completion = self.active_completion.as_ref()?;
+        let bg_color = cx.theme().colors().editor_background;
+
+        Some(
+            div()
+                .id("diff")
+                .p_4()
+                .size_full()
+                .bg(bg_color)
+                .overflow_scroll()
+                .whitespace_nowrap()
+                .child(CompletionDiffElement::new(
+                    &active_completion.completion,
+                    cx,
+                )),
+        )
+    }
+
+    fn render_raw_input(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
+        Some(
+            v_flex()
+                .size_full()
+                .overflow_hidden()
+                .relative()
+                .child(
+                    div()
+                        .id("raw-input")
+                        .py_4()
+                        .px_6()
+                        .size_full()
+                        .bg(cx.theme().colors().editor_background)
+                        .overflow_scroll()
+                        .child(if let Some(active_completion) = &self.active_completion {
+                            format!(
+                                "{}\n{}",
+                                active_completion.completion.input_events,
+                                active_completion.completion.input_excerpt
+                            )
+                        } else {
+                            "No active completion".to_string()
+                        }),
+                )
+                .id("raw-input-view"),
+        )
+    }
+
+    fn render_active_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
+        let focus_handle = &self.focus_handle(cx);
 
-        let mut diff = active_completion
-            .completion
-            .snapshot
-            .text_for_range(active_completion.completion.excerpt_range.clone())
-            .collect::<String>();
-
-        let mut delta = 0;
-        let mut diff_highlights = Vec::new();
-        for (old_range, new_text) in active_completion.completion.edits.iter() {
-            let old_range = old_range.to_offset(&active_completion.completion.snapshot);
-            let old_start_in_text =
-                old_range.start - active_completion.completion.excerpt_range.start + delta;
-            let old_end_in_text =
-                old_range.end - active_completion.completion.excerpt_range.start + delta;
-            if old_start_in_text < old_end_in_text {
-                diff_highlights.push((
-                    old_start_in_text..old_end_in_text,
-                    HighlightStyle {
-                        background_color: Some(cx.theme().status().deleted_background),
-                        strikethrough: Some(gpui::StrikethroughStyle {
-                            thickness: px(1.),
-                            color: Some(cx.theme().colors().text_muted),
-                        }),
-                        ..Default::default()
-                    },
-                ));
-            }
-
-            if !new_text.is_empty() {
-                diff.insert_str(old_end_in_text, new_text);
-                diff_highlights.push((
-                    old_end_in_text..old_end_in_text + new_text.len(),
-                    HighlightStyle {
-                        background_color: Some(cx.theme().status().created_background),
-                        ..Default::default()
-                    },
-                ));
-                delta += new_text.len();
-            }
-        }
-
-        let settings = ThemeSettings::get_global(cx).clone();
-        let text_style = TextStyle {
-            color: cx.theme().colors().editor_foreground,
-            font_size: settings.buffer_font_size(cx).into(),
-            font_family: settings.buffer_font.family,
-            font_features: settings.buffer_font.features,
-            font_fallbacks: settings.buffer_font.fallbacks,
-            line_height: relative(settings.buffer_line_height.value()),
-            font_weight: settings.buffer_font.weight,
-            font_style: settings.buffer_font.style,
-            ..Default::default()
-        };
+        let border_color = cx.theme().colors().border;
+        let bg_color = cx.theme().colors().editor_background;
 
         let rated = self.zeta.read(cx).is_completion_rated(completion_id);
-        let was_shown = self.zeta.read(cx).was_completion_shown(completion_id);
         let feedback_empty = active_completion
             .feedback_editor
             .read(cx)
             .text(cx)
             .is_empty();
 
-        let border_color = cx.theme().colors().border;
-        let bg_color = cx.theme().colors().editor_background;
-
-        let label_container = || h_flex().pl_1().gap_1p5();
+        let label_container = h_flex().pl_1().gap_1p5();
 
         Some(
             v_flex()
                 .size_full()
                 .overflow_hidden()
+                .relative()
                 .child(
-                    div()
-                        .id("diff")
-                        .py_4()
-                        .px_6()
+                    v_flex()
                         .size_full()
-                        .bg(bg_color)
-                        .overflow_scroll()
-                        .child(StyledText::new(diff).with_highlights(&text_style, diff_highlights)),
+                        .overflow_hidden()
+                        .relative()
+                        .child(self.render_view_nav(cx))
+                        .when_some(match self.current_view {
+                            RateCompletionView::SuggestedEdits => self.render_suggested_edits(cx),
+                            RateCompletionView::RawInput => self.render_raw_input(cx),
+                        }, |this, element| this.child(element))
                 )
-                .when_some((!rated).then(|| ()), |this, _| {
+                .when(!rated, |this| {
                     this.child(
                         h_flex()
                             .p_2()
                             .gap_2()
                             .border_y_1()
                             .border_color(border_color)
-
                             .child(
                                 Icon::new(IconName::Info)
                                     .size(IconSize::XSmall)
@@ -390,14 +430,14 @@ impl RateCompletionModal {
                                     .pr_2()
                                     .flex_wrap()
                                     .child(
-                                        Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                        Label::new("Explain why this completion is good or bad. If it's negative, describe what you expected instead.")
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
                                     )
                             )
                     )
                 })
-                .when_some((!rated).then(|| ()), |this, _| {
+                .when(!rated, |this| {
                     this.child(
                         div()
                             .h_40()
@@ -417,7 +457,7 @@ impl RateCompletionModal {
                         .justify_between()
                         .children(if rated {
                             Some(
-                                label_container()
+                                label_container
                                     .child(
                                         Icon::new(IconName::Check)
                                             .size(IconSize::Small)
@@ -427,7 +467,7 @@ impl RateCompletionModal {
                             )
                         } else if active_completion.completion.edits.is_empty() {
                             Some(
-                                label_container()
+                                label_container
                                     .child(
                                         Icon::new(IconName::Warning)
                                             .size(IconSize::Small)
@@ -435,60 +475,48 @@ impl RateCompletionModal {
                                     )
                                     .child(Label::new("No edits produced.").color(Color::Muted)),
                             )
-                        } else if !was_shown {
-                            Some(
-                                label_container()
-                                    .child(
-                                        Icon::new(IconName::Warning)
-                                            .size(IconSize::Small)
-                                            .color(Color::Warning),
-                                    )
-                                    .child(Label::new("Completion wasn't shown because another valid one was already on screen.")),
-                            )
                         } else {
-                            Some(label_container())
+                            Some(label_container)
                         })
                         .child(
                             h_flex()
                                 .gap_1()
                                 .child(
                                     Button::new("bad", "Bad Completion")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ThumbsDown,
-                                            &self.focus_handle(cx),
-                                            cx,
-                                        ))
-                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
-                                            this.tooltip(|cx| {
-                                                Tooltip::text("Explain what's bad about it before reporting it", cx)
-                                            })
+                                            this.tooltip(Tooltip::text("Explain what's bad about it before reporting it"))
                                         })
-                                        .on_click(cx.listener(move |this, _, cx| {
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsDownActiveCompletion,
+                                            focus_handle,
+                                            window,
+                                            cx
+                                        ))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_down_active(
                                                 &ThumbsDownActiveCompletion,
-                                                cx,
+                                                window, cx,
                                             );
                                         })),
                                 )
                                 .child(
                                     Button::new("good", "Good Completion")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ThumbsUp,
-                                            &self.focus_handle(cx),
-                                            cx,
-                                        ))
-                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
                                         .disabled(rated)
-                                        .on_click(cx.listener(move |this, _, cx| {
-                                            this.thumbs_up_active(&ThumbsUpActiveCompletion, cx);
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsUpActiveCompletion,
+                                            focus_handle,
+                                            window,
+                                            cx
+                                        ))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
                                         })),
                                 ),
                         ),
@@ -498,7 +526,7 @@ impl RateCompletionModal {
 }
 
 impl Render for RateCompletionModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border;
 
         h_flex()
@@ -506,13 +534,12 @@ impl Render for RateCompletionModal {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_prev_edit))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_next_edit))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
-            .on_action(cx.listener(Self::thumbs_up))
             .on_action(cx.listener(Self::thumbs_up_active))
             .on_action(cx.listener(Self::thumbs_down_active))
             .on_action(cx.listener(Self::focus_completions))
@@ -520,22 +547,22 @@ impl Render for RateCompletionModal {
             .bg(cx.theme().colors().elevated_surface_background)
             .border_1()
             .border_color(border_color)
-            .w(cx.viewport_size().width - px(320.))
-            .h(cx.viewport_size().height - px(300.))
+            .w(window.viewport_size().width - px(320.))
+            .h(window.viewport_size().height - px(300.))
             .rounded_lg()
             .shadow_lg()
             .child(
                 v_flex()
+                    .w_72()
+                    .h_full()
                     .border_r_1()
                     .border_color(border_color)
-                    .w_96()
-                    .h_full()
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child(
                         h_flex()
+                            .h_8()
                             .px_2()
-                            .py_1()
                             .justify_between()
                             .border_b_1()
                             .border_color(border_color)
@@ -561,12 +588,12 @@ impl Render for RateCompletionModal {
                                         div()
                                             .p_2()
                                             .child(
-                                                Label::new("No completions yet. Use the editor to generate some and rate them!")
+                                                Label::new("No completions yet. Use the editor to generate some, and make sure to rate them!")
                                                     .color(Color::Muted),
                                             )
                                             .into_any_element(),
                                     )
-                                    .children(self.zeta.read(cx).recent_completions().cloned().enumerate().map(
+                                    .children(self.zeta.read(cx).shown_completions().cloned().enumerate().map(
                                         |(index, completion)| {
                                             let selected =
                                                 self.active_completion.as_ref().map_or(false, |selected| {
@@ -575,44 +602,60 @@ impl Render for RateCompletionModal {
                                             let rated =
                                                 self.zeta.read(cx).is_completion_rated(completion.id);
 
+                                            let (icon_name, icon_color, tooltip_text) = match (rated, completion.edits.is_empty()) {
+                                                (true, _) => (IconName::Check, Color::Success, "Rated Completion"),
+                                                (false, true) => (IconName::File, Color::Muted, "No Edits Produced"),
+                                                (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
+                                            };
+
+                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or("untitled".to_string());
+                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().to_string());
+
                                             ListItem::new(completion.id)
                                                 .inset(true)
                                                 .spacing(ListItemSpacing::Sparse)
                                                 .focused(index == self.selected_index)
                                                 .toggle_state(selected)
-                                                .start_slot(if rated {
-                                                    Icon::new(IconName::Check).color(Color::Success).size(IconSize::Small)
-                                                } else if completion.edits.is_empty() {
-                                                    Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
-                                                } else {
-                                                    Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
-                                                })
                                                 .child(
-                                                    v_flex()
-                                                        .pl_1p5()
-                                                        .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
-                                                        .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::XSmall)
+                                                    h_flex()
+                                                        .id("completion-content")
+                                                        .gap_3()
+                                                        .child(
+                                                            Icon::new(icon_name)
+                                                                .color(icon_color)
+                                                                .size(IconSize::Small)
+                                                        )
+                                                        .child(
+                                                            v_flex()
+                                                                .child(
+                                                                    h_flex().gap_1()
+                                                                        .child(Label::new(file_name).size(LabelSize::Small))
+                                                                        .when_some(file_path, |this, p| this.child(Label::new(p).size(LabelSize::Small).color(Color::Muted)))
+                                                                )
+                                                                .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
+                                                                    .color(Color::Muted)
+                                                                    .size(LabelSize::XSmall)
+                                                                )
                                                         )
                                                 )
-                                                .on_click(cx.listener(move |this, _, cx| {
-                                                    this.select_completion(Some(completion.clone()), true, cx);
+                                                .tooltip(Tooltip::text(tooltip_text))
+                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                    this.select_completion(Some(completion.clone()), true, window, cx);
                                                 }))
                                         },
                                     )),
                             )
                     ),
             )
-            .children(self.render_active_completion(cx))
-            .on_mouse_down_out(cx.listener(|_, _, cx| cx.emit(DismissEvent)))
+            .children(self.render_active_completion(window, cx))
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
     }
 }
 
 impl EventEmitter<DismissEvent> for RateCompletionModal {}
 
-impl FocusableView for RateCompletionModal {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+impl Focusable for RateCompletionModal {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }

@@ -7,7 +7,6 @@ mod typed_envelope;
 pub use error::*;
 pub use typed_envelope::*;
 
-use collections::HashMap;
 pub use prost::{DecodeError, Message};
 use serde::Serialize;
 use std::{
@@ -15,6 +14,8 @@ use std::{
     cmp,
     fmt::{self, Debug},
     iter, mem,
+    path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -137,6 +138,62 @@ impl fmt::Display for PeerId {
     }
 }
 
+pub trait FromProto {
+    fn from_proto(proto: String) -> Self;
+}
+
+pub trait ToProto {
+    fn to_proto(self) -> String;
+}
+
+impl FromProto for PathBuf {
+    #[cfg(target_os = "windows")]
+    fn from_proto(proto: String) -> Self {
+        proto.split("/").collect()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn from_proto(proto: String) -> Self {
+        PathBuf::from(proto)
+    }
+}
+
+impl FromProto for Arc<Path> {
+    fn from_proto(proto: String) -> Self {
+        PathBuf::from_proto(proto).into()
+    }
+}
+
+impl ToProto for PathBuf {
+    #[cfg(target_os = "windows")]
+    fn to_proto(self) -> String {
+        self.components()
+            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn to_proto(self) -> String {
+        self.to_string_lossy().to_string()
+    }
+}
+
+impl ToProto for &Path {
+    #[cfg(target_os = "windows")]
+    fn to_proto(self) -> String {
+        self.components()
+            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn to_proto(self) -> String {
+        self.to_string_lossy().to_string()
+    }
+}
+
 messages!(
     (AcceptTermsOfService, Foreground),
     (AcceptTermsOfServiceResponse, Foreground),
@@ -156,6 +213,7 @@ messages!(
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
     (ChannelMessageUpdate, Foreground),
+    (Commit, Background),
     (ComputeEmbeddings, Background),
     (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
@@ -174,8 +232,12 @@ messages!(
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
     (ExpandProjectEntryResponse, Foreground),
+    (ExpandAllForProjectEntry, Foreground),
+    (ExpandAllForProjectEntryResponse, Foreground),
     (Follow, Foreground),
     (FollowResponse, Foreground),
+    (ApplyCodeActionKind, Foreground),
+    (ApplyCodeActionKindResponse, Foreground),
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
@@ -216,8 +278,10 @@ messages!(
     (GetImplementationResponse, Background),
     (GetLlmToken, Background),
     (GetLlmTokenResponse, Background),
-    (GetStagedText, Foreground),
-    (GetStagedTextResponse, Foreground),
+    (OpenUnstagedDiff, Foreground),
+    (OpenUnstagedDiffResponse, Foreground),
+    (OpenUncommittedDiff, Foreground),
+    (OpenUncommittedDiffResponse, Foreground),
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
@@ -246,6 +310,7 @@ messages!(
     (OpenBufferForSymbol, Background),
     (OpenBufferForSymbolResponse, Background),
     (OpenBufferResponse, Background),
+    (OpenCommitMessageBuffer, Background),
     (PerformRename, Background),
     (PerformRenameResponse, Background),
     (Ping, Foreground),
@@ -286,6 +351,7 @@ messages!(
     (ShareProject, Foreground),
     (ShareProjectResponse, Foreground),
     (ShowContacts, Foreground),
+    (Stage, Background),
     (StartLanguageServer, Foreground),
     (SubscribeToChannels, Foreground),
     (SynchronizeBuffers, Foreground),
@@ -295,6 +361,7 @@ messages!(
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
+    (Unstage, Background),
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateChannelBuffer, Foreground),
@@ -303,7 +370,7 @@ messages!(
     (UpdateUserChannels, Foreground),
     (UpdateContacts, Foreground),
     (UpdateDiagnosticSummary, Foreground),
-    (UpdateDiffBase, Foreground),
+    (UpdateDiffBases, Foreground),
     (UpdateFollowers, Foreground),
     (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
@@ -374,6 +441,17 @@ messages!(
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
+    (GitReset, Background),
+    (GitCheckoutFiles, Background),
+    (GitShow, Background),
+    (GitCommitDetails, Background),
+    (SetIndexText, Background),
+    (Push, Background),
+    (Fetch, Background),
+    (GetRemotes, Background),
+    (GetRemotesResponse, Background),
+    (Pull, Background),
+    (RemoteMessageResponse, Background),
 );
 
 request_messages!(
@@ -385,6 +463,7 @@ request_messages!(
     ),
     (Call, Ack),
     (CancelCall, Ack),
+    (Commit, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
     (ComputeEmbeddings, ComputeEmbeddingsResponse),
     (CreateChannel, CreateChannelResponse),
@@ -394,7 +473,9 @@ request_messages!(
     (DeleteChannel, Ack),
     (DeleteProjectEntry, ProjectEntryResponse),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
+    (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
+    (ApplyCodeActionKind, ApplyCodeActionKindResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
     (GetCachedEmbeddings, GetCachedEmbeddingsResponse),
@@ -414,7 +495,8 @@ request_messages!(
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
     (GetSignatureHelp, GetSignatureHelpResponse),
-    (GetStagedText, GetStagedTextResponse),
+    (OpenUnstagedDiff, OpenUnstagedDiffResponse),
+    (OpenUncommittedDiff, OpenUncommittedDiffResponse),
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
@@ -436,6 +518,7 @@ request_messages!(
     (OpenBufferById, OpenBufferResponse),
     (OpenBufferByPath, OpenBufferResponse),
     (OpenBufferForSymbol, OpenBufferForSymbolResponse),
+    (OpenCommitMessageBuffer, OpenBufferResponse),
     (OpenNewBuffer, OpenBufferResponse),
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
@@ -460,6 +543,7 @@ request_messages!(
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
+    (Stage, Ack),
     (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
@@ -468,6 +552,7 @@ request_messages!(
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),
     (Test, Test),
+    (Unstage, Ack),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
@@ -501,6 +586,14 @@ request_messages!(
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
+    (GitShow, GitCommitDetails),
+    (GitReset, Ack),
+    (GitCheckoutFiles, Ack),
+    (SetIndexText, Ack),
+    (Push, RemoteMessageResponse),
+    (Fetch, RemoteMessageResponse),
+    (GetRemotes, GetRemotesResponse),
+    (Pull, RemoteMessageResponse),
 );
 
 entity_messages!(
@@ -513,12 +606,15 @@ entity_messages!(
     BufferReloaded,
     BufferSaved,
     CloseBuffer,
+    Commit,
     CopyProjectEntry,
     CreateBufferForPeer,
     CreateProjectEntry,
     DeleteProjectEntry,
     ExpandProjectEntry,
+    ExpandAllForProjectEntry,
     FindSearchCandidates,
+    ApplyCodeActionKind,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,
@@ -530,7 +626,8 @@ entity_messages!(
     GetProjectSymbols,
     GetReferences,
     GetSignatureHelp,
-    GetStagedText,
+    OpenUnstagedDiff,
+    OpenUncommittedDiff,
     GetTypeDefinition,
     InlayHints,
     JoinProject,
@@ -543,6 +640,7 @@ entity_messages!(
     OpenBufferById,
     OpenBufferByPath,
     OpenBufferForSymbol,
+    OpenCommitMessageBuffer,
     PerformRename,
     PrepareRename,
     RefreshInlayHints,
@@ -552,14 +650,16 @@ entity_messages!(
     ResolveCompletionDocumentation,
     ResolveInlayHint,
     SaveBuffer,
+    Stage,
     StartLanguageServer,
     SynchronizeBuffers,
     TaskContextForLocation,
     UnshareProject,
+    Unstage,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
-    UpdateDiffBase,
+    UpdateDiffBases,
     UpdateLanguageServer,
     UpdateProject,
     UpdateProjectCollaborator,
@@ -587,6 +687,14 @@ entity_messages!(
     GetPathMetadata,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
+    GitShow,
+    GitReset,
+    GitCheckoutFiles,
+    SetIndexText,
+    Push,
+    Fetch,
+    GetRemotes,
+    Pull,
 );
 
 entity_messages!(
@@ -642,16 +750,10 @@ pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
 
 pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
-    let mut done_files = false;
-
-    let mut repository_map = message
-        .updated_repositories
-        .into_iter()
-        .map(|repo| (repo.work_directory_id, repo))
-        .collect::<HashMap<_, _>>();
+    let mut done = false;
 
     iter::from_fn(move || {
-        if done_files {
+        if done {
             return None;
         }
 
@@ -673,27 +775,44 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             .drain(..removed_entries_chunk_size)
             .collect();
 
-        done_files = message.updated_entries.is_empty() && message.removed_entries.is_empty();
-
         let mut updated_repositories = Vec::new();
+        let mut limit = MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE;
+        while let Some(repo) = message.updated_repositories.first_mut() {
+            let updated_statuses_limit = cmp::min(repo.updated_statuses.len(), limit);
+            let removed_statuses_limit = cmp::min(repo.removed_statuses.len(), limit);
 
-        if !repository_map.is_empty() {
-            for entry in &updated_entries {
-                if let Some(repo) = repository_map.remove(&entry.id) {
-                    updated_repositories.push(repo)
-                }
+            updated_repositories.push(RepositoryEntry {
+                work_directory_id: repo.work_directory_id,
+                branch: repo.branch.clone(),
+                branch_summary: repo.branch_summary.clone(),
+                updated_statuses: repo
+                    .updated_statuses
+                    .drain(..updated_statuses_limit)
+                    .collect(),
+                removed_statuses: repo
+                    .removed_statuses
+                    .drain(..removed_statuses_limit)
+                    .collect(),
+                current_merge_conflicts: repo.current_merge_conflicts.clone(),
+            });
+            if repo.removed_statuses.is_empty() && repo.updated_statuses.is_empty() {
+                message.updated_repositories.remove(0);
+            }
+            limit = limit.saturating_sub(removed_statuses_limit + updated_statuses_limit);
+            if limit == 0 {
+                break;
             }
         }
 
-        let removed_repositories = if done_files {
+        done = message.updated_entries.is_empty()
+            && message.removed_entries.is_empty()
+            && message.updated_repositories.is_empty();
+
+        let removed_repositories = if done {
             mem::take(&mut message.removed_repositories)
         } else {
             Default::default()
         };
-
-        if done_files {
-            updated_repositories.extend(mem::take(&mut repository_map).into_values());
-        }
 
         Some(UpdateWorktree {
             project_id: message.project_id,
@@ -703,7 +822,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             updated_entries,
             removed_entries,
             scan_id: message.scan_id,
-            is_last_update: done_files && message.is_last_update,
+            is_last_update: done && message.is_last_update,
             updated_repositories,
             removed_repositories,
         })
@@ -736,5 +855,23 @@ mod tests {
             id: u32::MAX,
         };
         assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_proto() {
+        fn generate_proto_path(path: PathBuf) -> PathBuf {
+            let proto = path.to_proto();
+            PathBuf::from_proto(proto)
+        }
+
+        let path = PathBuf::from("C:\\foo\\bar");
+        assert_eq!(path, generate_proto_path(path.clone()));
+
+        let path = PathBuf::from("C:/foo/bar/");
+        assert_eq!(path, generate_proto_path(path.clone()));
+
+        let path = PathBuf::from("C:/foo\\bar\\");
+        assert_eq!(path, generate_proto_path(path.clone()));
     }
 }

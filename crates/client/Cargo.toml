@@ -1,8 +1,8 @@
 [package]
 name = "client"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -22,6 +22,7 @@ async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
+credentials_provider.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -33,8 +34,6 @@ postage.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
-rustls-native-certs.workspace = true
-rustls.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

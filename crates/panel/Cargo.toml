@@ -1,0 +1,20 @@
+[package]
+name = "panel"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/panel.rs"
+
+[dependencies]
+editor.workspace = true
+gpui.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+workspace.workspace = true

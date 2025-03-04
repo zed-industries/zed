@@ -1,10 +1,10 @@
-use std::{iter::Peekable, str::Chars, time::Duration};
-
 use editor::Editor;
-use gpui::{actions, impl_actions, ViewContext};
+use gpui::{actions, impl_actions, impl_internal_actions, Context, Window};
 use language::Point;
+use schemars::JsonSchema;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
+use std::{iter::Peekable, str::Chars, time::Duration};
 use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
@@ -15,8 +15,8 @@ use crate::{
     Vim,
 };
 
-#[derive(Clone, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MoveToNext {
     #[serde(default = "default_true")]
     case_sensitive: bool,
@@ -26,9 +26,9 @@ pub(crate) struct MoveToNext {
     regex: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MoveToPrev {
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MoveToPrevious {
     #[serde(default = "default_true")]
     case_sensitive: bool,
     #[serde(default)]
@@ -37,7 +37,8 @@ pub(crate) struct MoveToPrev {
     regex: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
@@ -45,19 +46,20 @@ pub(crate) struct Search {
     regex: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct FindCommand {
     pub query: String,
     pub backwards: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReplaceCommand {
     pub(crate) range: CommandRange,
     pub(crate) replacement: Replacement,
 }
 
-#[derive(Debug, Default, PartialEq, Deserialize, Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Replacement {
     search: String,
     replacement: String,
@@ -65,17 +67,15 @@ pub(crate) struct Replacement {
     is_case_sensitive: bool,
 }
 
-actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPrevMatch]);
-impl_actions!(
-    vim,
-    [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
-);
+actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPreviousMatch]);
+impl_actions!(vim, [FindCommand, Search, MoveToPrevious, MoveToNext]);
+impl_internal_actions!(vim, [ReplaceCommand]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
-    Vim::action(editor, cx, Vim::move_to_prev);
+    Vim::action(editor, cx, Vim::move_to_previous);
     Vim::action(editor, cx, Vim::move_to_next_match);
-    Vim::action(editor, cx, Vim::move_to_prev_match);
+    Vim::action(editor, cx, Vim::move_to_previous_match);
     Vim::action(editor, cx, Vim::search);
     Vim::action(editor, cx, Vim::search_deploy);
     Vim::action(editor, cx, Vim::find_command);
@@ -83,36 +83,53 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 }
 
 impl Vim {
-    fn move_to_next(&mut self, action: &MoveToNext, cx: &mut ViewContext<Self>) {
+    fn move_to_next(&mut self, action: &MoveToNext, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to_internal(
             Direction::Next,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
+            window,
             cx,
         )
     }
 
-    fn move_to_prev(&mut self, action: &MoveToPrev, cx: &mut ViewContext<Self>) {
+    fn move_to_previous(
+        &mut self,
+        action: &MoveToPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.move_to_internal(
             Direction::Prev,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
+            window,
             cx,
         )
     }
 
-    fn move_to_next_match(&mut self, _: &MoveToNextMatch, cx: &mut ViewContext<Self>) {
-        self.move_to_match_internal(self.search.direction, cx)
+    fn move_to_next_match(
+        &mut self,
+        _: &MoveToNextMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_to_match_internal(self.search.direction, window, cx)
     }
 
-    fn move_to_prev_match(&mut self, _: &MoveToPrevMatch, cx: &mut ViewContext<Self>) {
-        self.move_to_match_internal(self.search.direction.opposite(), cx)
+    fn move_to_previous_match(
+        &mut self,
+        _: &MoveToPreviousMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_to_match_internal(self.search.direction.opposite(), window, cx)
     }
 
-    fn search(&mut self, action: &Search, cx: &mut ViewContext<Self>) {
-        let Some(pane) = self.pane(cx) else {
+    fn search(&mut self, action: &Search, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.pane(window, cx) else {
             return;
         };
         let direction = if action.backwards {
@@ -121,17 +138,16 @@ impl Vim {
             Direction::Next
         };
         let count = Vim::take_count(cx).unwrap_or(1);
-        let prior_selections = self.editor_selections(cx);
+        let prior_selections = self.editor_selections(window, cx);
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
-                    if !search_bar.show(cx) {
+                    if !search_bar.show(window, cx) {
                         return;
                     }
-                    let query = search_bar.query(cx);
 
-                    search_bar.select_query(cx);
-                    cx.focus_self();
+                    search_bar.select_query(window, cx);
+                    cx.focus_self(window);
 
                     search_bar.set_replacement(None, cx);
                     let mut options = SearchOptions::NONE;
@@ -148,7 +164,6 @@ impl Vim {
                     self.search = SearchState {
                         direction,
                         count,
-                        initial_query: query,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode,
@@ -159,29 +174,36 @@ impl Vim {
     }
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
-    fn search_deploy(&mut self, _: &buffer_search::Deploy, cx: &mut ViewContext<Self>) {
+    fn search_deploy(&mut self, _: &buffer_search::Deploy, _: &mut Window, cx: &mut Context<Self>) {
         self.search = Default::default();
         cx.propagate();
     }
 
-    pub fn search_submit(&mut self, cx: &mut ViewContext<Self>) {
-        self.store_visual_marks(cx);
-        let Some(pane) = self.pane(cx) else { return };
+    pub fn search_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.store_visual_marks(window, cx);
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
+        let new_selections = self.editor_selections(window, cx);
         let result = pane.update(cx, |pane, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
             search_bar.update(cx, |search_bar, cx| {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
-                // in the case that the query has changed, the search bar
-                // will have selected the next match already.
-                if (search_bar.query(cx) != self.search.initial_query)
-                    && self.search.direction == Direction::Next
-                {
+                search_bar.has_active_match();
+                let new_head = new_selections.last().unwrap().start;
+                let is_different_head = self
+                    .search
+                    .prior_selections
+                    .last()
+                    .map_or(true, |range| range.start != new_head);
+
+                if is_different_head && self.search.direction == Direction::Next {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
-                search_bar.select_match(direction, count, cx);
-                search_bar.focus_editor(&Default::default(), cx);
+                search_bar.select_match(direction, count, window, cx);
+                search_bar.focus_editor(&Default::default(), window, cx);
 
                 let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
                 let prior_mode = self.search.prior_mode;
@@ -197,12 +219,13 @@ impl Vim {
             return;
         };
 
-        let new_selections = self.editor_selections(cx);
+        let new_selections = self.editor_selections(window, cx);
 
         // If the active editor has changed during a search, don't panic.
         if prior_selections.iter().any(|s| {
-            self.update_editor(cx, |_, editor, cx| {
-                !s.start.is_valid(&editor.snapshot(cx).buffer_snapshot)
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                !s.start
+                    .is_valid(&editor.snapshot(window, cx).buffer_snapshot)
             })
             .unwrap_or(true)
         }) {
@@ -210,34 +233,42 @@ impl Vim {
         }
 
         if prior_mode != self.mode {
-            self.switch_mode(prior_mode, true, cx);
+            self.switch_mode(prior_mode, true, window, cx);
         }
         if let Some(operator) = prior_operator {
-            self.push_operator(operator, cx);
+            self.push_operator(operator, window, cx);
         };
         self.search_motion(
             Motion::ZedSearchResult {
                 prior_selections,
                 new_selections,
             },
+            window,
             cx,
         );
     }
 
-    pub fn move_to_match_internal(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
-        let Some(pane) = self.pane(cx) else { return };
+    pub fn move_to_match_internal(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
         let count = Vim::take_count(cx).unwrap_or(1);
-        let prior_selections = self.editor_selections(cx);
+        let prior_selections = self.editor_selections(window, cx);
 
         let success = pane.update(cx, |pane, cx| {
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return false;
             };
             search_bar.update(cx, |search_bar, cx| {
-                if !search_bar.has_active_match() || !search_bar.show(cx) {
+                if !search_bar.has_active_match() || !search_bar.show(window, cx) {
                     return false;
                 }
-                search_bar.select_match(direction, count, cx);
+                search_bar.select_match(direction, count, window, cx);
                 true
             })
         });
@@ -245,12 +276,13 @@ impl Vim {
             return;
         }
 
-        let new_selections = self.editor_selections(cx);
+        let new_selections = self.editor_selections(window, cx);
         self.search_motion(
             Motion::ZedSearchResult {
                 prior_selections,
                 new_selections,
             },
+            window,
             cx,
         );
     }
@@ -261,12 +293,15 @@ impl Vim {
         case_sensitive: bool,
         whole_word: bool,
         regex: bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        let Some(pane) = self.pane(cx) else { return };
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
         let count = Vim::take_count(cx).unwrap_or(1);
-        let prior_selections = self.editor_selections(cx);
-        let vim = cx.view().clone();
+        let prior_selections = self.editor_selections(window, cx);
+        let vim = cx.entity().clone();
 
         let searched = pane.update(cx, |pane, cx| {
             self.search.direction = direction;
@@ -284,32 +319,33 @@ impl Vim {
                 if whole_word {
                     options |= SearchOptions::WHOLE_WORD;
                 }
-                if !search_bar.show(cx) {
+                if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar.query_suggestion(cx) else {
-                    drop(search_bar.search("", None, cx));
+                let Some(query) = search_bar.query_suggestion(window, cx) else {
+                    drop(search_bar.search("", None, window, cx));
                     return None;
                 };
                 let query = regex::escape(&query);
-                Some(search_bar.search(&query, Some(options), cx))
+                Some(search_bar.search(&query, Some(options), window, cx))
             });
 
             let Some(search) = search else { return false };
 
             let search_bar = search_bar.downgrade();
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn_in(window, |_, mut cx| async move {
                 search.await?;
-                search_bar.update(&mut cx, |search_bar, cx| {
-                    search_bar.select_match(direction, count, cx);
+                search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                    search_bar.select_match(direction, count, window, cx);
 
                     vim.update(cx, |vim, cx| {
-                        let new_selections = vim.editor_selections(cx);
+                        let new_selections = vim.editor_selections(window, cx);
                         vim.search_motion(
                             Motion::ZedSearchResult {
                                 prior_selections,
                                 new_selections,
                             },
+                            window,
                             cx,
                         )
                     });
@@ -320,20 +356,22 @@ impl Vim {
             true
         });
         if !searched {
-            self.clear_operator(cx)
+            self.clear_operator(window, cx)
         }
 
         if self.mode.is_visual() {
-            self.switch_mode(Mode::Normal, false, cx)
+            self.switch_mode(Mode::Normal, false, window, cx)
         }
     }
 
-    fn find_command(&mut self, action: &FindCommand, cx: &mut ViewContext<Self>) {
-        let Some(pane) = self.pane(cx) else { return };
+    fn find_command(&mut self, action: &FindCommand, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {
-                    if !search_bar.show(cx) {
+                    if !search_bar.show(window, cx) {
                         return None;
                     }
                     let mut query = action.query.clone();
@@ -349,7 +387,7 @@ impl Vim {
                         );
                     }
 
-                    Some(search_bar.search(&query, Some(options), cx))
+                    Some(search_bar.search(&query, Some(options), window, cx))
                 });
                 let Some(search) = search else { return };
                 let search_bar = search_bar.downgrade();
@@ -358,10 +396,10 @@ impl Vim {
                 } else {
                     Direction::Next
                 };
-                cx.spawn(|_, mut cx| async move {
+                cx.spawn_in(window, |_, mut cx| async move {
                     search.await?;
-                    search_bar.update(&mut cx, |search_bar, cx| {
-                        search_bar.select_match(direction, 1, cx)
+                    search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                        search_bar.select_match(direction, 1, window, cx)
                     })?;
                     anyhow::Ok(())
                 })
@@ -370,16 +408,23 @@ impl Vim {
         })
     }
 
-    fn replace_command(&mut self, action: &ReplaceCommand, cx: &mut ViewContext<Self>) {
+    fn replace_command(
+        &mut self,
+        action: &ReplaceCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let replacement = action.replacement.clone();
-        let Some(((pane, workspace), editor)) =
-            self.pane(cx).zip(self.workspace(cx)).zip(self.editor())
+        let Some(((pane, workspace), editor)) = self
+            .pane(window, cx)
+            .zip(self.workspace(window))
+            .zip(self.editor())
         else {
             return;
         };
-        if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
-            let range = action.range.buffer_range(vim, editor, cx)?;
-            let snapshot = &editor.snapshot(cx).buffer_snapshot;
+        if let Some(result) = self.update_editor(window, cx, |vim, editor, window, cx| {
+            let range = action.range.buffer_range(vim, editor, window, cx)?;
+            let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
             let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
             let range = snapshot.anchor_before(Point::new(range.start.0, 0))
                 ..snapshot.anchor_after(end_point);
@@ -390,13 +435,13 @@ impl Vim {
                 result.notify_err(workspace, cx);
             })
         }
-        let vim = cx.view().clone();
+        let vim = cx.entity().clone();
         pane.update(cx, |pane, cx| {
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return;
             };
             let search = search_bar.update(cx, |search_bar, cx| {
-                if !search_bar.show(cx) {
+                if !search_bar.show(window, cx) {
                     return None;
                 }
 
@@ -416,16 +461,16 @@ impl Vim {
                     );
                 }
                 search_bar.set_replacement(Some(&replacement.replacement), cx);
-                Some(search_bar.search(&search, Some(options), cx))
+                Some(search_bar.search(&search, Some(options), window, cx))
             });
             let Some(search) = search else { return };
             let search_bar = search_bar.downgrade();
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn_in(window, |_, mut cx| async move {
                 search.await?;
-                search_bar.update(&mut cx, |search_bar, cx| {
+                search_bar.update_in(&mut cx, |search_bar, window, cx| {
                     if replacement.should_replace_all {
-                        search_bar.select_last_match(cx);
-                        search_bar.replace_all(&Default::default(), cx);
+                        search_bar.select_last_match(window, cx);
+                        search_bar.replace_all(&Default::default(), window, cx);
                         cx.spawn(|_, mut cx| async move {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
@@ -441,6 +486,7 @@ impl Vim {
                                     display_lines: false,
                                 },
                                 None,
+                                window,
                                 cx,
                             )
                         });
@@ -537,6 +583,7 @@ mod test {
     };
     use editor::EditorSettings;
     use editor::{display_map::DisplayRow, DisplayPoint};
+
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
@@ -623,7 +670,7 @@ mod test {
         cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
         cx.simulate_keystrokes("/ c c");
 
-        let search_bar = cx.workspace(|workspace, cx| {
+        let search_bar = cx.workspace(|workspace, _, cx| {
             workspace
                 .active_pane()
                 .read(cx)
@@ -633,14 +680,14 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        cx.update_view(search_bar, |bar, cx| {
+        cx.update_entity(search_bar, |bar, _window, cx| {
             assert_eq!(bar.query(cx), "cc");
         });
 
         cx.run_until_parked();
 
-        cx.update_editor(|editor, cx| {
-            let highlights = editor.all_text_background_highlights(cx);
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
             assert_eq!(3, highlights.len());
             assert_eq!(
                 DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 2),
@@ -681,7 +728,9 @@ mod test {
         cx.simulate_keystrokes("/ d");
         cx.simulate_keystrokes("enter");
         cx.assert_state("aa\nbb\nˇdd\ncc\nbb\n", Mode::Normal);
-        cx.update_editor(|editor, cx| editor.move_to_beginning(&Default::default(), cx));
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&Default::default(), window, cx)
+        });
         cx.assert_state("ˇaa\nbb\ndd\ncc\nbb\n", Mode::Normal);
         cx.simulate_keystrokes("/ b");
         cx.simulate_keystrokes("enter");
@@ -789,6 +838,16 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_v_search_aa(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇaa aa").await;
+        cx.simulate_shared_keystrokes("v / a a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("«aa aˇ»a");
+    }
+
+    #[gpui::test]
     async fn test_visual_block_search(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -837,10 +896,9 @@ mod test {
             a
              "
         });
-        cx.executor().advance_clock(Duration::from_millis(250));
-        cx.run_until_parked();
 
-        cx.simulate_shared_keystrokes("/ a enter").await;
+        cx.simulate_shared_keystrokes("/ a").await;
+        cx.simulate_shared_keystrokes("enter").await;
         cx.shared_state().await.assert_eq(indoc! {
             "a
                 ba
@@ -853,7 +911,29 @@ mod test {
         });
     }
 
-    // cargo test -p vim --features neovim test_replace_with_range
+    #[gpui::test]
+    async fn test_search_skipping(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇaa aa aa"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes("/ a a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "aa ˇaa aa"
+        });
+
+        cx.simulate_shared_keystrokes("left / a a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "aa ˇaa aa"
+        });
+    }
+
     #[gpui::test]
     async fn test_replace_with_range(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;

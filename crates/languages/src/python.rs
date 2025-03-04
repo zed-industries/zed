@@ -2,8 +2,8 @@ use anyhow::ensure;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::{AppContext, Task};
-use gpui::{AsyncAppContext, SharedString};
+use gpui::{App, Task};
+use gpui::{AsyncApp, SharedString};
 use language::language_settings::language_settings;
 use language::LanguageName;
 use language::LanguageToolchainStore;
@@ -18,6 +18,7 @@ use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
+use project::Fs;
 use serde_json::{json, Value};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
@@ -80,21 +81,30 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let node = delegate.which("node".as_ref()).await?;
-        let (node_modules_path, _) = delegate
-            .npm_package_installed_version(Self::SERVER_NAME.as_ref())
-            .await
-            .log_err()??;
+        if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pyright_bin,
+                env: Some(env),
+                arguments: vec!["--stdio".into()],
+            })
+        } else {
+            let node = delegate.which("node".as_ref()).await?;
+            let (node_modules_path, _) = delegate
+                .npm_package_installed_version(Self::SERVER_NAME.as_ref())
+                .await
+                .log_err()??;
 
-        let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
+            let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
 
-        Some(LanguageServerBinary {
-            path: node,
-            env: None,
-            arguments: server_binary_arguments(&path),
-        })
+            Some(LanguageServerBinary {
+                path: node,
+                env: None,
+                arguments: server_binary_arguments(&path),
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
@@ -250,9 +260,10 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
             .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
@@ -315,7 +326,7 @@ impl ContextProvider for PythonContextProvider {
         location: &project::Location,
         _: Option<HashMap<String, String>>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
         let test_target = {
             let test_runner = selected_test_runner(location.buffer.read(cx).file(), cx);
@@ -348,7 +359,7 @@ impl ContextProvider for PythonContextProvider {
     fn associated_tasks(
         &self,
         file: Option<Arc<dyn language::File>>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<TaskTemplates> {
         let test_runner = selected_test_runner(file.as_ref(), cx);
 
@@ -439,7 +450,7 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &AppContext) -> TestRunner {
+fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
     language_settings(Some(LanguageName::new("Python")), location, cx)
         .tasks
@@ -542,6 +553,7 @@ static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
     PythonEnvironmentKind::VirtualEnvWrapper,
     PythonEnvironmentKind::Venv,
     PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::Pixi,
     PythonEnvironmentKind::Conda,
     PythonEnvironmentKind::Pyenv,
     PythonEnvironmentKind::GlobalPaths,
@@ -672,7 +684,7 @@ impl<'a> EnvironmentApi<'a> {
     }
 }
 
-impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
+impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     fn get_user_home(&self) -> Option<PathBuf> {
         self.user_home()
     }
@@ -770,6 +782,12 @@ impl PyLspAdapter {
     }
 }
 
+const BINARY_DIR: &str = if cfg!(target_os = "windows") {
+    "Scripts"
+} else {
+    "bin"
+};
+
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -780,21 +798,30 @@ impl LspAdapter for PyLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let venv = toolchains
-            .active_toolchain(
-                delegate.worktree_id(),
-                LanguageName::new("Python"),
-                &mut cx.clone(),
-            )
-            .await?;
-        let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
-        pylsp_path.exists().then(|| LanguageServerBinary {
-            path: venv.path.to_string().into(),
-            arguments: vec![pylsp_path.into()],
-            env: None,
-        })
+        if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pylsp_bin,
+                env: Some(env),
+                arguments: vec![],
+            })
+        } else {
+            let venv = toolchains
+                .active_toolchain(
+                    delegate.worktree_id(),
+                    LanguageName::new("Python"),
+                    &mut cx.clone(),
+                )
+                .await?;
+            let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
+            pylsp_path.exists().then(|| LanguageServerBinary {
+                path: venv.path.to_string().into(),
+                arguments: vec![pylsp_path.into()],
+                env: None,
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
@@ -811,7 +838,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join("bin").join("pip3");
+        let pip_path = venv.join(BINARY_DIR).join("pip3");
         ensure!(
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
@@ -842,7 +869,7 @@ impl LspAdapter for PyLspAdapter {
                 .success(),
             "pylsp-mypy installation failed"
         );
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
         Ok(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -856,7 +883,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
         Some(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -924,9 +951,10 @@ impl LspAdapter for PyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
             .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
@@ -995,7 +1023,7 @@ impl LspAdapter for PyLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -1015,9 +1043,9 @@ mod tests {
             });
         });
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
-            let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
+            let append = |buffer: &mut Buffer, text: &str, cx: &mut Context<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
             };

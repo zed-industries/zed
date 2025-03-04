@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use gpui::{AsyncAppContext, Model};
+use gpui::{AsyncApp, Entity};
 use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -235,7 +235,7 @@ impl Prettier {
         _: LanguageServerId,
         prettier_dir: PathBuf,
         _: NodeRuntime,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
             default: prettier_dir == default_prettier_dir().as_path(),
@@ -248,7 +248,7 @@ impl Prettier {
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: NodeRuntime,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
 
@@ -279,11 +279,19 @@ impl Prettier {
             server_binary,
             &prettier_dir,
             None,
+            Default::default(),
             cx.clone(),
         )
         .context("prettier server creation")?;
+
         let server = cx
-            .update(|cx| executor.spawn(server.initialize(None, cx)))?
+            .update(|cx| {
+                let params = server.default_initialize_params(cx);
+                let configuration = lsp::DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                executor.spawn(server.initialize(params, configuration.into(), cx))
+            })?
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
@@ -295,10 +303,10 @@ impl Prettier {
 
     pub async fn format(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
         match self {
             Self::Real(local) => {
@@ -939,7 +947,7 @@ mod tests {
         .await {
             Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
             Err(e) => {
-                let message = e.to_string();
+                let message = e.to_string().replace("\\\\", "/");
                 assert!(message.contains("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader"), "Error message should mention which project had prettier defined");
                 assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
             },

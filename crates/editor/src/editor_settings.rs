@@ -1,4 +1,4 @@
-use gpui::AppContext;
+use gpui::App;
 use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,8 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
+    pub selection_highlight: bool,
+    pub selection_highlight_debounce: u64,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
@@ -35,7 +37,6 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
-    pub show_inline_completions_in_menu: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -103,9 +104,10 @@ pub struct Toolbar {
 pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
+    pub selected_text: bool,
     pub selected_symbol: bool,
     pub search_results: bool,
-    pub diagnostics: bool,
+    pub diagnostics: ScrollbarDiagnostics,
     pub cursors: bool,
     pub axes: ScrollbarAxes,
 }
@@ -148,6 +150,73 @@ pub struct ScrollbarAxes {
     ///
     /// Default: true
     pub vertical: bool,
+}
+
+/// Which diagnostic indicators to show in the scrollbar.
+///
+/// Default: all
+#[derive(Copy, Clone, Debug, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollbarDiagnostics {
+    /// Show all diagnostic levels: hint, information, warnings, error.
+    All,
+    /// Show only the following diagnostic levels: information, warning, error.
+    Information,
+    /// Show only the following diagnostic levels: warning, error.
+    Warning,
+    /// Show only the following diagnostic level: error.
+    Error,
+    /// Do not show diagnostics.
+    None,
+}
+
+impl<'de> Deserialize<'de> for ScrollbarDiagnostics {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl serde::de::Visitor<'_> for Visitor {
+            type Value = ScrollbarDiagnostics;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(
+                    f,
+                    r#"a boolean or one of "all", "information", "warning", "error", "none""#
+                )
+            }
+
+            fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match b {
+                    false => Ok(ScrollbarDiagnostics::None),
+                    true => Ok(ScrollbarDiagnostics::All),
+                }
+            }
+
+            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match s {
+                    "all" => Ok(ScrollbarDiagnostics::All),
+                    "information" => Ok(ScrollbarDiagnostics::Information),
+                    "warning" => Ok(ScrollbarDiagnostics::Warning),
+                    "error" => Ok(ScrollbarDiagnostics::Error),
+                    "none" => Ok(ScrollbarDiagnostics::None),
+                    _ => Err(E::unknown_variant(
+                        s,
+                        &["all", "information", "warning", "error", "none"],
+                    )),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 /// The key to use for adding multiple cursors
@@ -205,6 +274,14 @@ pub struct EditorSettingsContent {
     ///
     /// Default: all
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    /// Whether to highlight all occurrences of the selected text in an editor.
+    ///
+    /// Default: true
+    pub selection_highlight: Option<bool>,
+    /// The debounce delay before querying highlights based on the selected text.
+    ///
+    /// Default: 75
+    pub selection_highlight_debounce: Option<u64>,
     /// The debounce delay before querying highlights from the language
     /// server based on the current cursor location.
     ///
@@ -301,12 +378,6 @@ pub struct EditorSettingsContent {
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
 
-    /// Whether to show the inline completions next to the completions provided by a language server.
-    /// Only has an effect if inline completion provider supports it.
-    ///
-    /// Default: true
-    pub show_inline_completions_in_menu: Option<bool>,
-
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
 }
@@ -344,14 +415,18 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub search_results: Option<bool>,
+    /// Whether to show selected text occurrences in the scrollbar.
+    ///
+    /// Default: true
+    pub selected_text: Option<bool>,
     /// Whether to show selected symbol occurrences in the scrollbar.
     ///
     /// Default: true
     pub selected_symbol: Option<bool>,
-    /// Whether to show diagnostic indicators in the scrollbar.
+    /// Which diagnostic indicators to show in the scrollbar:
     ///
-    /// Default: true
-    pub diagnostics: Option<bool>,
+    /// Default: all
+    pub diagnostics: Option<ScrollbarDiagnostics>,
     /// Whether to show cursor positions in the scrollbar.
     ///
     /// Default: true
@@ -396,7 +471,7 @@ pub struct GutterContent {
 }
 
 impl EditorSettings {
-    pub fn jupyter_enabled(cx: &AppContext) -> bool {
+    pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
     }
 }
@@ -406,10 +481,7 @@ impl Settings for EditorSettings {
 
     type FileContent = EditorSettingsContent;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
     }
 }

@@ -73,7 +73,8 @@ message Envelope {
         ProjectEntryResponse project_entry_response = 50;
         ExpandProjectEntry expand_project_entry = 51;
         ExpandProjectEntryResponse expand_project_entry_response = 52;
-
+        ExpandAllForProjectEntry expand_all_for_project_entry = 291;
+        ExpandAllForProjectEntryResponse expand_all_for_project_entry_response = 292;
         UpdateDiagnosticSummary update_diagnostic_summary = 53;
         StartLanguageServer start_language_server = 54;
         UpdateLanguageServer update_language_server = 55;
@@ -128,7 +129,7 @@ message Envelope {
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
         UpdateUserPlan update_user_plan = 234;
-        UpdateDiffBase update_diff_base = 104;
+        UpdateDiffBases update_diff_bases = 104;
         AcceptTermsOfService accept_terms_of_service = 239;
         AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
@@ -303,10 +304,35 @@ message Envelope {
         SyncExtensionsResponse sync_extensions_response = 286;
         InstallExtension install_extension = 287;
 
-        GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289;
+        OpenUnstagedDiff open_unstaged_diff = 288;
+        OpenUnstagedDiffResponse open_unstaged_diff_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
+
+        Stage stage = 293;
+        Unstage unstage = 294;
+        Commit commit = 295;
+        OpenCommitMessageBuffer open_commit_message_buffer = 296;
+
+        OpenUncommittedDiff open_uncommitted_diff = 297;
+        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298;
+        GitShow git_show = 300;
+        GitReset git_reset = 301;
+        GitCommitDetails git_commit_details = 302;
+
+        SetIndexText set_index_text = 299;
+        GitCheckoutFiles git_checkout_files = 303;
+
+        Push push = 304;
+        Fetch fetch = 305;
+        GetRemotes get_remotes = 306;
+        GetRemotesResponse get_remotes_response = 307;
+        Pull pull = 308;
+
+        ApplyCodeActionKind apply_code_action_kind = 309;
+        ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
+
+        RemoteMessageResponse remote_message_response = 311; // current max
     }
 
     reserved 87 to 88;
@@ -359,6 +385,7 @@ enum ErrorCode {
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     RateLimitExceeded = 18;
+    CommitFailed = 19;
     reserved 6;
     reserved 14 to 15;
 }
@@ -545,13 +572,23 @@ message JoinProject {
     uint64 project_id = 1;
 }
 
+message ListRemoteDirectoryConfig {
+    bool is_dir = 1;
+}
+
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
     string path = 2;
+    ListRemoteDirectoryConfig config = 3;
+}
+
+message EntryInfo {
+    bool is_dir = 1;
 }
 
 message ListRemoteDirectoryResponse {
     repeated string entries = 1;
+    repeated EntryInfo entry_info = 2;
 }
 
 message JoinProjectResponse {
@@ -627,6 +664,15 @@ message ExpandProjectEntry {
 }
 
 message ExpandProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
+}
+
+message ExpandAllForProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandAllForProjectEntryResponse {
     uint64 worktree_scan_id = 1;
 }
 
@@ -765,6 +811,7 @@ message Symbol {
     PointUtf16 start = 7;
     PointUtf16 end = 8;
     bytes signature = 9;
+    uint64 language_server_id = 10;
 }
 
 message OpenBufferForSymbol {
@@ -882,6 +929,16 @@ message ChannelBufferVersion {
     uint64 channel_id = 1;
     repeated VectorClockEntry version = 2;
     uint64 epoch = 3;
+}
+
+message ApplyCodeActionKind {
+    uint64 project_id = 1;
+    string kind = 2;
+    repeated uint64 buffer_ids = 3;
+}
+
+message ApplyCodeActionKindResponse {
+    ProjectTransaction transaction = 1;
 }
 
 enum FormatTrigger {
@@ -1033,6 +1090,7 @@ message PrepareRenameResponse {
     Anchor start = 2;
     Anchor end = 3;
     repeated VectorClockEntry version = 4;
+    bool only_unprepared_rename_supported = 5;
 }
 
 message PerformRename {
@@ -1749,6 +1807,8 @@ message User {
     uint64 id = 1;
     string github_login = 2;
     string avatar_url = 3;
+    optional string email = 4;
+    optional string name = 5;
 }
 
 message File {
@@ -1768,7 +1828,7 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     reserved 6;
-    optional GitStatus git_status = 9;
+    reserved 9;
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
@@ -1776,18 +1836,51 @@ message Entry {
 
 message RepositoryEntry {
     uint64 work_directory_id = 1;
-    optional string branch = 2;
+    optional string branch = 2; // deprecated
+    optional Branch branch_summary = 6;
+    repeated StatusEntry updated_statuses = 3;
+    repeated string removed_statuses = 4;
+    repeated string current_merge_conflicts = 5;
 }
+
 
 message StatusEntry {
     string repo_path = 1;
-    GitStatus status = 2;
+    // Can be removed once collab's min version is >=0.171.0.
+    GitStatus simple_status = 2;
+    GitFileStatus status = 3;
 }
 
 enum GitStatus {
     Added = 0;
     Modified = 1;
     Conflict = 2;
+    Deleted = 3;
+    Updated = 4;
+    TypeChanged = 5;
+    Renamed = 6;
+    Copied = 7;
+    Unmodified = 8;
+}
+
+message GitFileStatus {
+    oneof variant {
+        Untracked untracked = 1;
+        Ignored ignored = 2;
+        Unmerged unmerged = 3;
+        Tracked tracked = 4;
+    }
+
+    message Untracked {}
+    message Ignored {}
+    message Unmerged {
+        GitStatus first_head = 1;
+        GitStatus second_head = 2;
+    }
+    message Tracked {
+        GitStatus index_status = 1;
+        GitStatus worktree_status = 2;
+    }
 }
 
 message BufferState {
@@ -1987,19 +2080,59 @@ message WorktreeMetadata {
     string abs_path = 4;
 }
 
-message UpdateDiffBase {
+message UpdateDiffBases {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+
+    enum Mode {
+        // No collaborator is using the unstaged diff.
+        HEAD_ONLY = 0;
+        // No collaborator is using the diff from HEAD.
+        INDEX_ONLY = 1;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD are the same for this path.
+        INDEX_MATCHES_HEAD = 2;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD differ for this path,
+        // where None means the path doesn't exist in that state of the repo.
+        INDEX_AND_HEAD = 3;
+    }
+
     optional string staged_text = 3;
+    optional string committed_text = 4;
+    Mode mode = 5;
 }
 
-message GetStagedText {
+message OpenUnstagedDiff {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message GetStagedTextResponse {
+message OpenUnstagedDiffResponse {
     optional string staged_text = 1;
+}
+
+message OpenUncommittedDiff {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message OpenUncommittedDiffResponse {
+    enum Mode {
+        INDEX_MATCHES_HEAD = 0;
+        INDEX_AND_HEAD = 1;
+    }
+    optional string staged_text = 1;
+    optional string committed_text = 2;
+    Mode mode = 3;
+}
+
+message SetIndexText {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string path = 4;
+    optional string text = 5;
 }
 
 message GetNotifications {
@@ -2404,8 +2537,8 @@ message RefreshLlmToken {}
 // Remote FS
 
 message AddWorktree {
-    uint64 project_id = 2;
     string path = 1;
+    uint64 project_id = 2;
     bool visible = 3;
 }
 
@@ -2520,10 +2653,26 @@ message ActiveToolchainResponse {
     optional Toolchain toolchain = 1;
 }
 
+message CommitSummary {
+    string sha = 1;
+    string subject = 2;
+    int64 commit_timestamp = 3;
+}
+
 message Branch {
     bool is_head = 1;
     string name = 2;
     optional uint64 unix_timestamp = 3;
+    optional GitUpstream upstream = 4;
+    optional CommitSummary most_recent_commit = 5;
+}
+message GitUpstream {
+    string ref_name = 1;
+    optional UpstreamTracking tracking = 2;
+}
+message UpstreamTracking {
+    uint64 ahead = 1;
+    uint64 behind = 2;
 }
 
 message GitBranches {
@@ -2540,7 +2689,43 @@ message UpdateGitBranch {
     string branch_name = 2;
     ProjectPath repository = 3;
 }
+
 message GetPanicFiles {
+}
+
+message GitShow {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+}
+
+message GitCommitDetails {
+    string sha = 1;
+    string message = 2;
+    int64 commit_timestamp = 3;
+    string committer_email = 4;
+    string committer_name = 5;
+}
+
+message GitReset {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+    ResetMode mode = 5;
+    enum ResetMode {
+        SOFT = 0;
+        MIXED = 1;
+    }
+}
+
+message GitCheckoutFiles {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+    repeated string paths = 5;
 }
 
 message GetPanicFilesResponse {
@@ -2588,4 +2773,81 @@ message InstallExtension {
 message RegisterBufferWithLanguageServers{
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+}
+
+message Stage {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    repeated string paths = 4;
+}
+
+message Unstage {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    repeated string paths = 4;
+}
+
+message Commit {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    optional string name = 4;
+    optional string email = 5;
+    string message = 6;
+}
+
+message OpenCommitMessageBuffer {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message Push {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
+    optional PushOptions options = 6;
+
+    enum PushOptions {
+        SET_UPSTREAM = 0;
+        FORCE = 1;
+    }
+}
+
+message Fetch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message GetRemotes {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    optional string branch_name = 4;
+}
+
+message GetRemotesResponse {
+    repeated Remote remotes = 1;
+
+    message Remote {
+        string name = 1;
+    }
+}
+
+message Pull {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
+}
+
+message RemoteMessageResponse {
+    string stdout = 1;
+    string stderr = 2;
 }

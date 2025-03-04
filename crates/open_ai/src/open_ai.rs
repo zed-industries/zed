@@ -1,6 +1,6 @@
 mod supported_countries;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use futures::{
     io::BufReader,
     stream::{self, BoxStream},
@@ -72,10 +72,14 @@ pub enum Model {
     FourOmni,
     #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini")]
     FourOmniMini,
+    #[serde(rename = "o1", alias = "o1")]
+    O1,
     #[serde(rename = "o1-preview", alias = "o1-preview")]
     O1Preview,
     #[serde(rename = "o1-mini", alias = "o1-mini")]
     O1Mini,
+    #[serde(rename = "o3-mini", alias = "o3-mini")]
+    O3Mini,
 
     #[serde(rename = "custom")]
     Custom {
@@ -96,8 +100,10 @@ impl Model {
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
+            "o1" => Ok(Self::O1),
             "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
+            "o3-mini" => Ok(Self::O3Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -109,8 +115,10 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
+            Self::O3Mini => "o3-mini",
             Self::Custom { name, .. } => name,
         }
     }
@@ -122,8 +130,10 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
+            Self::O3Mini => "o3-mini",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -132,13 +142,15 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::ThreePointFiveTurbo => 16385,
-            Self::Four => 8192,
-            Self::FourTurbo => 128000,
-            Self::FourOmni => 128000,
-            Self::FourOmniMini => 128000,
-            Self::O1Preview => 128000,
-            Self::O1Mini => 128000,
+            Self::ThreePointFiveTurbo => 16_385,
+            Self::Four => 8_192,
+            Self::FourTurbo => 128_000,
+            Self::FourOmni => 128_000,
+            Self::FourOmniMini => 128_000,
+            Self::O1 => 200_000,
+            Self::O1Preview => 128_000,
+            Self::O1Mini => 128_000,
+            Self::O3Mini => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -475,7 +487,7 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    if request.model == "o1-preview" || request.model == "o1-mini" {
+    if request.model.starts_with("o1") {
         let response = complete(client, api_url, api_key, request).await;
         let response_stream_event = response.map(adapt_response_to_stream);
         return Ok(stream::once(future::ready(response_stream_event)).boxed());

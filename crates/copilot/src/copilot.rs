@@ -11,13 +11,14 @@ use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
-    ModelContext, Task, WeakModel,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    WeakEntity,
 };
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
+use language::language_settings::CopilotSettings;
 use language::{
-    language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
+    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
@@ -58,11 +59,11 @@ pub fn init(
     fs: Arc<dyn Fs>,
     http: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     copilot_chat::init(fs, http.clone(), cx);
 
-    let copilot = cx.new_model({
+    let copilot = cx.new({
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
@@ -209,8 +210,8 @@ struct RegisteredBuffer {
 impl RegisteredBuffer {
     fn report_changes(
         &mut self,
-        buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Copilot>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Copilot>,
     ) -> oneshot::Receiver<(i32, BufferSnapshot)> {
         let (done_tx, done_rx) = oneshot::channel();
 
@@ -234,8 +235,7 @@ impl RegisteredBuffer {
                 let new_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
-                    .background_executor()
-                    .spawn({
+                    .background_spawn({
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
@@ -270,7 +270,7 @@ impl RegisteredBuffer {
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidChangeTextDocument>(
-                                    lsp::DidChangeTextDocumentParams {
+                                    &lsp::DidChangeTextDocumentParams {
                                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                                             buffer.uri.clone(),
                                             buffer.snapshot_version,
@@ -304,7 +304,7 @@ pub struct Copilot {
     http: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     server: CopilotServer,
-    buffers: HashSet<WeakModel<Buffer>>,
+    buffers: HashSet<WeakEntity<Buffer>>,
     server_id: LanguageServerId,
     _subscription: gpui::Subscription,
 }
@@ -317,17 +317,17 @@ pub enum Event {
 
 impl EventEmitter<Event> for Copilot {}
 
-struct GlobalCopilot(Model<Copilot>);
+struct GlobalCopilot(Entity<Copilot>);
 
 impl Global for GlobalCopilot {}
 
 impl Copilot {
-    pub fn global(cx: &AppContext) -> Option<Model<Self>> {
+    pub fn global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalCopilot>()
             .map(|model| model.0.clone())
     }
 
-    pub fn set_global(copilot: Model<Self>, cx: &mut AppContext) {
+    pub fn set_global(copilot: Entity<Self>, cx: &mut App) {
         cx.set_global(GlobalCopilot(copilot));
     }
 
@@ -335,7 +335,7 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             server_id: new_server_id,
@@ -351,10 +351,7 @@ impl Copilot {
         this
     }
 
-    fn shutdown_language_server(
-        &mut self,
-        _cx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = ()> {
+    fn shutdown_language_server(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
             _ => None,
@@ -367,17 +364,17 @@ impl Copilot {
         }
     }
 
-    fn enable_or_disable_copilot(&mut self, cx: &mut ModelContext<Self>) {
+    fn enable_or_disable_copilot(&mut self, cx: &mut Context<Self>) {
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        if all_language_settings(None, cx).inline_completions.provider
-            == InlineCompletionProvider::Copilot
-        {
+        let language_settings = all_language_settings(None, cx);
+        if language_settings.edit_predictions.provider == EditPredictionProvider::Copilot {
             if matches!(self.server, CopilotServer::Disabled) {
+                let env = self.build_env(&language_settings.edit_predictions.copilot);
                 let start_task = cx
                     .spawn(move |this, cx| {
-                        Self::start_language_server(server_id, http, node_runtime, this, cx)
+                        Self::start_language_server(server_id, http, node_runtime, env, this, cx)
                     })
                     .shared();
                 self.server = CopilotServer::Starting { task: start_task };
@@ -389,8 +386,32 @@ impl Copilot {
         }
     }
 
+    fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
+        let proxy_url = copilot_settings.proxy.clone()?;
+        let no_verify = copilot_settings.proxy_no_verify;
+        let http_or_https_proxy = if proxy_url.starts_with("http:") {
+            "HTTP_PROXY"
+        } else if proxy_url.starts_with("https:") {
+            "HTTPS_PROXY"
+        } else {
+            log::error!(
+                "Unsupported protocol scheme for language server proxy (must be http or https)"
+            );
+            return None;
+        };
+
+        let mut env = HashMap::default();
+        env.insert(http_or_https_proxy.to_string(), proxy_url);
+
+        if let Some(true) = no_verify {
+            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+        };
+
+        Some(env)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
-    pub fn fake(cx: &mut gpui::TestAppContext) -> (Model<Self>, lsp::FakeLanguageServer) {
+    pub fn fake(cx: &mut gpui::TestAppContext) -> (Entity<Self>, lsp::FakeLanguageServer) {
         use lsp::FakeLanguageServer;
         use node_runtime::NodeRuntime;
 
@@ -407,7 +428,7 @@ impl Copilot {
         );
         let http = http_client::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = NodeRuntime::unavailable();
-        let this = cx.new_model(|cx| Self {
+        let this = cx.new(|cx| Self {
             server_id: LanguageServerId(0),
             http: http.clone(),
             node_runtime,
@@ -426,8 +447,9 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        this: WeakModel<Self>,
-        mut cx: AsyncAppContext,
+        env: Option<HashMap<String, String>>,
+        this: WeakEntity<Self>,
+        mut cx: AsyncApp,
     ) {
         let start_language_server = async {
             let server_path = get_copilot_lsp(http).await?;
@@ -436,8 +458,7 @@ impl Copilot {
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
-                // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
-                env: None,
+                env,
             };
 
             let root_path = if cfg!(target_os = "windows") {
@@ -454,13 +475,23 @@ impl Copilot {
                 binary,
                 root_path,
                 None,
+                Default::default(),
                 cx.clone(),
             )?;
 
             server
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
-            let server = cx.update(|cx| server.initialize(None, cx))?.await?;
+
+            let configuration = lsp::DidChangeConfigurationParams {
+                settings: Default::default(),
+            };
+            let server = cx
+                .update(|cx| {
+                    let params = server.default_initialize_params(cx);
+                    server.initialize(params, configuration.into(), cx)
+                })?
+                .await?;
 
             let status = server
                 .request::<request::CheckStatus>(request::CheckStatusParams {
@@ -506,7 +537,7 @@ impl Copilot {
         .ok();
     }
 
-    pub fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
@@ -582,8 +613,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_executor()
-                .spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
@@ -591,11 +621,11 @@ impl Copilot {
         }
     }
 
-    pub fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 server
                     .request::<request::SignOut>(request::SignOutParams {})
                     .await?;
@@ -606,7 +636,9 @@ impl Copilot {
         }
     }
 
-    pub fn reinstall(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+    pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let language_settings = all_language_settings(None, cx);
+        let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
@@ -614,7 +646,7 @@ impl Copilot {
                 let server_id = self.server_id;
                 move |this, cx| async move {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, http, node_runtime, this, cx).await
+                    Self::start_language_server(server_id, http, node_runtime, env, this, cx).await
                 }
             })
             .shared();
@@ -625,7 +657,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.background_executor().spawn(start_task)
+        cx.background_spawn(start_task)
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
@@ -636,7 +668,7 @@ impl Copilot {
         }
     }
 
-    pub fn register_buffer(&mut self, buffer: &Model<Buffer>, cx: &mut ModelContext<Self>) {
+    pub fn register_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
         let weak_buffer = buffer.downgrade();
         self.buffers.insert(weak_buffer.clone());
 
@@ -659,7 +691,7 @@ impl Copilot {
                     let snapshot = buffer.read(cx).snapshot();
                     server
                         .notify::<lsp::notification::DidOpenTextDocument>(
-                            lsp::DidOpenTextDocumentParams {
+                            &lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem {
                                     uri: uri.clone(),
                                     language_id: language_id.clone(),
@@ -692,9 +724,9 @@ impl Copilot {
 
     fn handle_buffer_event(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running() {
             if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
@@ -707,7 +739,7 @@ impl Copilot {
                         server
                             .lsp
                             .notify::<lsp::notification::DidSaveTextDocument>(
-                                lsp::DidSaveTextDocumentParams {
+                                &lsp::DidSaveTextDocumentParams {
                                     text_document: lsp::TextDocumentIdentifier::new(
                                         registered_buffer.uri.clone(),
                                     ),
@@ -727,14 +759,14 @@ impl Copilot {
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidCloseTextDocument>(
-                                    lsp::DidCloseTextDocumentParams {
+                                    &lsp::DidCloseTextDocumentParams {
                                         text_document: lsp::TextDocumentIdentifier::new(old_uri),
                                     },
                                 )?;
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidOpenTextDocument>(
-                                    lsp::DidOpenTextDocumentParams {
+                                    &lsp::DidOpenTextDocumentParams {
                                         text_document: lsp::TextDocumentItem::new(
                                             registered_buffer.uri.clone(),
                                             registered_buffer.language_id.clone(),
@@ -753,13 +785,13 @@ impl Copilot {
         Ok(())
     }
 
-    fn unregister_buffer(&mut self, buffer: &WeakModel<Buffer>) {
+    fn unregister_buffer(&mut self, buffer: &WeakEntity<Buffer>) {
         if let Ok(server) = self.server.as_running() {
             if let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
                 server
                     .lsp
                     .notify::<lsp::notification::DidCloseTextDocument>(
-                        lsp::DidCloseTextDocumentParams {
+                        &lsp::DidCloseTextDocumentParams {
                             text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                         },
                     )
@@ -770,9 +802,9 @@ impl Copilot {
 
     pub fn completions<T>(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Completion>>>
     where
         T: ToPointUtf16,
@@ -782,9 +814,9 @@ impl Copilot {
 
     pub fn completions_cycling<T>(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Completion>>>
     where
         T: ToPointUtf16,
@@ -795,7 +827,7 @@ impl Copilot {
     pub fn accept_completion(
         &mut self,
         completion: &Completion,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
@@ -807,7 +839,7 @@ impl Copilot {
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -816,7 +848,7 @@ impl Copilot {
     pub fn discard_completions(
         &mut self,
         completions: &[Completion],
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
@@ -831,7 +863,7 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -839,9 +871,9 @@ impl Copilot {
 
     fn request_completions<R, T>(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Completion>>>
     where
         R: 'static
@@ -878,7 +910,7 @@ impl Copilot {
             .map(|file| file.path().to_path_buf())
             .unwrap_or_default();
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
                 .request::<R>(request::GetCompletionsParams {
@@ -930,11 +962,7 @@ impl Copilot {
         }
     }
 
-    fn update_sign_in_status(
-        &mut self,
-        lsp_status: request::SignInStatus,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn update_sign_in_status(&mut self, lsp_status: request::SignInStatus, cx: &mut Context<Self>) {
         self.buffers.retain(|buffer| buffer.is_upgradable());
 
         if let Ok(server) = self.server.as_running() {
@@ -976,7 +1004,7 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::Url {
+fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
         lsp::Url::from_file_path(file.abs_path(cx)).unwrap()
     } else {
@@ -1061,12 +1089,13 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use util::path;
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.new_model(|cx| Buffer::local("Hello", cx));
+        let buffer_1 = cx.new(|cx| Buffer::local("Hello", cx));
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1084,7 +1113,7 @@ mod tests {
             }
         );
 
-        let buffer_2 = cx.new_model(|cx| Buffer::local("Goodbye", cx));
+        let buffer_2 = cx.new(|cx| Buffer::local("Goodbye", cx));
         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1123,7 +1152,7 @@ mod tests {
         buffer_1.update(cx, |buffer, cx| {
             buffer.file_updated(
                 Arc::new(File {
-                    abs_path: "/root/child/buffer-1".into(),
+                    abs_path: path!("/root/child/buffer-1").into(),
                     path: Path::new("child/buffer-1").into(),
                 }),
                 cx,
@@ -1136,7 +1165,7 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path("/root/child/buffer-1").unwrap();
+        let buffer_1_uri = lsp::Url::from_file_path(path!("/root/child/buffer-1")).unwrap();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
@@ -1239,11 +1268,11 @@ mod tests {
             &self.path
         }
 
-        fn full_path(&self, _: &AppContext) -> PathBuf {
+        fn full_path(&self, _: &App) -> PathBuf {
             unimplemented!()
         }
 
-        fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
+        fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
             unimplemented!()
         }
 
@@ -1251,11 +1280,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn to_proto(&self, _: &AppContext) -> rpc::proto::File {
+        fn to_proto(&self, _: &App) -> rpc::proto::File {
             unimplemented!()
         }
 
-        fn worktree_id(&self, _: &AppContext) -> settings::WorktreeId {
+        fn worktree_id(&self, _: &App) -> settings::WorktreeId {
             settings::WorktreeId::from_usize(0)
         }
 
@@ -1265,16 +1294,24 @@ mod tests {
     }
 
     impl language::LocalFile for File {
-        fn abs_path(&self, _: &AppContext) -> PathBuf {
+        fn abs_path(&self, _: &App) -> PathBuf {
             self.abs_path.clone()
         }
 
-        fn load(&self, _: &AppContext) -> Task<Result<String>> {
+        fn load(&self, _: &App) -> Task<Result<String>> {
             unimplemented!()
         }
 
-        fn load_bytes(&self, _cx: &AppContext) -> Task<Result<Vec<u8>>> {
+        fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
             unimplemented!()
         }
+    }
+}
+
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
     }
 }

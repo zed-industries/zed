@@ -1,4 +1,4 @@
-use crate::{AppContext, PlatformDispatcher};
+use crate::{App, PlatformDispatcher};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -35,6 +35,11 @@ pub struct BackgroundExecutor {
 
 /// A pointer to the executor that is currently running,
 /// for spawning tasks on the main thread.
+///
+/// This is intentionally `!Send` via the `not_send` marker field. This is because
+/// `ForegroundExecutor::spawn` does not require `Send` but checks at runtime that the future is
+/// only polled from the same thread it was spawned from. These checks would fail when spawning
+/// foreground tasks from from background threads.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     #[doc(hidden)]
@@ -84,7 +89,7 @@ where
     /// Run the task to completion in the background and log any
     /// errors that occur.
     #[track_caller]
-    pub fn detach_and_log_err(self, cx: &AppContext) {
+    pub fn detach_and_log_err(self, cx: &App) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err(*location))
@@ -582,7 +587,7 @@ impl<'a> Scope<'a> {
     }
 }
 
-impl<'a> Drop for Scope<'a> {
+impl Drop for Scope<'_> {
     fn drop(&mut self) {
         self.tx.take().unwrap();
 

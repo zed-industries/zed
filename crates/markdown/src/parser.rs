@@ -2,14 +2,16 @@ use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
-pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSet<SharedString>) {
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
     options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+    options.remove(pulldown_cmark::Options::ENABLE_MATH);
 
     let mut events = Vec::new();
+    let mut languages = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
     for (pulldown_event, mut range) in Parser::new_ext(text, options).into_offset_iter() {
@@ -26,6 +28,11 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
                 match tag {
                     pulldown_cmark::Tag::Link { .. } => within_link = true,
                     pulldown_cmark::Tag::MetadataBlock { .. } => within_metadata = true,
+                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
+                        ref language,
+                    )) => {
+                        languages.insert(SharedString::from(language.to_string()));
+                    }
                     _ => {}
                 }
                 events.push((range, MarkdownEvent::Start(tag.into())))
@@ -36,9 +43,10 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
                 }
                 events.push((range, MarkdownEvent::End(tag)));
             }
-            pulldown_cmark::Event::Text(_) => {
+            pulldown_cmark::Event::Text(parsed) => {
                 // Automatically detect links in text if we're not already within a markdown
                 // link.
+                let mut parsed = parsed.as_ref();
                 if !within_link {
                     let mut finder = LinkFinder::new();
                     finder.kinds(&[linkify::LinkKind::Url]);
@@ -48,7 +56,12 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
                             text_range.start + link.start()..text_range.start + link.end();
 
                         if link_range.start > range.start {
-                            events.push((range.start..link_range.start, MarkdownEvent::Text));
+                            let (text, tail) = parsed.split_at(link_range.start - range.start);
+                            events.push((
+                                range.start..link_range.start,
+                                MarkdownEvent::Text(SharedString::new(text)),
+                            ));
+                            parsed = tail;
                         }
 
                         events.push((
@@ -60,15 +73,20 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
                                 id: SharedString::default(),
                             }),
                         ));
-                        events.push((link_range.clone(), MarkdownEvent::Text));
+
+                        let (link_text, tail) = parsed.split_at(link_range.end - link_range.start);
+                        events.push((
+                            link_range.clone(),
+                            MarkdownEvent::Text(SharedString::new(link_text)),
+                        ));
                         events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
 
                         range.start = link_range.end;
+                        parsed = tail;
                     }
                 }
-
                 if range.start < range.end {
-                    events.push((range, MarkdownEvent::Text));
+                    events.push((range, MarkdownEvent::Text(SharedString::new(parsed))));
                 }
             }
             pulldown_cmark::Event::Code(_) => {
@@ -90,10 +108,10 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
             pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
-    events
+    (events, languages)
 }
 
-pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+pub fn parse_links_only(mut text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     let mut events = Vec::new();
     let mut finder = LinkFinder::new();
     finder.kinds(&[linkify::LinkKind::Url]);
@@ -105,9 +123,15 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         let link_range = link.start()..link.end();
 
         if link_range.start > text_range.start {
-            events.push((text_range.start..link_range.start, MarkdownEvent::Text));
+            let (head, tail) = text.split_at(link_range.start - text_range.start);
+            events.push((
+                text_range.start..link_range.start,
+                MarkdownEvent::Text(SharedString::new(head)),
+            ));
+            text = tail;
         }
 
+        let (link_text, tail) = text.split_at(link_range.end - link_range.start);
         events.push((
             link_range.clone(),
             MarkdownEvent::Start(MarkdownTag::Link {
@@ -117,14 +141,18 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
                 id: SharedString::default(),
             }),
         ));
-        events.push((link_range.clone(), MarkdownEvent::Text));
+        events.push((
+            link_range.clone(),
+            MarkdownEvent::Text(SharedString::new(link_text)),
+        ));
         events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
 
         text_range.start = link_range.end;
+        text = tail;
     }
 
     if text_range.end > text_range.start {
-        events.push((text_range, MarkdownEvent::Text));
+        events.push((text_range, MarkdownEvent::Text(SharedString::new(text))));
     }
 
     events
@@ -141,7 +169,7 @@ pub enum MarkdownEvent {
     /// End of a tagged element.
     End(MarkdownTagEnd),
     /// A text node.
-    Text,
+    Text(SharedString),
     /// An inline code node.
     Code,
     /// An HTML node.

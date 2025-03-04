@@ -158,6 +158,33 @@ impl PlatformInput {
                     })
                 })
             }
+            // Some mice (like Logitech MX Master) send navigation buttons as swipe events
+            NSEventType::NSEventTypeSwipe => {
+                let navigation_direction = match native_event.phase() {
+                    NSEventPhase::NSEventPhaseEnded => match native_event.deltaX() {
+                        x if x > 0.0 => Some(NavigationDirection::Back),
+                        x if x < 0.0 => Some(NavigationDirection::Forward),
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+
+                match navigation_direction {
+                    Some(direction) => window_height.map(|window_height| {
+                        Self::MouseDown(MouseDownEvent {
+                            button: MouseButton::Navigate(direction),
+                            position: point(
+                                px(native_event.locationInWindow().x as f32),
+                                window_height - px(native_event.locationInWindow().y as f32),
+                            ),
+                            modifiers: read_modifiers(native_event),
+                            click_count: 1,
+                            first_mouse: false,
+                        })
+                    }),
+                    _ => None,
+                }
+            }
             NSEventType::NSScrollWheel => window_height.map(|window_height| {
                 let phase = match native_event.phase() {
                     NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
@@ -322,7 +349,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             let mut chars_with_shift = chars_for_modified_key(native_event.keyCode(), SHIFT_MOD);
             let always_use_cmd_layout = always_use_command_layout();
 
-            // Handle Dvorak+QWERTY / Russian / Armeniam
+            // Handle Dvorak+QWERTY / Russian / Armenian
             if command || always_use_cmd_layout {
                 let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), CMD_MOD);
                 let chars_with_both =

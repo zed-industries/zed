@@ -1,4 +1,4 @@
-use crate::db::billing_subscription::StripeSubscriptionStatus;
+use crate::db::billing_subscription::{StripeCancellationReason, StripeSubscriptionStatus};
 
 use super::*;
 
@@ -7,6 +7,7 @@ pub struct CreateBillingSubscriptionParams {
     pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
+    pub stripe_cancellation_reason: Option<StripeCancellationReason>,
 }
 
 #[derive(Debug, Default)]
@@ -15,6 +16,7 @@ pub struct UpdateBillingSubscriptionParams {
     pub stripe_subscription_id: ActiveValue<String>,
     pub stripe_subscription_status: ActiveValue<StripeSubscriptionStatus>,
     pub stripe_cancel_at: ActiveValue<Option<DateTime>>,
+    pub stripe_cancellation_reason: ActiveValue<Option<StripeCancellationReason>>,
 }
 
 impl Database {
@@ -28,6 +30,7 @@ impl Database {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
                 stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
+                stripe_cancellation_reason: ActiveValue::set(params.stripe_cancellation_reason),
                 ..Default::default()
             })
             .exec_without_returning(&*tx)
@@ -51,6 +54,7 @@ impl Database {
                 stripe_subscription_id: params.stripe_subscription_id.clone(),
                 stripe_subscription_status: params.stripe_subscription_status.clone(),
                 stripe_cancel_at: params.stripe_cancel_at.clone(),
+                stripe_cancellation_reason: params.stripe_cancellation_reason.clone(),
                 ..Default::default()
             })
             .exec(&*tx)

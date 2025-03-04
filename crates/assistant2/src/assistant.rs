@@ -1,70 +1,74 @@
 mod active_thread;
+mod assistant_configuration;
 mod assistant_model_selector;
 mod assistant_panel;
-mod assistant_settings;
 mod buffer_codegen;
 mod context;
 mod context_picker;
 mod context_store;
 mod context_strip;
+mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
-mod prompts;
-mod streaming_diff;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod tool_use;
 mod ui;
 
 use std::sync::Arc;
 
+use assistant_settings::AssistantSettings;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
-use gpui::{actions, AppContext};
-use prompts::PromptLoadingParams;
+use gpui::{actions, App};
+use prompt_store::PromptBuilder;
 use settings::Settings as _;
-use util::ResultExt;
 
-pub use crate::assistant_panel::AssistantPanel;
-use crate::assistant_settings::AssistantSettings;
+pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 
 actions!(
     assistant2,
     [
-        ToggleFocus,
         NewThread,
+        NewPromptEditor,
         ToggleContextPicker,
-        ToggleModelSelector,
+        RemoveAllContext,
         OpenHistory,
+        OpenConfiguration,
+        RemoveSelectedThread,
         Chat,
+        ChatMode,
         CycleNextInlineAssist,
-        CyclePreviousInlineAssist
+        CyclePreviousInlineAssist,
+        FocusUp,
+        FocusDown,
+        FocusLeft,
+        FocusRight,
+        RemoveFocusedContext,
+        AcceptSuggestedContext
     ]
 );
 
 const NAMESPACE: &str = "assistant2";
 
 /// Initializes the `assistant2` crate.
-pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mut AppContext) {
+pub fn init(
+    fs: Arc<dyn Fs>,
+    client: Arc<Client>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut App,
+) {
     AssistantSettings::register(cx);
+    thread_store::init(cx);
     assistant_panel::init(cx);
 
-    let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
-        fs: fs.clone(),
-        repo_path: stdout_is_a_pty
-            .then(|| std::env::current_dir().log_err())
-            .flatten(),
-        cx,
-    }))
-    .log_err()
-    .map(Arc::new)
-    .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -81,7 +85,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
     feature_gate_assistant2_actions(cx);
 }
 
-fn feature_gate_assistant2_actions(cx: &mut AppContext) {
+fn feature_gate_assistant2_actions(cx: &mut App) {
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(NAMESPACE);
     });

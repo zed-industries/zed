@@ -1,10 +1,10 @@
 [package]
 name = "gpui"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
-publish = false
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]
@@ -13,7 +13,7 @@ workspace = true
 [features]
 default = ["http_client", "font-kit", "wayland", "x11"]
 test-support = [
-    "backtrace",
+    "leak-detection",
     "collections/test-support",
     "rand",
     "util/test-support",
@@ -21,8 +21,16 @@ test-support = [
     "wayland",
     "x11",
 ]
+leak-detection = ["backtrace"]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck", "objc2", "objc2-metal"]
+macos-blade = [
+    "blade-graphics",
+    "blade-macros",
+    "blade-util",
+    "bytemuck",
+    "objc2",
+    "objc2-metal",
+]
 wayland = [
     "blade-graphics",
     "blade-macros",
@@ -79,8 +87,8 @@ futures.workspace = true
 gpui_macros.workspace = true
 http_client = { optional = true, workspace = true }
 image = "0.25.1"
+inventory.workspace = true
 itertools.workspace = true
-linkme = "0.3"
 log.workspace = true
 num_cpus = "1.13"
 parking = "2.0.0"
@@ -108,22 +116,7 @@ thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
-
-[dev-dependencies]
-backtrace = "0.3"
-collections = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
-rand.workspace = true
-util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
-
-[build-dependencies]
-embed-resource = "3.0"
-
-[target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.70.0"
-cbindgen = { version = "0.27.0", default-features = false }
+lyon = "1.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -148,7 +141,10 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = "0.3.0"
+oo7 = { version = "0.4.0", default-features = false, features = [
+    "async-std",
+    "native_crypto",
+] }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
@@ -213,6 +209,30 @@ rand.workspace = true
 windows.workspace = true
 windows-core = "0.58"
 
+[dev-dependencies]
+backtrace = "0.3"
+collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+http_client = { workspace = true, features = ["test-support"] }
+lyon = { version = "1.0", features = ["extra"] }
+rand.workspace = true
+unicode-segmentation.workspace = true
+reqwest_client = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3.0"
+naga.workspace = true
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+bindgen = "0.70.0"
+cbindgen = { version = "0.28.0", default-features = false }
+naga.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
+naga.workspace = true
+
+
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
@@ -222,16 +242,20 @@ name = "image"
 path = "examples/image/image.rs"
 
 [[example]]
-name = "set_menus"
-path = "examples/set_menus.rs"
-
-[[example]]
-name = "window_shadow"
-path = "examples/window_shadow.rs"
-
-[[example]]
 name = "input"
 path = "examples/input.rs"
+
+[[example]]
+name = "opacity"
+path = "examples/opacity.rs"
+
+[[example]]
+name = "pattern"
+path = "examples/pattern.rs"
+
+[[example]]
+name = "set_menus"
+path = "examples/set_menus.rs"
 
 [[example]]
 name = "shadow"
@@ -246,9 +270,13 @@ name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
 [[example]]
-name = "opacity"
-path = "examples/opacity.rs"
-
-[[example]]
 name = "uniform_list"
 path = "examples/uniform_list.rs"
+
+[[example]]
+name = "window_shadow"
+path = "examples/window_shadow.rs"
+
+[[example]]
+name = "on_window_close_quit"
+path = "examples/on_window_close_quit.rs"

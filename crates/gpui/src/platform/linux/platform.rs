@@ -1,6 +1,5 @@
 use std::{
     env,
-    panic::AssertUnwindSafe,
     path::{Path, PathBuf},
     process::Command,
     rc::Rc,
@@ -18,7 +17,7 @@ use std::{
 use anyhow::{anyhow, Context as _};
 use async_task::Runnable;
 use calloop::{channel::Channel, LoopSignal};
-use futures::{channel::oneshot, future::FutureExt};
+use futures::channel::oneshot;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
@@ -46,6 +45,7 @@ const FILE_PICKER_PORTAL_MISSING: &str =
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
+    fn keyboard_layout(&self) -> String;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
@@ -76,6 +76,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -133,11 +134,11 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn keyboard_layout(&self) -> String {
-        "unknown".into()
+        self.keyboard_layout()
     }
 
-    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
-        // todo(linux)
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -180,16 +181,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         log::info!("Restarting process, using app path: {:?}", app_path);
 
         // Script to wait for the current process to exit and then restart the app.
-        // We also wait for possibly open TCP sockets by the process to be closed,
-        // since on Linux it's not guaranteed that a process' resources have been
-        // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
             while kill -0 {pid} 2>/dev/null; do
-                sleep 0.1
-            done
-
-            while lsof -nP -iTCP -a -p {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
@@ -371,6 +365,11 @@ impl<P: LinuxClient + 'static> Platform for P {
         done_rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        // org.freedesktop.portal.FileChooser only supports "pick files" and "pick directories".
+        false
+    }
+
     fn reveal_path(&self, path: &Path) {
         self.reveal_path(path.to_owned());
     }
@@ -483,12 +482,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let username = attributes
                         .get("username")
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
-                    // oo7 panics if the retrieved secret can't be decrypted due to
-                    // unexpected padding.
-                    let secret = AssertUnwindSafe(item.secret())
-                        .catch_unwind()
-                        .await
-                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
+                    let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,
                     // a current limitation GPUI's credentials api
@@ -697,6 +691,12 @@ impl crate::Keystroke {
             Keysym::KP_Next => "pagedown".to_owned(),
             Keysym::XF86_Back => "back".to_owned(),
             Keysym::XF86_Forward => "forward".to_owned(),
+            Keysym::XF86_Cut => "cut".to_owned(),
+            Keysym::XF86_Copy => "copy".to_owned(),
+            Keysym::XF86_Paste => "paste".to_owned(),
+            Keysym::XF86_New => "new".to_owned(),
+            Keysym::XF86_Open => "open".to_owned(),
+            Keysym::XF86_Save => "save".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -766,7 +766,7 @@ impl crate::Keystroke {
 
     /**
      * Returns which symbol the dead key represents
-     * https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux
+     * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
      */
     pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
         match keysym {

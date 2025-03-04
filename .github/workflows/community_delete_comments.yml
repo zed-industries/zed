@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   delete_comment:
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Check for specific strings in comment

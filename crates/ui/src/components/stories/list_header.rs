@@ -7,7 +7,7 @@ use crate::{IconName, ListHeader};
 pub struct ListHeaderStory;
 
 impl Render for ListHeaderStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<ListHeader>())
             .child(Story::label("Default"))

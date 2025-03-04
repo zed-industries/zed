@@ -1,4 +1,4 @@
-use gpui::{px, rems, Pixels, Rems, WindowContext};
+use gpui::{px, rems, App, Pixels, Rems};
 use settings::Settings;
 use theme::{ThemeSettings, UiDensity};
 use ui_macros::derive_dynamic_spacing;
@@ -50,6 +50,6 @@ derive_dynamic_spacing![
 /// Do not use this to calculate spacing values.
 ///
 /// Always use [DynamicSpacing] for spacing values.
-pub fn ui_density(cx: &WindowContext) -> UiDensity {
+pub fn ui_density(cx: &mut App) -> UiDensity {
     ThemeSettings::get_global(cx).ui_density
 }

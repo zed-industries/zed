@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
@@ -69,6 +69,8 @@ pub struct ExtensionManifest {
 
     #[serde(default)]
     pub themes: Vec<PathBuf>,
+    #[serde(default)]
+    pub icon_themes: Vec<PathBuf>,
     #[serde(default)]
     pub languages: Vec<PathBuf>,
     #[serde(default)]
@@ -175,7 +177,7 @@ impl ExtensionManifest {
                 .await
                 .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
             toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+                .with_context(|| format!("invalid extension.toml for extension {extension_name}"))
         }
     }
 }
@@ -199,6 +201,7 @@ fn manifest_from_old_manifest(
             themes.dedup();
             themes
         },
+        icon_themes: Vec::new(),
         languages: {
             let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
             languages.sort();

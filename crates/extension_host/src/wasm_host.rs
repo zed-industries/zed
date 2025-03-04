@@ -17,7 +17,7 @@ use futures::{
     future::BoxFuture,
     Future, FutureExt, StreamExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
@@ -305,8 +305,7 @@ pub struct WasmState {
     pub host: Arc<WasmHost>,
 }
 
-type MainThreadCall =
-    Box<dyn Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, ()>>;
+type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
 
 type ExtensionCall = Box<
     dyn Send + for<'a> FnOnce(&'a mut Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
@@ -332,7 +331,7 @@ impl WasmHost {
         node_runtime: NodeRuntime,
         proxy: Arc<ExtensionHostProxy>,
         work_dir: PathBuf,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Arc<Self> {
         let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
         let task = cx.spawn(|mut cx| async move {
@@ -491,7 +490,7 @@ impl WasmExtension {
         extension_dir: PathBuf,
         manifest: &Arc<ExtensionManifest>,
         wasm_host: Arc<WasmHost>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Result<Self> {
         let path = extension_dir.join("extension.wasm");
 
@@ -538,7 +537,7 @@ impl WasmState {
     fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T>
     where
         T: 'static + Send,
-        Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, T>,
+        Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, T>,
     {
         let (return_tx, return_rx) = oneshot::channel();
         self.host

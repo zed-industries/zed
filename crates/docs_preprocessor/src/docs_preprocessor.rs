@@ -32,8 +32,9 @@ impl PreprocessorContext {
             _ => return None,
         };
 
-        keymap.blocks().iter().find_map(|block| {
-            block.bindings().iter().find_map(|(keystroke, a)| {
+        // Find the binding in reverse order, as the last binding takes precedence.
+        keymap.sections().rev().find_map(|section| {
+            section.bindings().rev().find_map(|(keystroke, a)| {
                 if a.to_string() == action {
                     Some(keystroke.to_string())
                 } else {

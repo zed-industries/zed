@@ -1,7 +1,7 @@
-use crate::{lsp_command::LspCommand, lsp_store::LspStore};
-use anyhow::{Context, Result};
+use crate::{lsp_command::LspCommand, lsp_store::LspStore, make_text_document_identifier};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use gpui::{AppContext, AsyncAppContext, Model};
+use gpui::{App, AsyncApp, Entity};
 use language::{point_to_lsp, proto::deserialize_anchor, Buffer};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
@@ -47,28 +47,30 @@ impl LspCommand for ExpandMacro {
     type LspRequest = LspExpandMacro;
     type ProtoRequest = proto::LspExtExpandMacro;
 
+    fn display_name(&self) -> &str {
+        "Expand macro"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> ExpandMacroParams {
-        ExpandMacroParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
-            },
+        _: &App,
+    ) -> Result<ExpandMacroParams> {
+        Ok(ExpandMacroParams {
+            text_document: make_text_document_identifier(path)?,
             position: point_to_lsp(self.position),
-        }
+        })
     }
 
     async fn response_from_lsp(
         self,
         message: Option<ExpandedMacro>,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<ExpandedMacro> {
         Ok(message
             .map(|message| ExpandedMacro {
@@ -90,9 +92,9 @@ impl LspCommand for ExpandMacro {
 
     async fn from_proto(
         message: Self::ProtoRequest,
-        _: Model<LspStore>,
-        buffer: Model<Buffer>,
-        mut cx: AsyncAppContext,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
@@ -108,7 +110,7 @@ impl LspCommand for ExpandMacro {
         _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> proto::LspExtExpandMacroResponse {
         proto::LspExtExpandMacroResponse {
             name: response.name,
@@ -119,9 +121,9 @@ impl LspCommand for ExpandMacro {
     async fn response_from_proto(
         self,
         message: proto::LspExtExpandMacroResponse,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> anyhow::Result<ExpandedMacro> {
         Ok(ExpandedMacro {
             name: message.name,
@@ -173,28 +175,32 @@ impl LspCommand for OpenDocs {
     type LspRequest = LspOpenDocs;
     type ProtoRequest = proto::LspExtOpenDocs;
 
+    fn display_name(&self) -> &str {
+        "Open docs"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> OpenDocsParams {
-        OpenDocsParams {
+        _: &App,
+    ) -> Result<OpenDocsParams> {
+        Ok(OpenDocsParams {
             text_document: lsp::TextDocumentIdentifier {
                 uri: lsp::Url::from_file_path(path).unwrap(),
             },
             position: point_to_lsp(self.position),
-        }
+        })
     }
 
     async fn response_from_lsp(
         self,
         message: Option<DocsUrls>,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<DocsUrls> {
         Ok(message
             .map(|message| DocsUrls {
@@ -216,9 +222,9 @@ impl LspCommand for OpenDocs {
 
     async fn from_proto(
         message: Self::ProtoRequest,
-        _: Model<LspStore>,
-        buffer: Model<Buffer>,
-        mut cx: AsyncAppContext,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
@@ -234,7 +240,7 @@ impl LspCommand for OpenDocs {
         _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> proto::LspExtOpenDocsResponse {
         proto::LspExtOpenDocsResponse {
             web: response.web,
@@ -245,9 +251,9 @@ impl LspCommand for OpenDocs {
     async fn response_from_proto(
         self,
         message: proto::LspExtOpenDocsResponse,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> anyhow::Result<DocsUrls> {
         Ok(DocsUrls {
             web: message.web,
@@ -286,25 +292,29 @@ impl LspCommand for SwitchSourceHeader {
     type LspRequest = LspSwitchSourceHeader;
     type ProtoRequest = proto::LspExtSwitchSourceHeader;
 
+    fn display_name(&self) -> &str {
+        "Switch source header"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> SwitchSourceHeaderParams {
-        SwitchSourceHeaderParams(lsp::TextDocumentIdentifier {
-            uri: lsp::Url::from_file_path(path).unwrap(),
-        })
+        _: &App,
+    ) -> Result<SwitchSourceHeaderParams> {
+        Ok(SwitchSourceHeaderParams(make_text_document_identifier(
+            path,
+        )?))
     }
 
     async fn response_from_lsp(
         self,
         message: Option<SwitchSourceHeaderResult>,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<SwitchSourceHeaderResult> {
         Ok(message
             .map(|message| SwitchSourceHeaderResult(message.0))
@@ -320,9 +330,9 @@ impl LspCommand for SwitchSourceHeader {
 
     async fn from_proto(
         _: Self::ProtoRequest,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> anyhow::Result<Self> {
         Ok(Self {})
     }
@@ -332,7 +342,7 @@ impl LspCommand for SwitchSourceHeader {
         _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> proto::LspExtSwitchSourceHeaderResponse {
         proto::LspExtSwitchSourceHeaderResponse {
             target_file: response.0,
@@ -342,9 +352,9 @@ impl LspCommand for SwitchSourceHeader {
     async fn response_from_proto(
         self,
         message: proto::LspExtSwitchSourceHeaderResponse,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> anyhow::Result<SwitchSourceHeaderResult> {
         Ok(SwitchSourceHeaderResult(message.target_file))
     }

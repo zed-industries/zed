@@ -13,6 +13,7 @@ test_both_dbs!(
 async fn test_contributors(db: &Arc<Database>) {
     db.create_user(
         "user1@example.com",
+        None,
         false,
         NewUserParams {
             github_login: "user1".to_string(),
@@ -25,7 +26,7 @@ async fn test_contributors(db: &Arc<Database>) {
     assert_eq!(db.get_contributors().await.unwrap(), Vec::<String>::new());
 
     let user1_created_at = Utc::now();
-    db.add_contributor("user1", 1, None, user1_created_at, None)
+    db.add_contributor("user1", 1, None, None, user1_created_at, None)
         .await
         .unwrap();
     assert_eq!(
@@ -34,7 +35,7 @@ async fn test_contributors(db: &Arc<Database>) {
     );
 
     let user2_created_at = Utc::now();
-    db.add_contributor("user2", 2, None, user2_created_at, None)
+    db.add_contributor("user2", 2, None, None, user2_created_at, None)
         .await
         .unwrap();
     assert_eq!(

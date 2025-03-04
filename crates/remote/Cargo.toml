@@ -1,9 +1,9 @@
 [package]
 name = "remote"
 description = "Client-side subsystem for remote editing"
-edition = "2021"
+edition.workspace = true
 version = "0.1.0"
-publish = false
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -30,6 +30,7 @@ paths.workspace = true
 parking_lot.workspace = true
 prost.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
+schemars.workspace =  true
 serde.workspace = true
 serde_json.workspace = true
 shlex.workspace = true

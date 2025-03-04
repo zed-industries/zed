@@ -6,7 +6,7 @@ use clock::RealSystemClock;
 use collections::BTreeMap;
 use feature_flags::FeatureFlagAppExt as _;
 use git::GitHostingProviderRegistry;
-use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model};
+use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Entity};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -99,7 +99,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     env_logger::init();
 
-    gpui::App::headless().run(move |cx| {
+    gpui::Application::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
         let client = Arc::new(ReqwestClient::user_agent("Zed LLM evals").unwrap());
         cx.set_http_client(client.clone());
@@ -252,7 +252,7 @@ struct Counts {
 async fn run_evaluation(
     only_repo: Option<String>,
     executor: &BackgroundExecutor,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     let mut http_client = None;
     cx.update(|cx| {
@@ -290,9 +290,7 @@ async fn run_evaluation(
             )
         })
         .unwrap();
-    let user_store = cx
-        .new_model(|cx| UserStore::new(client.clone(), cx))
-        .unwrap();
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx)).unwrap();
     let node_runtime = NodeRuntime::unavailable();
 
     let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
@@ -404,14 +402,14 @@ async fn run_evaluation(
 #[allow(clippy::too_many_arguments)]
 async fn run_eval_project(
     evaluation_project: EvaluationProject,
-    user_store: &Model<UserStore>,
+    user_store: &Entity<UserStore>,
     repo_db_path: PathBuf,
     repo_dir: &Path,
     counts: &mut Counts,
-    project: Model<Project>,
+    project: Entity<Project>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     fs: Arc<dyn Fs>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<(), anyhow::Error> {
     let mut semantic_index = SemanticDb::new(repo_db_path, embedding_provider, cx).await?;
 
@@ -547,8 +545,8 @@ async fn run_eval_project(
 }
 
 async fn wait_for_indexing_complete(
-    project_index: &Model<ProjectIndex>,
-    cx: &mut AsyncAppContext,
+    project_index: &Entity<ProjectIndex>,
+    cx: &mut AsyncApp,
     timeout: Option<Duration>,
 ) {
     let (tx, rx) = bounded(1);

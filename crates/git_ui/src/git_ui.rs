@@ -1,53 +1,48 @@
 use ::settings::Settings;
-use git::repository::GitFileStatus;
-use gpui::{actions, AppContext, Hsla};
-use settings::GitPanelSettings;
-use ui::{Color, Icon, IconName, IntoElement};
+use git::status::FileStatus;
+use git_panel_settings::GitPanelSettings;
+use gpui::App;
+use project_diff::ProjectDiff;
+use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
+pub mod branch_picker;
+mod commit_modal;
 pub mod git_panel;
-mod settings;
+mod git_panel_settings;
+pub mod picker_prompt;
+pub mod project_diff;
+mod remote_output_toast;
+pub mod repository_selector;
 
-actions!(
-    git_ui,
-    [
-        StageAll,
-        UnstageAll,
-        DiscardAll,
-        CommitStagedChanges,
-        CommitAllChanges
-    ]
-);
-
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
+    branch_picker::init(cx);
+    cx.observe_new(ProjectDiff::register).detach();
+    commit_modal::init(cx);
 }
 
-const ADDED_COLOR: Hsla = Hsla {
-    h: 142. / 360.,
-    s: 0.68,
-    l: 0.45,
-    a: 1.0,
-};
-const MODIFIED_COLOR: Hsla = Hsla {
-    h: 48. / 360.,
-    s: 0.76,
-    l: 0.47,
-    a: 1.0,
-};
-const REMOVED_COLOR: Hsla = Hsla {
-    h: 355. / 360.,
-    s: 0.65,
-    l: 0.65,
-    a: 1.0,
-};
-
 // TODO: Add updated status colors to theme
-pub fn git_status_icon(status: GitFileStatus) -> impl IntoElement {
-    match status {
-        GitFileStatus::Added => Icon::new(IconName::SquarePlus).color(Color::Custom(ADDED_COLOR)),
-        GitFileStatus::Modified => {
-            Icon::new(IconName::SquareDot).color(Color::Custom(MODIFIED_COLOR))
-        }
-        GitFileStatus::Conflict => Icon::new(IconName::Warning).color(Color::Custom(REMOVED_COLOR)),
-    }
+pub fn git_status_icon(status: FileStatus, cx: &App) -> impl IntoElement {
+    let (icon_name, color) = if status.is_conflicted() {
+        (
+            IconName::Warning,
+            cx.theme().colors().version_control_conflict,
+        )
+    } else if status.is_deleted() {
+        (
+            IconName::SquareMinus,
+            cx.theme().colors().version_control_deleted,
+        )
+    } else if status.is_modified() {
+        (
+            IconName::SquareDot,
+            cx.theme().colors().version_control_modified,
+        )
+    } else {
+        (
+            IconName::SquarePlus,
+            cx.theme().colors().version_control_added,
+        )
+    };
+    Icon::new(icon_name).color(Color::Custom(color))
 }

@@ -267,6 +267,9 @@ pub struct Panic {
     pub backtrace: Vec<String>,
     /// Zed version number
     pub app_version: String,
+    /// The Git commit SHA that Zed was built at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_commit_sha: Option<String>,
     /// Zed release channel (stable, preview, dev)
     pub release_channel: String,
     pub target: Option<String>,

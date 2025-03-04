@@ -37,7 +37,7 @@ use x11rb::{
 };
 use xim::{x11rb::X11rbClient, AttributeName, Client, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
     button_or_scroll_from_event_detail, get_valuator_axis_index, modifiers_from_state,
@@ -186,6 +186,8 @@ pub struct X11ClientState {
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
+    // TODO: Can the other updates to `modifiers` be removed so that this is unnecessary?
+    pub last_modifiers_changed_event: Modifiers,
 
     pub(crate) compose_state: Option<xkbc::compose::State>,
     pub(crate) pre_edit_text: Option<String>,
@@ -434,6 +436,7 @@ impl X11Client {
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
             modifiers: Modifiers::default(),
+            last_modifiers_changed_event: Modifiers::default(),
             event_loop: Some(event_loop),
             loop_handle: handle,
             common,
@@ -840,6 +843,8 @@ impl X11Client {
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
+                let old_layout = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+                let new_layout = u32::from(event.group);
                 state.xkb.update_mask(
                     event.base_mods.into(),
                     event.latched_mods.into(),
@@ -853,12 +858,24 @@ impl X11Client {
                     latched_layout: event.latched_group as u32,
                     locked_layout: event.locked_group.into(),
                 };
+
+                if new_layout != old_layout {
+                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+                    {
+                        drop(state);
+                        callback();
+                        state = self.0.borrow_mut();
+                        state.common.callbacks.keyboard_layout_change = Some(callback);
+                    }
+                }
+
                 let modifiers = Modifiers::from_xkb(&state.xkb);
-                if state.modifiers == modifiers {
+                if state.last_modifiers_changed_event == modifiers {
                     drop(state);
                 } else {
                     let focused_window_id = state.keyboard_focused_window?;
                     state.modifiers = modifiers;
+                    state.last_modifiers_changed_event = modifiers;
                     drop(state);
 
                     let focused_window = self.get_window(focused_window_id)?;
@@ -1265,6 +1282,16 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
+    fn keyboard_layout(&self) -> String {
+        let state = self.0.borrow();
+        let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+        state
+            .xkb
+            .get_keymap()
+            .layout_get_name(layout_idx)
+            .to_string()
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         let setup = state.xcb_connection.setup();
@@ -1580,7 +1607,7 @@ impl LinuxClient for X11Client {
     }
 }
 
-// Adatpted from:
+// Adapted from:
 // https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
 pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {

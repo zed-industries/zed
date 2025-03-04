@@ -115,7 +115,7 @@ If you are using Mesa, and want more control over which GPU is selected you can 
 
 If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141).
 
-If you have a discrete GPU and you are using [PRIME](https://wiki.archlinux.org/title/PRIME) you may be able to configure Zed to work by setting `/etc/prime-discrete` to 'on'.
+If you have a discrete GPU and you are using [PRIME](https://wiki.archlinux.org/title/PRIME) (e.g. Pop_OS 24.04, ArchLinux, etc) you may be able to configure Zed to work by switching `/etc/prime-discrete` from 'off' to 'on' (or the reverse).
 
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 
@@ -170,13 +170,3 @@ rm ~/.local/zed.app/lib/libcrypto.so.1.1
 ```
 
 This will force zed to fallback to the system `libssl` and `libcrypto` libraries.
-
-### Editing files requiring root access
-
-When you try to edit files that require root access, Zed requires `pkexec` (part of polkit) to handle authentication prompts.
-
-Polkit comes pre-installed with most desktop environments like GNOME and KDE. If you're using a minimal system and polkit is not installed, you can install it with:
-
-- Ubuntu/Debian: `sudo apt install policykit-1`
-- Fedora: `sudo dnf install polkit`
-- Arch Linux: `sudo pacman -S polkit`

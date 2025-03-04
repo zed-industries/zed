@@ -10,7 +10,7 @@ use ::lsp::LanguageServerName;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use fs::normalize_path;
-use gpui::{AppContext, Task};
+use gpui::{App, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
 
@@ -19,7 +19,7 @@ pub use crate::extension_manifest::*;
 pub use crate::types::*;
 
 /// Initializes the `extension` crate.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     ExtensionHostProxy::default_global(cx);
 }
 

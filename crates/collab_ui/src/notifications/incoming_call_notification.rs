@@ -2,14 +2,14 @@ use crate::notification_window_options;
 use crate::notifications::collab_notification::CollabNotification;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
-use gpui::{prelude::*, AppContext, WindowHandle};
+use gpui::{prelude::*, App, WindowHandle};
 
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Button, Label};
 use util::ResultExt;
 use workspace::AppState;
 
-pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     let app_state = Arc::downgrade(app_state);
     let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();
     cx.spawn(|mut cx| async move {
@@ -17,8 +17,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         while let Some(incoming_call) = incoming_call.next().await {
             for window in notification_windows.drain(..) {
                 window
-                    .update(&mut cx, |_, cx| {
-                        cx.remove_window();
+                    .update(&mut cx, |_, window, _| {
+                        window.remove_window();
                     })
                     .log_err();
             }
@@ -36,8 +36,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                         .log_err()
                     {
                         let window = cx
-                            .open_window(options, |cx| {
-                                cx.new_view(|_| {
+                            .open_window(options, |_, cx| {
+                                cx.new(|_| {
                                     IncomingCallNotification::new(
                                         incoming_call.clone(),
                                         app_state.clone(),
@@ -67,14 +67,14 @@ impl IncomingCallNotificationState {
         Self { call, app_state }
     }
 
-    fn respond(&self, accept: bool, cx: &mut AppContext) {
+    fn respond(&self, accept: bool, cx: &mut App) {
         let active_call = ActiveCall::global(cx);
         if accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
             let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             let app_state = self.app_state.clone();
-            let cx: &mut AppContext = cx;
+            let cx: &mut App = cx;
             cx.spawn(|cx| async move {
                 join.await?;
                 if let Some(project_id) = initial_project_id {
@@ -111,19 +111,19 @@ impl IncomingCallNotification {
 }
 
 impl Render for IncomingCallNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = theme::setup_ui_font(window, cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.state.call.calling_user.avatar_uri.clone(),
                 Button::new("accept", "Accept").on_click({
                     let state = self.state.clone();
-                    move |_, cx| state.respond(true, cx)
+                    move |_, _, cx| state.respond(true, cx)
                 }),
                 Button::new("decline", "Decline").on_click({
                     let state = self.state.clone();
-                    move |_, cx| state.respond(false, cx)
+                    move |_, _, cx| state.respond(false, cx)
                 }),
             )
             .child(v_flex().overflow_hidden().child(Label::new(format!(

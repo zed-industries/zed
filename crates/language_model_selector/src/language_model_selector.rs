@@ -2,31 +2,160 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Task,
-    View, WeakView,
+    action_with_deprecated_aliases, Action, AnyElement, App, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
+use language_model::{
+    AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
+};
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{
+    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverButton,
+    PopoverMenuHandle, Tooltip, TriggerablePopover,
+};
 use workspace::ShowConfiguration;
+
+action_with_deprecated_aliases!(
+    assistant,
+    ToggleModelSelector,
+    ["assistant2::ToggleModelSelector"]
+);
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
-type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &AppContext) + 'static>;
+type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &App) + 'static>;
 
 pub struct LanguageModelSelector {
-    picker: View<Picker<LanguageModelPickerDelegate>>,
+    picker: Entity<Picker<LanguageModelPickerDelegate>>,
+    /// The task used to update the picker's matches when there is a change to
+    /// the language model registry.
+    update_matches_task: Option<Task<()>>,
+    popover_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
+    _authenticate_all_providers_task: Task<()>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl LanguageModelSelector {
     pub fn new(
-        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &AppContext) + 'static,
-        cx: &mut ViewContext<Self>,
+        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let on_model_changed = Arc::new(on_model_changed);
 
-        let all_models = LanguageModelRegistry::global(cx)
+        let all_models = Self::all_models(cx);
+        let delegate = LanguageModelPickerDelegate {
+            language_model_selector: cx.entity().downgrade(),
+            on_model_changed: on_model_changed.clone(),
+            all_models: all_models.clone(),
+            filtered_models: all_models,
+            selected_index: Self::get_active_model_index(cx),
+        };
+
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .width(rems(20.))
+                .max_height(Some(rems(20.).into()))
+        });
+
+        LanguageModelSelector {
+            picker,
+            update_matches_task: None,
+            popover_menu_handle: PopoverMenuHandle::default(),
+            _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
+            _subscriptions: vec![cx.subscribe_in(
+                &LanguageModelRegistry::global(cx),
+                window,
+                Self::handle_language_model_registry_event,
+            )],
+        }
+    }
+
+    pub fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.popover_menu_handle.toggle(window, cx);
+    }
+
+    fn handle_language_model_registry_event(
+        &mut self,
+        _registry: &Entity<LanguageModelRegistry>,
+        event: &language_model::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            language_model::Event::ProviderStateChanged
+            | language_model::Event::AddedProvider(_)
+            | language_model::Event::RemovedProvider(_) => {
+                let task = self.picker.update(cx, |this, cx| {
+                    let query = this.query(cx);
+                    this.delegate.all_models = Self::all_models(cx);
+                    this.delegate.update_matches(query, window, cx)
+                });
+                self.update_matches_task = Some(task);
+            }
+            _ => {}
+        }
+    }
+
+    /// Authenticates all providers in the [`LanguageModelRegistry`].
+    ///
+    /// We do this so that we can populate the language selector with all of the
+    /// models from the configured providers.
+    fn authenticate_all_providers(cx: &mut App) -> Task<()> {
+        let authenticate_all_providers = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
+            .collect::<Vec<_>>();
+
+        cx.spawn(|_cx| async move {
+            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
+                if let Err(err) = authenticate_task.await {
+                    if matches!(err, AuthenticateError::CredentialsNotFound) {
+                        // Since we're authenticating these providers in the
+                        // background for the purposes of populating the
+                        // language selector, we don't care about providers
+                        // where the credentials are not found.
+                    } else {
+                        // Some providers have noisy failure states that we
+                        // don't want to spam the logs with every time the
+                        // language model selector is initialized.
+                        //
+                        // Ideally these should have more clear failure modes
+                        // that we know are safe to ignore here, like what we do
+                        // with `CredentialsNotFound` above.
+                        match provider_id.0.as_ref() {
+                            "lmstudio" | "ollama" => {
+                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                //
+                                // These fail noisily, so we don't log them.
+                            }
+                            "copilot_chat" => {
+                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                            }
+                            _ => {
+                                log::error!(
+                                    "Failed to authenticate provider: {}: {err}",
+                                    provider_name.0
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn all_models(cx: &App) -> Vec<ModelInfo> {
+        LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
             .iter()
@@ -44,71 +173,41 @@ impl LanguageModelSelector {
                     }
                 })
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    }
 
-        let delegate = LanguageModelPickerDelegate {
-            language_model_selector: cx.view().downgrade(),
-            on_model_changed: on_model_changed.clone(),
-            all_models: all_models.clone(),
-            filtered_models: all_models,
-            selected_index: 0,
-        };
-
-        let picker =
-            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
-
-        LanguageModelSelector { picker }
+    fn get_active_model_index(cx: &App) -> usize {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        Self::all_models(cx)
+            .iter()
+            .position(|model_info| {
+                Some(model_info.model.id()) == active_model.as_ref().map(|model| model.id())
+            })
+            .unwrap_or(0)
     }
 }
 
 impl EventEmitter<DismissEvent> for LanguageModelSelector {}
 
-impl FocusableView for LanguageModelSelector {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+impl Focusable for LanguageModelSelector {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for LanguageModelSelector {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
 
-#[derive(IntoElement)]
-pub struct LanguageModelSelectorPopoverMenu<T>
-where
-    T: PopoverTrigger,
-{
-    language_model_selector: View<LanguageModelSelector>,
-    trigger: T,
-    handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
-}
-
-impl<T: PopoverTrigger> LanguageModelSelectorPopoverMenu<T> {
-    pub fn new(language_model_selector: View<LanguageModelSelector>, trigger: T) -> Self {
-        Self {
-            language_model_selector,
-            trigger,
-            handle: None,
-        }
-    }
-
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<LanguageModelSelector>) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-}
-
-impl<T: PopoverTrigger> RenderOnce for LanguageModelSelectorPopoverMenu<T> {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let language_model_selector = self.language_model_selector.clone();
-
-        PopoverMenu::new("model-switcher")
-            .menu(move |_cx| Some(language_model_selector.clone()))
-            .trigger(self.trigger)
-            .attach(gpui::Corner::BottomLeft)
-            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
+impl TriggerablePopover for LanguageModelSelector {
+    fn menu_handle(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> PopoverMenuHandle<Self> {
+        self.popover_menu_handle.clone()
     }
 }
 
@@ -120,7 +219,7 @@ struct ModelInfo {
 }
 
 pub struct LanguageModelPickerDelegate {
-    language_model_selector: WeakView<LanguageModelSelector>,
+    language_model_selector: WeakEntity<LanguageModelSelector>,
     on_model_changed: OnModelChanged,
     all_models: Vec<ModelInfo>,
     filtered_models: Vec<ModelInfo>,
@@ -138,39 +237,44 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix.min(self.filtered_models.len().saturating_sub(1));
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a model...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
         let all_models = self.all_models.clone();
+        let current_index = self.selected_index;
 
-        let llm_registry = LanguageModelRegistry::global(cx);
+        let language_model_registry = LanguageModelRegistry::global(cx);
 
-        let configured_models: Vec<_> = llm_registry
+        let configured_providers = language_model_registry
             .read(cx)
             .providers()
             .iter()
             .filter(|provider| provider.is_authenticated(cx))
             .map(|provider| provider.id())
-            .collect();
+            .collect::<Vec<_>>();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let filtered_models = cx
-                .background_executor()
-                .spawn(async move {
-                    let displayed_models = if configured_models.is_empty() {
+                .background_spawn(async move {
+                    let displayed_models = if configured_providers.is_empty() {
                         all_models
                     } else {
                         all_models
                             .into_iter()
                             .filter(|model_info| {
-                                configured_models.contains(&model_info.model.provider_id())
+                                configured_providers.contains(&model_info.model.provider_id())
                             })
                             .collect::<Vec<_>>()
                     };
@@ -193,31 +297,40 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate.filtered_models = filtered_models;
-                this.delegate.set_selected_index(0, cx);
+                // Preserve selection focus
+                let new_index = if current_index >= this.delegate.filtered_models.len() {
+                    0
+                } else {
+                    current_index
+                };
+                this.delegate.set_selected_index(new_index, window, cx);
                 cx.notify();
             })
             .ok();
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(model_info) = self.filtered_models.get(self.selected_index) {
             let model = model_info.model.clone();
             (self.on_model_changed)(model.clone(), cx);
+
+            let current_index = self.selected_index;
+            self.set_selected_index(current_index, window, cx);
 
             cx.emit(DismissEvent);
         }
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.language_model_selector
             .update(cx, |_this, cx| cx.emit(DismissEvent))
             .ok();
     }
 
-    fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_header(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let configured_models_count = LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
@@ -232,7 +345,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .color(Color::Muted)
                     .mt_1()
                     .mb_0p5()
-                    .ml_3()
+                    .ml_2()
                     .into_any_element(),
             )
         } else {
@@ -244,7 +357,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
         let show_badges = cx.has_flag::<ZedPro>();
@@ -263,25 +377,34 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let is_selected = Some(model_info.model.provider_id()) == active_provider_id
             && Some(model_info.model.id()) == active_model_id;
 
+        let model_icon_color = if is_selected {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(
-                    div().pr_0p5().child(
-                        Icon::new(model_info.icon)
-                            .color(Color::Muted)
-                            .size(IconSize::Medium),
-                    ),
+                    Icon::new(model_info.icon)
+                        .color(model_icon_color)
+                        .size(IconSize::Small),
                 )
                 .child(
                     h_flex()
                         .w_full()
                         .items_center()
                         .gap_1p5()
-                        .min_w(px(200.))
-                        .child(Label::new(model_info.model.name().0.clone()))
+                        .pl_0p5()
+                        .w(px(240.))
+                        .child(
+                            div()
+                                .max_w_40()
+                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
+                        )
                         .child(
                             h_flex()
                                 .gap_0p5()
@@ -303,7 +426,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 }),
                         ),
                 )
-                .end_slot(div().when(is_selected, |this| {
+                .end_slot(div().pr_3().when(is_selected, |this| {
                     this.child(
                         Icon::new(IconName::Check)
                             .color(Color::Accent)
@@ -313,7 +436,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         )
     }
 
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+    fn render_footer(
+        &self,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 
         let plan = proto::Plan::ZedPro;
@@ -335,8 +462,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .icon_position(IconPosition::Start)
-                            .on_click(|_, cx| {
-                                cx.dispatch_action(Box::new(zed_actions::OpenAccountSettings))
+                            .on_click(|_, window, cx| {
+                                window
+                                    .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
                             }),
                         // Free user
                         Plan::Free => Button::new(
@@ -347,7 +475,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 "Try Pro"
                             },
                         )
-                        .on_click(|_, cx| cx.open_url(TRY_ZED_PRO_URL)),
+                        .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
                     })
                 })
                 .child(
@@ -356,11 +484,106 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(ShowConfiguration.boxed_clone());
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(ShowConfiguration.boxed_clone(), cx);
                         }),
                 )
                 .into_any(),
         )
+    }
+}
+
+pub struct InlineLanguageModelSelector {
+    selector: Entity<LanguageModelSelector>,
+}
+
+impl InlineLanguageModelSelector {
+    pub fn new(selector: Entity<LanguageModelSelector>) -> Self {
+        Self { selector }
+    }
+}
+
+impl RenderOnce for InlineLanguageModelSelector {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        PopoverButton::new(
+            self.selector,
+            gpui::Corner::TopRight,
+            IconButton::new("context", IconName::SettingsAlt)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted),
+            move |window, cx| {
+                Tooltip::with_meta(
+                    format!(
+                        "Using {}",
+                        LanguageModelRegistry::read_global(cx)
+                            .active_model()
+                            .map(|model| model.name().0)
+                            .unwrap_or_else(|| "No model selected".into()),
+                    ),
+                    None,
+                    "Change Model",
+                    window,
+                    cx,
+                )
+            },
+        )
+        .render(window, cx)
+    }
+}
+
+pub struct AssistantLanguageModelSelector {
+    focus_handle: FocusHandle,
+    selector: Entity<LanguageModelSelector>,
+}
+
+impl AssistantLanguageModelSelector {
+    pub fn new(focus_handle: FocusHandle, selector: Entity<LanguageModelSelector>) -> Self {
+        Self {
+            focus_handle,
+            selector,
+        }
+    }
+}
+
+impl RenderOnce for AssistantLanguageModelSelector {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.focus_handle.clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            _ => SharedString::from("No model selected"),
+        };
+
+        PopoverButton::new(
+            self.selector.clone(),
+            Corner::BottomRight,
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+        )
+        .render(window, cx)
     }
 }

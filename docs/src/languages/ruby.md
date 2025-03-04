@@ -106,14 +106,14 @@ Solargraph has formatting and diagnostics disabled by default. We can tell Zed t
 }
 ```
 
-To use Solargraph in the context of the bundle, you can use [folder-specific settings](../configuring-zed.md#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Solargraph:
+By default, Solargraph uses `bundle exec` to run in the context of the bundle. To disable that, you can use the `use_bundler` configuration option:
 
 ```json
 {
   "lsp": {
     "solargraph": {
-      "binary": {
-        "path": "<path_to_your_project>/bin/solargraph"
+      "settings": {
+        "use_bundler": false
       }
     }
   }
@@ -150,6 +150,20 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
           // This disables diagnostics
           "diagnostics": false
         }
+      }
+    }
+  }
+}
+```
+
+By default, Ruby LSP does not use `bundle exec` to run in the context of the bundle. To enable that, you can use the `use_bundler` configuration option:
+
+```json
+{
+  "lsp": {
+    "ruby-lsp": {
+      "settings": {
+        "use_bundler": true
       }
     }
   }
@@ -193,14 +207,14 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
 }
 ```
 
-To use Rubocop in the context of the bundle, you can use [folder-specific settings](../configuring-zed.md#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Rubocop:
+By default, `rubocop` uses `bundle exec` to run in the context of the bundle. To disable that, you can use the `use_bundler` configuration option:
 
 ```json
 {
   "lsp": {
     "rubocop": {
-      "binary": {
-        "path": "<path_to_your_project>/bin/rubocop"
+      "settings": {
+        "use_bundler": false
       }
     }
   }

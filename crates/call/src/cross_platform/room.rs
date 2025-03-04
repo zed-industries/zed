@@ -1,4 +1,4 @@
-#![cfg_attr(target_os = "windows", allow(unused))]
+#![cfg_attr(all(target_os = "windows", target_env = "gnu"), allow(unused))]
 
 use crate::{
     call_settings::CallSettings,
@@ -13,11 +13,9 @@ use client::{
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::LanguageRegistry;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use livekit::{
     capture_local_audio_track, capture_local_video_track,
     id::ParticipantIdentity,
@@ -27,7 +25,7 @@ use livekit::{
     track::{TrackKind, TrackSource},
     RoomEvent, RoomOptions,
 };
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", target_env = "gnu"))]
 use livekit::{publication::LocalTrackPublication, RoomEvent};
 use livekit_client as livekit;
 use postage::{sink::Sink, stream::Stream, watch};
@@ -76,8 +74,8 @@ pub struct Room {
     channel_id: Option<ChannelId>,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
-    shared_projects: HashSet<WeakModel<Project>>,
-    joined_projects: HashSet<WeakModel<Project>>,
+    shared_projects: HashSet<WeakEntity<Project>>,
+    joined_projects: HashSet<WeakEntity<Project>>,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<u64, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
@@ -85,7 +83,7 @@ pub struct Room {
     pending_call_count: usize,
     leave_when_empty: bool,
     client: Arc<Client>,
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -106,7 +104,10 @@ impl Room {
         !self.shared_projects.is_empty()
     }
 
-    #[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
+    #[cfg(all(
+        any(test, feature = "test-support"),
+        not(all(target_os = "windows", target_env = "gnu"))
+    ))]
     pub fn is_connected(&self) -> bool {
         if let Some(live_kit) = self.live_kit.as_ref() {
             live_kit.room.connection_state() == livekit::ConnectionState::Connected
@@ -120,8 +121,8 @@ impl Room {
         channel_id: Option<ChannelId>,
         livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
-        user_store: Model<UserStore>,
-        cx: &mut ModelContext<Self>,
+        user_store: Entity<UserStore>,
+        cx: &mut Context<Self>,
     ) -> Self {
         spawn_room_connection(livekit_connection_info, cx);
 
@@ -147,7 +148,7 @@ impl Room {
             pending_participants: Default::default(),
             pending_call_count: 0,
             client_subscriptions: vec![
-                client.add_message_handler(cx.weak_model(), Self::handle_room_updated)
+                client.add_message_handler(cx.weak_entity(), Self::handle_room_updated)
             ],
             _subscriptions: vec![
                 cx.on_release(Self::released),
@@ -166,15 +167,15 @@ impl Room {
 
     pub(crate) fn create(
         called_user_id: u64,
-        initial_project: Option<Model<Project>>,
+        initial_project: Option<Entity<Project>>,
         client: Arc<Client>,
-        user_store: Model<UserStore>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
+        user_store: Entity<UserStore>,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
         cx.spawn(move |mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.new_model(|cx| {
+            let room = cx.new(|cx| {
                 let mut room = Self::new(
                     room_proto.id,
                     None,
@@ -216,9 +217,9 @@ impl Room {
     pub(crate) async fn join_channel(
         channel_id: ChannelId,
         client: Arc<Client>,
-        user_store: Model<UserStore>,
-        cx: AsyncAppContext,
-    ) -> Result<Model<Self>> {
+        user_store: Entity<UserStore>,
+        cx: AsyncApp,
+    ) -> Result<Entity<Self>> {
         Self::from_join_response(
             client
                 .request(proto::JoinChannel {
@@ -234,9 +235,9 @@ impl Room {
     pub(crate) async fn join(
         room_id: u64,
         client: Arc<Client>,
-        user_store: Model<UserStore>,
-        cx: AsyncAppContext,
-    ) -> Result<Model<Self>> {
+        user_store: Entity<UserStore>,
+        cx: AsyncApp,
+    ) -> Result<Entity<Self>> {
         Self::from_join_response(
             client.request(proto::JoinRoom { id: room_id }).await?,
             client,
@@ -245,16 +246,16 @@ impl Room {
         )
     }
 
-    fn released(&mut self, cx: &mut AppContext) {
+    fn released(&mut self, cx: &mut App) {
         if self.status.is_online() {
             self.leave_internal(cx).detach_and_log_err(cx);
         }
     }
 
-    fn app_will_quit(&mut self, cx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
+    fn app_will_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> {
         let task = if self.status.is_online() {
             let leave = self.leave_internal(cx);
-            Some(cx.background_executor().spawn(async move {
+            Some(cx.background_spawn(async move {
                 leave.await.log_err();
             }))
         } else {
@@ -268,18 +269,18 @@ impl Room {
         }
     }
 
-    pub fn mute_on_join(cx: &AppContext) -> bool {
+    pub fn mute_on_join(cx: &App) -> bool {
         CallSettings::get_global(cx).mute_on_join || client::IMPERSONATE_LOGIN.is_some()
     }
 
     fn from_join_response(
         response: proto::JoinRoomResponse,
         client: Arc<Client>,
-        user_store: Model<UserStore>,
-        mut cx: AsyncAppContext,
-    ) -> Result<Model<Self>> {
+        user_store: Entity<UserStore>,
+        mut cx: AsyncApp,
+    ) -> Result<Entity<Self>> {
         let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-        let room = cx.new_model(|cx| {
+        let room = cx.new(|cx| {
             Self::new(
                 room_proto.id,
                 response.channel_id.map(ChannelId),
@@ -305,12 +306,12 @@ impl Room {
             && self.pending_call_count == 0
     }
 
-    pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub(crate) fn leave(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.notify();
         self.leave_internal(cx)
     }
 
-    fn leave_internal(&mut self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn leave_internal(&mut self, cx: &mut App) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -321,13 +322,13 @@ impl Room {
         self.clear_state(cx);
 
         let leave_room = self.client.request(proto::LeaveRoom {});
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             leave_room.await?;
             anyhow::Ok(())
         })
     }
 
-    pub(crate) fn clear_state(&mut self, cx: &mut AppContext) {
+    pub(crate) fn clear_state(&mut self, cx: &mut App) {
         for project in self.shared_projects.drain() {
             if let Some(project) = project.upgrade() {
                 project.update(cx, |project, cx| {
@@ -355,9 +356,9 @@ impl Room {
     }
 
     async fn maintain_connection(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         client: Arc<Client>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {
@@ -441,7 +442,7 @@ impl Room {
         ))
     }
 
-    fn rejoin(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn rejoin(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let mut projects = HashMap::default();
         let mut reshared_projects = Vec::new();
         let mut rejoined_projects = Vec::new();
@@ -531,6 +532,10 @@ impl Room {
         &self.local_participant
     }
 
+    pub fn local_participant_user(&self, cx: &App) -> Option<Arc<User>> {
+        self.user_store.read(cx).current_user()
+    }
+
     pub fn remote_participants(&self) -> &BTreeMap<u64, RemoteParticipant> {
         &self.remote_participants
     }
@@ -567,7 +572,7 @@ impl Room {
         &mut self,
         user_id: u64,
         role: proto::ChannelRole,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let room_id = self.id;
@@ -599,7 +604,7 @@ impl Room {
     }
 
     /// Returns the most 'active' projects, defined as most people in the project
-    pub fn most_active_project(&self, cx: &AppContext) -> Option<(u64, u64)> {
+    pub fn most_active_project(&self, cx: &App) -> Option<(u64, u64)> {
         let mut project_hosts_and_guest_counts = HashMap::<u64, (Option<u64>, u32)>::default();
         for participant in self.remote_participants.values() {
             match participant.location {
@@ -636,9 +641,9 @@ impl Room {
     }
 
     async fn handle_room_updated(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let room = envelope
             .payload
@@ -647,7 +652,7 @@ impl Room {
         this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))?
     }
 
-    fn apply_room_update(&mut self, room: proto::Room, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn apply_room_update(&mut self, room: proto::Room, cx: &mut Context<Self>) -> Result<()> {
         log::trace!(
             "client {:?}. room update: {:?}",
             self.client.user_id(),
@@ -671,21 +676,13 @@ impl Room {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    fn start_room_connection(
-        &self,
-        mut room: proto::Room,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<()> {
+    #[cfg(all(target_os = "windows", target_env = "gnu"))]
+    fn start_room_connection(&self, mut room: proto::Room, cx: &mut Context<Self>) -> Task<()> {
         Task::ready(())
     }
 
-    #[cfg(not(target_os = "windows"))]
-    fn start_room_connection(
-        &self,
-        mut room: proto::Room,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<()> {
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
+    fn start_room_connection(&self, mut room: proto::Room, cx: &mut Context<Self>) -> Task<()> {
         // Filter ourselves out from the room's participants.
         let local_participant_ix = room
             .participants
@@ -837,7 +834,7 @@ impl Room {
                                     muted: true,
                                     speaking: false,
                                     video_tracks: Default::default(),
-                                    #[cfg(not(target_os = "windows"))]
+                                    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
                                     audio_tracks: Default::default(),
                                 },
                             );
@@ -932,11 +929,7 @@ impl Room {
         })
     }
 
-    fn livekit_room_updated(
-        &mut self,
-        event: RoomEvent,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    fn livekit_room_updated(&mut self, event: RoomEvent, cx: &mut Context<Self>) -> Result<()> {
         log::trace!(
             "client {:?}. livekit event: {:?}",
             self.client.user_id(),
@@ -944,7 +937,7 @@ impl Room {
         );
 
         match event {
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
             RoomEvent::TrackSubscribed {
                 track,
                 participant,
@@ -979,7 +972,7 @@ impl Room {
                 }
             }
 
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
             RoomEvent::TrackUnsubscribed {
                 track, participant, ..
             } => {
@@ -1007,7 +1000,7 @@ impl Room {
                 }
             }
 
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
             RoomEvent::ActiveSpeakersChanged { speakers } => {
                 let mut speaker_ids = speakers
                     .into_iter()
@@ -1024,7 +1017,7 @@ impl Room {
                 }
             }
 
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
             RoomEvent::TrackMuted {
                 participant,
                 publication,
@@ -1049,7 +1042,7 @@ impl Room {
                 }
             }
 
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
             RoomEvent::LocalTrackUnpublished { publication, .. } => {
                 log::info!("unpublished track {}", publication.sid());
                 if let Some(room) = &mut self.live_kit {
@@ -1072,12 +1065,12 @@ impl Room {
                 }
             }
 
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
             RoomEvent::LocalTrackPublished { publication, .. } => {
                 log::info!("published track {:?}", publication.sid());
             }
 
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
             RoomEvent::Disconnected { reason } => {
                 log::info!("disconnected from room: {reason:?}");
                 self.leave(cx).detach_and_log_err(cx);
@@ -1113,7 +1106,7 @@ impl Room {
         &mut self,
         called_user_id: u64,
         initial_project_id: Option<u64>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
@@ -1147,8 +1140,8 @@ impl Room {
         id: u64,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<Project>>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         cx.emit(Event::RemoteProjectJoined { project_id: id });
@@ -1172,8 +1165,8 @@ impl Room {
 
     pub fn share_project(
         &mut self,
-        project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<u64>> {
         if let Some(project_id) = project.read(cx).remote_id() {
             return Task::ready(Ok(project_id));
@@ -1210,8 +1203,8 @@ impl Room {
 
     pub(crate) fn unshare_project(
         &mut self,
-        project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
     ) -> Result<()> {
         let project_id = match project.read(cx).remote_id() {
             Some(project_id) => project_id,
@@ -1229,8 +1222,8 @@ impl Room {
 
     pub(crate) fn set_location(
         &mut self,
-        project: Option<&Model<Project>>,
-        cx: &mut ModelContext<Self>,
+        project: Option<&Entity<Project>>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
@@ -1255,7 +1248,7 @@ impl Room {
         };
 
         cx.notify();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             client
                 .request(proto::UpdateParticipantLocation {
                     room_id,
@@ -1304,13 +1297,12 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
-    pub fn can_use_microphone(&self, _cx: &AppContext) -> bool {
+    pub fn can_use_microphone(&self) -> bool {
         use proto::ChannelRole::*;
 
         #[cfg(not(any(test, feature = "test-support")))]
         {
-            use feature_flags::FeatureFlagAppExt as _;
-            if cfg!(target_os = "windows") || (cfg!(target_os = "linux") && !_cx.is_staff()) {
+            if cfg!(all(target_os = "windows", target_env = "gnu")) {
                 return false;
             }
         }
@@ -1329,14 +1321,14 @@ impl Room {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!("Windows is not supported yet")))
+    #[cfg(all(target_os = "windows", target_env = "gnu"))]
+    pub fn share_microphone(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("MinGW is not supported yet")))
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     #[track_caller]
-    pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn share_microphone(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -1381,11 +1373,10 @@ impl Room {
                 match publication {
                     Ok(publication) => {
                         if canceled {
-                            cx.background_executor()
-                                .spawn(async move {
-                                    participant.unpublish_track(&publication.sid()).await
-                                })
-                                .detach_and_log_err(cx)
+                            cx.background_spawn(async move {
+                                participant.unpublish_track(&publication.sid()).await
+                            })
+                            .detach_and_log_err(cx)
                         } else {
                             if live_kit.muted_by_user || live_kit.deafened {
                                 publication.mute();
@@ -1412,13 +1403,13 @@ impl Room {
         })
     }
 
-    #[cfg(target_os = "windows")]
-    pub fn share_screen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!("Windows is not supported yet")))
+    #[cfg(all(target_os = "windows", target_env = "gnu"))]
+    pub fn share_screen(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("MinGW is not supported yet")))
     }
 
-    #[cfg(not(target_os = "windows"))]
-    pub fn share_screen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
+    pub fn share_screen(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -1473,11 +1464,10 @@ impl Room {
                 match publication {
                     Ok(publication) => {
                         if canceled {
-                            cx.background_executor()
-                                .spawn(async move {
-                                    participant.unpublish_track(&publication.sid()).await
-                                })
-                                .detach()
+                            cx.background_spawn(async move {
+                                participant.unpublish_track(&publication.sid()).await
+                            })
+                            .detach()
                         } else {
                             live_kit.screen_track = LocalTrack::Published {
                                 track_publication: publication,
@@ -1503,7 +1493,7 @@ impl Room {
         })
     }
 
-    pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         if let Some(live_kit) = self.live_kit.as_mut() {
             // When unmuting, undeafen if the user was deafened before.
             let was_deafened = live_kit.deafened;
@@ -1529,7 +1519,7 @@ impl Room {
         }
     }
 
-    pub fn toggle_deafen(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn toggle_deafen(&mut self, cx: &mut Context<Self>) {
         if let Some(live_kit) = self.live_kit.as_mut() {
             // When deafening, mute the microphone if it was not already muted.
             // When un-deafening, unmute the microphone, unless it was explicitly muted.
@@ -1547,7 +1537,7 @@ impl Room {
         }
     }
 
-    pub fn unshare_screen(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn unshare_screen(&mut self, cx: &mut Context<Self>) -> Result<()> {
         if self.status.is_offline() {
             return Err(anyhow!("room is offline"));
         }
@@ -1565,23 +1555,25 @@ impl Room {
             LocalTrack::Published {
                 track_publication, ..
             } => {
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
                 {
                     let local_participant = live_kit.room.local_participant();
                     let sid = track_publication.sid();
-                    cx.background_executor()
-                        .spawn(async move { local_participant.unpublish_track(&sid).await })
-                        .detach_and_log_err(cx);
+                    cx.background_spawn(
+                        async move { local_participant.unpublish_track(&sid).await },
+                    )
+                    .detach_and_log_err(cx);
                     cx.notify();
                 }
+
                 Audio::play_sound(Sound::StopScreenshare, cx);
                 Ok(())
             }
         }
     }
 
-    fn set_deafened(&mut self, deafened: bool, cx: &mut ModelContext<Self>) -> Option<()> {
-        #[cfg(not(target_os = "windows"))]
+    fn set_deafened(&mut self, deafened: bool, cx: &mut Context<Self>) -> Option<()> {
+        #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
         {
             let live_kit = self.live_kit.as_mut()?;
             cx.notify();
@@ -1597,11 +1589,7 @@ impl Room {
         None
     }
 
-    fn set_mute(
-        &mut self,
-        should_mute: bool,
-        cx: &mut ModelContext<Room>,
-    ) -> Option<Task<Result<()>>> {
+    fn set_mute(&mut self, should_mute: bool, cx: &mut Context<Room>) -> Option<Task<Result<()>>> {
         let live_kit = self.live_kit.as_mut()?;
         cx.notify();
 
@@ -1623,7 +1611,7 @@ impl Room {
             LocalTrack::Published {
                 track_publication, ..
             } => {
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
                 {
                     if should_mute {
                         track_publication.mute()
@@ -1631,23 +1619,24 @@ impl Room {
                         track_publication.unmute()
                     }
                 }
+
                 None
             }
         }
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", target_env = "gnu"))]
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
-    cx: &mut ModelContext<'_, Room>,
+    cx: &mut Context<'_, Room>,
 ) {
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
-    cx: &mut ModelContext<'_, Room>,
+    cx: &mut Context<'_, Room>,
 ) {
     if let Some(connection_info) = livekit_connection_info {
         cx.spawn(|this, mut cx| async move {
@@ -1684,7 +1673,7 @@ fn spawn_room_connection(
                     _handle_updates,
                 });
 
-                if !muted_by_user && this.can_use_microphone(cx) {
+                if !muted_by_user && this.can_use_microphone() {
                     this.share_microphone(cx)
                 } else {
                     Task::ready(Ok(()))
@@ -1709,11 +1698,11 @@ struct LiveKitRoom {
 }
 
 impl LiveKitRoom {
-    #[cfg(target_os = "windows")]
-    fn stop_publishing(&mut self, _cx: &mut ModelContext<Room>) {}
+    #[cfg(all(target_os = "windows", target_env = "gnu"))]
+    fn stop_publishing(&mut self, _cx: &mut Context<Room>) {}
 
-    #[cfg(not(target_os = "windows"))]
-    fn stop_publishing(&mut self, cx: &mut ModelContext<Room>) {
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
+    fn stop_publishing(&mut self, cx: &mut Context<Room>) {
         let mut tracks_to_unpublish = Vec::new();
         if let LocalTrack::Published {
             track_publication, ..
@@ -1732,13 +1721,12 @@ impl LiveKitRoom {
         }
 
         let participant = self.room.local_participant();
-        cx.background_executor()
-            .spawn(async move {
-                for sid in tracks_to_unpublish {
-                    participant.unpublish_track(&sid).await.log_err();
-                }
-            })
-            .detach();
+        cx.background_spawn(async move {
+            for sid in tracks_to_unpublish {
+                participant.unpublish_track(&sid).await.log_err();
+            }
+        })
+        .detach();
     }
 }
 

@@ -1,8 +1,8 @@
 [package]
 name = "tab_switcher"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -19,6 +19,7 @@ gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true
+schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 ui.workspace = true

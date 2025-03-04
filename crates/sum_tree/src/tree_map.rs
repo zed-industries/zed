@@ -26,13 +26,13 @@ impl<K> Default for MapKey<K> {
 #[derive(Clone, Debug)]
 pub struct MapKeyRef<'a, K>(Option<&'a K>);
 
-impl<'a, K> Default for MapKeyRef<'a, K> {
+impl<K> Default for MapKeyRef<'_, K> {
     fn default() -> Self {
         Self(None)
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeSet<K>(TreeMap<K, ()>)
 where
     K: Clone + Ord;

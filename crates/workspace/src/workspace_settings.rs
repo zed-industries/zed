@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -18,11 +18,31 @@ pub struct WorkspaceSettings {
     pub autosave: AutosaveSetting,
     pub restore_on_startup: RestoreOnStartupBehavior,
     pub drop_target_size: f32,
-    pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
     pub show_user_picture: bool,
     pub max_tabs: Option<NonZeroUsize>,
+    pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
+    pub on_last_window_closed: OnLastWindowClosed,
+}
+
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OnLastWindowClosed {
+    /// Match platform conventions by default, so don't quit on macOS, and quit on other platforms
+    #[default]
+    PlatformDefault,
+    /// Quit the application the last window is closed
+    QuitApp,
+}
+
+impl OnLastWindowClosed {
+    pub fn is_quit_app(&self) -> bool {
+        match self {
+            OnLastWindowClosed::PlatformDefault => false,
+            OnLastWindowClosed::QuitApp => true,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -71,7 +91,7 @@ impl CloseWindowWhenNoItems {
     }
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreOnStartupBehavior {
     /// Always start with an empty editor
@@ -136,17 +156,22 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub show_user_picture: Option<bool>,
-    // Maximum open tabs in a pane. Will not close an unsaved
-    // tab. Set to `None` for unlimited tabs.
-    //
-    // Default: none
+    /// Maximum open tabs in a pane. Will not close an unsaved
+    /// tab. Set to `None` for unlimited tabs.
+    ///
+    /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
+    /// What to do when the last window is closed
+    ///
+    /// Default: auto (nothing on macOS, "app quit" otherwise)
+    pub on_last_window_closed: Option<OnLastWindowClosed>,
 }
 
 #[derive(Deserialize)]
 pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
+    pub show_tab_bar_buttons: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -159,6 +184,10 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_nav_history_buttons: Option<bool>,
+    /// Whether or not to show the tab bar buttons.
+    ///
+    /// Default: true
+    pub show_tab_bar_buttons: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -208,7 +237,7 @@ impl Settings for WorkspaceSettings {
 
     type FileContent = WorkspaceSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }
@@ -218,7 +247,7 @@ impl Settings for TabBarSettings {
 
     type FileContent = TabBarSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }

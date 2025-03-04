@@ -3,30 +3,36 @@ mod rate_limiter;
 mod registry;
 mod request;
 mod role;
+mod telemetry;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
 use anyhow::Result;
+use client::Client;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
-use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
-pub use model::*;
+use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 use proto::Plan;
-pub use rate_limiter::*;
-pub use registry::*;
-pub use request::*;
-pub use role::*;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
 use std::{future::Future, sync::Arc};
+use thiserror::Error;
 use ui::IconName;
+
+pub use crate::model::*;
+pub use crate::rate_limiter::*;
+pub use crate::registry::*;
+pub use crate::request::*;
+pub use crate::role::*;
+pub use crate::telemetry::*;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, cx: &mut App) {
     registry::init(cx);
+    RefreshLlmTokenListener::register(client.clone(), cx);
 }
 
 /// The availability of a [`LanguageModel`].
@@ -84,7 +90,7 @@ where
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
-    pub name: String,
+    pub name: Arc<str>,
     pub input: serde_json::Value,
 }
 
@@ -113,7 +119,7 @@ pub trait LanguageModel: Send + Sync {
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
 
-    fn api_key(&self, _cx: &AppContext) -> Option<String> {
+    fn api_key(&self, _cx: &App) -> Option<String> {
         None
     }
 
@@ -130,19 +136,19 @@ pub trait LanguageModel: Send + Sync {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &App,
     ) -> BoxFuture<'static, Result<usize>>;
 
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
 
     fn stream_completion_text(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
         let events = self.stream_completion(request, cx);
 
@@ -186,7 +192,7 @@ pub trait LanguageModel: Send + Sync {
         name: String,
         description: String,
         schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -203,7 +209,7 @@ impl dyn LanguageModel {
     pub fn use_tool<T: LanguageModelTool>(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> impl 'static + Future<Output = Result<T>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
@@ -218,7 +224,7 @@ impl dyn LanguageModel {
     pub fn use_tool_stream<T: LanguageModelTool>(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
@@ -231,35 +237,56 @@ pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn description() -> String;
 }
 
+/// An error that occurred when trying to authenticate the language model provider.
+#[derive(Debug, Error)]
+pub enum AuthenticateError {
+    #[error("credentials not found")]
+    CredentialsNotFound,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
     fn icon(&self) -> IconName {
         IconName::ZedAssistant
     }
-    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>>;
-    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
-    fn is_authenticated(&self, cx: &AppContext) -> bool;
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView;
-    fn must_accept_terms(&self, _cx: &AppContext) -> bool {
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
+    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
+    fn is_authenticated(&self, cx: &App) -> bool;
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
+    fn must_accept_terms(&self, _cx: &App) -> bool {
         false
     }
-    fn render_accept_terms(&self, _cx: &mut WindowContext) -> Option<AnyElement> {
+    fn render_accept_terms(
+        &self,
+        _view: LanguageModelProviderTosView,
+        _cx: &mut App,
+    ) -> Option<AnyElement> {
         None
     }
-    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+}
+
+#[derive(PartialEq, Eq)]
+pub enum LanguageModelProviderTosView {
+    ThreadEmptyState,
+    PromptEditorPopup,
+    Configuration,
 }
 
 pub trait LanguageModelProviderState: 'static {
     type ObservableEntity;
 
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>>;
+    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>>;
 
     fn subscribe<T: 'static>(
         &self,
-        cx: &mut gpui::ModelContext<T>,
-        callback: impl Fn(&mut T, &mut gpui::ModelContext<T>) + 'static,
+        cx: &mut gpui::Context<T>,
+        callback: impl Fn(&mut T, &mut gpui::Context<T>) + 'static,
     ) -> Option<gpui::Subscription> {
         let entity = self.observable_entity()?;
         Some(cx.observe(&entity, move |this, _, cx| {

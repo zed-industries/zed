@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
@@ -55,6 +55,7 @@ x11rb::atom_manager! {
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
+        _NET_WM_PID,
         _NET_WM_NAME,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
@@ -436,6 +437,18 @@ impl X11WindowState {
 
         // Collect errors during setup, so that window can be destroyed on failure.
         let setup_result = maybe!({
+            let pid = std::process::id();
+            check_reply(
+                || "X11 ChangeProperty for _NET_WM_PID failed.",
+                xcb.change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._NET_WM_PID,
+                    xproto::AtomEnum::CARDINAL,
+                    &[pid],
+                ),
+            )?;
+
             if let Some(size) = params.window_min_size {
                 let mut size_hints = WmSizeHints::new();
                 let min_size = (size.width.0 as i32, size.height.0 as i32);
@@ -577,7 +590,6 @@ impl X11WindowState {
                 BladeRenderer::new(gpu_context, &raw_window, config)?
             };
 
-            check_reply(|| "X11 MapWindow failed.", xcb.map_window(x_window))?;
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
             Ok(Self {
@@ -1263,6 +1275,14 @@ impl PlatformWindow for X11Window {
             ),
         )
         .unwrap();
+    }
+
+    fn map_window(&mut self) -> anyhow::Result<()> {
+        check_reply(
+            || "X11 MapWindow failed.",
+            self.0.xcb.map_window(self.0.x_window),
+        )?;
+        Ok(())
     }
 
     fn set_edited(&mut self, _edited: bool) {

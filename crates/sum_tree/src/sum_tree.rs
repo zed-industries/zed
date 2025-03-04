@@ -32,7 +32,7 @@ pub trait KeyedItem: Item {
 
 /// A type that describes the Sum of all [`Item`]s in a subtree of the [`SumTree`]
 ///
-/// Each Summary type can have multiple [`Dimensions`] that it measures,
+/// Each Summary type can have multiple [`Dimension`]s that it measures,
 /// which can be used to navigate the tree
 pub trait Summary: Clone {
     type Context;
@@ -40,6 +40,21 @@ pub trait Summary: Clone {
     fn zero(cx: &Self::Context) -> Self;
 
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
+}
+
+/// This type exists because we can't implement Summary for () without causing
+/// type resolution errors
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Unit;
+
+impl Summary for Unit {
+    type Context = ();
+
+    fn zero(_: &()) -> Self {
+        Unit
+    }
+
+    fn add_summary(&mut self, _: &Self, _: &()) {}
 }
 
 /// Each [`Summary`] type can have more than one [`Dimension`] type that it measures.
@@ -100,11 +115,26 @@ impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>> Dimension<'a, T
     }
 }
 
-impl<'a, S: Summary, D1: SeekTarget<'a, S, D1> + Dimension<'a, S>, D2: Dimension<'a, S>>
-    SeekTarget<'a, S, (D1, D2)> for D1
+impl<'a, S, D1, D2> SeekTarget<'a, S, (D1, D2)> for D1
+where
+    S: Summary,
+    D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
+    D2: Dimension<'a, S>,
 {
     fn cmp(&self, cursor_location: &(D1, D2), cx: &S::Context) -> Ordering {
         self.cmp(&cursor_location.0, cx)
+    }
+}
+
+impl<'a, S, D1, D2, D3> SeekTarget<'a, S, ((D1, D2), D3)> for D1
+where
+    S: Summary,
+    D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
+    D2: Dimension<'a, S>,
+    D3: Dimension<'a, S>,
+{
+    fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
+        self.cmp(&cursor_location.0 .0, cx)
     }
 }
 
@@ -486,6 +516,10 @@ impl<T: Item> SumTree<T> {
         }
     }
 
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     fn push_tree_recursive(
         &mut self,
         other: SumTree<T>,
@@ -760,6 +794,55 @@ impl<T: KeyedItem> SumTree<T> {
         } else {
             None
         }
+    }
+
+    #[inline]
+    pub fn contains(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> bool {
+        self.get(key, cx).is_some()
+    }
+
+    pub fn update<F, R>(
+        &mut self,
+        key: &T::Key,
+        cx: &<T::Summary as Summary>::Context,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut cursor = self.cursor::<T::Key>(cx);
+        let mut new_tree = cursor.slice(key, Bias::Left, cx);
+        let mut result = None;
+        if Ord::cmp(key, &cursor.end(cx)) == Ordering::Equal {
+            let mut updated = cursor.item().unwrap().clone();
+            result = Some(f(&mut updated));
+            new_tree.push(updated, cx);
+            cursor.next(cx);
+        }
+        new_tree.append(cursor.suffix(cx), cx);
+        drop(cursor);
+        *self = new_tree;
+        result
+    }
+
+    pub fn retain<F: FnMut(&T) -> bool>(
+        &mut self,
+        cx: &<T::Summary as Summary>::Context,
+        mut predicate: F,
+    ) {
+        let mut new_map = SumTree::new(cx);
+
+        let mut cursor = self.cursor::<T::Key>(cx);
+        cursor.next(cx);
+        while let Some(item) = cursor.item() {
+            if predicate(&item) {
+                new_map.push(item.clone(), cx);
+            }
+            cursor.next(cx);
+        }
+        drop(cursor);
+
+        *self = new_map;
     }
 }
 
@@ -1385,7 +1468,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for u8 {
+    impl Dimension<'_, IntegersSummary> for u8 {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1395,7 +1478,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Count {
+    impl Dimension<'_, IntegersSummary> for Count {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1405,13 +1488,13 @@ mod tests {
         }
     }
 
-    impl<'a> SeekTarget<'a, IntegersSummary, IntegersSummary> for Count {
+    impl SeekTarget<'_, IntegersSummary, IntegersSummary> for Count {
         fn cmp(&self, cursor_location: &IntegersSummary, _: &()) -> Ordering {
             self.0.cmp(&cursor_location.count)
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Sum {
+    impl Dimension<'_, IntegersSummary> for Sum {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }

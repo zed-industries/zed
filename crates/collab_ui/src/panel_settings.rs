@@ -27,7 +27,7 @@ impl<'de> Deserialize<'de> for ChatPanelButton {
     {
         struct Visitor;
 
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = ChatPanelButton;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -126,7 +126,7 @@ impl Settings for CollaborationPanelSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
@@ -139,7 +139,7 @@ impl Settings for ChatPanelSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
@@ -152,7 +152,7 @@ impl Settings for NotificationPanelSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
@@ -165,7 +165,7 @@ impl Settings for MessageEditorSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }

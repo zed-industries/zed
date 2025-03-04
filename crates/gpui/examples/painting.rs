@@ -1,46 +1,62 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
-    Pixels, Point, Render, ViewContext, WindowOptions,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, Application,
+    Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
+    Point, Render, StrokeOptions, Window, WindowOptions,
 };
+
 struct PaintingViewer {
-    default_lines: Vec<Path<Pixels>>,
+    default_lines: Vec<(Path<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
     _painting: bool,
 }
 
 impl PaintingViewer {
-    fn new() -> Self {
+    fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         let mut lines = vec![];
 
-        // draw a line
-        let mut path = Path::new(point(px(50.), px(180.)));
-        path.line_to(point(px(100.), px(120.)));
-        // go back to close the path
-        path.line_to(point(px(100.), px(121.)));
-        path.line_to(point(px(50.), px(181.)));
-        lines.push(path);
+        // draw a Rust logo
+        let mut builder = lyon::path::Path::svg_builder();
+        lyon::extra::rust_logo::build_logo_path(&mut builder);
+        // move down the Path
+        let mut builder: PathBuilder = builder.into();
+        builder.translate(point(px(10.), px(100.)));
+        builder.scale(0.9);
+        let path = builder.build().unwrap();
+        lines.push((path, gpui::black().into()));
 
         // draw a lightening bolt ⚡
-        let mut path = Path::new(point(px(150.), px(200.)));
-        path.line_to(point(px(200.), px(125.)));
-        path.line_to(point(px(200.), px(175.)));
-        path.line_to(point(px(250.), px(100.)));
-        lines.push(path);
+        let mut builder = PathBuilder::fill();
+        builder.move_to(point(px(150.), px(200.)));
+        builder.line_to(point(px(200.), px(125.)));
+        builder.line_to(point(px(200.), px(175.)));
+        builder.line_to(point(px(250.), px(100.)));
+        let path = builder.build().unwrap();
+        lines.push((path, rgb(0x1d4ed8).into()));
 
         // draw a ⭐
-        let mut path = Path::new(point(px(350.), px(100.)));
-        path.line_to(point(px(370.), px(160.)));
-        path.line_to(point(px(430.), px(160.)));
-        path.line_to(point(px(380.), px(200.)));
-        path.line_to(point(px(400.), px(260.)));
-        path.line_to(point(px(350.), px(220.)));
-        path.line_to(point(px(300.), px(260.)));
-        path.line_to(point(px(320.), px(200.)));
-        path.line_to(point(px(270.), px(160.)));
-        path.line_to(point(px(330.), px(160.)));
-        path.line_to(point(px(350.), px(100.)));
-        lines.push(path);
+        let mut builder = PathBuilder::fill();
+        builder.move_to(point(px(350.), px(100.)));
+        builder.line_to(point(px(370.), px(160.)));
+        builder.line_to(point(px(430.), px(160.)));
+        builder.line_to(point(px(380.), px(200.)));
+        builder.line_to(point(px(400.), px(260.)));
+        builder.line_to(point(px(350.), px(220.)));
+        builder.line_to(point(px(300.), px(260.)));
+        builder.line_to(point(px(320.), px(200.)));
+        builder.line_to(point(px(270.), px(160.)));
+        builder.line_to(point(px(330.), px(160.)));
+        builder.line_to(point(px(350.), px(100.)));
+        let path = builder.build().unwrap();
+        lines.push((
+            path,
+            linear_gradient(
+                180.,
+                linear_color_stop(rgb(0xFACC15), 0.7),
+                linear_color_stop(rgb(0xD56D0C), 1.),
+            )
+            .color_space(ColorSpace::Oklab),
+        ));
 
         let square_bounds = Bounds {
             origin: point(px(450.), px(100.)),
@@ -49,18 +65,42 @@ impl PaintingViewer {
         let height = square_bounds.size.height;
         let horizontal_offset = height;
         let vertical_offset = px(30.);
-        let mut path = Path::new(square_bounds.bottom_left());
-        path.curve_to(
+        let mut builder = PathBuilder::fill();
+        builder.move_to(square_bounds.bottom_left());
+        builder.curve_to(
             square_bounds.origin + point(horizontal_offset, vertical_offset),
             square_bounds.origin + point(px(0.0), vertical_offset),
         );
-        path.line_to(square_bounds.top_right() + point(-horizontal_offset, vertical_offset));
-        path.curve_to(
+        builder.line_to(square_bounds.top_right() + point(-horizontal_offset, vertical_offset));
+        builder.curve_to(
             square_bounds.bottom_right(),
             square_bounds.top_right() + point(px(0.0), vertical_offset),
         );
-        path.line_to(square_bounds.bottom_left());
-        lines.push(path);
+        builder.line_to(square_bounds.bottom_left());
+        let path = builder.build().unwrap();
+        lines.push((
+            path,
+            linear_gradient(
+                180.,
+                linear_color_stop(gpui::blue(), 0.4),
+                linear_color_stop(gpui::red(), 1.),
+            ),
+        ));
+
+        // draw a wave
+        let options = StrokeOptions::default()
+            .with_line_width(1.)
+            .with_line_join(lyon::path::LineJoin::Bevel);
+        let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
+        builder.move_to(point(px(40.), px(320.)));
+        for i in 0..50 {
+            builder.line_to(point(
+                px(40.0 + i as f32 * 10.0),
+                px(320.0 + (i as f32 * 10.0).sin() * 40.0),
+            ));
+        }
+        let path = builder.build().unwrap();
+        lines.push((path, gpui::green().into()));
 
         Self {
             default_lines: lines.clone(),
@@ -70,13 +110,13 @@ impl PaintingViewer {
         }
     }
 
-    fn clear(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear(&mut self, cx: &mut Context<Self>) {
         self.lines.clear();
         cx.notify();
     }
 }
 impl Render for PaintingViewer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
         div()
@@ -103,7 +143,7 @@ impl Render for PaintingViewer {
                             .flex()
                             .px_3()
                             .py_1()
-                            .on_click(cx.listener(|this, _, cx| {
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.clear(cx);
                             })),
                     ),
@@ -113,29 +153,30 @@ impl Render for PaintingViewer {
                     .size_full()
                     .child(
                         canvas(
-                            move |_, _| {},
-                            move |_, _, cx| {
-                                const STROKE_WIDTH: Pixels = px(2.0);
-                                for path in default_lines {
-                                    cx.paint_path(path, gpui::black());
+                            move |_, _, _| {},
+                            move |_, _, window, _| {
+
+                                for (path, color) in default_lines {
+                                    window.paint_path(path, color);
                                 }
+
                                 for points in lines {
-                                    let mut path = Path::new(points[0]);
-                                    for p in points.iter().skip(1) {
-                                        path.line_to(*p);
+                                    if points.len() < 2 {
+                                        continue;
                                     }
 
-                                    let mut last = points.last().unwrap();
-                                    for p in points.iter().rev() {
-                                        let mut offset_x = px(0.);
-                                        if last.x == p.x {
-                                            offset_x = STROKE_WIDTH;
+                                    let mut builder = PathBuilder::stroke(px(1.));
+                                    for (i, p) in points.into_iter().enumerate() {
+                                        if i == 0 {
+                                            builder.move_to(p);
+                                        } else {
+                                            builder.line_to(p);
                                         }
-                                        path.line_to(point(p.x + offset_x, p.y  + STROKE_WIDTH));
-                                        last = p;
                                     }
 
-                                    cx.paint_path(path, gpui::black());
+                                    if let Ok(path) = builder.build() {
+                                        window.paint_path(path, gpui::black());
+                                    }
                                 }
                             },
                         )
@@ -143,14 +184,14 @@ impl Render for PaintingViewer {
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, ev: &MouseDownEvent, _| {
+                        cx.listener(|this, ev: &MouseDownEvent, _, _| {
                             this._painting = true;
                             this.start = ev.position;
                             let path = vec![ev.position];
                             this.lines.push(path);
                         }),
                     )
-                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, cx| {
+                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
                         if !this._painting {
                             return;
                         }
@@ -176,7 +217,7 @@ impl Render for PaintingViewer {
                     }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _| {
+                        cx.listener(|this, _, _, _| {
                             this._painting = false;
                         }),
                     ),
@@ -185,13 +226,13 @@ impl Render for PaintingViewer {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx| {
         cx.open_window(
             WindowOptions {
                 focus: true,
                 ..Default::default()
             },
-            |cx| cx.new_view(|_| PaintingViewer::new()),
+            |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
         )
         .unwrap();
         cx.activate(true);

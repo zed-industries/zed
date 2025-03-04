@@ -40,7 +40,7 @@ When you invite a collaborator to join your project, a new call begins. Your Zed
 
 Collaborators in the same project as you are in color, and have a cursor color. Collaborators in other projects are shown in gray. Collaborators that have access to the current project will have their own cursor color under their avatar.
 
-We aim to eliminate the distinction between local and remote projects as much as possible. Guests can open, edit, and save files, perform searches, interact with the language server, etc.
+We aim to eliminate the distinction between local and remote projects as much as possible. Collaborators can open, edit, and save files, perform searches, interact with the language server, etc. Guests have a read-only view of the project, including access to language server info.
 
 #### Unshared Projects
 

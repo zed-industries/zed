@@ -1,14 +1,17 @@
-#![allow(missing_docs)]
-use gpui::{svg, AnimationElement, Hsla, IntoElement, Point, Rems, Transformation};
+mod decorated_icon;
+mod icon_decoration;
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+pub use decorated_icon::*;
+use gpui::{img, svg, AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation};
+pub use icon_decoration::*;
 use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
-use crate::{
-    prelude::*,
-    traits::component_preview::{ComponentExample, ComponentPreview},
-    Indicator,
-};
+use crate::{prelude::*, Indicator};
 
 #[derive(IntoElement)]
 pub enum AnyIcon {
@@ -40,7 +43,7 @@ impl From<AnimationElement<Icon>> for AnyIcon {
 }
 
 impl RenderOnce for AnyIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         match self {
             Self::Icon(icon) => icon.into_any_element(),
             Self::AnimatedIcon(animated_icon) => animated_icon.into_any_element(),
@@ -59,6 +62,9 @@ pub enum IconSize {
     #[default]
     /// 16px
     Medium,
+    /// 48px
+    XLarge,
+    Custom(Rems),
 }
 
 impl IconSize {
@@ -68,6 +74,8 @@ impl IconSize {
             IconSize::XSmall => rems_from_px(12.),
             IconSize::Small => rems_from_px(14.),
             IconSize::Medium => rems_from_px(16.),
+            IconSize::XLarge => rems_from_px(48.),
+            IconSize::Custom(size) => size,
         }
     }
 
@@ -76,21 +84,24 @@ impl IconSize {
     /// The returned tuple contains:
     ///   1. The length of one side of the square
     ///   2. The padding of one side of the square
-    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
-        let icon_size = self.rems() * cx.rem_size();
+    pub fn square_components(&self, window: &mut Window, cx: &mut App) -> (Pixels, Pixels) {
+        let icon_size = self.rems() * window.rem_size();
         let padding = match self {
             IconSize::Indicator => DynamicSpacing::Base00.px(cx),
             IconSize::XSmall => DynamicSpacing::Base02.px(cx),
             IconSize::Small => DynamicSpacing::Base02.px(cx),
             IconSize::Medium => DynamicSpacing::Base02.px(cx),
+            IconSize::XLarge => DynamicSpacing::Base02.px(cx),
+            // TODO: Wire into dynamic spacing
+            IconSize::Custom(size) => size.to_pixels(window.rem_size()),
         };
 
         (icon_size, padding)
     }
 
     /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
-        let (icon_size, padding) = self.square_components(cx);
+    pub fn square(&self, window: &mut Window, cx: &mut App) -> Pixels {
+        let (icon_size, padding) = self.square_components(window, cx);
 
         icon_size + padding * 2.
     }
@@ -114,8 +125,12 @@ impl IconSize {
 pub enum IconName {
     Ai,
     AiAnthropic,
+    AiBedrock,
     AiAnthropicHosted,
+    AiDeepSeek,
     AiGoogle,
+    AiLmStudio,
+    AiMistral,
     AiOllama,
     AiOpenAi,
     AiZed,
@@ -143,11 +158,13 @@ pub enum IconName {
     CaseSensitive,
     Check,
     ChevronDown,
-    ChevronDownSmall, // This chevron indicates a popover menu.
+    /// This chevron indicates a popover menu.
+    ChevronDownSmall,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
     ChevronUpDown,
+    Circle,
     Close,
     Code,
     Command,
@@ -201,10 +218,10 @@ pub enum IconName {
     Github,
     Globe,
     GitBranch,
+    GitBranchSmall,
     Hash,
     HistoryRerun,
     Indicator,
-    IndicatorX,
     Info,
     InlayHint,
     Keyboard,
@@ -213,12 +230,14 @@ pub enum IconName {
     Link,
     ListTree,
     ListX,
+    LockOutlined,
     MagnifyingGlass,
     MailOpen,
     Maximize,
     Menu,
     MessageBubbles,
     MessageCircle,
+    Cloud,
     Mic,
     MicMute,
     Microscope,
@@ -230,6 +249,7 @@ pub enum IconName {
     PanelRight,
     Pencil,
     Person,
+    PersonCircle,
     PhoneIncoming,
     Pin,
     Play,
@@ -306,6 +326,9 @@ pub enum IconName {
     ZedAssistant2,
     ZedAssistantFilled,
     ZedPredict,
+    ZedPredictUp,
+    ZedPredictDown,
+    ZedPredictDisabled,
     ZedXCopilot,
 }
 
@@ -315,9 +338,34 @@ impl From<IconName> for Icon {
     }
 }
 
-#[derive(IntoElement)]
+/// The source of an icon.
+enum IconSource {
+    /// An SVG embedded in the Zed binary.
+    Svg(SharedString),
+    /// An image file located at the specified path.
+    ///
+    /// Currently our SVG renderer is missing support for the following features:
+    /// 1. Loading SVGs from external files.
+    /// 2. Rendering polychrome SVGs.
+    ///
+    /// In order to support icon themes, we render the icons as images instead.
+    Image(Arc<Path>),
+}
+
+impl IconSource {
+    fn from_path(path: impl Into<SharedString>) -> Self {
+        let path = path.into();
+        if path.starts_with("icons/file_icons") {
+            Self::Svg(path)
+        } else {
+            Self::Image(Arc::from(PathBuf::from(path.as_ref())))
+        }
+    }
+}
+
+#[derive(IntoElement, IntoComponent)]
 pub struct Icon {
-    path: SharedString,
+    source: IconSource,
     color: Color,
     size: Rems,
     transformation: Transformation,
@@ -326,7 +374,7 @@ pub struct Icon {
 impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
-            path: icon.path().into(),
+            source: IconSource::Svg(icon.path().into()),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -335,7 +383,7 @@ impl Icon {
 
     pub fn from_path(path: impl Into<SharedString>) -> Self {
         Self {
-            path: path.into(),
+            source: IconSource::from_path(path),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -367,267 +415,21 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        svg()
-            .with_transformation(self.transformation)
-            .size(self.size)
-            .flex_none()
-            .path(self.path)
-            .text_color(self.color.color(cx))
-    }
-}
-
-const ICON_DECORATION_SIZE: f32 = 11.0;
-
-/// An icon silhouette used to knockout the background of an element
-/// for an icon to sit on top of it, emulating a stroke/border.
-#[derive(Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, DerivePathStr)]
-#[strum(serialize_all = "snake_case")]
-#[path_str(prefix = "icons/knockouts", suffix = ".svg")]
-pub enum KnockoutIconName {
-    // /icons/knockouts/x1.svg
-    XFg,
-    XBg,
-    DotFg,
-    DotBg,
-    TriangleFg,
-    TriangleBg,
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString)]
-pub enum IconDecorationKind {
-    // Slash,
-    X,
-    Dot,
-    Triangle,
-}
-
-impl IconDecorationKind {
-    fn fg(&self) -> KnockoutIconName {
-        match self {
-            Self::X => KnockoutIconName::XFg,
-            Self::Dot => KnockoutIconName::DotFg,
-            Self::Triangle => KnockoutIconName::TriangleFg,
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        match self.source {
+            IconSource::Svg(path) => svg()
+                .with_transformation(self.transformation)
+                .size(self.size)
+                .flex_none()
+                .path(path)
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+            IconSource::Image(path) => img(path)
+                .size(self.size)
+                .flex_none()
+                .text_color(self.color.color(cx))
+                .into_any_element(),
         }
-    }
-
-    fn bg(&self) -> KnockoutIconName {
-        match self {
-            Self::X => KnockoutIconName::XBg,
-            Self::Dot => KnockoutIconName::DotBg,
-            Self::Triangle => KnockoutIconName::TriangleBg,
-        }
-    }
-}
-
-/// The decoration for an icon.
-///
-/// For example, this can show an indicator, an "x",
-/// or a diagonal strikethrough to indicate something is disabled.
-#[derive(IntoElement)]
-pub struct IconDecoration {
-    kind: IconDecorationKind,
-    color: Hsla,
-    knockout_color: Hsla,
-    knockout_hover_color: Hsla,
-    position: Point<Pixels>,
-    group_name: Option<SharedString>,
-}
-
-impl IconDecoration {
-    /// Create a new icon decoration
-    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, cx: &WindowContext) -> Self {
-        let color = cx.theme().colors().icon;
-        let position = Point::default();
-
-        Self {
-            kind,
-            color,
-            knockout_color,
-            knockout_hover_color: knockout_color,
-            position,
-            group_name: None,
-        }
-    }
-
-    /// Sets the kind of decoration
-    pub fn kind(mut self, kind: IconDecorationKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
-    /// Sets the color of the decoration
-    pub fn color(mut self, color: Hsla) -> Self {
-        self.color = color;
-        self
-    }
-
-    /// Sets the color of the decoration's knockout
-    ///
-    /// Match this to the background of the element
-    /// the icon will be rendered on
-    pub fn knockout_color(mut self, color: Hsla) -> Self {
-        self.knockout_color = color;
-        self
-    }
-
-    /// Sets the color of the decoration that is used on hover
-    pub fn knockout_hover_color(mut self, color: Hsla) -> Self {
-        self.knockout_hover_color = color;
-        self
-    }
-
-    /// Sets the position of the decoration
-    pub fn position(mut self, position: Point<Pixels>) -> Self {
-        self.position = position;
-        self
-    }
-
-    /// Sets the name of the group the decoration belongs to
-    pub fn group_name(mut self, name: Option<SharedString>) -> Self {
-        self.group_name = name;
-        self
-    }
-}
-
-impl RenderOnce for IconDecoration {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div()
-            .size(px(ICON_DECORATION_SIZE))
-            .flex_none()
-            .absolute()
-            .bottom(self.position.y)
-            .right(self.position.x)
-            .child(
-                // foreground
-                svg()
-                    .absolute()
-                    .bottom_0()
-                    .right_0()
-                    .size(px(ICON_DECORATION_SIZE))
-                    .path(self.kind.fg().path())
-                    .text_color(self.color),
-            )
-            .child(
-                // background
-                svg()
-                    .absolute()
-                    .bottom_0()
-                    .right_0()
-                    .size(px(ICON_DECORATION_SIZE))
-                    .path(self.kind.bg().path())
-                    .text_color(self.knockout_color)
-                    .when(self.group_name.is_none(), |this| {
-                        this.hover(|style| style.text_color(self.knockout_hover_color))
-                    })
-                    .when_some(self.group_name.clone(), |this, group_name| {
-                        this.group_hover(group_name, |style| {
-                            style.text_color(self.knockout_hover_color)
-                        })
-                    }),
-            )
-    }
-}
-
-impl ComponentPreview for IconDecoration {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
-
-        let examples = all_kinds
-            .iter()
-            .map(|kind| {
-                let name = format!("{:?}", kind).to_string();
-
-                single_example(
-                    name,
-                    IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
-                )
-            })
-            .collect();
-
-        vec![example_group(examples)]
-    }
-}
-
-#[derive(IntoElement)]
-pub struct DecoratedIcon {
-    icon: Icon,
-    decoration: Option<IconDecoration>,
-}
-
-impl DecoratedIcon {
-    pub fn new(icon: Icon, decoration: Option<IconDecoration>) -> Self {
-        Self { icon, decoration }
-    }
-}
-
-impl RenderOnce for DecoratedIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div()
-            .relative()
-            .size(self.icon.size)
-            .child(self.icon)
-            .when_some(self.decoration, |this, decoration| this.child(decoration))
-    }
-}
-
-impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        let icon_1 = Icon::new(IconName::FileDoc);
-        let icon_2 = Icon::new(IconName::FileDoc);
-        let icon_3 = Icon::new(IconName::FileDoc);
-        let icon_4 = Icon::new(IconName::FileDoc);
-
-        let decoration_x = IconDecoration::new(
-            IconDecorationKind::X,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let decoration_triangle = IconDecoration::new(
-            IconDecorationKind::Triangle,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let decoration_dot = IconDecoration::new(
-            IconDecorationKind::Dot,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let examples = vec![
-            single_example("no_decoration", DecoratedIcon::new(icon_1, None)),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_2, Some(decoration_x)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_3, Some(decoration_triangle)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_4, Some(decoration_dot)),
-            ),
-        ];
-
-        vec![example_group(examples)]
     }
 }
 
@@ -666,7 +468,7 @@ impl IconWithIndicator {
 }
 
 impl RenderOnce for IconWithIndicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let indicator_border_color = self
             .indicator_border_color
             .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);
@@ -690,25 +492,43 @@ impl RenderOnce for IconWithIndicator {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Icon {
-    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
-        let arrow_icons = vec![
-            IconName::ArrowDown,
-            IconName::ArrowLeft,
-            IconName::ArrowRight,
-            IconName::ArrowUp,
-            IconName::ArrowCircle,
-        ];
-
-        vec![example_group_with_title(
-            "Arrow Icons",
-            arrow_icons
-                .into_iter()
-                .map(|icon| {
-                    let name = format!("{:?}", icon).to_string();
-                    ComponentExample::new(name, Icon::new(icon))
-                })
-                .collect(),
-        )]
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Sizes",
+                    vec![
+                        single_example("Default", Icon::new(IconName::Star).into_any_element()),
+                        single_example(
+                            "Small",
+                            Icon::new(IconName::Star)
+                                .size(IconSize::Small)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Large",
+                            Icon::new(IconName::Star)
+                                .size(IconSize::XLarge)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Colors",
+                    vec![
+                        single_example("Default", Icon::new(IconName::Bell).into_any_element()),
+                        single_example(
+                            "Custom Color",
+                            Icon::new(IconName::Bell)
+                                .color(Color::Error)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

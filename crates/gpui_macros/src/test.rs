@@ -164,7 +164,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     if let Type::Path(ty) = &*ty.elem {
                         let last_segment = ty.path.segments.last();
                         match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                            Some("AppContext") => {
+                            Some("App") => {
                                 let cx_varname = format_ident!("cx_{}", ix);
                                 let cx_varname_lock = format_ident!("cx_{}_lock", ix);
                                 cx_vars.extend(quote!(

@@ -1,8 +1,7 @@
-use anyhow::Context;
-use gpui::{AppContext, UpdateGlobal};
+use anyhow::Context as _;
+use gpui::{App, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
-use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
@@ -31,7 +30,26 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut AppContext) {
+/// A shared grammar for plain text, exposed for reuse by downstream crates.
+#[cfg(feature = "tree-sitter-gitcommit")]
+pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
+    std::sync::LazyLock::new(|| {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Git Commit".into(),
+                soft_wrap: Some(language::language_settings::SoftWrap::EditorWidth),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
+                    first_line_pattern: None,
+                },
+                line_comments: vec![Arc::from("#")],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_gitcommit::LANGUAGE.into()),
+        ))
+    });
+
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
@@ -53,6 +71,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
         ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
         ("yaml", tree_sitter_yaml::LANGUAGE),
+        ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
     ]);
 
     macro_rules! language {

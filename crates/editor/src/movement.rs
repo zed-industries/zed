@@ -7,6 +7,7 @@ use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
+use workspace::searchable::Direction;
 
 use std::{ops::Range, sync::Arc};
 
@@ -213,6 +214,7 @@ pub fn indented_line_beginning(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     stop_at_soft_boundaries: bool,
+    stop_at_indent: bool,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
@@ -228,7 +230,7 @@ pub fn indented_line_beginning(
     if stop_at_soft_boundaries && soft_line_start > indent_start && display_point != soft_line_start
     {
         soft_line_start
-    } else if stop_at_soft_boundaries && display_point != indent_start {
+    } else if stop_at_indent && display_point != indent_start {
         indent_start
     } else {
         line_start
@@ -236,7 +238,7 @@ pub fn indented_line_beginning(
 }
 
 /// Returns a position of the end of line.
-
+///
 /// If `stop_at_soft_boundaries` is true, the returned position is that of the
 /// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
 /// Otherwise it's always going to be the end of a logical line.
@@ -401,6 +403,69 @@ pub fn end_of_paragraph(
     }
 
     map.max_point()
+}
+
+pub fn start_of_excerpt(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+        return display_point;
+    };
+    match direction {
+        Direction::Prev => {
+            let mut start = excerpt.start_anchor().to_display_point(&map);
+            if start >= display_point && start.row() > DisplayRow(0) {
+                let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
+                    return display_point;
+                };
+                start = excerpt.start_anchor().to_display_point(&map);
+            }
+            start
+        }
+        Direction::Next => {
+            let mut end = excerpt.end_anchor().to_display_point(&map);
+            *end.row_mut() += 1;
+            map.clip_point(end, Bias::Right)
+        }
+    }
+}
+
+pub fn end_of_excerpt(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+        return display_point;
+    };
+    match direction {
+        Direction::Prev => {
+            let mut start = excerpt.start_anchor().to_display_point(&map);
+            if start.row() > DisplayRow(0) {
+                *start.row_mut() -= 1;
+            }
+            map.clip_point(start, Bias::Left)
+        }
+        Direction::Next => {
+            let mut end = excerpt.end_anchor().to_display_point(&map);
+            *end.column_mut() = 0;
+            if end <= display_point {
+                *end.row_mut() += 1;
+                let point_end = map.display_point_to_point(end, Bias::Right);
+                let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point_end..point_end)
+                else {
+                    return display_point;
+                };
+                end = excerpt.end_anchor().to_display_point(&map);
+                *end.column_mut() = 0;
+            }
+            end
+        }
+    }
 }
 
 /// Scans for a boundary preceding the given start point `from` until a boundary is found,
@@ -703,17 +768,17 @@ mod tests {
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
         Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
     };
-    use gpui::{font, px, Context as _};
+    use gpui::{font, px, AppContext as _};
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;
     use util::post_inc;
 
     #[gpui::test]
-    fn test_previous_word_start(cx: &mut gpui::AppContext) {
+    fn test_previous_word_start(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_word_start(&snapshot, display_points[1]),
@@ -738,10 +803,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_previous_subword_start(cx: &mut gpui::AppContext) {
+    fn test_previous_subword_start(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_subword_start(&snapshot, display_points[1]),
@@ -773,12 +838,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_preceding_boundary(cx: &mut gpui::AppContext) {
+    fn test_find_preceding_boundary(cx: &mut gpui::App) {
         init_test(cx);
 
         fn assert(
             marked_text: &str,
-            cx: &mut gpui::AppContext,
+            cx: &mut gpui::App,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
@@ -811,7 +876,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_preceding_boundary_with_inlays(cx: &mut gpui::AppContext) {
+    fn test_find_preceding_boundary_with_inlays(cx: &mut gpui::App) {
         init_test(cx);
 
         let input_text = "abcdefghijklmnopqrstuvwxys";
@@ -820,7 +885,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
 
-        let display_map = cx.new_model(|cx| {
+        let display_map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
                 font,
@@ -864,7 +929,7 @@ mod tests {
             })
             .collect();
         let snapshot = display_map.update(cx, |map, cx| {
-            map.splice_inlays(Vec::new(), inlays, cx);
+            map.splice_inlays(&[], inlays, cx);
             map.snapshot(cx)
         });
 
@@ -884,10 +949,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_next_word_end(cx: &mut gpui::AppContext) {
+    fn test_next_word_end(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_word_end(&snapshot, display_points[0]),
@@ -909,10 +974,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_next_subword_end(cx: &mut gpui::AppContext) {
+    fn test_next_subword_end(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_subword_end(&snapshot, display_points[0]),
@@ -943,12 +1008,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_boundary(cx: &mut gpui::AppContext) {
+    fn test_find_boundary(cx: &mut gpui::App) {
         init_test(cx);
 
         fn assert(
             marked_text: &str,
-            cx: &mut gpui::AppContext,
+            cx: &mut gpui::App,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
@@ -981,10 +1046,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_surrounding_word(cx: &mut gpui::AppContext) {
+    fn test_surrounding_word(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 surrounding_word(&snapshot, display_points[1]),
@@ -1013,14 +1078,13 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
         let window = cx.window;
-        _ = cx.update_window(window, |_, cx| {
-            let text_layout_details =
-                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
+        _ = cx.update_window(window, |_, window, cx| {
+            let text_layout_details = editor.read(cx).text_layout_details(window);
 
             let font = font("Helvetica");
 
-            let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
-            let multibuffer = cx.new_model(|cx| {
+            let buffer = cx.new(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
+            let multibuffer = cx.new(|cx| {
                 let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
@@ -1038,7 +1102,7 @@ mod tests {
                 );
                 multibuffer
             });
-            let display_map = cx.new_model(|cx| {
+            let display_map = cx.new(|cx| {
                 DisplayMap::new(
                     multibuffer,
                     font,
@@ -1182,9 +1246,10 @@ mod tests {
         });
     }
 
-    fn init_test(cx: &mut gpui::AppContext) {
+    fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         crate::init(cx);

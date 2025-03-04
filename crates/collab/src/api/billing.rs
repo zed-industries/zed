@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use stripe::{
-    BillingPortalSession, CreateBillingPortalSession, CreateBillingPortalSessionFlowData,
-    CreateBillingPortalSessionFlowDataAfterCompletion,
+    BillingPortalSession, CancellationDetailsReason, CreateBillingPortalSession,
+    CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataType, CreateCustomer, Customer, CustomerId, EventObject,
     EventType, Expandable, ListEvents, Subscription, SubscriptionId, SubscriptionStatus,
@@ -21,8 +21,10 @@ use stripe::{
 use util::ResultExt;
 
 use crate::api::events::SnowflakeRow;
+use crate::db::billing_subscription::{StripeCancellationReason, StripeSubscriptionStatus};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
+use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
     db::{
         billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
@@ -31,10 +33,6 @@ use crate::{
         UpdateBillingSubscriptionParams,
     },
     stripe_billing::StripeBilling,
-};
-use crate::{
-    db::{billing_subscription::StripeSubscriptionStatus, UserId},
-    llm::db::LlmDatabase,
 };
 use crate::{AppState, Cents, Error, Result};
 
@@ -251,22 +249,31 @@ async fn create_billing_subscription(
         ));
     }
 
-    let customer_id =
-        if let Some(existing_customer) = app.db.get_billing_customer_by_user_id(user.id).await? {
-            CustomerId::from_str(&existing_customer.stripe_customer_id)
-                .context("failed to parse customer ID")?
-        } else {
-            let customer = Customer::create(
-                &stripe_client,
-                CreateCustomer {
-                    email: user.email_address.as_deref(),
-                    ..Default::default()
-                },
-            )
-            .await?;
+    let existing_billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
+    if let Some(existing_billing_customer) = &existing_billing_customer {
+        if existing_billing_customer.has_overdue_invoices {
+            return Err(Error::http(
+                StatusCode::PAYMENT_REQUIRED,
+                "user has overdue invoices".into(),
+            ));
+        }
+    }
 
-            customer.id
-        };
+    let customer_id = if let Some(existing_customer) = existing_billing_customer {
+        CustomerId::from_str(&existing_customer.stripe_customer_id)
+            .context("failed to parse customer ID")?
+    } else {
+        let customer = Customer::create(
+            &stripe_client,
+            CreateCustomer {
+                email: user.email_address.as_deref(),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        customer.id
+    };
 
     let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-5-sonnet")?;
     let stripe_model = stripe_billing.register_model(default_model).await?;
@@ -661,6 +668,27 @@ async fn handle_customer_subscription_event(
             .await?
             .ok_or_else(|| anyhow!("billing customer not found"))?;
 
+    let was_canceled_due_to_payment_failure = subscription.status == SubscriptionStatus::Canceled
+        && subscription
+            .cancellation_details
+            .as_ref()
+            .and_then(|details| details.reason)
+            .map_or(false, |reason| {
+                reason == CancellationDetailsReason::PaymentFailed
+            });
+
+    if was_canceled_due_to_payment_failure {
+        app.db
+            .update_billing_customer(
+                billing_customer.id,
+                &UpdateBillingCustomerParams {
+                    has_overdue_invoices: ActiveValue::set(true),
+                    ..Default::default()
+                },
+            )
+            .await?;
+    }
+
     if let Some(existing_subscription) = app
         .db
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
@@ -678,6 +706,12 @@ async fn handle_customer_subscription_event(
                             .cancel_at
                             .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
                             .map(|time| time.naive_utc()),
+                    ),
+                    stripe_cancellation_reason: ActiveValue::set(
+                        subscription
+                            .cancellation_details
+                            .and_then(|details| details.reason)
+                            .map(|reason| reason.into()),
                     ),
                 },
             )
@@ -715,6 +749,10 @@ async fn handle_customer_subscription_event(
                 billing_customer_id: billing_customer.id,
                 stripe_subscription_id: subscription.id.to_string(),
                 stripe_subscription_status: subscription.status.into(),
+                stripe_cancellation_reason: subscription
+                    .cancellation_details
+                    .and_then(|details| details.reason)
+                    .map(|reason| reason.into()),
             })
             .await?;
     }
@@ -787,6 +825,16 @@ impl From<SubscriptionStatus> for StripeSubscriptionStatus {
             SubscriptionStatus::Canceled => Self::Canceled,
             SubscriptionStatus::Unpaid => Self::Unpaid,
             SubscriptionStatus::Paused => Self::Paused,
+        }
+    }
+}
+
+impl From<CancellationDetailsReason> for StripeCancellationReason {
+    fn from(value: CancellationDetailsReason) -> Self {
+        match value {
+            CancellationDetailsReason::CancellationRequested => Self::CancellationRequested,
+            CancellationDetailsReason::PaymentDisputed => Self::PaymentDisputed,
+            CancellationDetailsReason::PaymentFailed => Self::PaymentFailed,
         }
     }
 }

@@ -1,8 +1,5 @@
-#![allow(missing_docs)]
-
-use gpui::{StyleRefinement, WindowContext};
-
-use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
+use crate::{prelude::*, LabelLike};
+use gpui::StyleRefinement;
 
 /// A struct representing a label element in the UI.
 ///
@@ -32,11 +29,10 @@ use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 ///
 /// let my_label = Label::new("Deleted").strikethrough(true);
 /// ```
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
 pub struct Label {
     base: LabelLike,
     label: SharedString,
-    single_line: bool,
 }
 
 impl Label {
@@ -53,10 +49,12 @@ impl Label {
         Self {
             base: LabelLike::new(),
             label: label.into(),
-            single_line: false,
         }
     }
 }
+
+// nate: If we are going to do this, we might as well just
+// impl Styled for Label and not constrain styles
 
 // Style methods.
 impl Label {
@@ -84,6 +82,15 @@ impl LabelCommon for Label {
         self
     }
 
+    /// Sets the weight of the label using a [`FontWeight`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").weight(FontWeight::Bold);
+    /// ```
     fn weight(mut self, weight: gpui::FontWeight) -> Self {
         self.base = self.base.weight(weight);
         self
@@ -126,8 +133,8 @@ impl LabelCommon for Label {
     ///
     /// let my_label = Label::new("Hello, World!").strikethrough(true);
     /// ```
-    fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.base = self.base.strikethrough(strikethrough);
+    fn strikethrough(mut self) -> Self {
+        self.base = self.base.strikethrough();
         self
     }
 
@@ -140,8 +147,8 @@ impl LabelCommon for Label {
     ///
     /// let my_label = Label::new("Hello, World!").italic(true);
     /// ```
-    fn italic(mut self, italic: bool) -> Self {
-        self.base = self.base.italic(italic);
+    fn italic(mut self) -> Self {
+        self.base = self.base.italic();
         self
     }
 
@@ -159,30 +166,86 @@ impl LabelCommon for Label {
         self
     }
 
-    fn underline(mut self, underline: bool) -> Self {
-        self.base = self.base.underline(underline);
+    fn underline(mut self) -> Self {
+        self.base = self.base.underline();
         self
     }
 
-    fn text_ellipsis(mut self) -> Self {
-        self.base = self.base.text_ellipsis();
+    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    fn truncate(mut self) -> Self {
+        self.base = self.base.truncate();
         self
     }
 
     fn single_line(mut self) -> Self {
-        self.single_line = true;
+        self.label = SharedString::from(self.label.replace('\n', "⏎"));
         self.base = self.base.single_line();
+        self
+    }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self.base.buffer_font(cx);
         self
     }
 }
 
 impl RenderOnce for Label {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let target_label = if self.single_line {
-            SharedString::from(self.label.replace('\n', "␤"))
-        } else {
-            self.label
-        };
-        self.base.child(target_label)
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        self.base.child(self.label)
+    }
+}
+
+mod label_preview {
+    use crate::prelude::*;
+
+    // View this component preview using `workspace: open component-preview`
+    impl ComponentPreview for Label {
+        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Sizes",
+                        vec![
+                            single_example("Default", Label::new("Project Explorer").into_any_element()),
+                            single_example("Small", Label::new("File: main.rs").size(LabelSize::Small).into_any_element()),
+                            single_example("Large", Label::new("Welcome to Zed").size(LabelSize::Large).into_any_element()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Colors",
+                        vec![
+                            single_example("Default", Label::new("Status: Ready").into_any_element()),
+                            single_example("Accent", Label::new("New Update Available").color(Color::Accent).into_any_element()),
+                            single_example("Error", Label::new("Build Failed").color(Color::Error).into_any_element()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Styles",
+                        vec![
+                            single_example("Default", Label::new("Normal Text").into_any_element()),
+                            single_example("Bold", Label::new("Important Notice").weight(gpui::FontWeight::BOLD).into_any_element()),
+                            single_example("Italic", Label::new("Code Comment").italic().into_any_element()),
+                            single_example("Strikethrough", Label::new("Deprecated Feature").strikethrough().into_any_element()),
+                            single_example("Underline", Label::new("Clickable Link").underline().into_any_element()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Line Height Styles",
+                        vec![
+                            single_example("Default", Label::new("Multi-line\nText\nExample").into_any_element()),
+                            single_example("UI Label", Label::new("Compact\nUI\nLabel").line_height_style(LineHeightStyle::UiLabel).into_any_element()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Special Cases",
+                        vec![
+                            single_example("Single Line", Label::new("Line 1\nLine 2\nLine 3").single_line().into_any_element()),
+                            single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
+                        ],
+                    ),
+                ])
+                .into_any_element()
+        }
     }
 }

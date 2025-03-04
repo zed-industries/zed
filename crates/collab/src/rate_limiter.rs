@@ -189,6 +189,7 @@ mod tests {
         let user_1 = db
             .create_user(
                 "user-1@zed.dev",
+                None,
                 false,
                 NewUserParams {
                     github_login: "user-1".into(),
@@ -201,6 +202,7 @@ mod tests {
         let user_2 = db
             .create_user(
                 "user-2@zed.dev",
+                None,
                 false,
                 NewUserParams {
                     github_login: "user-2".into(),

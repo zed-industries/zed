@@ -2,7 +2,7 @@
 
 JavaScript support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
+- Tree-sitter: [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
 - Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
 ## Code formatting
@@ -147,6 +147,24 @@ You can configure ESLint's `rulesCustomizations` setting:
           // set all eslint errors/warnings to show as warnings
           { "rule": "*", "severity": "warn" }
         ]
+      }
+    }
+  }
+}
+```
+
+### Configure ESLint's `workingDirectory`:
+
+You can configure ESLint's `workingDirectory` setting:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "workingDirectory": {
+          "mode": "auto"
+        }
       }
     }
   }

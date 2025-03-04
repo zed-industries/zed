@@ -1,8 +1,8 @@
 [package]
 name = "auto_update_ui"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -19,7 +19,6 @@ editor.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 markdown_preview.workspace = true
-menu.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true

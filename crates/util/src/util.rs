@@ -1,14 +1,14 @@
 pub mod arc_cow;
 pub mod command;
 pub mod fs;
+pub mod markdown;
 pub mod paths;
 pub mod serde;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::Result;
 use futures::Future;
-
 use itertools::Either;
 use regex::Regex;
 use std::sync::{LazyLock, OnceLock};
@@ -24,7 +24,12 @@ use std::{
 };
 use unicase::UniCase;
 
+#[cfg(unix)]
+use anyhow::{anyhow, Context as _};
+
 pub use take_until::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use util_macros::{separator, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -35,6 +40,50 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        concat!("C:", util::separator!($path))
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        $path
     };
 }
 
@@ -50,10 +99,15 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
 pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
+    // If the string's byte length is <= max_chars, walking the string can be skipped since the
+    // number of chars is <= the number of bytes.
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
     let truncation_ix = s.char_indices().map(|(i, _)| i).nth(max_chars);
     match truncation_ix {
-        Some(length) => s[..length].to_string() + "…",
-        None => s.to_string(),
+        Some(index) => s[..index].to_string() + "…",
+        _ => s.to_string(),
     }
 }
 
@@ -62,10 +116,19 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
 pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
-    let truncation_ix = s.char_indices().map(|(i, _)| i).nth_back(max_chars);
+    // If the string's byte length is <= max_chars, walking the string can be skipped since the
+    // number of chars is <= the number of bytes.
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
+    let suffix_char_length = max_chars.saturating_sub(1);
+    let truncation_ix = s
+        .char_indices()
+        .map(|(i, _)| i)
+        .nth_back(suffix_char_length);
     match truncation_ix {
-        Some(length) => "…".to_string() + &s[length..],
-        None => s.to_string(),
+        Some(index) if index > 0 => "…".to_string() + &s[index..],
+        _ => s.to_string(),
     }
 }
 
@@ -109,6 +172,28 @@ where
             start_index = index;
         }
     }
+}
+
+pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
+where
+    F: Fn(&T, &T) -> Ordering,
+{
+    if limit == 0 {
+        items.truncate(0);
+    }
+    if items.len() <= limit {
+        items.sort_by(compare);
+        return;
+    }
+    // When limit is near to items.len() it may be more efficient to sort the whole list and
+    // truncate, rather than always doing selection first as is done below. It's hard to analyze
+    // where the threshold for this should be since the quickselect style algorithm used by
+    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
+    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
+    // unsorted input.
+    items.select_nth_unstable_by(limit, compare);
+    items.truncate(limit);
+    items.sort_by(compare);
 }
 
 #[cfg(unix)]
@@ -160,6 +245,7 @@ pub fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
@@ -246,7 +332,7 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 if let Some(target) = target.get_mut(&key) {
                     merge_json_value_into(value, target);
                 } else {
-                    target.insert(key.clone(), value);
+                    target.insert(key, value);
                 }
             }
         }
@@ -274,7 +360,7 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
             if let Some(target) = target_object.get_mut(&key) {
                 merge_non_null_json_value_into(value, target);
             } else if !value.is_null() {
-                target_object.insert(key.clone(), value);
+                target_object.insert(key, value);
             }
         }
     } else if !source.is_null() {
@@ -337,6 +423,7 @@ pub trait ResultExt<E> {
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
+    fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
     fn anyhow(self) -> anyhow::Result<Self::Ok>
     where
         E: Into<anyhow::Error>;
@@ -350,13 +437,7 @@ where
 
     #[track_caller]
     fn log_err(self) -> Option<T> {
-        match self {
-            Ok(value) => Some(value),
-            Err(error) => {
-                log_error_with_caller(*Location::caller(), error, log::Level::Error);
-                None
-            }
-        }
+        self.log_with_level(log::Level::Error)
     }
 
     #[track_caller]
@@ -369,10 +450,15 @@ where
 
     #[track_caller]
     fn warn_on_err(self) -> Option<T> {
+        self.log_with_level(log::Level::Warn)
+    }
+
+    #[track_caller]
+    fn log_with_level(self, level: log::Level) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+                log_error_with_caller(*Location::caller(), error, level);
                 None
             }
         }
@@ -408,6 +494,10 @@ where
             .level(level)
             .build(),
     );
+}
+
+pub fn log_err<E: std::fmt::Debug>(error: &E) {
+    log_error_with_caller(*Location::caller(), error, log::Level::Warn);
 }
 
 pub trait TryFutureExt {
@@ -691,9 +781,31 @@ impl Ord for NumericPrefixWithSuffix<'_> {
     }
 }
 
-impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
+impl PartialOrd for NumericPrefixWithSuffix<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Capitalizes the first character of a string.
+///
+/// This function takes a string slice as input and returns a new `String` with the first character
+/// capitalized.
+///
+/// # Examples
+///
+/// ```
+/// use util::capitalize;
+///
+/// assert_eq!(capitalize("hello"), "Hello");
+/// assert_eq!(capitalize("WORLD"), "WORLD");
+/// assert_eq!(capitalize(""), "");
+/// ```
+pub fn capitalize(str: &str) -> String {
+    let mut chars = str.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 
@@ -735,6 +847,29 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_to_bottom_n_sorted_by() {
+        let mut vec: Vec<u32> = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 10, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4, 5]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 5, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4, 5]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 4, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 1, &u32::cmp);
+        assert_eq!(vec, &[1]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 0, &u32::cmp);
+        assert!(vec.is_empty());
+    }
+
+    #[test]
     fn test_iife() {
         fn option_returning_function() -> Option<()> {
             None
@@ -751,9 +886,23 @@ mod tests {
     #[test]
     fn test_truncate_and_trailoff() {
         assert_eq!(truncate_and_trailoff("", 5), "");
+        assert_eq!(truncate_and_trailoff("aaaaaa", 7), "aaaaaa");
+        assert_eq!(truncate_and_trailoff("aaaaaa", 6), "aaaaaa");
+        assert_eq!(truncate_and_trailoff("aaaaaa", 5), "aaaaa…");
         assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
+    }
+
+    #[test]
+    fn test_truncate_and_remove_front() {
+        assert_eq!(truncate_and_remove_front("", 5), "");
+        assert_eq!(truncate_and_remove_front("aaaaaa", 7), "aaaaaa");
+        assert_eq!(truncate_and_remove_front("aaaaaa", 6), "aaaaaa");
+        assert_eq!(truncate_and_remove_front("aaaaaa", 5), "…aaaaa");
+        assert_eq!(truncate_and_remove_front("èèèèèè", 7), "èèèèèè");
+        assert_eq!(truncate_and_remove_front("èèèèèè", 6), "èèèèèè");
+        assert_eq!(truncate_and_remove_front("èèèèèè", 5), "…èèèèè");
     }
 
     #[test]

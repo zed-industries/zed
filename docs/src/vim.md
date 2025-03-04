@@ -159,6 +159,8 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
+- You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
+- You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 
 ## Command palette
 
@@ -367,10 +369,10 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 {
   "context": "Dock",
   "bindings": {
-    "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-    "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-    "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-    "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"]
+    "ctrl-w h": "workspace::ActivatePaneLeft",
+    "ctrl-w l": "workspace::ActivatePaneRight",
+    "ctrl-w k": "workspace::ActivatePaneUp",
+    "ctrl-w j": "workspace::ActivatePaneDown"
     // ... or other keybindings
   }
 }
@@ -379,17 +381,15 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json
-[
-  {
-    "context": "VimControl && !menu && vim_mode != operator",
-    "bindings": {
-      "w": "vim::NextSubwordStart",
-      "b": "vim::PreviousSubwordStart",
-      "e": "vim::NextSubwordEnd",
-      "g e": "vim::PreviousSubwordEnd"
-    }
+{
+  "context": "VimControl && !menu && vim_mode != operator",
+  "bindings": {
+    "w": "vim::NextSubwordStart",
+    "b": "vim::PreviousSubwordStart",
+    "e": "vim::NextSubwordEnd",
+    "g e": "vim::PreviousSubwordEnd"
   }
-]
+}
 ```
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
@@ -398,19 +398,37 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 {
   "context": "vim_mode == visual",
   "bindings": {
-    "shift-s": [
-      "vim::PushOperator",
-      {
-        "AddSurrounds": {}
-      }
-    ]
+    "shift-s": ["vim::PushAddSurrounds", {}]
+  }
+}
+```
+
+The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for quick navigation to any two-character sequence in your text. You can enable it by adding the following keybindings to your keymap. By default, the `s` key is mapped to `vim::Substitute`. Adding these bindings will override that behavior, so ensure this change aligns with your workflow preferences.
+
+```json
+{
+  "context": "vim_mode == normal || vim_mode == visual",
+  "bindings": {
+    "s": "vim::PushSneak",
+    "shift-s": "vim::PushSneakBackward"
+  }
+}
+```
+
+The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not have a default binding for visual mode, as the `shift-x` binding conflicts with the default `shift-x` binding for visual mode (`vim::VisualDeleteLine`). To assign the default vim-exchange binding, add the following keybinding to your keymap:
+
+```json
+{
+  "context": "vim_mode == visual",
+  "bindings": {
+    "shift-x": "vim::Exchange"
   }
 }
 ```
 
 ### Restoring common text editing keybindings
 
-If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to copy, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
+If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to paste, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
 
 ```json
 {
@@ -433,6 +451,7 @@ You can change the following settings to modify vim mode's behavior:
 
 | Property                     | Description                                                                                                                                                                                   | Default Value |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                  | "normal"      |
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | If `true`, `f` and `t` motions extend across multiple lines.                                                                                                                                  | false         |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |

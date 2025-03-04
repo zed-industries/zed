@@ -168,7 +168,7 @@ impl ExtensionBuilder {
         let wasm_bytes = fs::read(&wasm_path)
             .with_context(|| format!("failed to read output module `{}`", wasm_path.display()))?;
 
-        let encoder = ComponentEncoder::default()
+        let mut encoder = ComponentEncoder::default()
             .module(&wasm_bytes)?
             .adapter("wasi_snapshot_preview1", &adapter_bytes)
             .context("failed to load adapter module")?
@@ -555,6 +555,21 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                 let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.themes.contains(&relative_theme_path) {
                     manifest.themes.push(relative_theme_path);
+                }
+            }
+        }
+    }
+
+    let icon_themes_dir = extension_path.join("icon_themes");
+    if icon_themes_dir.exists() {
+        for entry in fs::read_dir(&icon_themes_dir).context("failed to list icon themes dir")? {
+            let entry = entry?;
+            let icon_theme_path = entry.path();
+            if icon_theme_path.extension() == Some("json".as_ref()) {
+                let relative_icon_theme_path =
+                    icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
+                if !manifest.icon_themes.contains(&relative_icon_theme_path) {
+                    manifest.icon_themes.push(relative_icon_theme_path);
                 }
             }
         }

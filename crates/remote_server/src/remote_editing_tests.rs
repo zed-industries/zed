@@ -1,9 +1,12 @@
+/// todo(windows)
+/// The tests in this file assume that server_cx is running on Windows too.
+/// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{Context, Model, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},
@@ -20,15 +23,18 @@ use serde_json::json;
 use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use unindent::Unindent as _;
+use util::{path, separator};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -44,14 +50,14 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     )
     .await;
     fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
+        Path::new(path!("/code/project1/.git")),
+        &[("src/lib.rs".into(), "fn one() -> usize { 0 }".into())],
     );
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -78,18 +84,15 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         })
         .await
         .unwrap();
-    let change_set = project
+    let diff = project
         .update(cx, |project, cx| {
-            project.open_unstaged_changes(buffer.clone(), cx)
+            project.open_unstaged_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
-    change_set.update(cx, |change_set, cx| {
-        assert_eq!(
-            change_set.base_text_string(cx).unwrap(),
-            "fn one() -> usize { 0 }"
-        );
+    diff.update(cx, |diff, _| {
+        assert_eq!(diff.base_text_string().unwrap(), "fn one() -> usize { 0 }");
     });
 
     buffer.update(cx, |buffer, cx| {
@@ -112,7 +115,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // A new file is created in the remote filesystem. The user
     // sees the new file.
     fs.save(
-        "/code/project1/src/main.rs".as_ref(),
+        path!("/code/project1/src/main.rs").as_ref(),
         &"fn main() {}".into(),
         Default::default(),
     )
@@ -133,8 +136,8 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 
     // A file that is currently open in a buffer is renamed.
     fs.rename(
-        "/code/project1/src/lib.rs".as_ref(),
-        "/code/project1/src/lib2.rs".as_ref(),
+        path!("/code/project1/src/lib.rs").as_ref(),
+        path!("/code/project1/src/lib2.rs").as_ref(),
         Default::default(),
     )
     .await
@@ -145,13 +148,13 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     });
 
     fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
+        Path::new(path!("/code/project1/.git")),
+        &[("src/lib2.rs".into(), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    change_set.update(cx, |change_set, cx| {
+    diff.update(cx, |diff, _| {
         assert_eq!(
-            change_set.base_text_string(cx).unwrap(),
+            diff.base_text_string().unwrap(),
             "fn one() -> usize { 100 }"
         );
     });
@@ -161,7 +164,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -178,15 +181,15 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
 
-    async fn do_search(project: &Model<Project>, mut cx: TestAppContext) -> Model<Buffer> {
-        let mut receiver = project.update(&mut cx, |project, cx| {
+    async fn do_search(project: &Entity<Project>, mut cx: TestAppContext) -> Entity<Buffer> {
+        let receiver = project.update(&mut cx, |project, cx| {
             project.search(
                 SearchQuery::text(
                     "project",
@@ -202,18 +205,18 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        let first_response = receiver.next().await.unwrap();
+        let first_response = receiver.recv().await.unwrap();
         let SearchResult::Buffer { buffer, .. } = first_response else {
             panic!("incorrect result");
         };
         buffer.update(&mut cx, |buffer, cx| {
             assert_eq!(
                 buffer.file().unwrap().full_path(cx).to_string_lossy(),
-                "project1/README.md"
+                separator!("project1/README.md")
             )
         });
 
-        assert!(receiver.next().await.is_none());
+        assert!(receiver.recv().await.is_err());
         buffer
     }
 
@@ -367,7 +370,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -383,7 +386,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
-        "/code/project1/.zed",
+        path!("/code/project1/.zed"),
         json!({
             "settings.json": r#"
           {
@@ -400,7 +403,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     )
     .await;
 
-    cx.update_model(&project, |project, _| {
+    cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -430,7 +433,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let worktree_id = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap()
@@ -511,7 +514,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(
-                    lsp::Url::from_file_path("/code/project1/src/lib.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/code/project1/src/lib.rs")).unwrap(),
                     vec![lsp::TextEdit::new(
                         lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
                         "two".to_string(),
@@ -544,7 +547,7 @@ async fn test_remote_cancel_language_server_work(
 ) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -560,7 +563,7 @@ async fn test_remote_cancel_language_server_work(
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
-        "/code/project1/.zed",
+        path!("/code/project1/.zed"),
         json!({
             "settings.json": r#"
           {
@@ -577,7 +580,7 @@ async fn test_remote_cancel_language_server_work(
     )
     .await;
 
-    cx.update_model(&project, |project, _| {
+    cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -607,7 +610,7 @@ async fn test_remote_cancel_language_server_work(
 
     let worktree_id = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap()
@@ -707,7 +710,7 @@ async fn test_remote_cancel_language_server_work(
 async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -723,7 +726,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -738,7 +741,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         .unwrap();
 
     fs.save(
-        &PathBuf::from("/code/project1/src/lib.rs"),
+        &PathBuf::from(path!("/code/project1/src/lib.rs")),
         &("bangles".to_string().into()),
         LineEnding::Unix,
     )
@@ -753,7 +756,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
     });
 
     fs.save(
-        &PathBuf::from("/code/project1/src/lib.rs"),
+        &PathBuf::from(path!("/code/project1/src/lib.rs")),
         &("bloop".to_string().into()),
         LineEnding::Unix,
     )
@@ -785,7 +788,7 @@ async fn test_remote_resolve_path_in_buffer(
 ) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -801,7 +804,7 @@ async fn test_remote_resolve_path_in_buffer(
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -817,14 +820,14 @@ async fn test_remote_resolve_path_in_buffer(
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer("/code/project1/README.md", &buffer, cx)
+            project.resolve_path_in_buffer(path!("/code/project1/README.md"), &buffer, cx)
         })
         .await
         .unwrap();
     assert!(path.is_file());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        "/code/project1/README.md"
+        path!("/code/project1/README.md")
     );
 
     let path = project
@@ -856,7 +859,7 @@ async fn test_remote_resolve_path_in_buffer(
 async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -873,7 +876,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_abs_path("/code/project1/README.md", cx)
+            project.resolve_abs_path(path!("/code/project1/README.md"), cx)
         })
         .await
         .unwrap();
@@ -881,12 +884,12 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     assert!(path.is_file());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        "/code/project1/README.md"
+        path!("/code/project1/README.md")
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_abs_path("/code/project1/src", cx)
+            project.resolve_abs_path(path!("/code/project1/src"), cx)
         })
         .await
         .unwrap();
@@ -894,12 +897,12 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     assert!(path.is_dir());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        "/code/project1/src"
+        path!("/code/project1/src")
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_abs_path("/code/project1/DOESNOTEXIST", cx)
+            project.resolve_abs_path(path!("/code/project1/DOESNOTEXIST"), cx)
         })
         .await;
     assert!(path.is_none());
@@ -955,7 +958,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
 ) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -974,14 +977,14 @@ async fn test_adding_then_removing_then_adding_worktrees(
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (_worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
 
     let (worktree_2, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project2", true, cx)
+            project.find_or_create_worktree(path!("/code/project2"), true, cx)
         })
         .await
         .unwrap();
@@ -991,7 +994,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
 
     let (worktree_2, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project2", true, cx)
+            project.find_or_create_worktree(path!("/code/project2"), true, cx)
         })
         .await
         .unwrap();
@@ -1012,7 +1015,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
 async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1034,7 +1037,9 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
     cx.update(|cx| {
         assert_eq!(
             buffer.read(cx).text(),
-            initial_server_settings_content().to_string()
+            initial_server_settings_content()
+                .to_string()
+                .replace("\r\n", "\n")
         )
     })
 }
@@ -1043,7 +1048,7 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
 async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1060,7 +1065,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -1090,7 +1095,9 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         .unwrap();
 
     assert_eq!(
-        fs.load("/code/project1/src/lib.rs".as_ref()).await.unwrap(),
+        fs.load(path!("/code/project1/src/lib.rs").as_ref())
+            .await
+            .unwrap(),
         "fn one() -> usize { 100 }"
     );
 }
@@ -1135,6 +1142,159 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let entry = worktree
+        .update(cx, |worktree, cx| {
+            let entry = worktree.entry_for_path("README.md").unwrap();
+            worktree.rename_entry(entry.id, Path::new("README.rst"), cx)
+        })
+        .await
+        .unwrap()
+        .to_included()
+        .unwrap();
+
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _| {
+        assert_eq!(worktree.entry_for_path("README.rst").unwrap().id, entry.id)
+    });
+}
+
+#[gpui::test]
+async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let text_2 = "
+        fn one() -> usize {
+            1
+        }
+    "
+    .unindent();
+    let text_1 = "
+        fn one() -> usize {
+            0
+        }
+    "
+    .unindent();
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": text_2
+                },
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_1.clone())],
+    );
+    fs.set_head_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_1.clone())],
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(
+            diff.secondary_diff()
+                .unwrap()
+                .read(cx)
+                .base_text_string()
+                .unwrap(),
+            text_1
+        );
+    });
+
+    // stage the current buffer's contents
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_2.clone())],
+    );
+
+    cx.executor().run_until_parked();
+    diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(
+            diff.secondary_diff()
+                .unwrap()
+                .read(cx)
+                .base_text_string()
+                .unwrap(),
+            text_2
+        );
+    });
+
+    // commit the current buffer's contents
+    fs.set_head_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_2.clone())],
+    );
+
+    cx.executor().run_until_parked();
+    diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text_string().unwrap(), text_2);
+        assert_eq!(
+            diff.secondary_diff()
+                .unwrap()
+                .read(cx)
+                .base_text_string()
+                .unwrap(),
+            text_2
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -1150,6 +1310,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let (project, headless_project) = init_test(&fs, cx, server_cx).await;
     let branches = ["main", "dev", "feature-1"];
+    let branches_set = branches
+        .iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
     fs.insert_branches(Path::new("/code/project1/.git"), &branches);
 
     let (worktree, _) = project
@@ -1173,10 +1337,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let remote_branches = remote_branches
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&remote_branches, &branches);
+    assert_eq!(&remote_branches, &branches_set);
 
     cx.update(|cx| {
         project.update(cx, |project, cx| {
@@ -1200,7 +1364,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.as_ref(), branches[2]);
+    assert_eq!(server_branch.name, branches[2]);
 
     // Also try creating a new branch
     cx.update(|cx| {
@@ -1223,14 +1387,14 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.as_ref(), "totally-new-branch");
+    assert_eq!(server_branch.name, "totally-new-branch");
 }
 
 pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
-) -> (Model<Project>, Model<HeadlessProject>) {
+) -> (Entity<Project>, Entity<HeadlessProject>) {
     let server_fs = server_fs.clone();
     cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
@@ -1246,7 +1410,7 @@ pub async fn init_test(
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
-    let headless = server_cx.new_model(|cx| {
+    let headless = server_cx.new(|cx| {
         client::init_settings(cx);
 
         HeadlessProject::new(
@@ -1279,7 +1443,7 @@ fn init_logger() {
     }
 }
 
-fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
+fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
     cx.update(|cx| {
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -1296,7 +1460,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
     });
 
     let node = NodeRuntime::unavailable();
-    let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
 

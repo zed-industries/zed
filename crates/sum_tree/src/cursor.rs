@@ -9,6 +9,15 @@ struct StackEntry<'a, T: Item, D> {
     position: D,
 }
 
+impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StackEntry")
+            .field("index", &self.index)
+            .field("position", &self.position)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct Cursor<'a, T: Item, D> {
     tree: &'a SumTree<T>,
@@ -16,6 +25,21 @@ pub struct Cursor<'a, T: Item, D> {
     position: D,
     did_seek: bool,
     at_end: bool,
+}
+
+impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for Cursor<'_, T, D>
+where
+    T::Summary: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Cursor")
+            .field("tree", &self.tree)
+            .field("stack", &self.stack)
+            .field("position", &self.position)
+            .field("did_seek", &self.did_seek)
+            .field("at_end", &self.at_end)
+            .finish()
+    }
 }
 
 pub struct Iter<'a, T: Item> {
@@ -60,6 +84,7 @@ where
         }
     }
 
+    /// Item is None, when the list is empty, or this cursor is at the end of the list.
     #[track_caller]
     pub fn item(&self) -> Option<&'a T> {
         self.assert_did_seek();
@@ -422,7 +447,7 @@ where
         summary.0
     }
 
-    /// Returns whether we found the item you where seeking for
+    /// Returns whether we found the item you were seeking for
     #[track_caller]
     fn seek_internal(
         &mut self,
@@ -717,14 +742,14 @@ struct SliceSeekAggregate<T: Item> {
 
 struct SummarySeekAggregate<D>(D);
 
-impl<'a, T: Item> SeekAggregate<'a, T> for () {
+impl<T: Item> SeekAggregate<'_, T> for () {
     fn begin_leaf(&mut self) {}
     fn end_leaf(&mut self, _: &<T::Summary as Summary>::Context) {}
     fn push_item(&mut self, _: &T, _: &T::Summary, _: &<T::Summary as Summary>::Context) {}
     fn push_tree(&mut self, _: &SumTree<T>, _: &T::Summary, _: &<T::Summary as Summary>::Context) {}
 }
 
-impl<'a, T: Item> SeekAggregate<'a, T> for SliceSeekAggregate<T> {
+impl<T: Item> SeekAggregate<'_, T> for SliceSeekAggregate<T> {
     fn begin_leaf(&mut self) {}
     fn end_leaf(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.tree.append(

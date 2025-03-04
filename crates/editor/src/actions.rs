@@ -1,82 +1,107 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::action_as;
+use gpui::{action_as, action_with_deprecated_aliases};
+use schemars::JsonSchema;
 use util::serde::default_true;
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectPrevious {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToBeginningOfLine {
+    #[serde(default)]
+    pub(super) stop_at_indent: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MovePageUp {
     #[serde(default)]
     pub(super) center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MovePageDown {
     #[serde(default)]
     pub(super) center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveToEndOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ToggleCodeActions {
     // Display row from which the action was deployed.
     #[serde(default)]
+    #[serde(skip)]
     pub deployed_from_indicator: Option<DisplayRow>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ComposeCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ToggleComments {
     #[serde(default)]
     pub advance_downwards: bool,
@@ -84,84 +109,112 @@ pub struct ToggleComments {
     pub ignore_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FoldAt {
+    #[serde(skip)]
     pub buffer_row: MultiBufferRow,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UnfoldAt {
+    #[serde(skip)]
     pub buffer_row: MultiBufferRow,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExpandExcerpts {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExpandExcerptsUp {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExpandExcerptsDown {
     #[serde(default)]
     pub(super) lines: u32,
 }
-#[derive(PartialEq, Clone, Deserialize, Default)]
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ShowCompletions {
     #[serde(default)]
     pub(super) trigger: Option<String>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct HandleInput(pub String);
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeleteToNextWordEnd {
     #[serde(default)]
     pub ignore_newlines: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeleteToPreviousWordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct FoldAtLevel {
-    pub level: u32,
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GoToHunk {
+    #[serde(default)]
+    pub center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GoToPreviousHunk {
+    #[serde(default)]
+    pub center_cursor: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+pub struct FoldAtLevel(pub u32);
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SpawnNearestTask {
     #[serde(default)]
     pub reveal: task::RevealStrategy,
@@ -180,12 +233,15 @@ impl_actions!(
         ComposeCompletion,
         ConfirmCodeAction,
         ConfirmCompletion,
+        DeleteToBeginningOfLine,
         DeleteToNextWordEnd,
         DeleteToPreviousWordStart,
         ExpandExcerpts,
         ExpandExcerptsDown,
         ExpandExcerptsUp,
         FoldAt,
+        GoToHunk,
+        GoToPreviousHunk,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -204,16 +260,16 @@ impl_actions!(
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
-        FoldAtLevel
+        FoldAtLevel,
     ]
 );
 
 gpui::actions!(
     editor,
     [
-        AcceptInlineCompletion,
+        AcceptEditPrediction,
         AcceptPartialCopilotSuggestion,
-        AcceptPartialInlineCompletion,
+        AcceptPartialEditPrediction,
         AddSelectionAbove,
         AddSelectionBelow,
         ApplyAllDiffHunks,
@@ -225,7 +281,7 @@ gpui::actions!(
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
-        ContextMenuPrev,
+        ContextMenuPrevious,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
@@ -237,14 +293,13 @@ gpui::actions!(
         Copy,
         CopyFileLocation,
         CopyHighlightJson,
-        CopyPath,
+        CopyFileName,
+        CopyFileNameWithoutExtension,
         CopyPermalinkToLine,
-        CopyRelativePath,
         Cut,
         CutToEndOfLine,
         Delete,
         DeleteLine,
-        DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
         DeleteToPreviousSubwordStart,
@@ -252,7 +307,6 @@ gpui::actions!(
         DuplicateLineDown,
         DuplicateLineUp,
         DuplicateSelection,
-        ExpandAllHunkDiffs,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -269,11 +323,9 @@ gpui::actions!(
         GoToDefinition,
         GoToDefinitionSplit,
         GoToDiagnostic,
-        GoToHunk,
         GoToImplementation,
         GoToImplementationSplit,
-        GoToPrevDiagnostic,
-        GoToPrevHunk,
+        GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
         HalfPageDown,
@@ -301,26 +353,29 @@ gpui::actions!(
         MoveToPreviousSubwordStart,
         MoveToPreviousWordStart,
         MoveToStartOfParagraph,
+        MoveToStartOfExcerpt,
+        MoveToEndOfExcerpt,
         MoveUp,
         Newline,
         NewlineAbove,
         NewlineBelow,
-        NextInlineCompletion,
+        NextEditPrediction,
         NextScreen,
         OpenContextMenu,
         OpenExcerpts,
         OpenExcerptsSplit,
         OpenProposedChangesEditor,
-        OpenFile,
         OpenDocs,
         OpenPermalinkToLine,
+        OpenSelectionsInMultibuffer,
         OpenUrl,
+        OrganizeImports,
         Outdent,
         AutoIndent,
         PageDown,
         PageUp,
         Paste,
-        PreviousInlineCompletion,
+        PreviousEditPrediction,
         Redo,
         RedoSelection,
         Rename,
@@ -329,7 +384,6 @@ gpui::actions!(
         ReverseLines,
         RevertFile,
         ReloadFile,
-        RevertSelectedHunks,
         Rewrap,
         ScrollCursorBottom,
         ScrollCursorCenter,
@@ -337,6 +391,8 @@ gpui::actions!(
         ScrollCursorTop,
         SelectAll,
         SelectAllMatches,
+        SelectToStartOfExcerpt,
+        SelectToEndOfExcerpt,
         SelectDown,
         SelectEnclosingSymbol,
         SelectLargerSyntaxNode,
@@ -356,7 +412,7 @@ gpui::actions!(
         SelectToStartOfParagraph,
         SelectUp,
         ShowCharacterPalette,
-        ShowInlineCompletion,
+        ShowEditPrediction,
         ShowSignatureHelp,
         ShuffleLines,
         SortLinesCaseInsensitive,
@@ -364,15 +420,17 @@ gpui::actions!(
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,
-        TabPrev,
+        Backtab,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,
-        ToggleHunkDiff,
         ToggleIndentGuides,
         ToggleInlayHints,
-        ToggleInlineCompletions,
+        ToggleInlineDiagnostics,
+        ToggleEditPrediction,
         ToggleLineNumbers,
+        SwapSelectionEnds,
+        SetMark,
         ToggleRelativeLineNumbers,
         ToggleSelectionMenu,
         ToggleSoftWrap,
@@ -388,6 +446,8 @@ gpui::actions!(
     ]
 );
 
-action_as!(outline, ToggleOutline as Toggle);
-
 action_as!(go_to_line, ToggleGoToLine as Toggle);
+
+action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);
+action_with_deprecated_aliases!(editor, ToggleSelectedDiffHunks, ["editor::ToggleHunkDiff"]);
+action_with_deprecated_aliases!(editor, ExpandAllDiffHunks, ["editor::ExpandAllHunkDiffs"]);

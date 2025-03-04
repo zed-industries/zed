@@ -6,6 +6,7 @@ on:
 
 jobs:
   discord_release:
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Get release URL

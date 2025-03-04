@@ -13,6 +13,7 @@ pub struct Model {
     pub github_user_id: i32,
     pub github_user_created_at: Option<NaiveDateTime>,
     pub email_address: Option<String>,
+    pub name: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
     pub invite_count: i32,

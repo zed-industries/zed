@@ -30,8 +30,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
-    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
@@ -39,10 +39,8 @@ use collections::{HashMap, HashSet};
 pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
-use gpui::{
-    AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
-};
-pub(crate) use inlay_map::Inlay;
+use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
+pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 use invisibles::{is_invisible, replacement};
@@ -53,7 +51,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -67,8 +65,8 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::LineIndent;
-use ui::{px, SharedString, WindowContext};
+use text::{BufferId, LineIndent};
+use ui::{px, SharedString};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -77,8 +75,6 @@ pub enum FoldStatus {
     Folded,
     Foldable,
 }
-
-pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
@@ -93,7 +89,7 @@ type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHi
 /// See the [module level documentation](self) for more information.
 pub struct DisplayMap {
     /// The buffer that we are displaying.
-    buffer: Model<MultiBuffer>,
+    buffer: Entity<MultiBuffer>,
     buffer_subscription: BufferSubscription,
     /// Decides where the [`Inlay`]s should be displayed.
     inlay_map: InlayMap,
@@ -102,7 +98,7 @@ pub struct DisplayMap {
     /// Keeps track of hard tabs in a buffer.
     tab_map: TabMap,
     /// Handles soft wrapping.
-    wrap_map: Model<WrapMap>,
+    wrap_map: Entity<WrapMap>,
     /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
     block_map: BlockMap,
     /// Regions of text that should be highlighted.
@@ -119,7 +115,7 @@ pub struct DisplayMap {
 impl DisplayMap {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        buffer: Model<MultiBuffer>,
+        buffer: Entity<MultiBuffer>,
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
@@ -128,7 +124,7 @@ impl DisplayMap {
         excerpt_header_height: u32,
         excerpt_footer_height: u32,
         fold_placeholder: FoldPlaceholder,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
 
@@ -166,7 +162,7 @@ impl DisplayMap {
         }
     }
 
-    pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
+    pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
@@ -194,7 +190,7 @@ impl DisplayMap {
         }
     }
 
-    pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut ModelContext<Self>) {
+    pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut Context<Self>) {
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
@@ -210,11 +206,7 @@ impl DisplayMap {
     }
 
     /// Creates folds for the given creases.
-    pub fn fold<T: Clone + ToOffset>(
-        &mut self,
-        creases: Vec<Crease<T>>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn fold<T: Clone + ToOffset>(&mut self, creases: Vec<Crease<T>>, cx: &mut Context<Self>) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -286,7 +278,7 @@ impl DisplayMap {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         type_id: TypeId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -311,7 +303,7 @@ impl DisplayMap {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let offset_ranges = ranges
@@ -338,7 +330,11 @@ impl DisplayMap {
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
     }
 
-    pub fn fold_buffer(&mut self, buffer_id: language::BufferId, cx: &mut ModelContext<Self>) {
+    pub fn fold_buffers(
+        &mut self,
+        buffer_ids: impl IntoIterator<Item = language::BufferId>,
+        cx: &mut Context<Self>,
+    ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -349,10 +345,14 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.fold_buffer(buffer_id, self.buffer.read(cx), cx)
+        block_map.fold_buffers(buffer_ids, self.buffer.read(cx), cx)
     }
 
-    pub fn unfold_buffer(&mut self, buffer_id: language::BufferId, cx: &mut ModelContext<Self>) {
+    pub fn unfold_buffers(
+        &mut self,
+        buffer_ids: impl IntoIterator<Item = language::BufferId>,
+        cx: &mut Context<Self>,
+    ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -363,17 +363,21 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.unfold_buffer(buffer_id, self.buffer.read(cx), cx)
+        block_map.unfold_buffers(buffer_ids, self.buffer.read(cx), cx)
     }
 
-    pub(crate) fn buffer_folded(&self, buffer_id: language::BufferId) -> bool {
+    pub(crate) fn is_buffer_folded(&self, buffer_id: language::BufferId) -> bool {
         self.block_map.folded_buffers.contains(&buffer_id)
+    }
+
+    pub(crate) fn folded_buffers(&self) -> &HashSet<BufferId> {
+        &self.block_map.folded_buffers
     }
 
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease<Anchor>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Vec<CreaseId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.insert(creases, &snapshot)
@@ -382,7 +386,7 @@ impl DisplayMap {
     pub fn remove_creases(
         &mut self,
         crease_ids: impl IntoIterator<Item = CreaseId>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.remove(crease_ids, &snapshot)
@@ -391,7 +395,7 @@ impl DisplayMap {
     pub fn insert_blocks(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Vec<CustomBlockId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -406,11 +410,7 @@ impl DisplayMap {
         block_map.insert(blocks)
     }
 
-    pub fn resize_blocks(
-        &mut self,
-        heights: HashMap<CustomBlockId, u32>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn resize_blocks(&mut self, heights: HashMap<CustomBlockId, u32>, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -428,7 +428,7 @@ impl DisplayMap {
         self.block_map.replace_blocks(renderers);
     }
 
-    pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut ModelContext<Self>) {
+    pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -445,7 +445,7 @@ impl DisplayMap {
     pub fn row_for_block(
         &mut self,
         block_id: CustomBlockId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<DisplayRow> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -500,12 +500,12 @@ impl DisplayMap {
         cleared
     }
 
-    pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut Context<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
     }
 
-    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
@@ -516,9 +516,9 @@ impl DisplayMap {
 
     pub(crate) fn splice_inlays(
         &mut self,
-        to_remove: Vec<InlayId>,
+        to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if to_remove.is_empty() && to_insert.is_empty() {
             return;
@@ -543,7 +543,7 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
+    fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
             .and_then(|buffer| buffer.language())
@@ -553,7 +553,7 @@ impl DisplayMap {
     }
 
     #[cfg(test)]
-    pub fn is_rewrapping(&self, cx: &gpui::AppContext) -> bool {
+    pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
     }
 
@@ -715,13 +715,8 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(
-        &self,
-        start_row: DisplayRow,
-    ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
-        self.block_snapshot
-            .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(MultiBufferRow))
+    pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
+        self.block_snapshot.row_infos(BlockRow(start_row.0))
     }
 
     pub fn widest_line_number(&self) -> u32 {
@@ -1081,13 +1076,15 @@ impl DisplaySnapshot {
         DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
     }
 
-    pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {
-        let mut point = point.0;
-        if point.column == self.line_len(DisplayRow(point.row)) {
-            point.column = point.column.saturating_sub(1);
-            point = self.block_snapshot.clip_point(point, Bias::Left);
+    pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {
+        let mut point = self.display_point_to_point(display_point, Bias::Left);
+
+        if point.column != self.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+            return display_point;
         }
-        DisplayPoint(point)
+        point.column = point.column.saturating_sub(1);
+        point = self.buffer_snapshot.clip_point(point, Bias::Left);
+        self.point_to_display_point(point, Bias::Left)
     }
 
     pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
@@ -1127,6 +1124,11 @@ impl DisplaySnapshot {
         self.block_snapshot.is_block_line(BlockRow(display_row.0))
     }
 
+    pub fn is_folded_buffer_header(&self, display_row: DisplayRow) -> bool {
+        self.block_snapshot
+            .is_folded_buffer_header(BlockRow(display_row.0))
+    }
+
     pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {
         let wrap_row = self
             .block_snapshot
@@ -1153,12 +1155,7 @@ impl DisplaySnapshot {
     }
 
     pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
-        let (buffer, range) = self
-            .buffer_snapshot
-            .buffer_line_for_row(buffer_row)
-            .unwrap();
-
-        buffer.line_indent_for_row(range.start.row)
+        self.buffer_snapshot.line_indent_for_row(buffer_row)
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {
@@ -1449,10 +1446,13 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{movement, test::marked_display_snapshot};
+    use crate::{
+        movement,
+        test::{marked_display_snapshot, test_font},
+    };
     use block_map::BlockPlacement;
     use gpui::{
-        div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla, Rgba,
+        div, font, observe, px, App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba,
     };
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -1508,10 +1508,11 @@ pub mod tests {
             }
         });
 
-        let map = cx.new_model(|cx| {
+        let font = test_font();
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
-                font("Helvetica"),
+                font,
                 font_size,
                 wrap_width,
                 true,
@@ -1749,16 +1750,16 @@ pub mod tests {
         let editor = cx.editor.clone();
         let window = cx.window;
 
-        _ = cx.update_window(window, |_, cx| {
+        _ = cx.update_window(window, |_, window, cx| {
             let text_layout_details =
-                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
+                editor.update(cx, |editor, _cx| editor.text_layout_details(window));
 
             let font_size = px(12.0);
             let wrap_width = Some(px(64.));
 
             let text = "one two three four five\nsix seven eight";
             let buffer = MultiBuffer::build_simple(text, cx);
-            let map = cx.new_model(|cx| {
+            let map = cx.new(|cx| {
                 DisplayMap::new(
                     buffer.clone(),
                     font("Helvetica"),
@@ -1862,14 +1863,14 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_text_chunks(cx: &mut gpui::AppContext) {
+    fn test_text_chunks(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
         let text = sample_text(6, 6, 'a');
         let buffer = MultiBuffer::build_simple(&text, cx);
 
         let font_size = px(14.0);
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
                 font("Helvetica"),
@@ -1924,6 +1925,67 @@ pub mod tests {
     }
 
     #[gpui::test]
+    fn test_inlays_with_newlines_after_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, |_| {}));
+
+        let buffer = cx.new(|cx| Buffer::local("a", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let font_size = px(14.0);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                true,
+                1,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
+
+        map.update(cx, |map, cx| {
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Above(
+                        buffer_snapshot.anchor_before(Point::new(0, 0)),
+                    ),
+                    height: 2,
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            );
+        });
+        map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\na"));
+
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                vec![Inlay {
+                    id: InlayId::InlineCompletion(0),
+                    position: buffer_snapshot.anchor_after(0),
+                    text: "\n".into(),
+                }],
+                cx,
+            );
+        });
+        map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\na"));
+
+        // Regression test: updating the display map does not crash when a
+        // block is immediately followed by a multi-line inlay.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "b")], None, cx);
+        });
+        map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\nab"));
+    }
+
+    #[gpui::test]
     async fn test_chunks(cx: &mut gpui::TestAppContext) {
         let text = r#"
             fn outer() {}
@@ -1959,13 +2021,13 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_size = px(14.0);
 
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
                 font("Helvetica"),
@@ -2062,12 +2124,12 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
                 font("Courier"),
@@ -2082,18 +2144,30 @@ pub mod tests {
             )
         });
 
-        // Insert a block in the middle of a multi-line string literal
+        // Insert two blocks in the middle of a multi-line string literal.
+        // The second block has zero height.
         map.update(cx, |map, cx| {
             map.insert_blocks(
-                [BlockProperties {
-                    placement: BlockPlacement::Below(
-                        buffer_snapshot.anchor_before(Point::new(1, 0)),
-                    ),
-                    height: 1,
-                    style: BlockStyle::Sticky,
-                    render: Arc::new(|_| div().into_any()),
-                    priority: 0,
-                }],
+                [
+                    BlockProperties {
+                        placement: BlockPlacement::Below(
+                            buffer_snapshot.anchor_before(Point::new(1, 0)),
+                        ),
+                        height: 1,
+                        style: BlockStyle::Sticky,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    },
+                    BlockProperties {
+                        placement: BlockPlacement::Below(
+                            buffer_snapshot.anchor_before(Point::new(2, 0)),
+                        ),
+                        height: 0,
+                        style: BlockStyle::Sticky,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    },
+                ],
                 cx,
             )
         });
@@ -2136,7 +2210,7 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
 
         buffer.update(cx, |buffer, cx| {
             buffer.update_diagnostics(
@@ -2157,10 +2231,10 @@ pub mod tests {
             )
         });
 
-        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
                 font("Courier"),
@@ -2249,7 +2323,7 @@ pub mod tests {
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple("abcde\nfghij\nklmno\npqrst", cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
                 font("Courier"),
@@ -2387,13 +2461,13 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_size = px(16.0);
 
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
                 font("Courier"),
@@ -2470,14 +2544,14 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 
-        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let font_size = px(16.0);
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
                 font("Courier"),
@@ -2528,10 +2602,10 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_clip_point(cx: &mut gpui::AppContext) {
+    fn test_clip_point(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
-        fn assert(text: &str, shift_right: bool, bias: Bias, cx: &mut gpui::AppContext) {
+        fn assert(text: &str, shift_right: bool, bias: Bias, cx: &mut gpui::App) {
             let (unmarked_snapshot, mut markers) = marked_display_snapshot(text, cx);
 
             match bias {
@@ -2578,10 +2652,10 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_clip_at_line_ends(cx: &mut gpui::AppContext) {
+    fn test_clip_at_line_ends(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
-        fn assert(text: &str, cx: &mut gpui::AppContext) {
+        fn assert(text: &str, cx: &mut gpui::App) {
             let (mut unmarked_snapshot, markers) = marked_display_snapshot(text, cx);
             unmarked_snapshot.clip_at_line_ends = true;
             assert_eq!(
@@ -2597,13 +2671,13 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_creases(cx: &mut gpui::AppContext) {
+    fn test_creases(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
         let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_size = px(14.0);
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut map = DisplayMap::new(
                 buffer.clone(),
                 font("Helvetica"),
@@ -2624,8 +2698,8 @@ pub mod tests {
                 [Crease::inline(
                     range,
                     FoldPlaceholder::test(),
-                    |_row, _status, _toggle, _cx| div(),
-                    |_row, _status, _cx| div(),
+                    |_row, _status, _toggle, _window, _cx| div(),
+                    |_row, _status, _window, _cx| div(),
                 )],
                 &map.buffer.read(cx).snapshot(cx),
             );
@@ -2635,14 +2709,14 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_tabs_with_multibyte_chars(cx: &mut gpui::AppContext) {
+    fn test_tabs_with_multibyte_chars(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_size = px(14.0);
 
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
                 font("Helvetica"),
@@ -2714,12 +2788,12 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_max_point(cx: &mut gpui::AppContext) {
+    fn test_max_point(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_size = px(14.0);
-        let map = cx.new_model(|cx| {
+        let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
                 font("Helvetica"),
@@ -2741,9 +2815,9 @@ pub mod tests {
 
     fn syntax_chunks(
         rows: Range<DisplayRow>,
-        map: &Model<DisplayMap>,
+        map: &Entity<DisplayMap>,
         theme: &SyntaxTheme,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Vec<(String, Option<Hsla>)> {
         chunks(rows, map, theme, cx)
             .into_iter()
@@ -2753,9 +2827,9 @@ pub mod tests {
 
     fn chunks(
         rows: Range<DisplayRow>,
-        map: &Model<DisplayMap>,
+        map: &Entity<DisplayMap>,
         theme: &SyntaxTheme,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Vec<(String, Option<Hsla>, Option<Hsla>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Hsla>, Option<Hsla>)> = Vec::new();
@@ -2775,9 +2849,10 @@ pub mod tests {
         chunks
     }
 
-    fn init_test(cx: &mut AppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {
+    fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        workspace::init_settings(cx);
         language::init(cx);
         crate::init(cx);
         Project::init_settings(cx);

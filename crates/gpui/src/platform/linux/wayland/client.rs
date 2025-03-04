@@ -588,6 +588,19 @@ impl WaylandClient {
 }
 
 impl LinuxClient for WaylandClient {
+    fn keyboard_layout(&self) -> String {
+        let state = self.0.borrow();
+        if let Some(keymap_state) = &state.keymap_state {
+            let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
+            keymap_state
+                .get_keymap()
+                .layout_get_name(layout_idx)
+                .to_string()
+        } else {
+            "unknown".to_string()
+        }
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.0
             .borrow()
@@ -1119,11 +1132,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 size,
                 ..
             } => {
-                assert_eq!(
-                    format,
-                    wl_keyboard::KeymapFormat::XkbV1,
-                    "Unsupported keymap format"
-                );
+                if format != wl_keyboard::KeymapFormat::XkbV1 {
+                    log::error!("Received keymap format {:?}, expected XkbV1", format);
+                    return;
+                }
                 let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 let keymap = unsafe {
                     xkb::Keymap::new_from_fd(
@@ -1139,6 +1151,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
+
+                if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                    drop(state);
+                    callback();
+                    state = client.borrow_mut();
+                    state.common.callbacks.keyboard_layout_change = Some(callback);
+                }
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
@@ -1176,8 +1195,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let focused_window = state.keyboard_focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_mut().unwrap();
+                let old_layout =
+                    keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+
+                if group != old_layout {
+                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+                    {
+                        drop(state);
+                        callback();
+                        state = client.borrow_mut();
+                        state.common.callbacks.keyboard_layout_change = Some(callback);
+                    }
+                }
 
                 let Some(focused_window) = focused_window else {
                     return;

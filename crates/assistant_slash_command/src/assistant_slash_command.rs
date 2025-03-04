@@ -1,12 +1,14 @@
 mod extension_slash_command;
 mod slash_command_registry;
+mod slash_command_working_set;
 
 pub use crate::extension_slash_command::*;
 pub use crate::slash_command_registry::*;
+pub use crate::slash_command_working_set::*;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
+use gpui::{App, SharedString, Task, WeakEntity, Window};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,7 @@ use std::{
 };
 use workspace::{ui::IconName, Workspace};
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     SlashCommandRegistry::default_global(cx);
     extension_slash_command::init(cx);
 }
@@ -69,7 +71,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn icon(&self) -> IconName {
         IconName::Slash
     }
-    fn label(&self, _cx: &AppContext) -> CodeLabel {
+    fn label(&self, _cx: &App) -> CodeLabel {
         CodeLabel::plain(self.name(), None)
     }
     fn description(&self) -> String;
@@ -78,34 +80,31 @@ pub trait SlashCommand: 'static + Send + Sync {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
     fn accepts_arguments(&self) -> bool {
         self.requires_argument()
     }
+    #[allow(clippy::too_many_arguments)]
     fn run(
         self: Arc<Self>,
         arguments: &[String],
         context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
         //
         // It may be that `LspAdapterDelegate` needs a more general name, or
         // perhaps another kind of delegate is needed here.
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult>;
 }
-
-pub type RenderFoldPlaceholder = Arc<
-    dyn Send
-        + Sync
-        + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
->;
 
 #[derive(Debug, PartialEq)]
 pub enum SlashCommandContent {
@@ -263,6 +262,67 @@ pub struct SlashCommandOutputSection<T> {
 impl SlashCommandOutputSection<language::Anchor> {
     pub fn is_valid(&self, buffer: &language::TextBuffer) -> bool {
         self.range.start.is_valid(buffer) && !self.range.to_offset(buffer).is_empty()
+    }
+}
+
+pub struct SlashCommandLine {
+    /// The range within the line containing the command name.
+    pub name: Range<usize>,
+    /// Ranges within the line containing the command arguments.
+    pub arguments: Vec<Range<usize>>,
+}
+
+impl SlashCommandLine {
+    pub fn parse(line: &str) -> Option<Self> {
+        let mut call: Option<Self> = None;
+        let mut ix = 0;
+        for c in line.chars() {
+            let next_ix = ix + c.len_utf8();
+            if let Some(call) = &mut call {
+                // The command arguments start at the first non-whitespace character
+                // after the command name, and continue until the end of the line.
+                if let Some(argument) = call.arguments.last_mut() {
+                    if c.is_whitespace() {
+                        if (*argument).is_empty() {
+                            argument.start = next_ix;
+                            argument.end = next_ix;
+                        } else {
+                            argument.end = ix;
+                            call.arguments.push(next_ix..next_ix);
+                        }
+                    } else {
+                        argument.end = next_ix;
+                    }
+                }
+                // The command name ends at the first whitespace character.
+                else if !call.name.is_empty() {
+                    if c.is_whitespace() {
+                        call.arguments = vec![next_ix..next_ix];
+                    } else {
+                        call.name.end = next_ix;
+                    }
+                }
+                // The command name must begin with a letter.
+                else if c.is_alphabetic() {
+                    call.name.end = next_ix;
+                } else {
+                    return None;
+                }
+            }
+            // Commands start with a slash.
+            else if c == '/' {
+                call = Some(SlashCommandLine {
+                    name: next_ix..next_ix,
+                    arguments: Vec::new(),
+                });
+            }
+            // The line can't contain anything before the slash except for whitespace.
+            else if !c.is_whitespace() {
+                return None;
+            }
+            ix = next_ix;
+        }
+        call
     }
 }
 

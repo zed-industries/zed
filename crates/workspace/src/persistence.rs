@@ -179,7 +179,7 @@ define_connection! {
     //   group_id: usize, // Primary key for pane_groups
     //   workspace_id: usize, // References workspaces table
     //   parent_group_id: Option<usize>, // None indicates that this is the root node
-    //   position: Optiopn<usize>, // None indicates that this is the root node
+    //   position: Option<usize>, // None indicates that this is the root node
     //   axis: Option<Axis>, // 'Vertical', 'Horizontal'
     //   flexes: Option<Vec<f32>>, // A JSON array of floats
     // )
@@ -1088,7 +1088,7 @@ impl WorkspaceDb {
                 .context("Preparing insertion")?;
 
             let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.0.to_owned(), worktree_id.to_usize()))?;
+                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize()))?;
 
             Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
                 name: name.into(),
@@ -1144,7 +1144,7 @@ impl WorkspaceDb {
             insert((
                 workspace_id,
                 worktree_id.to_usize(),
-                toolchain.language_name.0.as_ref(),
+                toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
             ))?;
@@ -1156,11 +1156,14 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+    use std::time::Duration;
+
     use super::*;
     use crate::persistence::model::SerializedWorkspace;
     use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
     use db::open_test_db;
-    use gpui::{self};
+    use gpui;
 
     #[gpui::test]
     async fn test_next_id_stability() {
@@ -1556,31 +1559,33 @@ mod tests {
         };
 
         db.save_workspace(workspace_1.clone()).await;
+        thread::sleep(Duration::from_millis(1000)); // Force timestamps to increment
         db.save_workspace(workspace_2.clone()).await;
         db.save_workspace(workspace_3.clone()).await;
+        thread::sleep(Duration::from_millis(1000)); // Force timestamps to increment
         db.save_workspace(workspace_4.clone()).await;
         db.save_workspace(workspace_5.clone()).await;
         db.save_workspace(workspace_6.clone()).await;
 
         let locations = db.session_workspaces("session-id-1".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].0, LocalPaths::new(["/tmp1"]));
+        assert_eq!(locations[0].0, LocalPaths::new(["/tmp2"]));
         assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[0].2, Some(10));
-        assert_eq!(locations[1].0, LocalPaths::new(["/tmp2"]));
+        assert_eq!(locations[0].2, Some(20));
+        assert_eq!(locations[1].0, LocalPaths::new(["/tmp1"]));
         assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[1].2, Some(20));
+        assert_eq!(locations[1].2, Some(10));
 
         let locations = db.session_workspaces("session-id-2".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].0, LocalPaths::new(["/tmp3"]));
-        assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[0].2, Some(30));
         let empty_paths: Vec<&str> = Vec::new();
-        assert_eq!(locations[1].0, LocalPaths::new(empty_paths.iter()));
-        assert_eq!(locations[1].1, LocalPathsOrder::new([]));
-        assert_eq!(locations[1].2, Some(50));
-        assert_eq!(locations[1].3, Some(ssh_project.id.0));
+        assert_eq!(locations[0].0, LocalPaths::new(empty_paths.iter()));
+        assert_eq!(locations[0].1, LocalPathsOrder::new([]));
+        assert_eq!(locations[0].2, Some(50));
+        assert_eq!(locations[0].3, Some(ssh_project.id.0));
+        assert_eq!(locations[1].0, LocalPaths::new(["/tmp3"]));
+        assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[1].2, Some(30));
 
         let locations = db.session_workspaces("session-id-3".to_owned()).unwrap();
         assert_eq!(locations.len(), 1);

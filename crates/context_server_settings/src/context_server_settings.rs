@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::App;
 use schemars::gen::SchemaGenerator;
 use schemars::schema::{InstanceType, Schema, SchemaObject};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     ContextServerSettings::register(cx);
 }
 
@@ -54,7 +54,7 @@ impl Settings for ContextServerSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }

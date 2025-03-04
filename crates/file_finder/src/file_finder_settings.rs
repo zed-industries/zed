@@ -26,7 +26,7 @@ impl Settings for FileFinderSettings {
 
     type FileContent = FileFinderSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> Result<Self> {
         sources.json_merge()
     }
 }

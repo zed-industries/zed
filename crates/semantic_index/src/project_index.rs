@@ -3,12 +3,12 @@ use crate::{
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use futures::{stream::StreamExt, FutureExt};
+use futures::FutureExt;
 use gpui::{
-    AppContext, Entity, EntityId, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel,
+    App, AppContext as _, Context, Entity, EntityId, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::LanguageRegistry;
 use log;
@@ -27,7 +27,7 @@ use util::ResultExt;
 
 #[derive(Debug)]
 pub struct SearchResult {
-    pub worktree: Model<Worktree>,
+    pub worktree: Entity<Worktree>,
     pub path: Arc<Path>,
     pub range: Range<usize>,
     pub score: f32,
@@ -60,7 +60,7 @@ pub enum Status {
 
 pub struct ProjectIndex {
     db_connection: heed::Env,
-    project: WeakModel<Project>,
+    project: WeakEntity<Project>,
     worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
@@ -73,14 +73,14 @@ pub struct ProjectIndex {
 
 impl ProjectIndex {
     pub fn new(
-        project: Model<Project>,
+        project: Entity<Project>,
         db_connection: heed::Env,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
-        let (status_tx, mut status_rx) = channel::unbounded();
+        let (status_tx, status_rx) = channel::unbounded();
         let mut this = ProjectIndex {
             db_connection,
             project: project.downgrade(),
@@ -92,7 +92,7 @@ impl ProjectIndex {
             embedding_provider,
             _subscription: cx.subscribe(&project, Self::handle_project_event),
             _maintain_status: cx.spawn(|this, mut cx| async move {
-                while status_rx.next().await.is_some() {
+                while status_rx.recv().await.is_ok() {
                     if this
                         .update(&mut cx, |this, cx| this.update_status(cx))
                         .is_err()
@@ -110,7 +110,7 @@ impl ProjectIndex {
         self.last_status
     }
 
-    pub fn project(&self) -> WeakModel<Project> {
+    pub fn project(&self) -> WeakEntity<Project> {
         self.project.clone()
     }
 
@@ -120,9 +120,9 @@ impl ProjectIndex {
 
     fn handle_project_event(
         &mut self,
-        _: Model<Project>,
+        _: Entity<Project>,
         event: &project::Event,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
@@ -132,7 +132,7 @@ impl ProjectIndex {
         }
     }
 
-    fn update_worktree_indices(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_worktree_indices(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.upgrade() else {
             return;
         };
@@ -198,7 +198,7 @@ impl ProjectIndex {
         self.update_status(cx);
     }
 
-    fn update_status(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_status(&mut self, cx: &mut Context<Self>) {
         let mut indexing_count = 0;
         let mut any_loading = false;
 
@@ -232,7 +232,7 @@ impl ProjectIndex {
         &self,
         queries: Vec<String>,
         limit: usize,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<Vec<SearchResult>>> {
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
         let mut worktree_scan_tasks = Vec::new();
@@ -252,7 +252,7 @@ impl ProjectIndex {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
                         let db = *index.embedding_index().db();
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let txn = db_connection
                                 .read_txn()
                                 .context("failed to create read transaction")?;
@@ -372,7 +372,7 @@ impl ProjectIndex {
     }
 
     #[cfg(test)]
-    pub fn path_count(&self, cx: &AppContext) -> Result<u64> {
+    pub fn path_count(&self, cx: &App) -> Result<u64> {
         let mut result = 0;
         for worktree_index in self.worktree_indices.values() {
             if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
@@ -385,8 +385,8 @@ impl ProjectIndex {
     pub(crate) fn worktree_index(
         &self,
         worktree_id: WorktreeId,
-        cx: &AppContext,
-    ) -> Option<Model<WorktreeIndex>> {
+        cx: &App,
+    ) -> Option<Entity<WorktreeIndex>> {
         for index in self.worktree_indices.values() {
             if let WorktreeIndexHandle::Loaded { index, .. } = index {
                 if index.read(cx).worktree().read(cx).id() == worktree_id {
@@ -397,7 +397,7 @@ impl ProjectIndex {
         None
     }
 
-    pub(crate) fn worktree_indices(&self, cx: &AppContext) -> Vec<Model<WorktreeIndex>> {
+    pub(crate) fn worktree_indices(&self, cx: &App) -> Vec<Entity<WorktreeIndex>> {
         let mut result = self
             .worktree_indices
             .values()
@@ -413,7 +413,7 @@ impl ProjectIndex {
         result
     }
 
-    pub fn all_summaries(&self, cx: &AppContext) -> Task<Result<Vec<FileSummary>>> {
+    pub fn all_summaries(&self, cx: &App) -> Task<Result<Vec<FileSummary>>> {
         let (summaries_tx, summaries_rx) = channel::bounded(1024);
         let mut worktree_scan_tasks = Vec::new();
         for worktree_index in self.worktree_indices.values() {
@@ -434,7 +434,7 @@ impl ProjectIndex {
                         let file_digest_db = summary_index.file_digest_db();
                         let summary_db = summary_index.summary_db();
 
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let txn = db_connection
                                 .read_txn()
                                 .context("failed to create db read transaction")?;
@@ -503,7 +503,7 @@ impl ProjectIndex {
     }
 
     /// Empty out the backlogs of all the worktrees in the project
-    pub fn flush_summary_backlogs(&self, cx: &AppContext) -> impl Future<Output = ()> {
+    pub fn flush_summary_backlogs(&self, cx: &App) -> impl Future<Output = ()> {
         let flush_start = std::time::Instant::now();
 
         futures::future::join_all(self.worktree_indices.values().map(|worktree_index| {
@@ -521,8 +521,9 @@ impl ProjectIndex {
 
                 index
                     .read_with(&cx, |index, cx| {
-                        cx.background_executor()
-                            .spawn(index.summary_index().flush_backlog(worktree_abs_path, cx))
+                        cx.background_spawn(
+                            index.summary_index().flush_backlog(worktree_abs_path, cx),
+                        )
                     })?
                     .await
             })
@@ -540,7 +541,7 @@ impl ProjectIndex {
         })
     }
 
-    pub fn remaining_summaries(&self, cx: &mut ModelContext<Self>) -> usize {
+    pub fn remaining_summaries(&self, cx: &mut Context<Self>) -> usize {
         self.worktree_indices(cx)
             .iter()
             .map(|index| index.read(cx).summary_index().backlog_len())

@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{Context, View, ViewContext, VisualContext, WindowContext};
-use language::Language;
+use gpui::{App, AppContext as _, Context, Entity, Window};
+use language::{Capability, Language};
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
 use text::ToPointUtf16;
@@ -18,22 +18,23 @@ fn is_rust_language(language: &Language) -> bool {
     language.name() == "Rust".into()
 }
 
-pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {
+pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
     if editor
         .update(cx, |e, cx| {
             find_specific_language_server_in_selection(e, cx, is_rust_language, RUST_ANALYZER_NAME)
         })
         .is_some()
     {
-        register_action(editor, cx, expand_macro_recursively);
-        register_action(editor, cx, open_docs);
+        register_action(editor, window, expand_macro_recursively);
+        register_action(editor, window, open_docs);
     }
 }
 
 pub fn expand_macro_recursively(
     editor: &mut Editor,
     _: &ExpandMacroRecursively,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
 ) {
     if editor.selections.count() == 0 {
         return;
@@ -67,7 +68,7 @@ pub fn expand_macro_recursively(
             cx,
         )
     });
-    cx.spawn(|_editor, mut cx| async move {
+    cx.spawn_in(window, |_editor, mut cx| async move {
         let macro_expansion = expand_macro_task.await.context("expand macro")?;
         if macro_expansion.is_empty() {
             log::info!("Empty macro expansion for position {position:?}");
@@ -77,20 +78,23 @@ pub fn expand_macro_recursively(
         let buffer = project
             .update(&mut cx, |project, cx| project.create_buffer(cx))?
             .await?;
-        workspace.update(&mut cx, |workspace, cx| {
+        workspace.update_in(&mut cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(0..0, macro_expansion.expansion)], None, cx);
-                buffer.set_language(Some(rust_language), cx)
+                buffer.set_text(macro_expansion.expansion, cx);
+                buffer.set_language(Some(rust_language), cx);
+                buffer.set_capability(Capability::ReadOnly, cx);
             });
-            let multibuffer = cx.new_model(|cx| {
-                MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
-            });
+            let multibuffer =
+                cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name));
             workspace.add_item_to_active_pane(
-                Box::new(
-                    cx.new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx)),
-                ),
+                Box::new(cx.new(|cx| {
+                    let mut editor = Editor::for_multibuffer(multibuffer, None, false, window, cx);
+                    editor.set_read_only(true);
+                    editor
+                })),
                 None,
                 true,
+                window,
                 cx,
             );
         })
@@ -98,7 +102,7 @@ pub fn expand_macro_recursively(
     .detach_and_log_err(cx);
 }
 
-pub fn open_docs(editor: &mut Editor, _: &OpenDocs, cx: &mut ViewContext<Editor>) {
+pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mut Context<Editor>) {
     if editor.selections.count() == 0 {
         return;
     }
@@ -132,7 +136,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, cx: &mut ViewContext<Editor>
         )
     });
 
-    cx.spawn(|_editor, mut cx| async move {
+    cx.spawn_in(window, |_editor, mut cx| async move {
         let docs_urls = open_docs_task.await.context("open docs")?;
         if docs_urls.is_empty() {
             log::debug!("Empty docs urls for position {position:?}");
