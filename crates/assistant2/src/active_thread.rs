@@ -139,19 +139,19 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(index) = self.messages.iter().position(|msg| msg == id) else {
+        let Some(index) = self.messages.iter().position(|message_id| message_id == id) else {
             return;
         };
         self.list_state.splice(index..index + 1, 1);
-
         let markdown = self.render_markdown(text.into(), window, cx);
         self.rendered_messages_by_id.insert(*id, markdown);
     }
 
     fn deleted_message(&mut self, id: &MessageId) {
-        let Some(index) = self.messages.iter().position(|msg| msg == id) else {
+        let Some(index) = self.messages.iter().position(|message_id| message_id == id) else {
             return;
         };
+        self.messages.remove(index);
         self.list_state.splice(index..index + 1, 0);
         self.rendered_messages_by_id.remove(id);
     }
