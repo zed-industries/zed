@@ -362,6 +362,7 @@ impl BufferDiffInner {
             pending_hunks = secondary.pending_hunks.clone();
         }
 
+        let max_point = buffer.max_point();
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || loop {
             let (start_point, (start_anchor, start_base)) = summaries.next()?;
@@ -371,7 +372,7 @@ impl BufferDiffInner {
                 continue;
             }
 
-            if end_point.column > 0 {
+            if end_point.column > 0 && end_point < max_point {
                 end_point.row += 1;
                 end_point.column = 0;
                 end_anchor = buffer.anchor_before(end_point);
