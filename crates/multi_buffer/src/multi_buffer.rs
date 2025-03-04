@@ -4823,16 +4823,6 @@ impl MultiBufferSnapshot {
         self.anchor_at(position, Bias::Right)
     }
 
-    pub fn breakpoint_anchor<T: ToOffset>(&self, position: T) -> Anchor {
-        let bias = if position.to_offset(self) == 0usize {
-            Bias::Right
-        } else {
-            Bias::Left
-        };
-
-        self.anchor_at(position, bias)
-    }
-
     pub fn anchor_at<T: ToOffset>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
 

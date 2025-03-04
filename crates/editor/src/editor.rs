@@ -8051,7 +8051,7 @@ impl Editor {
             .buffer
             .read(cx)
             .snapshot(cx)
-            .breakpoint_anchor(Point::new(row.0, 0u32));
+            .anchor_before(Point::new(row.0, 0u32));
 
         let context_menu = self.breakpoint_context_menu(
             position.unwrap_or(source.text_anchor),
@@ -8127,7 +8127,7 @@ impl Editor {
             .snapshot(window, cx)
             .display_snapshot
             .buffer_snapshot
-            .breakpoint_anchor(Point::new(cursor_position.row, 0))
+            .anchor_before(Point::new(cursor_position.row, 0))
             .text_anchor;
 
         let project = self.project.clone();
@@ -8175,7 +8175,7 @@ impl Editor {
                     .snapshot(window, cx)
                     .display_snapshot
                     .buffer_snapshot
-                    .breakpoint_anchor(Point::new(cursor_position.row, 0))
+                    .anchor_before(Point::new(cursor_position.row, 0))
                     .text_anchor;
 
                 (
@@ -8218,7 +8218,7 @@ impl Editor {
                 .snapshot(window, cx)
                 .display_snapshot
                 .buffer_snapshot
-                .breakpoint_anchor(Point::new(cursor_position.row, 0))
+                .anchor_before(Point::new(cursor_position.row, 0))
                 .text_anchor;
 
             self.edit_breakpoint_at_anchor(
@@ -8241,7 +8241,17 @@ impl Editor {
             return;
         };
 
-        let Some(buffer_id) = breakpoint_position.buffer_id else {
+        let Some(buffer_id) = breakpoint_position.buffer_id.or_else(|| {
+            if breakpoint_position == text::Anchor::MIN {
+                self.buffer()
+                    .read(cx)
+                    .excerpt_buffer_ids()
+                    .into_iter()
+                    .next()
+            } else {
+                None
+            }
+        }) else {
             return;
         };
 
