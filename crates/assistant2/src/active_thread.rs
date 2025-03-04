@@ -4,8 +4,8 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    list, AbsoluteLength, AnyElement, App, DefiniteLength, EdgesRefinement, Empty, Entity,
-    Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
+    list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
+    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
     TextStyleRefinement, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
@@ -452,6 +452,19 @@ impl ActiveThread {
             .unwrap_or(&[])
     }
 
+    fn handle_cancel_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_editing_message(&menu::Cancel, window, cx);
+    }
+
+    fn handle_regenerate_click(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_editing_message(&menu::Confirm, window, cx);
+    }
+
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -522,7 +535,8 @@ impl ActiveThread {
                         .child(
                             h_flex()
                                 .py_1()
-                                .px_2()
+                                .pl_2()
+                                .pr_1()
                                 .bg(colors.editor_foreground.opacity(0.05))
                                 .border_b_1()
                                 .border_color(colors.border)
@@ -551,24 +565,38 @@ impl ActiveThread {
                                                 .gap_1()
                                                 .child(
                                                     Button::new("cancel-edit-message", "Cancel")
-                                                        .key_binding(KeyBinding::for_action_in(
-                                                            &menu::Cancel,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )),
+                                                        .label_size(LabelSize::Small)
+                                                        .key_binding(
+                                                            KeyBinding::for_action_in(
+                                                                &menu::Cancel,
+                                                                &focus_handle,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                                        )
+                                                        .on_click(
+                                                            cx.listener(Self::handle_cancel_click),
+                                                        ),
                                                 )
                                                 .child(
                                                     Button::new(
                                                         "confirm-edit-message",
                                                         "Regenerate",
                                                     )
-                                                    .key_binding(KeyBinding::for_action_in(
-                                                        &menu::Confirm,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )),
+                                                    .label_size(LabelSize::Small)
+                                                    .key_binding(
+                                                        KeyBinding::for_action_in(
+                                                            &menu::Confirm,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                                    )
+                                                    .on_click(
+                                                        cx.listener(Self::handle_regenerate_click),
+                                                    ),
                                                 ),
                                         )
                                     },
@@ -576,19 +604,21 @@ impl ActiveThread {
                                 .when(
                                     edit_message_editor.is_none() && allow_editing_message,
                                     |this| {
-                                        this.child(Button::new("edit-message", "Edit").on_click(
-                                            cx.listener({
-                                                let message_text = message.text.clone();
-                                                move |this, _, window, cx| {
-                                                    this.start_editing_message(
-                                                        message_id,
-                                                        message_text.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            }),
-                                        ))
+                                        this.child(
+                                            Button::new("edit-message", "Edit")
+                                                .label_size(LabelSize::Small)
+                                                .on_click(cx.listener({
+                                                    let message_text = message.text.clone();
+                                                    move |this, _, window, cx| {
+                                                        this.start_editing_message(
+                                                            message_id,
+                                                            message_text.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                })),
+                                        )
                                     },
                                 ),
                         )
