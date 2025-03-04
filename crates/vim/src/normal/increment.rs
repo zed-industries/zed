@@ -7,6 +7,8 @@ use std::ops::Range;
 
 use crate::{state::Mode, Vim};
 
+const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
+
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Increment {
@@ -287,16 +289,10 @@ fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<P
 
     if let Some(begin) = begin {
         let end = end.unwrap_or(offset);
-        if word == "true"
-            || word == "false"
-            || word == "TRUE"
-            || word == "FALSE"
-            || word == "True"
-            || word == "False"
-            || word == "Yes"
-            || word == "No"
-            || word == "On"
-            || word == "Off"
+        let word_lower = word.to_lowercase();
+        if BOOLEAN_PAIRS
+            .iter()
+            .any(|(a, b)| word_lower == *a || word_lower == *b)
         {
             return Some((begin.to_point(snapshot)..end.to_point(snapshot), word));
         }
@@ -306,18 +302,33 @@ fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<P
 }
 
 fn toggle_boolean(boolean: &str) -> String {
-    match boolean {
-        "true" => "false".to_string(),
-        "false" => "true".to_string(),
-        "TRUE" => "FALSE".to_string(),
-        "FALSE" => "TRUE".to_string(),
-        "True" => "False".to_string(),
-        "False" => "True".to_string(),
-        "Yes" => "No".to_string(),
-        "No" => "Yes".to_string(),
-        "On" => "Off".to_string(),
-        "Off" => "On".to_string(),
-        _ => boolean.to_string(),
+    let lower = boolean.to_lowercase();
+
+    let target = BOOLEAN_PAIRS
+        .iter()
+        .find_map(|(a, b)| {
+            if lower == *a {
+                Some(b)
+            } else if lower == *b {
+                Some(a)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(&boolean);
+
+    if boolean.chars().all(|c| c.is_uppercase()) {
+        // Upper case
+        target.to_uppercase()
+    } else if boolean.chars().next().unwrap_or(' ').is_uppercase() {
+        // Title case
+        let mut chars = target.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    } else {
+        target.to_string()
     }
 }
 
