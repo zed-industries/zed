@@ -4310,16 +4310,26 @@ impl Project {
             .buffer_for_id(buffer_id, cx)?
             .read(cx)
             .project_path(cx)?;
-        self.git_store
-            .read(cx)
-            .all_repositories()
-            .into_iter()
-            .find_map(|repo| {
-                Some((
-                    repo.clone(),
-                    repo.read(cx).repository_entry.relativize(&path.path).ok()?,
-                ))
-            })
+
+        let mut found: Option<(Entity<Repository>, RepoPath)> = None;
+        for repo_handle in self.git_store.read(cx).all_repositories() {
+            let repo = repo_handle.read(cx);
+            if repo.worktree_id != path.worktree_id {
+                continue;
+            }
+            let Ok(relative_path) = repo.repository_entry.relativize(&path.path) else {
+                continue;
+            };
+            if found
+                .as_ref()
+                .is_some_and(|(found, _)| repo.contains_sub_repo(found, cx))
+            {
+                continue;
+            }
+            found = Some((repo_handle.clone(), relative_path))
+        }
+
+        found
     }
 }
 

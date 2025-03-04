@@ -136,6 +136,15 @@ impl BufferDiffState {
         let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
     }
 
+    pub fn wait_for_recalculation(&mut self) -> Option<oneshot::Receiver<()>> {
+        if self.diff_updated_futures.is_empty() {
+            return None;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+        Some(rx)
+    }
+
     fn diff_bases_changed(
         &mut self,
         buffer: text::BufferSnapshot,
@@ -1362,8 +1371,23 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff) = self.get_unstaged_diff(buffer_id, cx) {
-            return Task::ready(Ok(diff));
+        if let Some(OpenBuffer::Complete { diff_state, .. }) = self.opened_buffers.get(&buffer_id) {
+            if let Some(unstaged_diff) = diff_state
+                .read(cx)
+                .unstaged_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(unstaged_diff)
+                    });
+                }
+                return Task::ready(Ok(unstaged_diff));
+            }
         }
 
         let task = match self.loading_diffs.entry((buffer_id, DiffKind::Unstaged)) {
@@ -1402,8 +1426,24 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff) = self.get_uncommitted_diff(buffer_id, cx) {
-            return Task::ready(Ok(diff));
+
+        if let Some(OpenBuffer::Complete { diff_state, .. }) = self.opened_buffers.get(&buffer_id) {
+            if let Some(uncommitted_diff) = diff_state
+                .read(cx)
+                .uncommitted_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(uncommitted_diff)
+                    });
+                }
+                return Task::ready(Ok(uncommitted_diff));
+            }
         }
 
         let task = match self.loading_diffs.entry((buffer_id, DiffKind::Uncommitted)) {
