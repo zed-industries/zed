@@ -1934,7 +1934,7 @@ impl GitPanel {
         })
     }
 
-    pub fn can_open_commit_editor(&self) -> bool {
+    pub fn can_commit(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
     }
 
@@ -2013,7 +2013,6 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
-        let can_open_commit_editor = self.can_open_commit_editor();
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let project = self.project.clone().read(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
@@ -2108,7 +2107,6 @@ impl GitPanel {
                                     .icon_size(IconSize::Small)
                                     .style(ButtonStyle::Transparent)
                                     .width(expand_button_size.into())
-                                    .disabled(!can_open_commit_editor)
                                     .on_click(cx.listener({
                                         move |_, _, window, cx| {
                                             window.dispatch_action(
