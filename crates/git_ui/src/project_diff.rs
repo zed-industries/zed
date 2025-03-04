@@ -812,10 +812,8 @@ impl Render for ProjectDiffToolbar {
                         el.child(
                             Button::new("stage", "Stage")
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Stage",
-                                    &StageAndNext {
-                                        whole_excerpt: false,
-                                    },
+                                    "Stage and go to next hunk",
+                                    &StageAndNext,
                                     &focus_handle,
                                 ))
                                 // don't actually disable the button so it's mashable
@@ -825,22 +823,14 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(
-                                        &StageAndNext {
-                                            whole_excerpt: false,
-                                        },
-                                        window,
-                                        cx,
-                                    )
+                                    this.dispatch_action(&StageAndNext, window, cx)
                                 })),
                         )
                         .child(
                             Button::new("unstage", "Unstage")
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage",
-                                    &UnstageAndNext {
-                                        whole_excerpt: false,
-                                    },
+                                    "Unstage and go to next hunk",
+                                    &UnstageAndNext,
                                     &focus_handle,
                                 ))
                                 .color(if button_states.unstage {
@@ -849,13 +839,7 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(
-                                        &UnstageAndNext {
-                                            whole_excerpt: false,
-                                        },
-                                        window,
-                                        cx,
-                                    )
+                                    this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
                         )
                     }),
@@ -869,20 +853,12 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to previous hunk",
-                                &GoToPreviousHunk {
-                                    center_cursor: false,
-                                },
+                                &GoToPreviousHunk,
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(
-                                    &GoToPreviousHunk {
-                                        center_cursor: true,
-                                    },
-                                    window,
-                                    cx,
-                                )
+                                this.dispatch_action(&GoToPreviousHunk, window, cx)
                             })),
                     )
                     .child(
@@ -890,20 +866,12 @@ impl Render for ProjectDiffToolbar {
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Go to next hunk",
-                                &GoToHunk {
-                                    center_cursor: false,
-                                },
+                                &GoToHunk,
                                 &focus_handle,
                             ))
                             .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(
-                                    &GoToHunk {
-                                        center_cursor: true,
-                                    },
-                                    window,
-                                    cx,
-                                )
+                                this.dispatch_action(&GoToHunk, window, cx)
                             })),
                     ),
             )
