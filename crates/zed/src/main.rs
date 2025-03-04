@@ -1020,7 +1020,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
     let extension_store = ExtensionStore::global(cx);
     let theme_registry = ThemeRegistry::global(cx);
     let theme_settings = ThemeSettings::get_global(cx);
-    let appearance = cx.window_appearance().into();
+    let appearance = SystemAppearance::global(cx).0;
 
     if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
         let theme_name = theme_selection.theme(appearance);
