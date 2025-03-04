@@ -355,8 +355,10 @@ impl RunningState {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let session_id = session.read(cx).session_id();
-        let stack_frame_list =
-            cx.new(|cx| StackFrameList::new(workspace.clone(), session.clone(), window, cx));
+        let weak_state = cx.weak_entity();
+        let stack_frame_list = cx.new(|cx| {
+            StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
+        });
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -376,6 +378,7 @@ impl RunningState {
         });
 
         cx.observe(&module_list, |_, _, cx| cx.notify()).detach();
+        cx.observe(&session, |_, _, cx| cx.notify()).detach();
 
         let _subscriptions = vec![cx.subscribe(
             &stack_frame_list,
@@ -488,11 +491,8 @@ impl RunningState {
     ) {
         self.thread = Some((thread_id, thread_name));
 
-        self.stack_frame_list.update(cx, |stack_frame_list, cx| {
-            stack_frame_list.set_thread_id(self.thread.as_ref().map(|id| id.0), window, cx);
-        });
-
-        cx.notify();
+        self.stack_frame_list
+            .update(cx, |list, cx| list.refresh(window, cx))
     }
 
     fn clear_highlights(&self, _cx: &mut Context<Self>) {

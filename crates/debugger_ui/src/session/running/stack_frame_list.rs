@@ -9,10 +9,13 @@ use gpui::{
 };
 
 use language::Point;
-use project::debugger::session::{Session, StackFrame, ThreadId};
+use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::ProjectItem;
 use ui::{prelude::*, Tooltip};
+use util::ResultExt;
 use workspace::Workspace;
+
+use super::RunningState;
 
 #[derive(Debug)]
 pub enum StackFrameListEvent {
@@ -21,10 +24,10 @@ pub enum StackFrameListEvent {
 
 pub struct StackFrameList {
     list: ListState,
-    thread_id: Option<ThreadId>,
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
+    state: WeakEntity<RunningState>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     current_stack_frame_id: StackFrameId,
@@ -40,6 +43,7 @@ impl StackFrameList {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
+        state: WeakEntity<RunningState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -60,30 +64,27 @@ impl StackFrameList {
             },
         );
 
-        let _subscription = cx.observe_in(&session, window, |stack_frame_list, _, window, cx| {
-            stack_frame_list.build_entries(stack_frame_list.entries.is_empty(), window, cx);
-        });
+        let _subscription =
+            cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
+                SessionEvent::Stopped => {
+                    this.entries.clear();
+                    this.build_entries(true, window, cx);
+                }
+                SessionEvent::Invalidate => {
+                    this.build_entries(this.entries.is_empty(), window, cx);
+                }
+            });
 
         Self {
             list,
             session,
             workspace,
             focus_handle,
+            state,
             _subscription,
-            thread_id: None,
             entries: Default::default(),
             current_stack_frame_id: Default::default(),
         }
-    }
-
-    pub(crate) fn set_thread_id(
-        &mut self,
-        thread_id: Option<ThreadId>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.thread_id = thread_id;
-        self.build_entries(true, window, cx);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -92,7 +93,10 @@ impl StackFrameList {
     }
 
     pub fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
-        self.thread_id
+        self.state
+            .read_with(cx, |state, _| state.thread.as_ref().map(|(id, _)| *id))
+            .log_err()
+            .flatten()
             .map(|thread_id| {
                 self.session
                     .update(cx, |this, cx| this.stack_frames(thread_id, cx))
@@ -119,8 +123,10 @@ impl StackFrameList {
         self.current_stack_frame_id
     }
 
-    pub fn _current_thread_id(&self) -> Option<ThreadId> {
-        self.thread_id
+    pub(super) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.defer_in(window, |this, window, cx| {
+            this.build_entries(this.entries.is_empty(), window, cx);
+        });
     }
 
     fn build_entries(

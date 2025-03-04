@@ -33,7 +33,7 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     ) -> Result<Self::Response>;
 }
 
-struct GenericCommand;
+pub(crate) struct GenericCommand;
 
 pub(crate) trait DapCommand: LocalDapCommand + Any {
     type ProtoRequest: 'static + Send + proto::RequestMessage;

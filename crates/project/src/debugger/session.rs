@@ -717,8 +717,9 @@ impl Session {
 
         // todo(debugger): We should see if we could only invalidate the thread that stopped
         // instead of everything right now.
-        self.invalidate(cx);
+        self.invalidate_command_type(TypeId::of::<dap_command::GenericCommand>());
         cx.emit(SessionEvent::Stopped);
+        cx.notify();
     }
 
     pub(crate) fn handle_dap_event(&mut self, event: Box<Events>, cx: &mut Context<Self>) {
@@ -1210,7 +1211,9 @@ impl Session {
     }
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
-        if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped {
+        if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped
+            && self.requests.contains_key(&ThreadsCommand::command_id())
+        {
             self.fetch(
                 super::dap_command::StackTraceCommand {
                     thread_id: thread_id.0,
@@ -1257,30 +1260,36 @@ impl Session {
     }
 
     pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
-        self.fetch(
-            ScopesCommand { stack_frame_id },
-            move |this, scopes, cx| {
+        if self.requests.contains_key(&ThreadsCommand::command_id())
+            && self
+                .requests
+                .contains_key(&dap_command::StackTraceCommand::command_id())
+        {
+            self.fetch(
+                ScopesCommand { stack_frame_id },
+                move |this, scopes, cx| {
 
-                for scope in scopes {
-                    this.variables(scope.variables_reference, cx);
-                }
+                    for scope in scopes {
+                        this.variables(scope.variables_reference, cx);
+                    }
 
-                let entry = this
-                    .stack_frames
-                    .entry(stack_frame_id)
-                    .and_modify(|stack_frame| {
-                        stack_frame.scopes = scopes.clone();
-                    });
+                    let entry = this
+                        .stack_frames
+                        .entry(stack_frame_id)
+                        .and_modify(|stack_frame| {
+                            stack_frame.scopes = scopes.clone();
+                        });
 
-                cx.emit(SessionEvent::Invalidate);
+                    cx.emit(SessionEvent::Invalidate);
 
-                debug_assert!(
-                    matches!(entry, indexmap::map::Entry::Occupied(_)),
-                    "Sent scopes request for stack_frame_id that doesn't exist or hasn't been fetched"
-                );
-            },
-            cx,
-        );
+                    debug_assert!(
+                        matches!(entry, indexmap::map::Entry::Occupied(_)),
+                        "Sent scopes request for stack_frame_id that doesn't exist or hasn't been fetched"
+                    );
+                },
+                cx,
+            );
+        }
 
         self.stack_frames
             .get(&stack_frame_id)
