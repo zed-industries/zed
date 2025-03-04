@@ -372,8 +372,8 @@
       "ctrl-alt-y": "git::ToggleStaged",
       "alt-y": "git::StageAndNext",
       "alt-shift-y": "git::UnstageAndNext",
-      "alt-.": ["editor::GoToHunk", { "center_cursor": true }],
-      "alt-,": ["editor::GoToPreviousHunk", { "center_cursor": true }]
+      "alt-.": "editor::GoToHunk",
+      "alt-,": "editor::GoToPreviousHunk"
     }
   },
   {
@@ -564,8 +564,8 @@
       "shift-enter": "editor::ExpandExcerpts",
       "ctrl-alt-enter": "editor::OpenExcerptsSplit",
       "ctrl-shift-e": "pane::RevealInProjectPanel",
-      "ctrl-f8": ["editor::GoToHunk", { "center_cursor": true }],
-      "ctrl-shift-f8": ["editor::GoToPreviousHunk", { "center_cursor": true }],
+      "ctrl-f8": "editor::GoToHunk",
+      "ctrl-shift-f8": "editor::GoToPreviousHunk",
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }

@@ -238,8 +238,8 @@
       "] x": "vim::SelectSmallerSyntaxNode",
       "] d": "editor::GoToDiagnostic",
       "[ d": "editor::GoToPreviousDiagnostic",
-      "] c": ["editor::GoToHunk", { "center_cursor": true }],
-      "[ c": ["editor::GoToPreviousHunk", { "center_cursor": true }],
+      "] c": "editor::GoToHunk",
+      "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments"
     }
   },

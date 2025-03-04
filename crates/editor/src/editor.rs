@@ -11487,14 +11487,13 @@ impl Editor {
         }
     }
 
-    fn go_to_next_hunk(&mut self, action: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
+    fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
         self.go_to_hunk_after_or_before_position(
             &snapshot,
             selection.head(),
-            true,
-            action.center_cursor,
+            Direction::Next,
             window,
             cx,
         );
@@ -11504,12 +11503,11 @@ impl Editor {
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
-        after: bool,
-        scroll_center: bool,
+        direction: Direction,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        let hunk = if after {
+        let hunk = if direction == Direction::Next {
             self.hunk_after_position(snapshot, position)
         } else {
             self.hunk_before_position(snapshot, position)
@@ -11517,11 +11515,7 @@ impl Editor {
 
         if let Some(hunk) = &hunk {
             let destination = Point::new(hunk.row_range.start.0, 0);
-            let autoscroll = if scroll_center {
-                Autoscroll::center()
-            } else {
-                Autoscroll::fit()
-            };
+            let autoscroll = Autoscroll::center();
 
             self.unfold_ranges(&[destination..destination], false, false, cx);
             self.change_selections(Some(autoscroll), window, cx, |s| {
@@ -11551,7 +11545,7 @@ impl Editor {
 
     fn go_to_prev_hunk(
         &mut self,
-        action: &GoToPreviousHunk,
+        _: &GoToPreviousHunk,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -11560,8 +11554,7 @@ impl Editor {
         self.go_to_hunk_after_or_before_position(
             &snapshot,
             selection.head(),
-            false,
-            action.center_cursor,
+            Direction::Prev,
             window,
             cx,
         );
@@ -13696,22 +13689,10 @@ impl Editor {
             });
 
         if run_twice {
-            self.go_to_next_hunk(
-                &GoToHunk {
-                    center_cursor: true,
-                },
-                window,
-                cx,
-            );
+            self.go_to_next_hunk(&GoToHunk, window, cx);
         }
         self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
-        self.go_to_next_hunk(
-            &GoToHunk {
-                center_cursor: true,
-            },
-            window,
-            cx,
-        );
+        self.go_to_next_hunk(&GoToHunk, window, cx);
     }
 
     fn do_stage_or_unstage(

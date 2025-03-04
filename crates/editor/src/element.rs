@@ -41,6 +41,7 @@ use gpui::{
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
     Subscription, TextRun, TextStyleRefinement, Window,
 };
+use inline_completion::Direction;
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -8891,7 +8892,11 @@ fn diff_hunk_controls(
                                     let position =
                                         hunk_range.end.to_point(&snapshot.buffer_snapshot);
                                     editor.go_to_hunk_after_or_before_position(
-                                        &snapshot, position, true, true, window, cx,
+                                        &snapshot,
+                                        position,
+                                        Direction::Next,
+                                        window,
+                                        cx,
                                     );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
@@ -8923,7 +8928,11 @@ fn diff_hunk_controls(
                                     let point =
                                         hunk_range.start.to_point(&snapshot.buffer_snapshot);
                                     editor.go_to_hunk_after_or_before_position(
-                                        &snapshot, point, false, true, window, cx,
+                                        &snapshot,
+                                        point,
+                                        Direction::Prev,
+                                        window,
+                                        cx,
                                     );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
