@@ -1917,7 +1917,7 @@ impl GitPanel {
         })
     }
 
-    pub fn can_commit(&self) -> bool {
+    pub fn can_open_commit_editor(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
     }
 
@@ -2000,6 +2000,7 @@ impl GitPanel {
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         if let Some(active_repo) = active_repository {
+            let can_open_commit_editor = self.can_open_commit_editor();
             let (can_commit, tooltip) = self.configure_commit_button(cx);
 
             let enable_coauthors = self.render_co_authors(cx);
@@ -2092,6 +2093,7 @@ impl GitPanel {
                                         .icon_size(IconSize::Small)
                                         .style(ButtonStyle::Transparent)
                                         .width(expand_button_size.into())
+                                        .disabled(!can_open_commit_editor)
                                         .on_click(cx.listener({
                                             move |_, _, window, cx| {
                                                 window.dispatch_action(

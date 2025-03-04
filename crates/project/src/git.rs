@@ -6,10 +6,7 @@ use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
 use git::repository::{Branch, CommitDetails, PushOptions, Remote, RemoteCommandOutput, ResetMode};
-use git::{
-    repository::{GitRepository, RepoPath},
-    status::{GitSummary, TrackedSummary},
-};
+use git::repository::{GitRepository, RepoPath};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
@@ -1071,18 +1068,6 @@ impl Repository {
     /// untracked files.
     pub fn entry_count(&self) -> usize {
         self.repository_entry.status_len()
-    }
-
-    fn have_changes(&self) -> bool {
-        self.repository_entry.status_summary() != GitSummary::UNCHANGED
-    }
-
-    fn have_staged_changes(&self) -> bool {
-        self.repository_entry.status_summary().index != TrackedSummary::UNCHANGED
-    }
-
-    pub fn can_commit(&self, commit_all: bool) -> bool {
-        return self.have_changes() && (commit_all || self.have_staged_changes());
     }
 
     pub fn commit(
