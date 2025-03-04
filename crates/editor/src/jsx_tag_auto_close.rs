@@ -96,6 +96,7 @@ pub(crate) fn generate_auto_close_edits(
         let Some(layer) = buffer.syntax_ancestor(edited_range.clone()) else {
             continue;
         };
+        // todo! perf: use layer.language().id_for_kind() to get kind ids for faster checking
         let Some(open_tag) = layer.descendant_for_byte_range(
             auto_edit.open_tag_range.start,
             auto_edit.open_tag_range.end,
@@ -111,6 +112,7 @@ pub(crate) fn generate_auto_close_edits(
 
         {
             let mut tree_root_node = open_tag;
+            let mut found_non_tag_root = false;
             // todo! child_with_descendant
             while let Some(parent) = tree_root_node.parent() {
                 tree_root_node = parent;
@@ -118,16 +120,22 @@ pub(crate) fn generate_auto_close_edits(
                     || (parent.kind() != config.jsx_element_node_name
                         && parent.kind() != config.open_tag_node_name)
                 {
+                    found_non_tag_root = true;
                     break;
                 }
             }
 
             let mut unclosed_open_tag_count: i32 = 0;
 
-            let mut stack = Vec::with_capacity(tree_root_node.descendant_count());
-            stack.push(tree_root_node);
-
             let mut cursor = tree_root_node.walk();
+
+            let mut stack = Vec::with_capacity(tree_root_node.descendant_count());
+
+            if !found_non_tag_root {
+                stack.push(tree_root_node);
+            } else {
+                stack.extend(tree_root_node.children(&mut cursor));
+            }
 
             let tag_node_name_equals = |node: &Node, tag_node_name: &str, name: &str| {
                 let is_empty = name.len() == 0;
@@ -147,25 +155,22 @@ pub(crate) fn generate_auto_close_edits(
             // else -> go to parent
             // if parent == tree_root_node -> break
             while let Some(node) = stack.pop() {
-                if node.kind() == config.open_tag_node_name {
+                let kind = node.kind();
+                if kind == config.open_tag_node_name {
                     if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
                         unclosed_open_tag_count += 1;
                     }
                     continue;
-                } else if node.kind() == config.close_tag_node_name {
+                } else if kind == config.close_tag_node_name {
                     if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
+                        // todo! node range shouldn't be before open tag
                         unclosed_open_tag_count -= 1;
                     }
                     continue;
-                } else if node.kind() == "jsx_self_closing_element" {
-                    // don't recurse into jsx self-closing elements
-                    continue;
-                } else if node.kind() == "jsx_expression" {
-                    // don't recurse into jsx expressions (it forms a new scope)
-                    continue;
+                } else if kind == config.jsx_element_node_name {
+                    // todo! perf: filter only open,close,element nodes
+                    stack.extend(node.children(&mut cursor));
                 }
-
-                stack.extend(node.children(&mut cursor));
             }
 
             if unclosed_open_tag_count <= 0 {
