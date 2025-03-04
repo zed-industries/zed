@@ -30,6 +30,7 @@ use rpc::AnyProtoClient;
 use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
+use std::any::TypeId;
 use std::path::PathBuf;
 use std::u64;
 use std::{
@@ -448,7 +449,7 @@ pub struct Session {
     locations: HashMap<u64, dap::LocationsResponse>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
-    requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
+    requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -457,6 +458,7 @@ trait CacheableCommand: 'static + Send + Sync {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool;
     fn dyn_hash(&self, hasher: &mut dyn Hasher);
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+    fn cacheable_command_id(&self) -> TypeId;
 }
 
 impl<T> CacheableCommand for T
@@ -477,6 +479,10 @@ where
     }
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
+    }
+
+    fn cacheable_command_id(&self) -> TypeId {
+        T::command_id()
     }
 }
 
@@ -529,6 +535,7 @@ impl CompletionsQuery {
 
 pub enum SessionEvent {
     Invalidate,
+    Stopped,
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -711,6 +718,7 @@ impl Session {
         // todo(debugger): We should see if we could only invalidate the thread that stopped
         // instead of everything right now.
         self.invalidate(cx);
+        cx.emit(SessionEvent::Stopped);
     }
 
     pub(crate) fn handle_dap_event(&mut self, event: Box<Events>, cx: &mut Context<Self>) {
@@ -791,7 +799,9 @@ impl Session {
                 "Only requests marked as cacheable should invoke `fetch`"
             );
         }
-        if let Entry::Vacant(vacant) = self.requests.entry(request.into()) {
+        let request_map = self.requests.entry(T::command_id()).or_default();
+
+        if let Entry::Vacant(vacant) = request_map.entry(request.into()) {
             let command = vacant.key().0.clone().as_any_arc().downcast::<T>().unwrap();
 
             let task = Self::request_inner::<Arc<T>>(
@@ -852,8 +862,18 @@ impl Session {
         )
     }
 
+    fn invalidate_command_type(&mut self, key: TypeId) {
+        self.requests
+            .entry(key)
+            .and_modify(|request_map| request_map.clear());
+    }
+
     fn invalidate_state(&mut self, key: &RequestSlot) {
-        self.requests.remove(&key);
+        self.requests
+            .entry(key.0.cacheable_command_id())
+            .and_modify(|request_map| {
+                request_map.remove(&key);
+            });
     }
 
     /// This function should be called after changing state not before
@@ -867,29 +887,22 @@ impl Session {
     }
 
     pub fn threads(&mut self, cx: &mut Context<Self>) -> Vec<(dap::Thread, ThreadStatus)> {
-        self.fetch(
-            dap_command::ThreadsCommand,
-            |this, result, cx| {
-                let v = this.threads.keys().copied().collect::<Vec<_>>();
-                for thread_id in v {
-                    this.invalidate_state(
-                        &StackTraceCommand {
-                            thread_id: thread_id.0,
-                            start_frame: None,
-                            levels: None,
-                        }
-                        .into(),
-                    );
-                }
-                this.threads.extend(
-                    result
+        if self.thread_states.any_stopped_thread() {
+            self.fetch(
+                dap_command::ThreadsCommand,
+                |this, result, cx| {
+                    this.threads = result
                         .iter()
-                        .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone()))),
-                );
-                cx.notify();
-            },
-            cx,
-        );
+                        .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
+                        .collect();
+
+                    this.invalidate_command_type(StackTraceCommand::command_id());
+                    cx.notify();
+                },
+                cx,
+            );
+        }
+
         self.threads
             .values()
             .map(|thread| {
@@ -1205,14 +1218,6 @@ impl Session {
                     levels: None,
                 },
                 move |this, stack_frames, cx| {
-                    for frame in stack_frames.iter() {
-                        this.invalidate_state(
-                            &ScopesCommand {
-                                stack_frame_id: frame.id,
-                            }
-                            .into(),
-                        );
-                    }
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
                         thread.stack_frame_ids =
                             stack_frames.iter().map(|frame| frame.id).collect();
@@ -1228,6 +1233,8 @@ impl Session {
                             .cloned()
                             .map(|frame| (frame.id, StackFrame::from(frame))),
                     );
+
+                    this.invalidate_command_type(ScopesCommand::command_id());
 
                     cx.emit(SessionEvent::Invalidate);
                     cx.notify();

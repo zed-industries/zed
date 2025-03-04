@@ -6,7 +6,7 @@ use gpui::{
     ListState, MouseDownEvent, Point, Subscription,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::debugger::session::Session;
+use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, sync::Arc};
 use ui::{prelude::*, ContextMenu, ListItem};
 use util::debug_panic;
@@ -79,7 +79,15 @@ impl VariableList {
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.subscribe(&session, |this, _, _, cx| this.build_entries(cx)),
+            cx.subscribe(&session, |this, _, event, cx| {
+                match event {
+                    SessionEvent::Stopped => {
+                        this.variable_states.clear();
+                    }
+                    _ => {}
+                }
+                this.build_entries(cx);
+            }),
         ];
 
         Self {

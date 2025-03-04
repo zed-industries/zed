@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 
 use anyhow::{Ok, Result};
 use dap::{
@@ -30,9 +33,23 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     ) -> Result<Self::Response>;
 }
 
-pub(crate) trait DapCommand: LocalDapCommand {
+struct GenericCommand;
+
+pub(crate) trait DapCommand: LocalDapCommand + Any {
     type ProtoRequest: 'static + Send + proto::RequestMessage;
     const CACHEABLE: bool = false;
+
+    fn is_generic() -> bool {
+        false
+    }
+
+    fn command_id() -> TypeId {
+        if Self::is_generic() {
+            TypeId::of::<GenericCommand>()
+        } else {
+            TypeId::of::<Self>()
+        }
+    }
 
     #[allow(dead_code)]
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId;
@@ -1093,6 +1110,10 @@ impl DapCommand for ModulesCommand {
     type ProtoRequest = proto::DapModulesRequest;
     const CACHEABLE: bool = true;
 
+    fn is_generic() -> bool {
+        true
+    }
+
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
     }
@@ -1164,6 +1185,10 @@ impl LocalDapCommand for LoadedSourcesCommand {
 impl DapCommand for LoadedSourcesCommand {
     type ProtoRequest = proto::DapLoadedSourcesRequest;
     const CACHEABLE: bool = true;
+
+    fn is_generic() -> bool {
+        true
+    }
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
@@ -1532,6 +1557,10 @@ impl LocalDapCommand for ThreadsCommand {
 impl DapCommand for ThreadsCommand {
     type ProtoRequest = proto::DapThreadsRequest;
     const CACHEABLE: bool = true;
+
+    fn is_generic() -> bool {
+        true
+    }
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapThreadsRequest {
