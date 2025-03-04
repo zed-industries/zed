@@ -67,12 +67,12 @@ impl StackFrameList {
         let _subscription =
             cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
                 SessionEvent::Stopped => {
-                    this.entries.clear();
                     this.build_entries(true, window, cx);
                 }
                 SessionEvent::Invalidate => {
                     this.build_entries(this.entries.is_empty(), window, cx);
                 }
+                _ => {}
             });
 
         Self {

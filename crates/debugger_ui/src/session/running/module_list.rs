@@ -7,6 +7,7 @@ pub struct ModuleList {
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
+    pending_render: bool,
 }
 
 impl ModuleList {
@@ -26,10 +27,8 @@ impl ModuleList {
             },
         );
 
-        let _subscription = cx.observe(&session, |module_list, state, cx| {
-            let modules_len = state.update(cx, |state, cx| state.modules(cx).len());
-
-            module_list.list.reset(modules_len);
+        let _subscription = cx.subscribe(&session, |this, _, _, cx| {
+            this.pending_render = true;
             cx.notify();
         });
 
@@ -38,6 +37,7 @@ impl ModuleList {
             session,
             focus_handle,
             _subscription,
+            pending_render: false,
         }
     }
 
@@ -74,10 +74,13 @@ impl Focusable for ModuleList {
 
 impl Render for ModuleList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.session.update(cx, |state, cx| {
-            state.modules(cx);
-        });
-
+        if self.pending_render {
+            let len = self
+                .session
+                .update(cx, |session, cx| session.modules(cx).len());
+            self.list.reset(len);
+            self.pending_render = false;
+        }
         div()
             .track_focus(&self.focus_handle)
             .size_full()

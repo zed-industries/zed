@@ -5,8 +5,8 @@ use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
     NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
-    SetVariableValueCommand, StackTraceCommand, StepBackCommand, StepCommand, StepInCommand,
-    StepOutCommand, TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
+    SetVariableValueCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
+    TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -422,6 +422,11 @@ impl ThreadStates {
             .or(self.global_state)
     }
 
+    fn thread_exited(&mut self, thread_id: ThreadId) {
+        self.known_thread_states
+            .insert(thread_id, ThreadStatus::Exited);
+    }
+
     fn any_stopped_thread(&self) -> bool {
         self.global_state
             .is_some_and(|state| state == ThreadStatus::Stopped)
@@ -535,7 +540,10 @@ impl CompletionsQuery {
 
 pub enum SessionEvent {
     Invalidate,
+    Modules,
     Stopped,
+    StackTrace,
+    Variables,
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -717,6 +725,11 @@ impl Session {
 
         // todo(debugger): We should see if we could only invalidate the thread that stopped
         // instead of everything right now.
+
+        self.threads
+            .values_mut()
+            .for_each(|thread| thread.stack_frame_ids.clear());
+
         self.invalidate_command_type(TypeId::of::<dap_command::GenericCommand>());
         cx.emit(SessionEvent::Stopped);
         cx.notify();
@@ -745,12 +758,18 @@ impl Session {
                 self.is_session_terminated = true;
             }
             Events::Thread(event) => {
+                let thread_id = ThreadId(event.thread_id);
+
                 match event.reason {
                     dap::ThreadEventReason::Started => {
-                        self.thread_states
-                            .thread_continued(ThreadId(event.thread_id));
+                        self.thread_states.thread_continued(thread_id);
                     }
-                    _ => {}
+                    dap::ThreadEventReason::Exited => {
+                        self.thread_states.thread_exited(thread_id);
+                    }
+                    reason => {
+                        log::error!("Unhandled thread event reason {:?}", reason);
+                    }
                 }
                 self.invalidate_state(&ThreadsCommand.into());
             }
@@ -822,6 +841,7 @@ impl Session {
                 .shared();
 
             vacant.insert(task);
+            cx.notify();
         }
     }
 
@@ -888,21 +908,18 @@ impl Session {
     }
 
     pub fn threads(&mut self, cx: &mut Context<Self>) -> Vec<(dap::Thread, ThreadStatus)> {
-        if self.thread_states.any_stopped_thread() {
-            self.fetch(
-                dap_command::ThreadsCommand,
-                |this, result, cx| {
-                    this.threads = result
-                        .iter()
-                        .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
-                        .collect();
+        self.fetch(
+            dap_command::ThreadsCommand,
+            |this, result, cx| {
+                this.threads = result
+                    .iter()
+                    .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
+                    .collect();
 
-                    this.invalidate_command_type(StackTraceCommand::command_id());
-                    cx.notify();
-                },
-                cx,
-            );
-        }
+                cx.notify();
+            },
+            cx,
+        );
 
         self.threads
             .values()
@@ -921,7 +938,7 @@ impl Session {
                 dap_command::ModulesCommand,
                 |this, result, cx| {
                     this.modules = result.iter().cloned().collect();
-                    cx.notify();
+                    cx.emit(SessionEvent::Modules);
                 },
                 cx,
             );
@@ -1239,7 +1256,7 @@ impl Session {
 
                     this.invalidate_command_type(ScopesCommand::command_id());
 
-                    cx.emit(SessionEvent::Invalidate);
+                    cx.emit(SessionEvent::StackTrace);
                     cx.notify();
                 },
                 cx,
@@ -1317,7 +1334,7 @@ impl Session {
                 this.variables
                     .insert(variables_reference, variables.clone());
 
-                cx.emit(SessionEvent::Invalidate);
+                cx.emit(SessionEvent::Variables);
             },
             cx,
         );
