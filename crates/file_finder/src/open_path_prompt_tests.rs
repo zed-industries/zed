@@ -43,6 +43,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["root"]);
 
+    // If the query ends with a slash, the picker should show the contents of the directory.
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -50,6 +51,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
         vec!["a1", "a2", "a3", "dir1", "dir2"]
     );
 
+    // Show candidates for the query "a".
     let query = path!("/root/a");
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -57,6 +59,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
         vec!["a1", "a2", "a3"]
     );
 
+    // Show candidates for the query "d".
     let query = path!("/root/d");
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
@@ -72,6 +75,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
         vec!["c", "d1", "d2", "d3", "dir3", "dir4"]
     );
 
+    // Show candidates for the query "d".
     let query = path!("/root/dir2/d");
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -109,14 +113,17 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
 
     let (picker, cx) = build_open_path_prompt(project, cx);
 
+    // Confirm completion for the query "/root", since it's a directory, it should add a trailing slash.
     let query = path!("/root");
     insert_query(query, &picker, cx).await;
     assert_eq!(confirm_completion(query, 0, &picker, cx), path!("/root/"));
 
+    // Confirm completion for the query "/root/", selecting the first candidate "a", since it's a file, it should not add a trailing slash.
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
     assert_eq!(confirm_completion(query, 0, &picker, cx), path!("/root/a"));
 
+    // Confirm completion for the query "/root/", selecting the second candidate "dir1", since it's a directory, it should add a trailing slash.
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -199,6 +206,7 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
 
     let (picker, cx) = build_open_path_prompt(project, cx);
 
+    // Support both forward and backward slashes.
     let query = "C:/root/";
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -223,6 +231,7 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
     );
     assert_eq!(confirm_completion(query, 0, &picker, cx), "C:\\root\\a");
 
+    // Confirm completion for the query "C:/root/d", selecting the second candidate "dir2", since it's a directory, it should add a trailing slash.
     let query = "C:/root/d";
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
@@ -299,9 +308,7 @@ fn confirm_completion(
 ) -> String {
     picker
         .update_in(cx, |f, window, cx| {
-            let x = f.delegate.selected_index();
-            println!("selected_index: {:?}", x);
-            if x != select {
+            if f.delegate.selected_index() != select {
                 f.delegate.set_selected_index(select, window, cx);
             }
             f.delegate.confirm_completion(query.to_string(), window, cx)
