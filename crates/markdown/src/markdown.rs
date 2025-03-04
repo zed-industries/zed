@@ -6,6 +6,7 @@ use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     actions, point, quad, AnyElement, App, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
@@ -786,12 +787,28 @@ impl Element for MarkdownElement {
                                         )
                                         .to_string();
                                         move |_event, _window, cx| {
+                                            let id = id.clone();
                                             markdown.update(cx, |this, cx| {
                                                 this.copied_code_blocks.insert(id.clone());
 
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     code.clone(),
                                                 ));
+
+                                                cx.spawn(|this, cx| async move {
+                                                    cx.background_executor()
+                                                        .timer(Duration::from_secs(2))
+                                                        .await;
+
+                                                    cx.update(|cx| {
+                                                        this.update(cx, |this, cx| {
+                                                            this.copied_code_blocks.remove(&id);
+                                                            cx.notify();
+                                                        })
+                                                    })
+                                                    .ok();
+                                                })
+                                                .detach();
                                             });
                                         }
                                     }),
