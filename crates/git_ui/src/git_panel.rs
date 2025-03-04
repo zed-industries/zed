@@ -2006,7 +2006,7 @@ impl GitPanel {
             };
             let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
-            let branch = active_repo.read(cx).current_branch()?.clone();
+            let branch = active_repo.read(cx).current_branch().cloned();
 
             let footer_size = px(32.);
             let gap = px(8.0);
@@ -2027,7 +2027,7 @@ impl GitPanel {
                 .child(PanelRepoFooter::new(
                     "footer-button",
                     display_name,
-                    Some(branch),
+                    branch,
                     Some(git_panel),
                     Some(branches),
                 ))
