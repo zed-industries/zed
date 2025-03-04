@@ -1,6 +1,6 @@
 pub mod parser;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::mem;
 use std::ops::Range;
@@ -72,6 +72,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<String>,
     open_url: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     options: Options,
+    copied_code_blocks: HashSet<ElementId>,
 }
 
 #[derive(Debug)]
@@ -108,6 +109,7 @@ impl Markdown {
                 copy_code_block_buttons: true,
             },
             open_url: None,
+            copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
         this
@@ -142,6 +144,7 @@ impl Markdown {
                 copy_code_block_buttons: true,
             },
             open_url: None,
+            copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
         this
@@ -749,23 +752,37 @@ impl Element for MarkdownElement {
                             builder.modify_current_div(|el| {
                                 let id =
                                     ElementId::NamedInteger("copy-markdown-code".into(), range.end);
+                                let was_copied =
+                                    self.markdown.read(cx).copied_code_blocks.contains(&id);
                                 let copy_button = div().absolute().top_1().right_1().w_5().child(
-                                    IconButton::new(id, IconName::Copy)
-                                        .icon_color(Color::Muted)
-                                        .shape(ui::IconButtonShape::Square)
-                                        .tooltip(Tooltip::text("Copy Code Block"))
-                                        .on_click({
-                                            let code = without_fences(
-                                                parsed_markdown.source()[range.clone()].trim(),
-                                            )
-                                            .to_string();
+                                    IconButton::new(
+                                        id.clone(),
+                                        if was_copied {
+                                            IconName::Check
+                                        } else {
+                                            IconName::Copy
+                                        },
+                                    )
+                                    .icon_color(Color::Muted)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(Tooltip::text("Copy Code"))
+                                    .on_click({
+                                        let id = id.clone();
+                                        let markdown = self.markdown.clone();
+                                        let code = without_fences(
+                                            parsed_markdown.source()[range.clone()].trim(),
+                                        )
+                                        .to_string();
+                                        move |_event, _window, cx| {
+                                            markdown.update(cx, |this, cx| {
+                                                this.copied_code_blocks.insert(id.clone());
 
-                                            move |_, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     code.clone(),
-                                                ))
-                                            }
-                                        }),
+                                                ));
+                                            });
+                                        }
+                                    }),
                                 );
 
                                 el.child(copy_button)

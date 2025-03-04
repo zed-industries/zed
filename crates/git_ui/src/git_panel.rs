@@ -696,12 +696,31 @@ impl GitPanel {
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
+            let workspace = self.workspace.upgrade()?;
+            let git_repo = self.active_repository.as_ref()?;
+
+            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx) {
+                if let Some(project_path) = project_diff.read(cx).active_path(cx) {
+                    if Some(&entry.repo_path)
+                        == git_repo
+                            .read(cx)
+                            .project_path_to_repo_path(&project_path)
+                            .as_ref()
+                    {
+                        project_diff.focus_handle(cx).focus(window);
+                        return None;
+                    }
+                }
+            };
 
             self.workspace
                 .update(cx, |workspace, cx| {
                     ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
                 })
-                .ok()
+                .ok();
+            self.focus_handle.focus(window);
+
+            Some(())
         });
     }
 
@@ -1898,7 +1917,7 @@ impl GitPanel {
         })
     }
 
-    pub fn can_commit(&self) -> bool {
+    pub fn can_open_commit_editor(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
     }
 
@@ -1959,14 +1978,15 @@ impl GitPanel {
         } else if !self.has_write_access(cx) {
             (false, "You do not have write access to this project")
         } else {
-            (
-                true,
-                if self.has_staged_changes() {
-                    "Commit"
-                } else {
-                    "Commit Tracked"
-                },
-            )
+            (true, self.commit_button_title())
+        }
+    }
+
+    pub fn commit_button_title(&self) -> &'static str {
+        if self.has_staged_changes() {
+            "Commit"
+        } else {
+            "Commit Tracked"
         }
     }
 
@@ -1980,18 +2000,15 @@ impl GitPanel {
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         if let Some(active_repo) = active_repository {
+            let can_open_commit_editor = self.can_open_commit_editor();
             let (can_commit, tooltip) = self.configure_commit_button(cx);
 
             let enable_coauthors = self.render_co_authors(cx);
 
-            let title = if self.has_staged_changes() {
-                "Commit"
-            } else {
-                "Commit Tracked"
-            };
+            let title = self.commit_button_title();
             let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
-            let branch = active_repo.read(cx).current_branch()?.clone();
+            let branch = active_repo.read(cx).current_branch().cloned();
 
             let footer_size = px(32.);
             let gap = px(8.0);
@@ -2012,7 +2029,7 @@ impl GitPanel {
                 .child(PanelRepoFooter::new(
                     "footer-button",
                     display_name,
-                    Some(branch),
+                    branch,
                     Some(git_panel),
                     Some(branches),
                 ))
@@ -2076,6 +2093,7 @@ impl GitPanel {
                                         .icon_size(IconSize::Small)
                                         .style(ButtonStyle::Transparent)
                                         .width(expand_button_size.into())
+                                        .disabled(!can_open_commit_editor)
                                         .on_click(cx.listener({
                                             move |_, _, window, cx| {
                                                 window.dispatch_action(
@@ -2444,7 +2462,7 @@ impl GitPanel {
         ix: usize,
         entry: &GitStatusEntry,
         has_write_access: bool,
-        _: &Window,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let display_name = entry
@@ -2536,6 +2554,10 @@ impl GitPanel {
             .h(self.list_item_height())
             .w_full()
             .items_center()
+            .border_1()
+            .when(selected && self.focus_handle.is_focused(window), |el| {
+                el.border_color(cx.theme().colors().border_focused)
+            })
             .px(rems(0.75)) // ~12px
             .overflow_hidden()
             .flex_none()
@@ -2551,6 +2573,7 @@ impl GitPanel {
                         this.open_file(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
+                        this.focus_handle.focus(window);
                     }
                 })
             })

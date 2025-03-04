@@ -6,10 +6,7 @@ use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
 use git::repository::{Branch, CommitDetails, PushOptions, Remote, RemoteCommandOutput, ResetMode};
-use git::{
-    repository::{GitRepository, RepoPath},
-    status::{GitSummary, TrackedSummary},
-};
+use git::repository::{GitRepository, RepoPath};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
@@ -24,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
-use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
+use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
 
 pub struct GitStore {
     buffer_store: Entity<BufferStore>,
@@ -691,6 +688,33 @@ impl Repository {
         self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
     }
 
+    // note: callers must verify these come from the same worktree
+    pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
+        let other_work_dir = &other.read(cx).repository_entry.work_directory;
+        match (&self.repository_entry.work_directory, other_work_dir) {
+            (WorkDirectory::InProject { .. }, WorkDirectory::AboveProject { .. }) => false,
+            (WorkDirectory::AboveProject { .. }, WorkDirectory::InProject { .. }) => true,
+            (
+                WorkDirectory::InProject {
+                    relative_path: this_path,
+                },
+                WorkDirectory::InProject {
+                    relative_path: other_path,
+                },
+            ) => other_path.starts_with(this_path),
+            (
+                WorkDirectory::AboveProject {
+                    absolute_path: this_path,
+                    ..
+                },
+                WorkDirectory::AboveProject {
+                    absolute_path: other_path,
+                    ..
+                },
+            ) => other_path.starts_with(this_path),
+        }
+    }
+
     pub fn worktree_id_path_to_repo_path(
         &self,
         worktree_id: WorktreeId,
@@ -1044,18 +1068,6 @@ impl Repository {
     /// untracked files.
     pub fn entry_count(&self) -> usize {
         self.repository_entry.status_len()
-    }
-
-    fn have_changes(&self) -> bool {
-        self.repository_entry.status_summary() != GitSummary::UNCHANGED
-    }
-
-    fn have_staged_changes(&self) -> bool {
-        self.repository_entry.status_summary().index != TrackedSummary::UNCHANGED
-    }
-
-    pub fn can_commit(&self, commit_all: bool) -> bool {
-        return self.have_changes() && (commit_all || self.have_staged_changes());
     }
 
     pub fn commit(
