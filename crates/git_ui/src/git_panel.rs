@@ -2589,6 +2589,7 @@ impl GitPanel {
                         this.open_file(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
+                        this.focus_handle.focus(window);
                     }
                 })
             })
