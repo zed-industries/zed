@@ -149,6 +149,18 @@ pub(crate) fn generate_auto_close_edits(
                 return is_empty;
             };
 
+            let mut has_erroneous_close_tag = false;
+            let mut erroneous_close_tag_node_name = "";
+            let mut erroneous_close_tag_name_node_name = "";
+            if let Some(name) = config.erroneous_close_tag_node_name.as_deref() {
+                has_erroneous_close_tag = true;
+                erroneous_close_tag_node_name = name;
+                erroneous_close_tag_name_node_name = config
+                    .erroneous_close_tag_name_node_name
+                    .as_deref()
+                    .unwrap_or(&config.tag_name_node_name);
+            }
+
             // todo! use cursor for more efficient traversal
             // if child -> go to child
             // else if next sibling -> go to next sibling
@@ -160,13 +172,16 @@ pub(crate) fn generate_auto_close_edits(
                     if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
                         unclosed_open_tag_count += 1;
                     }
-                    continue;
                 } else if kind == config.close_tag_node_name {
                     if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
                         // todo! node range shouldn't be before open tag
                         unclosed_open_tag_count -= 1;
                     }
-                    continue;
+                } else if has_erroneous_close_tag && kind == erroneous_close_tag_node_name {
+                    if tag_node_name_equals(&node, erroneous_close_tag_name_node_name, &tag_name) {
+                        // todo! node range shouldn't be before open tag
+                        unclosed_open_tag_count -= 1;
+                    }
                 } else if kind == config.jsx_element_node_name {
                     // todo! perf: filter only open,close,element nodes
                     stack.extend(node.children(&mut cursor));

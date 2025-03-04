@@ -703,10 +703,29 @@ pub struct LanguageMatcher {
 /// The configuration for JSX tag auto-closing.
 #[derive(Clone, Deserialize, JsonSchema)]
 pub struct JsxTagAutoCloseConfig {
+    /// The name of the node for a opening tag
     pub open_tag_node_name: String,
+    /// The name of the node for an closing tag
     pub close_tag_node_name: String,
+    /// The name of the node for a complete element with children for open and close tags
     pub jsx_element_node_name: String,
+    /// The name of the node found within both opening and closing
+    /// tags that describes the tag name
     pub tag_name_node_name: String,
+    /// Some grammars are smart enough to detect a closing tag
+    /// that is not valid i.e. doesn't match it's corresponding
+    /// opening tag or does not have a corresponding opening tag
+    /// This should be set to the name of the node for invalid
+    /// closing tags if the grammar contains such a node, otherwise
+    /// detecting already closed tags will not work properly
+    #[serde(default)]
+    pub erroneous_close_tag_node_name: Option<String>,
+    /// See above for erroneous_close_tag_node_name for details
+    /// This should be set if the node used for the tag name
+    /// within erroneous closing tags is different from the
+    /// normal tag name node name
+    #[serde(default)]
+    pub erroneous_close_tag_name_node_name: Option<String>,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
