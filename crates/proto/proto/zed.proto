@@ -572,13 +572,23 @@ message JoinProject {
     uint64 project_id = 1;
 }
 
+message ListRemoteDirectoryConfig {
+    bool is_dir = 1;
+}
+
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
     string path = 2;
+    ListRemoteDirectoryConfig config = 3;
+}
+
+message EntryInfo {
+    bool is_dir = 1;
 }
 
 message ListRemoteDirectoryResponse {
     repeated string entries = 1;
+    repeated EntryInfo entry_info = 2;
 }
 
 message JoinProjectResponse {

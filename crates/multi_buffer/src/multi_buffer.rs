@@ -2062,7 +2062,12 @@ impl MultiBuffer {
                     if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
                         buffer_state.excerpts.retain(|l| l != &excerpt.locator);
                         if buffer_state.excerpts.is_empty() {
+                            log::debug!(
+                                "removing buffer and diff for buffer {}",
+                                excerpt.buffer_id
+                            );
                             buffers.remove(&excerpt.buffer_id);
+                            self.diffs.remove(&excerpt.buffer_id);
                         }
                     }
                     cursor.next(&());
@@ -2302,7 +2307,27 @@ impl MultiBuffer {
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn settings_at<'a, T: ToOffset>(&self, point: T, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+        let buffer_id = self
+            .snapshot
+            .borrow()
+            .excerpts
+            .first()
+            .map(|excerpt| excerpt.buffer.remote_id());
+        buffer_id
+            .and_then(|buffer_id| self.buffer(buffer_id))
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+            })
+            .unwrap_or_else(move || self.language_settings_at(0, cx))
+    }
+
+    pub fn language_settings_at<'a, T: ToOffset>(
+        &'a self,
+        point: T,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
@@ -2715,6 +2740,11 @@ impl MultiBuffer {
         snapshot.is_dirty = is_dirty;
         snapshot.has_deleted_file = has_deleted_file;
         snapshot.has_conflict = has_conflict;
+
+        snapshot.diffs.retain(|_, _| false);
+        for (id, diff) in self.diffs.iter() {
+            snapshot.diffs.insert(*id, diff.diff.read(cx).snapshot(cx));
+        }
 
         excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
 
@@ -3476,7 +3506,10 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
-            let diff = self.diffs.get(&buffer.remote_id())?;
+            let Some(diff) = self.diffs.get(&buffer.remote_id()) else {
+                log::debug!("no diff found for {:?}", buffer.remote_id());
+                return None;
+            };
             let buffer_start = buffer.anchor_before(buffer_range.start);
             let buffer_end = buffer.anchor_after(buffer_range.end);
             Some(
@@ -3485,17 +3518,12 @@ impl MultiBufferSnapshot {
                         if hunk.is_created_file() && !self.all_diff_hunks_expanded {
                             return None;
                         }
-                        Some((
-                            Point::new(hunk.row_range.start, 0)..Point::new(hunk.row_range.end, 0),
-                            hunk,
-                        ))
+                        Some((hunk.range.clone(), hunk))
                     }),
             )
         })
         .filter_map(move |(range, hunk, excerpt)| {
-            if range.start != range.end
-                && range.end == query_range.start
-                && !hunk.row_range.is_empty()
+            if range.start != range.end && range.end == query_range.start && !hunk.range.is_empty()
             {
                 return None;
             }
@@ -3828,12 +3856,12 @@ impl MultiBufferSnapshot {
                     &excerpt.buffer,
                 ) {
                     let hunk_range = hunk.buffer_range.to_offset(&excerpt.buffer);
-                    if hunk.row_range.end >= buffer_end_row {
+                    if hunk.range.end >= Point::new(buffer_end_row, 0) {
                         continue;
                     }
 
-                    let hunk_start = Point::new(hunk.row_range.start, 0);
-                    let hunk_end = Point::new(hunk.row_range.end, 0);
+                    let hunk_start = hunk.range.start;
+                    let hunk_end = hunk.range.end;
 
                     cursor.seek_to_buffer_position_in_current_excerpt(&DimensionPair {
                         key: hunk_range.start,
@@ -4251,7 +4279,7 @@ impl MultiBufferSnapshot {
     pub fn indent_and_comment_for_line(&self, row: MultiBufferRow, cx: &App) -> String {
         let mut indent = self.indent_size_for_line(row).chars().collect::<String>();
 
-        if self.settings_at(0, cx).extend_comment_on_newline {
+        if self.language_settings(cx).extend_comment_on_newline {
             if let Some(language_scope) = self.language_scope_at(Point::new(row.0, 0)) {
                 let delimiters = language_scope.line_comment_prefixes();
                 for delimiter in delimiters {
@@ -5584,7 +5612,21 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
-    pub fn settings_at<'a, T: ToOffset>(
+    fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+        self.excerpts
+            .first()
+            .map(|excerpt| &excerpt.buffer)
+            .map(|buffer| {
+                language_settings(
+                    buffer.language().map(|language| language.name()),
+                    buffer.file(),
+                    cx,
+                )
+            })
+            .unwrap_or_else(move || self.language_settings_at(0, cx))
+    }
+
+    pub fn language_settings_at<'a, T: ToOffset>(
         &'a self,
         point: T,
         cx: &'a App,
