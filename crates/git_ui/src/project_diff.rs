@@ -812,10 +812,8 @@ impl Render for ProjectDiffToolbar {
                         el.child(
                             Button::new("stage", "Stage")
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Stage",
-                                    &StageAndNext {
-                                        whole_excerpt: false,
-                                    },
+                                    "Stage and go to next hunk",
+                                    &StageAndNext,
                                     &focus_handle,
                                 ))
                                 // don't actually disable the button so it's mashable
@@ -825,22 +823,14 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(
-                                        &StageAndNext {
-                                            whole_excerpt: false,
-                                        },
-                                        window,
-                                        cx,
-                                    )
+                                    this.dispatch_action(&StageAndNext, window, cx)
                                 })),
                         )
                         .child(
                             Button::new("unstage", "Unstage")
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage",
-                                    &UnstageAndNext {
-                                        whole_excerpt: false,
-                                    },
+                                    "Unstage and go to next hunk",
+                                    &UnstageAndNext,
                                     &focus_handle,
                                 ))
                                 .color(if button_states.unstage {
@@ -849,13 +839,7 @@ impl Render for ProjectDiffToolbar {
                                     Color::Disabled
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(
-                                        &UnstageAndNext {
-                                            whole_excerpt: false,
-                                        },
-                                        window,
-                                        cx,
-                                    )
+                                    this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
                         )
                     }),
