@@ -267,11 +267,7 @@ impl CommitModal {
                 } else {
                     "Commit changes to tracked files"
                 };
-                let title = if git_panel.has_staged_changes() {
-                    "Commit"
-                } else {
-                    "Commit All"
-                };
+                let title = git_panel.commit_button_title();
                 let co_authors = git_panel.render_co_authors(cx);
                 (branch, tooltip, title, co_authors)
             });
