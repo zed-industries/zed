@@ -785,14 +785,16 @@ impl ProjectSearchView {
         );
 
         let focus_handle = cx.focus_handle();
-        subscriptions.push(cx.on_focus_in(&focus_handle, window, |this, window, cx| {
-            if this.focus_handle.is_focused(window) {
-                if this.has_matches() {
-                    this.results_editor.focus_handle(cx).focus(window);
-                } else {
-                    this.query_editor.focus_handle(cx).focus(window);
+        subscriptions.push(cx.on_focus(&focus_handle, window, |_, window, cx| {
+            cx.on_next_frame(window, |this, window, cx| {
+                if this.focus_handle.is_focused(window) {
+                    if this.has_matches() {
+                        this.results_editor.focus_handle(cx).focus(window);
+                    } else {
+                        this.query_editor.focus_handle(cx).focus(window);
+                    }
                 }
-            }
+            });
         }));
 
         let languages = project.read(cx).languages().clone();
