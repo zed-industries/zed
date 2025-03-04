@@ -1444,6 +1444,15 @@ impl Worktree {
             worktree_scan_id: scan_id as u64,
         })
     }
+
+    pub fn dot_git_abs_path(&self, work_directory: &WorkDirectory) -> PathBuf {
+        let mut path = match work_directory {
+            WorkDirectory::InProject { relative_path } => self.abs_path().join(relative_path),
+            WorkDirectory::AboveProject { absolute_path, .. } => absolute_path.as_ref().to_owned(),
+        };
+        path.push(".git");
+        path
+    }
 }
 
 impl LocalWorktree {
