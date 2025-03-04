@@ -77,6 +77,13 @@ impl Vim {
                         if selection.is_empty() {
                             new_anchors.push((false, snapshot.anchor_after(range.end)))
                         }
+                    } else if let Some((range, boolean)) = find_boolean(&snapshot, start) {
+                        let replace = toggle_boolean(&boolean);
+                        delta += step as i64;
+                        edits.push((range.clone(), replace));
+                        if selection.is_empty() {
+                            new_anchors.push((false, snapshot.anchor_after(range.end)))
+                        }
                     } else if selection.is_empty() {
                         new_anchors.push((true, snapshot.anchor_after(start)))
                     }
@@ -240,6 +247,77 @@ fn find_number(
         Some((begin.to_point(snapshot)..end.to_point(snapshot), num, radix))
     } else {
         None
+    }
+}
+
+fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<Point>, String)> {
+    let mut offset = start.to_offset(snapshot);
+
+    let ch0 = snapshot.chars_at(offset).next();
+    if ch0.as_ref().is_some_and(|c| c.is_ascii_alphabetic()) {
+        for ch in snapshot.reversed_chars_at(offset) {
+            if ch.is_ascii_alphabetic() {
+                offset -= ch.len_utf8();
+                continue;
+            }
+            break;
+        }
+    }
+
+    let mut begin = None;
+    let mut end = None;
+    let mut word = String::new();
+
+    let mut chars = snapshot.chars_at(offset);
+
+    while let Some(ch) = chars.next() {
+        if ch.is_ascii_alphabetic() {
+            if begin.is_none() {
+                begin = Some(offset);
+            }
+            word.push(ch);
+        } else if begin.is_some() {
+            end = Some(offset);
+            break;
+        } else if ch == '\n' {
+            break;
+        }
+        offset += ch.len_utf8();
+    }
+
+    if let Some(begin) = begin {
+        let end = end.unwrap_or(offset);
+        if word == "true"
+            || word == "false"
+            || word == "TRUE"
+            || word == "FALSE"
+            || word == "True"
+            || word == "False"
+            || word == "Yes"
+            || word == "No"
+            || word == "On"
+            || word == "Off"
+        {
+            return Some((begin.to_point(snapshot)..end.to_point(snapshot), word));
+        }
+    }
+
+    None
+}
+
+fn toggle_boolean(boolean: &str) -> String {
+    match boolean {
+        "true" => "false".to_string(),
+        "false" => "true".to_string(),
+        "TRUE" => "FALSE".to_string(),
+        "FALSE" => "TRUE".to_string(),
+        "True" => "False".to_string(),
+        "False" => "True".to_string(),
+        "Yes" => "No".to_string(),
+        "No" => "Yes".to_string(),
+        "On" => "Off".to_string(),
+        "Off" => "On".to_string(),
+        _ => boolean.to_string(),
     }
 }
 
@@ -590,5 +668,30 @@ mod test {
             0  2
             0
             0"});
+    }
+
+    #[gpui::test]
+    async fn test_toggle_boolean(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+                let enabled = trˇue;
+                "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                let enabled = falsˇe;
+                "});
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                let enabled = truˇe;
+                "});
+
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                let enabled = falsˇe;
+                "});
     }
 }

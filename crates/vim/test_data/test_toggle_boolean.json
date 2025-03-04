@@ -1,0 +1,7 @@
+{"Put":{"state":"let enabled = trˇue;\n"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = falsˇe;\n","mode":"Normal"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = truˇe;\n","mode":"Normal"}}
+{"Key":"ctrl-x"}
+{"Get":{"state":"let enabled = falsˇe;\n","mode":"Normal"}}
