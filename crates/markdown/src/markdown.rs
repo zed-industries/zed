@@ -611,6 +611,9 @@ impl Element for MarkdownElement {
                                 None
                             };
 
+                            // This is a parent container that we can position the copy button inside.
+                            builder.push_div(div().relative().w_full(), range, markdown_end);
+
                             let mut code_block = div()
                                 .id(("code-block", range.start))
                                 .rounded_lg()
@@ -750,6 +753,12 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
 
+                        builder.pop_div();
+                        builder.pop_code_block();
+                        if self.style.code_block.text.is_some() {
+                            builder.pop_text_style();
+                        }
+
                         if self.markdown.read(cx).options.copy_code_block_buttons {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
@@ -792,11 +801,8 @@ impl Element for MarkdownElement {
                             });
                         }
 
+                        // Pop the parent container.
                         builder.pop_div();
-                        builder.pop_code_block();
-                        if self.style.code_block.text.is_some() {
-                            builder.pop_text_style();
-                        }
                     }
                     MarkdownTagEnd::HtmlBlock => builder.pop_div(),
                     MarkdownTagEnd::List(_) => {
