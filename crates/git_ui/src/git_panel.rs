@@ -1985,6 +1985,14 @@ impl GitPanel {
         }
     }
 
+    pub fn commit_button_title(&self) -> &'static str {
+        if self.has_staged_changes() {
+            "Commit"
+        } else {
+            "Commit Tracked"
+        }
+    }
+
     pub fn render_footer(
         &self,
         window: &mut Window,
@@ -1999,11 +2007,7 @@ impl GitPanel {
 
             let enable_coauthors = self.render_co_authors(cx);
 
-            let title = if self.has_staged_changes() {
-                "Commit"
-            } else {
-                "Commit Tracked"
-            };
+            let title = self.commit_button_title();
             let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
             let branch = active_repo.read(cx).current_branch().cloned();
