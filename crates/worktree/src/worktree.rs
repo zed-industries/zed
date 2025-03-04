@@ -519,7 +519,7 @@ impl WorkDirectory {
                     if let Ok(segment) = path.strip_prefix(location_in_repo) {
                         return parents.join(segment).into();
                     }
-                    location_in_repo = location_in_repo.parent().unwrap(); // XXX
+                    location_in_repo = location_in_repo.parent().unwrap_or(Path::new(""));
                     parents.push(Component::ParentDir);
                 }
             }
