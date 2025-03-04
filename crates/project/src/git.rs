@@ -22,6 +22,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tempfile::{tempdir, TempDir};
 use text::BufferId;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};

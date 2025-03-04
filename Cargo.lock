@@ -5370,9 +5370,11 @@ name = "git"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "async-trait",
  "collections",
  "derive_more",
+ "futures 0.3.31",
  "git2",
  "gpui",
  "http_client",
@@ -10218,6 +10220,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "askpass",
  "async-trait",
  "buffer_diff",
  "client",
