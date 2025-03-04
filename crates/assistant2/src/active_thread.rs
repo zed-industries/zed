@@ -573,7 +573,7 @@ impl ActiveThread {
                                                                 window,
                                                                 cx,
                                                             )
-                                                            .map(|kb| kb.size(px(12.))),
+                                                            .map(|kb| kb.size(rems_from_px(12.))),
                                                         )
                                                         .on_click(
                                                             cx.listener(Self::handle_cancel_click),
@@ -592,7 +592,7 @@ impl ActiveThread {
                                                             window,
                                                             cx,
                                                         )
-                                                        .map(|kb| kb.size(px(12.))),
+                                                        .map(|kb| kb.size(rems_from_px(12.))),
                                                     )
                                                     .on_click(
                                                         cx.listener(Self::handle_regenerate_click),
