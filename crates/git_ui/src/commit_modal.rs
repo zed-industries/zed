@@ -262,11 +262,7 @@ impl CommitModal {
                             .map(|b| b.name.clone())
                     })
                     .unwrap_or_else(|| "<no branch>".into());
-                let tooltip = if git_panel.has_staged_changes() {
-                    "Commit staged changes"
-                } else {
-                    "Commit changes to tracked files"
-                };
+                let (_, tooltip) = git_panel.configure_commit_button(cx);
                 let title = git_panel.commit_button_title();
                 let co_authors = git_panel.render_co_authors(cx);
                 (branch, tooltip, title, co_authors)
