@@ -229,6 +229,24 @@ impl Thread {
         id
     }
 
+    pub fn edit_message(
+        &mut self,
+        id: MessageId,
+        new_role: Role,
+        new_text: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        // TODO: Use hashmap for lookup
+        // TODO: Handle context change?
+        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+            return false;
+        };
+        message.role = new_role;
+        message.text = new_text;
+        cx.emit(ThreadEvent::MessageEdited(id));
+        true
+    }
+
     /// Returns the representation of this [`Thread`] in a textual form.
     ///
     /// This is the representation we use when attaching a thread as context to another thread.
@@ -567,6 +585,7 @@ pub enum ThreadEvent {
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     MessageAdded(MessageId),
+    MessageEdited(MessageId),
     SummaryChanged,
     UsePendingTools,
     ToolFinished {

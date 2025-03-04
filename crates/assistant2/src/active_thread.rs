@@ -198,6 +198,95 @@ impl ActiveThread {
         });
     }
 
+    fn edit_message(
+        &mut self,
+        id: &MessageId,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.messages.iter().position(|msg| msg == id) else {
+            return;
+        };
+        self.list_state.splice(index..index + 1, 1);
+
+        let theme_settings = ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
+        let ui_font_size = TextSize::Default.rems(cx);
+        let buffer_font_size = TextSize::Small.rems(cx);
+        let mut text_style = window.text_style();
+
+        text_style.refine(&TextStyleRefinement {
+            font_family: Some(theme_settings.ui_font.family.clone()),
+            font_size: Some(ui_font_size.into()),
+            color: Some(cx.theme().colors().text),
+            ..Default::default()
+        });
+
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style,
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            table_overflow_x_scroll: true,
+            code_block: StyleRefinement {
+                margin: EdgesRefinement {
+                    top: Some(Length::Definite(rems(0.).into())),
+                    left: Some(Length::Definite(rems(0.).into())),
+                    right: Some(Length::Definite(rems(0.).into())),
+                    bottom: Some(Length::Definite(rems(0.5).into())),
+                },
+                padding: EdgesRefinement {
+                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                },
+                background: Some(colors.editor_background.into()),
+                border_color: Some(colors.border_variant),
+                border_widths: EdgesRefinement {
+                    top: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    left: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    right: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                },
+                text: Some(TextStyleRefinement {
+                    font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_size: Some(buffer_font_size.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            inline_code: TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_size: Some(buffer_font_size.into()),
+                background_color: Some(colors.editor_foreground.opacity(0.1)),
+                ..Default::default()
+            },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                text.into(),
+                markdown_style,
+                Some(self.language_registry.clone()),
+                None,
+                cx,
+            )
+        });
+        self.rendered_messages_by_id.insert(*id, markdown);
+    }
+
     fn handle_thread_event(
         &mut self,
         _: &Entity<Thread>,
@@ -231,6 +320,24 @@ impl ActiveThread {
                     .map(|message| message.text.clone())
                 {
                     self.push_message(message_id, message_text, window, cx);
+                }
+
+                self.thread_store
+                    .update(cx, |thread_store, cx| {
+                        thread_store.save_thread(&self.thread, cx)
+                    })
+                    .detach_and_log_err(cx);
+
+                cx.notify();
+            }
+            ThreadEvent::MessageEdited(message_id) => {
+                if let Some(message_text) = self
+                    .thread
+                    .read(cx)
+                    .message(*message_id)
+                    .map(|message| message.text.clone())
+                {
+                    self.edit_message(message_id, message_text, window, cx);
                 }
 
                 self.thread_store
@@ -324,6 +431,9 @@ impl ActiveThread {
                 }
             });
 
+        let message_id = message.id;
+        let message_role = message.role;
+
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
@@ -358,6 +468,21 @@ impl ActiveThread {
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted),
                                         ),
+                                )
+                                .child(
+                                    Button::new("edit-message", "Edit")
+                                        .icon(IconName::Pencil)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.thread.update(cx, |thread, cx| {
+                                                thread.edit_message(
+                                                    message_id,
+                                                    message_role,
+                                                    "Sometext".to_string(),
+                                                    cx,
+                                                )
+                                            });
+                                            cx.notify();
+                                        })),
                                 ),
                         )
                         .child(message_content),
