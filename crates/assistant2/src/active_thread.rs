@@ -229,7 +229,7 @@ impl ActiveThread {
 
         cx.new(|cx| {
             Markdown::new(
-                text.into(),
+                text,
                 markdown_style,
                 Some(self.language_registry.clone()),
                 None,
