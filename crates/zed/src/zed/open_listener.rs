@@ -34,6 +34,7 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
+    pub dock_menu_action: Option<usize>,
 }
 
 impl OpenRequest {
@@ -42,6 +43,8 @@ impl OpenRequest {
         for url in urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.cli_connection = Some(connect_to_cli(server_name)?);
+            } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
+                this.dock_menu_action = Some(action_index.parse()?);
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
@@ -293,10 +296,6 @@ pub async fn handle_cli_connection(
 
                 let status = if open_workspace_result.is_err() { 1 } else { 0 };
                 responses.send(CliResponse::Exit { status }).log_err();
-            }
-            CliRequest::DockAction { action } => {
-                cx.update(|cx| cx.perform_dock_menu_action(action))
-                    .log_err();
             }
         }
     }

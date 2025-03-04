@@ -641,6 +641,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
+    if let Some(action_index) = request.dock_menu_action {
+        cx.spawn(|cx| async move {
+            println!("Dock menu action {} detected!", action_index);
+            cx.update(|cx| cx.perform_dock_menu_action(action_index))
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
+
     if let Some(connection_options) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
             let paths_with_position =
