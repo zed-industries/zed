@@ -177,8 +177,8 @@ pub enum ExampleLabelSide {
     /// Right side
     Right,
     /// Top side
-    Top,
     #[default]
+    Top,
     /// Bottom side
     Bottom,
 }

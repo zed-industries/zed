@@ -10,7 +10,7 @@ pub struct StatusToast {
     // children: SmallVec<[AnyElement; 2]>,
     icon: Option<AnyIcon>,
     label: SharedString,
-    // action
+    action: Option<SharedString>,
 }
 
 impl StatusToast {
@@ -19,6 +19,7 @@ impl StatusToast {
             id: id.into(),
             icon: None,
             label: label.into(),
+            action: None,
         }
     }
     pub fn with_icon(
@@ -32,24 +33,37 @@ impl StatusToast {
             id: id.into(),
             icon,
             label: label.into(),
+            action: None,
         }
+    }
+
+    pub fn action(mut self, action: impl Into<SharedString>) -> Self {
+        self.action = Some(action.into());
+        self
     }
 }
 
 impl RenderOnce for StatusToast {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let has_icon = self.icon.is_some();
+
         h_flex()
             .id(self.id)
             .elevation_3(cx)
             .gap_2()
-            .py_2()
-            .px_3()
-            .rounded_md()
+            .py_1p5()
+            .px_2p5()
+            // Reduce the left padding a bit when there is an icon
+            // as they usually have some padding baked in
+            .when(has_icon, |this| this.pl_2())
             .bg(cx.theme().colors().surface_background)
             .shadow_lg()
             .items_center()
             .children(self.icon)
             .child(Label::new(self.label).color(Color::Default))
+            .when_some(self.action, |this, action| {
+                this.child(Button::new(action.clone(), action).color(Color::Muted))
+            })
     }
 }
 
@@ -61,13 +75,52 @@ impl ComponentPreview for StatusToast {
             .children(vec![
                 example_group_with_title(
                     "Basic Toast",
-                    vec![single_example(
-                        "Text Only",
-                        StatusToast::new("simple-toast", "Operation completed").into_any_element(),
-                    )],
+                    vec![
+                        single_example(
+                            "Text",
+                            StatusToast::new("simple-toast", "Operation completed")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Action",
+                            StatusToast::new("action-toast", "Update ready")
+                                .action("Restart")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Icon",
+                            StatusToast::with_icon(
+                                "icon-toast",
+                                Some(Icon::new(IconName::Check).color(Color::Success).into()),
+                                "Successfully saved",
+                            )
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Animated Icon",
+                            StatusToast::with_icon(
+                                "loading-toast",
+                                Some(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(4)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
+                                        )
+                                        .into(),
+                                ),
+                                "Finding References…",
+                            )
+                            .into_any_element(),
+                        ),
+                    ],
                 ),
                 example_group_with_title(
-                    "With Icons",
+                    "Examples",
                     vec![
                         single_example(
                             "Success",
@@ -102,41 +155,6 @@ impl ComponentPreview for StatusToast {
                                 "info-toast",
                                 Some(Icon::new(IconName::Info).color(Color::Info).into()),
                                 "New update available",
-                            )
-                            .into_any_element(),
-                        ),
-                    ],
-                ),
-                example_group_with_title(
-                    "Special States",
-                    vec![
-                        single_example(
-                            "Loading",
-                            StatusToast::with_icon(
-                                "loading-toast",
-                                Some(
-                                    Icon::new(IconName::ArrowCircle)
-                                        .with_animation(
-                                            "arrow-circle",
-                                            Animation::new(Duration::from_secs(4)).repeat(),
-                                            |icon, delta| {
-                                                icon.transform(Transformation::rotate(percentage(
-                                                    delta,
-                                                )))
-                                            },
-                                        )
-                                        .into(),
-                                ),
-                                "Finding References…",
-                            )
-                            .into_any_element(),
-                        ),
-                        single_example(
-                            "Download",
-                            StatusToast::with_icon(
-                                "download-toast",
-                                Some(Icon::new(IconName::Download).color(Color::Default).into()),
-                                "Download complete",
                             )
                             .into_any_element(),
                         ),
