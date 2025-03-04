@@ -613,11 +613,14 @@ impl Element for MarkdownElement {
 
                             let mut code_block = div()
                                 .id(("code-block", range.start))
-                                .flex()
                                 .rounded_lg()
-                                .when(self.style.code_block_overflow_x_scroll, |mut code_block| {
-                                    code_block.style().restrict_scroll_to_axis = Some(true);
-                                    code_block.overflow_x_scroll()
+                                .map(|mut code_block| {
+                                    if self.style.code_block_overflow_x_scroll {
+                                        code_block.style().restrict_scroll_to_axis = Some(true);
+                                        code_block.flex().overflow_x_scroll()
+                                    } else {
+                                        code_block.w_full()
+                                    }
                                 });
                             code_block.style().refine(&self.style.code_block);
                             if let Some(code_block_text_style) = &self.style.code_block.text {
