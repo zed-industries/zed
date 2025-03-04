@@ -3,5 +3,23 @@
 {"Get":{"state":"let enabled = falsˇe;\n","mode":"Normal"}}
 {"Key":"ctrl-a"}
 {"Get":{"state":"let enabled = truˇe;\n","mode":"Normal"}}
+{"Put":{"state":"let enabled = ˇTRUE;\n"}}
 {"Key":"ctrl-x"}
-{"Get":{"state":"let enabled = falsˇe;\n","mode":"Normal"}}
+{"Get":{"state":"let enabled = FALSˇE;\n","mode":"Normal"}}
+{"Key":"ctrl-x"}
+{"Get":{"state":"let enabled = TRUˇE;\n","mode":"Normal"}}
+{"Put":{"state":"let enabled = Truˇe;\n"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = Falsˇe;\n","mode":"Normal"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = Truˇe;\n","mode":"Normal"}}
+{"Put":{"state":"let enabled = Yˇes;\n"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = Nˇo;\n","mode":"Normal"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = Yeˇs;\n","mode":"Normal"}}
+{"Put":{"state":"let enabled = Oˇn;\n"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = Ofˇf;\n","mode":"Normal"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"let enabled = Oˇn;\n","mode":"Normal"}}
