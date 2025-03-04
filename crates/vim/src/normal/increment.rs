@@ -703,26 +703,39 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
                 let enabled = falsˇe;
                 "});
-        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.simulate_shared_keystrokes("0 ctrl-a").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 let enabled = truˇe;
                 "});
 
         cx.set_shared_state(indoc! {"
-                let enabled = ˇTRUE;
+                ˇlet enabled = TRUE;
+                let enabled = TRUE;
+                let enabled = TRUE;
                 "})
             .await;
-        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.simulate_shared_keystrokes("shift-v j j ctrl-x").await;
         cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = FALSˇE;
-                "});
-        cx.simulate_shared_keystrokes("ctrl-x").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = TRUˇE;
+                ˇlet enabled = FALSE;
+                let enabled = FALSE;
+                let enabled = FALSE;
                 "});
 
         cx.set_shared_state(indoc! {"
-                let enabled = Truˇe;
+                let enabled = ˇYes;
+                let enabled = Yes;
+                let enabled = Yes;
+                "})
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-v j j e ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                let enabled = ˇNo;
+                let enabled = No;
+                let enabled = No;
+                "});
+
+        cx.set_shared_state(indoc! {"
+                ˇlet enabled = True;
                 "})
             .await;
         cx.simulate_shared_keystrokes("ctrl-a").await;
@@ -735,29 +748,12 @@ mod test {
                 "});
 
         cx.set_shared_state(indoc! {"
-                let enabled = Yˇes;
+                let enabled = Onˇ;
                 "})
             .await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.simulate_shared_keystrokes("v b ctrl-a").await;
         cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = Nˇo;
-                "});
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = Yeˇs;
-                "});
-
-        cx.set_shared_state(indoc! {"
-                let enabled = Oˇn;
-                "})
-            .await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = Ofˇf;
-                "});
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = Oˇn;
+                let enabled = ˇOff;
                 "});
     }
 }

@@ -1,25 +1,29 @@
 {"Put":{"state":"let enabled = trˇue;\n"}}
 {"Key":"ctrl-a"}
 {"Get":{"state":"let enabled = falsˇe;\n","mode":"Normal"}}
+{"Key":"0"}
 {"Key":"ctrl-a"}
 {"Get":{"state":"let enabled = truˇe;\n","mode":"Normal"}}
-{"Put":{"state":"let enabled = ˇTRUE;\n"}}
+{"Put":{"state":"ˇlet enabled = TRUE;\nlet enabled = TRUE;\nlet enabled = TRUE;\n"}}
+{"Key":"shift-v"}
+{"Key":"j"}
+{"Key":"j"}
 {"Key":"ctrl-x"}
-{"Get":{"state":"let enabled = FALSˇE;\n","mode":"Normal"}}
+{"Get":{"state":"ˇlet enabled = FALSE;\nlet enabled = FALSE;\nlet enabled = FALSE;\n","mode":"Normal"}}
+{"Put":{"state":"let enabled = ˇYes;\nlet enabled = Yes;\nlet enabled = Yes;\n"}}
+{"Key":"ctrl-v"}
+{"Key":"j"}
+{"Key":"j"}
+{"Key":"e"}
 {"Key":"ctrl-x"}
-{"Get":{"state":"let enabled = TRUˇE;\n","mode":"Normal"}}
-{"Put":{"state":"let enabled = Truˇe;\n"}}
+{"Get":{"state":"let enabled = ˇNo;\nlet enabled = No;\nlet enabled = No;\n","mode":"Normal"}}
+{"Put":{"state":"ˇlet enabled = True;\n"}}
 {"Key":"ctrl-a"}
 {"Get":{"state":"let enabled = Falsˇe;\n","mode":"Normal"}}
 {"Key":"ctrl-a"}
 {"Get":{"state":"let enabled = Truˇe;\n","mode":"Normal"}}
-{"Put":{"state":"let enabled = Yˇes;\n"}}
+{"Put":{"state":"let enabled = Onˇ;\n"}}
+{"Key":"v"}
+{"Key":"b"}
 {"Key":"ctrl-a"}
-{"Get":{"state":"let enabled = Nˇo;\n","mode":"Normal"}}
-{"Key":"ctrl-a"}
-{"Get":{"state":"let enabled = Yeˇs;\n","mode":"Normal"}}
-{"Put":{"state":"let enabled = Oˇn;\n"}}
-{"Key":"ctrl-a"}
-{"Get":{"state":"let enabled = Ofˇf;\n","mode":"Normal"}}
-{"Key":"ctrl-a"}
-{"Get":{"state":"let enabled = Oˇn;\n","mode":"Normal"}}
+{"Get":{"state":"let enabled = ˇOff;\n","mode":"Normal"}}
