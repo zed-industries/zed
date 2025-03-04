@@ -60,7 +60,6 @@ string being a match that was found within the file)."#.into()
         cx: &mut App,
     ) -> Task<anyhow::Result<String>> {
         let root_dir = workspace.update(cx, |workspace, cx| {
-            // todo! Provide all worktree roots to sandbox?
             let first_worktree = workspace
                 .visible_worktrees(cx)
                 .next()
