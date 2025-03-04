@@ -117,80 +117,7 @@ impl ActiveThread {
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
 
-        let theme_settings = ThemeSettings::get_global(cx);
-        let colors = cx.theme().colors();
-        let ui_font_size = TextSize::Default.rems(cx);
-        let buffer_font_size = TextSize::Small.rems(cx);
-        let mut text_style = window.text_style();
-
-        text_style.refine(&TextStyleRefinement {
-            font_family: Some(theme_settings.ui_font.family.clone()),
-            font_size: Some(ui_font_size.into()),
-            color: Some(cx.theme().colors().text),
-            ..Default::default()
-        });
-
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style,
-            syntax: cx.theme().syntax().clone(),
-            selection_background_color: cx.theme().players().local().selection,
-            code_block_overflow_x_scroll: true,
-            table_overflow_x_scroll: true,
-            code_block: StyleRefinement {
-                margin: EdgesRefinement {
-                    top: Some(Length::Definite(rems(0.).into())),
-                    left: Some(Length::Definite(rems(0.).into())),
-                    right: Some(Length::Definite(rems(0.).into())),
-                    bottom: Some(Length::Definite(rems(0.5).into())),
-                },
-                padding: EdgesRefinement {
-                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                },
-                background: Some(colors.editor_background.into()),
-                border_color: Some(colors.border_variant),
-                border_widths: EdgesRefinement {
-                    top: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                    left: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                    right: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                    bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                },
-                text: Some(TextStyleRefinement {
-                    font_family: Some(theme_settings.buffer_font.family.clone()),
-                    font_size: Some(buffer_font_size.into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            inline_code: TextStyleRefinement {
-                font_family: Some(theme_settings.buffer_font.family.clone()),
-                font_size: Some(buffer_font_size.into()),
-                background_color: Some(colors.editor_foreground.opacity(0.1)),
-                ..Default::default()
-            },
-            link: TextStyleRefinement {
-                background_color: Some(colors.editor_foreground.opacity(0.025)),
-                underline: Some(UnderlineStyle {
-                    color: Some(colors.text_accent.opacity(0.5)),
-                    thickness: px(1.),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let markdown = cx.new(|cx| {
-            Markdown::new(
-                text.into(),
-                markdown_style,
-                Some(self.language_registry.clone()),
-                None,
-                cx,
-            )
-        });
+        let markdown = self.render_markdown(text.into(), window, cx);
         self.rendered_messages_by_id.insert(*id, markdown);
         self.list_state.scroll_to(ListOffset {
             item_ix: old_len,
@@ -210,6 +137,16 @@ impl ActiveThread {
         };
         self.list_state.splice(index..index + 1, 1);
 
+        let markdown = self.render_markdown(text.into(), window, cx);
+        self.rendered_messages_by_id.insert(*id, markdown);
+    }
+
+    fn render_markdown(
+        &self,
+        text: SharedString,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Markdown> {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
         let ui_font_size = TextSize::Default.rems(cx);
@@ -275,7 +212,7 @@ impl ActiveThread {
             ..Default::default()
         };
 
-        let markdown = cx.new(|cx| {
+        cx.new(|cx| {
             Markdown::new(
                 text.into(),
                 markdown_style,
@@ -283,8 +220,7 @@ impl ActiveThread {
                 None,
                 cx,
             )
-        });
-        self.rendered_messages_by_id.insert(*id, markdown);
+        })
     }
 
     fn handle_thread_event(
