@@ -13733,7 +13733,7 @@ impl Editor {
                         buffer_range: hunk.buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range,
                         secondary_status: hunk.secondary_status,
-                        row_range: 0..0, // unused
+                        range: Point::zero()..Point::zero(), // unused
                     })
                     .collect::<Vec<_>>(),
                 &buffer_snapshot,
@@ -16041,9 +16041,9 @@ impl Editor {
                 if let Some(buffer) = multi_buffer.buffer(buffer_id) {
                     buffer.update(cx, |buffer, cx| {
                         buffer.edit(
-                            changes.into_iter().map(|(range, text)| {
-                                (range, text.to_string().map(Arc::<str>::from))
-                            }),
+                            changes
+                                .into_iter()
+                                .map(|(range, text)| (range, text.to_string())),
                             None,
                             cx,
                         );
@@ -17161,17 +17161,14 @@ impl EditorSnapshot {
             for hunk in self.buffer_snapshot.diff_hunks_in_range(
                 Point::new(query_rows.start.0, 0)..Point::new(query_rows.end.0, 0),
             ) {
-                // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
-                // when the caret is just above or just below the deleted hunk.
-                let allow_adjacent = hunk.status().is_deleted();
-                let related_to_selection = if allow_adjacent {
-                    hunk.row_range.overlaps(&query_rows)
-                        || hunk.row_range.start == query_rows.end
-                        || hunk.row_range.end == query_rows.start
-                } else {
-                    hunk.row_range.overlaps(&query_rows)
-                };
-                if related_to_selection {
+                // Include deleted hunks that are adjacent to the query range, because
+                // otherwise they would be missed.
+                let mut intersects_range = hunk.row_range.overlaps(&query_rows);
+                if hunk.status().is_deleted() {
+                    intersects_range |= hunk.row_range.start == query_rows.end;
+                    intersects_range |= hunk.row_range.end == query_rows.start;
+                }
+                if intersects_range {
                     if !processed_buffer_rows
                         .entry(hunk.buffer_id)
                         .or_default()
