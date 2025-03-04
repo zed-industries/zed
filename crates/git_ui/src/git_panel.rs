@@ -1369,7 +1369,6 @@ impl GitPanel {
             return;
         };
         let branch = branch.clone();
-        let guard = self.start_remote_operation();
         let remote = self.get_current_remote(window, cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = match remote.await {
@@ -1384,6 +1383,10 @@ impl GitPanel {
                     return Ok(());
                 }
             };
+
+            let guard = this
+                .update(&mut cx, |this, _| this.start_remote_operation())
+                .ok();
 
             let pull = repo.update(&mut cx, |repo, _cx| {
                 repo.pull(branch.name.clone(), remote.name.clone())
@@ -1413,7 +1416,6 @@ impl GitPanel {
             return;
         };
         let branch = branch.clone();
-        let guard = self.start_remote_operation();
         let options = action.options;
         let remote = self.get_current_remote(window, cx);
 
@@ -1430,6 +1432,10 @@ impl GitPanel {
                     return Ok(());
                 }
             };
+
+            let guard = this
+                .update(&mut cx, |this, _| this.start_remote_operation())
+                .ok();
 
             let push = repo.update(&mut cx, |repo, _cx| {
                 repo.push(branch.name.clone(), remote.name.clone(), options)
