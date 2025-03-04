@@ -107,7 +107,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let Some((stored_mode, reversed)) = vim.stored_visual_mode.take() else {
             return;
         };
-        let Some((start, end)) = vim.marks.get("<").zip(vim.marks.get(">")) else {
+        let Some((start, end)) = vim.special_marks.get("<").zip(vim.special_marks.get(">")) else {
             return;
         };
         let ranges = start
