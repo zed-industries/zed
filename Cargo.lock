@@ -3037,6 +3037,7 @@ dependencies = [
  "component",
  "gpui",
  "languages",
+ "project",
  "ui",
  "workspace",
 ]

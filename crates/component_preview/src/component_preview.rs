@@ -7,14 +7,16 @@ use std::sync::Arc;
 use client::UserStore;
 use component::{components, ComponentMetadata};
 use gpui::{
-    list, prelude::*, uniform_list, App, Entity, EventEmitter, FocusHandle, Focusable, Window,
+    list, prelude::*, uniform_list, App, Entity, EventEmitter, FocusHandle, Focusable, Task,
+    WeakEntity, Window,
 };
 use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
+use project::Project;
 use ui::{prelude::*, ListItem};
 
-use workspace::AppState;
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
+use workspace::{AppState, ItemId, SerializableItem};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     let app_state = app_state.clone();
@@ -30,7 +32,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                 let user_store = app_state.user_store.clone();
 
                 let component_preview =
-                    cx.new(|cx| ComponentPreview::new(language_registry, user_store, window, cx));
+                    cx.new(|cx| ComponentPreview::new(language_registry, user_store, None, cx));
                 workspace.add_item_to_active_pane(
                     Box::new(component_preview),
                     None,
@@ -59,11 +61,12 @@ impl ComponentPreview {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
         user_store: Entity<UserStore>,
-        _window: &mut Window,
+        selected_index: impl Into<Option<usize>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let components = components().all_sorted();
         let initial_length = components.len();
+        let selected_index = selected_index.into().unwrap_or(0);
 
         let component_list = ListState::new(initial_length, gpui::ListAlignment::Top, px(500.0), {
             let this = cx.entity().downgrade();
@@ -75,7 +78,7 @@ impl ComponentPreview {
             }
         });
 
-        Self {
+        let mut component_preview = Self {
             focus_handle: cx.focus_handle(),
             _view_scroll_handle: ScrollHandle::new(),
             nav_scroll_handle: UniformListScrollHandle::new(),
@@ -83,8 +86,14 @@ impl ComponentPreview {
             user_store,
             components,
             component_list,
-            selected_index: 0,
+            selected_index,
+        };
+
+        if component_preview.selected_index > 0 {
+            component_preview.scroll_to_preview(component_preview.selected_index, cx);
         }
+
+        component_preview
     }
 
     fn scroll_to_preview(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -239,7 +248,7 @@ impl Item for ComponentPreview {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<Self>>
     where
@@ -247,8 +256,9 @@ impl Item for ComponentPreview {
     {
         let language_registry = self.language_registry.clone();
         let user_store = self.user_store.clone();
+        let selected_index = self.selected_index;
 
-        Some(cx.new(|cx| Self::new(language_registry, user_store, window, cx)))
+        Some(cx.new(|cx| Self::new(language_registry, user_store, selected_index, cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
@@ -256,6 +266,68 @@ impl Item for ComponentPreview {
     }
 }
 
-// TODO: impl serializable item for component preview so it will restore with the workspace
-// ref: https://github.com/zed-industries/zed/blob/32201ac70a501e63dfa2ade9c00f85aea2d4dd94/crates/image_viewer/src/image_viewer.rs#L199
-// Use `ImageViewer` as a model for how to do it, except it'll be even simpler
+impl SerializableItem for ComponentPreview {
+    fn serialized_item_kind() -> &'static str {
+        "ComponentPreview"
+    }
+
+    fn deserialize(
+        project: Entity<Project>,
+        _workspace: WeakEntity<Workspace>,
+        _workspace_id: WorkspaceId,
+        _item_id: ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<Entity<Self>>> {
+        let user_store = project.read(cx).user_store().clone();
+        let language_registry = project.read(cx).languages().clone();
+
+        window.spawn(cx, |mut cx| async move {
+            let user_store = user_store.clone();
+            let language_registry = language_registry.clone();
+            cx.update(|_, cx| {
+                Ok(cx.new(|cx| ComponentPreview::new(language_registry, user_store, None, cx)))
+            })?
+        })
+    }
+
+    fn cleanup(
+        _workspace_id: WorkspaceId,
+        _alive_items: Vec<ItemId>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<gpui::Result<()>> {
+        Task::ready(Ok(()))
+        // window.spawn(cx, |_| {
+        // ...
+        // })
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        _item_id: ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        // TODO: Serialize the active index so we can re-open to the same place
+
+        // let workspace_id = workspace.database_id()?;
+        // let selected_index = self.selected_index;
+
+        // Some(cx.background_spawn({
+        //     async move {
+        //         IMAGE_VIEWER
+        //             .save_image_path(item_id, workspace_id, image_path)
+        //             .await
+        //     }
+        // }))
+
+        None
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
+}

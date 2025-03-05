@@ -35,7 +35,7 @@ impl AlertModal {
 }
 
 impl RenderOnce for AlertModal {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .id(self.id)
             .elevation_3(cx)

@@ -44,7 +44,7 @@ impl StatusToast {
 }
 
 impl RenderOnce for StatusToast {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let has_icon = self.icon.is_some();
 
         h_flex()
@@ -68,7 +68,7 @@ impl RenderOnce for StatusToast {
 }
 
 impl ComponentPreview for StatusToast {
-    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .p_4()
