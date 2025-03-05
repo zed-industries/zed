@@ -294,9 +294,9 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::UsePendingTools => {
-                let pending_tool_uses = self
-                    .thread
-                    .read(cx)
+                let thread = self.thread.read(cx);
+                let fs_changes = thread.fs_changes();
+                let pending_tool_uses = thread
                     .pending_tool_uses()
                     .into_iter()
                     .filter(|tool_use| tool_use.status.is_idle())
@@ -305,7 +305,13 @@ impl ActiveThread {
 
                 for tool_use in pending_tool_uses {
                     if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
+                        let task = tool.run(
+                            tool_use.input,
+                            fs_changes.clone(),
+                            self.workspace.clone(),
+                            window,
+                            cx,
+                        );
 
                         self.thread.update(cx, |thread, cx| {
                             thread.insert_tool_output(tool_use.id.clone(), task, cx);
