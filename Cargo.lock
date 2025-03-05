@@ -13610,6 +13610,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "log",
  "project",
  "rand 0.8.5",
  "schemars",
