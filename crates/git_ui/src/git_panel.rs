@@ -8,14 +8,13 @@ use crate::{
 };
 use crate::{picker_prompt, project_diff, ProjectDiff};
 use anyhow::Result;
-use askpass::{AskPassDelegate, AskPassSession};
+use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
 use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
 };
-use futures::channel::oneshot;
 use git::repository::{
     Branch, CommitDetails, CommitSummary, PushOptions, Remote, RemoteCommandOutput, ResetMode,
     Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -1482,14 +1481,15 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> AskPassDelegate {
         let this = cx.weak_entity();
+        let operation = operation.into();
         let window = window.window_handle();
         AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
             window
                 .update(cx, |_, window, cx| {
                     this.update(cx, |this, cx| {
                         this.workspace.update(cx, |workspace, cx| {
-                            workspace.toggle_modal(window, cx, |_window, cx| {
-                                AskPassModal::new(operation, prompt, tx, cx)
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
                             });
                         })
                     })

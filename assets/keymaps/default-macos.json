@@ -754,6 +754,13 @@
     }
   },
   {
+    "context": "AskPass > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "GitPanel > Editor",
     "use_key_equivalents": true,
     "bindings": {

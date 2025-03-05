@@ -316,7 +316,7 @@ impl SshPlatform {
 }
 
 pub trait SshClientDelegate: Send + Sync {
-    fn ask_password(&self, prompt: String, tx: oneshot::Sender<Result<String>>, cx: &mut AsyncApp);
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp);
     fn get_download_params(
         &self,
         platform: SshPlatform,
@@ -2487,7 +2487,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl SshClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: oneshot::Sender<Result<String>>, _: &mut AsyncApp) {
+        fn ask_password(&self, _: String, _: oneshot::Sender<String>, _: &mut AsyncApp) {
             unreachable!()
         }
 

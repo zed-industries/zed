@@ -4,6 +4,7 @@ use crate::{Project, ProjectPath};
 use anyhow::{Context as _, Result};
 use askpass::{AskPassDelegate, AskPassSession};
 use client::ProjectId;
+use collections::HashMap;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
 use git::repository::{Branch, CommitDetails, PushOptions, Remote, RemoteCommandOutput, ResetMode};
@@ -16,6 +17,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
+use parking_lot::Mutex;
 use rpc::proto::{git_reset, ToProto};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
@@ -24,13 +26,13 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
-use util::{maybe, ResultExt};
+use util::{debug_panic, maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitStore {
     buffer_store: Entity<BufferStore>,
     pub(super) project_id: Option<ProjectId>,
-    pub(super) client: Option<AnyProtoClient>,
+    pub(super) client: AnyProtoClient,
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<GitJob>,
@@ -45,6 +47,8 @@ pub struct Repository {
     pub git_repo: GitRepo,
     pub merge_message: Option<String>,
     job_sender: mpsc::UnboundedSender<GitJob>,
+    askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
+    latest_askpass_id: u64,
 }
 
 #[derive(Clone)]
@@ -80,7 +84,7 @@ impl GitStore {
     pub fn new(
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
-        client: Option<AnyProtoClient>,
+        client: AnyProtoClient,
         project_id: Option<ProjectId>,
         cx: &mut Context<'_, Self>,
     ) -> Self {
@@ -111,6 +115,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
+        client.add_entity_request_handler(Self::handle_askpass);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
@@ -145,7 +150,7 @@ impl GitStore {
                                 )
                             })
                             .or_else(|| {
-                                let client = client.clone()?;
+                                let client = client.clone();
                                 let project_id = project_id?;
                                 Some((
                                     GitRepo::Remote {
@@ -197,6 +202,8 @@ impl GitStore {
                             cx.new(|_| Repository {
                                 git_store: this.clone(),
                                 worktree_id,
+                                askpass_delegates: Default::default(),
+                                latest_askpass_id: 0,
                                 repository_entry: repo.clone(),
                                 git_repo,
                                 job_sender: self.update_sender.clone(),
@@ -271,16 +278,27 @@ impl GitStore {
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let askpass_id = envelope.payload.askpass_id;
 
-        todo!()
-        // let remote_output = repository_handle
-        //     .update(&mut cx, |repository_handle, _cx| repository_handle.fetch(askpass))?
-        //     .await??;
+        let askpass = make_remote_delegate(
+            this,
+            envelope.payload.project_id,
+            worktree_id,
+            work_directory_id,
+            askpass_id,
+            &mut cx,
+        );
 
-        // Ok(proto::RemoteMessageResponse {
-        //     stdout: remote_output.stdout,
-        //     stderr: remote_output.stderr,
-        // })
+        let remote_output = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.fetch(askpass, cx)
+            })?
+            .await??;
+
+        Ok(proto::RemoteMessageResponse {
+            stdout: remote_output.stdout,
+            stderr: remote_output.stderr,
+        })
     }
 
     async fn handle_push(
@@ -293,6 +311,16 @@ impl GitStore {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
+        let askpass_id = envelope.payload.askpass_id;
+        let askpass = make_remote_delegate(
+            this,
+            envelope.payload.project_id,
+            worktree_id,
+            work_directory_id,
+            askpass_id,
+            &mut cx,
+        );
+
         let options = envelope
             .payload
             .options
@@ -302,20 +330,18 @@ impl GitStore {
                 proto::push::PushOptions::Force => git::repository::PushOptions::Force,
             });
 
-        todo!()
+        let branch_name = envelope.payload.branch_name.into();
+        let remote_name = envelope.payload.remote_name.into();
 
-        // let branch_name = envelope.payload.branch_name.into();
-        // let remote_name = envelope.payload.remote_name.into();
-
-        // let remote_output = repository_handle
-        //     .update(&mut cx, |repository_handle, _cx| {
-        //         repository_handle.push(branch_name, remote_name, options)
-        //     })?
-        //     .await??;
-        // Ok(proto::RemoteMessageResponse {
-        //     stdout: remote_output.stdout,
-        //     stderr: remote_output.stderr,
-        // })
+        let remote_output = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.push(branch_name, remote_name, options, askpass, cx)
+            })?
+            .await??;
+        Ok(proto::RemoteMessageResponse {
+            stdout: remote_output.stdout,
+            stderr: remote_output.stderr,
+        })
     }
 
     async fn handle_pull(
@@ -327,21 +353,29 @@ impl GitStore {
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let askpass_id = envelope.payload.askpass_id;
+        let askpass = make_remote_delegate(
+            this,
+            envelope.payload.project_id,
+            worktree_id,
+            work_directory_id,
+            askpass_id,
+            &mut cx,
+        );
 
-        // let branch_name = envelope.payload.branch_name.into();
-        // let remote_name = envelope.payload.remote_name.into();
+        let branch_name = envelope.payload.branch_name.into();
+        let remote_name = envelope.payload.remote_name.into();
 
-        todo!()
+        let remote_message = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.pull(branch_name, remote_name, askpass, cx)
+            })?
+            .await??;
 
-        // let remote_message = repository_handle
-        //     .update(&mut cx, |repository_handle, _cx| {
-        //         repository_handle.pull(branch_name, remote_name)
-        //     })?
-        //     .await??;
-        // Ok(proto::RemoteMessageResponse {
-        //     stdout: remote_message.stdout,
-        //     stderr: remote_message.stderr,
-        // })
+        Ok(proto::RemoteMessageResponse {
+            stdout: remote_message.stdout,
+            stderr: remote_message.stderr,
+        })
     }
 
     async fn handle_stage(
@@ -572,6 +606,31 @@ impl GitStore {
         })
     }
 
+    async fn handle_askpass(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::AskPassRequest>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::AskPassResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone())?;
+        let Some(mut askpass) = delegates.lock().remove(&envelope.payload.askpass_id) else {
+            debug_panic!("no askpass found");
+            return Err(anyhow::anyhow!("no askpass found"));
+        };
+
+        let response = askpass.ask_password(envelope.payload.prompt).await?;
+
+        delegates
+            .lock()
+            .insert(envelope.payload.askpass_id, askpass);
+
+        Ok(proto::AskPassResponse { response })
+    }
+
     fn repository_for_request(
         this: &Entity<Self>,
         worktree_id: WorktreeId,
@@ -594,6 +653,36 @@ impl GitStore {
             anyhow::Ok(repository_handle)
         })?
     }
+}
+
+fn make_remote_delegate(
+    this: Entity<GitStore>,
+    project_id: u64,
+    worktree_id: WorktreeId,
+    work_directory_id: ProjectEntryId,
+    askpass_id: u64,
+    cx: &mut AsyncApp,
+) -> AskPassDelegate {
+    AskPassDelegate::new(cx, move |prompt, tx, cx| {
+        dbg!("here we go...", project_id, worktree_id, work_directory_id);
+        this.update(cx, |this, cx| {
+            let response = this.client.request(proto::AskPassRequest {
+                project_id,
+                worktree_id: worktree_id.to_proto(),
+                work_directory_id: work_directory_id.to_proto(),
+                askpass_id,
+                prompt,
+            });
+            cx.spawn(|_, _| async move {
+                dbg!("waiting");
+                tx.send(response.await?.response).ok();
+                dbg!("wote");
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        })
+        .log_err();
+    })
 }
 
 impl GitRepo {}
@@ -1103,12 +1192,15 @@ impl Repository {
     }
 
     pub fn fetch(
-        &self,
+        &mut self,
         askpass: AskPassDelegate,
         cx: &App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let executor = cx.background_executor().clone();
-        self.send_job(|git_repo| async move {
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+
+        self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
@@ -1120,11 +1212,18 @@ impl Repository {
                     worktree_id,
                     work_directory_id,
                 } => {
+                    askpass_delegates.lock().insert(askpass_id, askpass);
+                    let _defer = util::defer(|| {
+                        let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                        debug_assert!(askpass_delegate.is_some());
+                    });
+
                     let response = client
                         .request(proto::Fetch {
                             project_id: project_id.0,
                             worktree_id: worktree_id.to_proto(),
                             work_directory_id: work_directory_id.to_proto(),
+                            askpass_id,
                         })
                         .await
                         .context("sending fetch request")?;
@@ -1139,7 +1238,7 @@ impl Repository {
     }
 
     pub fn push(
-        &self,
+        &mut self,
         branch: SharedString,
         remote: SharedString,
         options: Option<PushOptions>,
@@ -1147,6 +1246,9 @@ impl Repository {
         cx: &App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let executor = cx.background_executor().clone();
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+
         self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
@@ -1159,11 +1261,17 @@ impl Repository {
                     worktree_id,
                     work_directory_id,
                 } => {
+                    askpass_delegates.lock().insert(askpass_id, askpass);
+                    let _defer = util::defer(|| {
+                        let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                        debug_assert!(askpass_delegate.is_some());
+                    });
                     let response = client
                         .request(proto::Push {
                             project_id: project_id.0,
                             worktree_id: worktree_id.to_proto(),
                             work_directory_id: work_directory_id.to_proto(),
+                            askpass_id,
                             branch_name: branch.to_string(),
                             remote_name: remote.to_string(),
                             options: options.map(|options| match options {
@@ -1184,14 +1292,16 @@ impl Repository {
     }
 
     pub fn pull(
-        &self,
+        &mut self,
         branch: SharedString,
         remote: SharedString,
         askpass: AskPassDelegate,
         cx: &App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let executor = cx.background_executor().clone();
-        self.send_job(|git_repo| async move {
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+        self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
@@ -1203,11 +1313,17 @@ impl Repository {
                     worktree_id,
                     work_directory_id,
                 } => {
+                    askpass_delegates.lock().insert(askpass_id, askpass);
+                    let _defer = util::defer(|| {
+                        let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                        debug_assert!(askpass_delegate.is_some());
+                    });
                     let response = client
                         .request(proto::Pull {
                             project_id: project_id.0,
                             worktree_id: worktree_id.to_proto(),
                             work_directory_id: work_directory_id.to_proto(),
+                            askpass_id,
                             branch_name: branch.to_string(),
                             remote_name: remote.to_string(),
                         })

@@ -1,29 +1,44 @@
 use editor::Editor;
-use gpui::{DismissEvent, EventEmitter};
-use ui::{div, rems, v_flex, Context, IntoElement, Render, Window};
+use futures::channel::oneshot;
+use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
+use ui::{
+    div, rems, v_flex, ActiveTheme, App, Context, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, StyledExt, Window,
+};
+use workspace::ModalView;
 
 pub(crate) struct AskPassModal {
     operation: SharedString,
     prompt: SharedString,
     editor: Entity<Editor>,
-    tx: Option<oneshot::Sender<Result<String>>>,
+    tx: Option<oneshot::Sender<String>>,
 }
 
 impl EventEmitter<DismissEvent> for AskPassModal {}
+impl ModalView for AskPassModal {}
+impl Focusable for AskPassModal {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
 
 impl AskPassModal {
-    fn new(
+    pub fn new(
         operation: SharedString,
         prompt: SharedString,
-        tx: oneshot::Sender<Result<String>>,
+        tx: oneshot::Sender<String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let editor = Editor::single_line(window, cx);
-        if prompt.contains("yes/no") {
-            editor.set_masked(false, cx);
-        } else {
-            editor.set_masked(true, cx);
-        }
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            if prompt.contains("yes/no") {
+                editor.set_masked(false, cx);
+            } else {
+                editor.set_masked(true, cx);
+            }
+            editor
+        });
         Self {
             operation,
             prompt,
@@ -32,13 +47,13 @@ impl AskPassModal {
         }
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
 
-    fn confirm(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tx) = self.tx.take() {
-            tx.send(Ok(self.editor.text(cx)))
+            tx.send(self.editor.read(cx).text(cx)).ok();
         }
         cx.emit(DismissEvent);
     }
@@ -46,14 +61,6 @@ impl AskPassModal {
 
 impl Render for AskPassModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let help_text = match self.line_and_char_from_query(cx) {
-            Some((line, Some(character))) => {
-                format!("Go to line {line}, character {character}").into()
-            }
-            Some((line, None)) => format!("Go to line {line}").into(),
-            None => self.current_text.clone(),
-        };
-
         v_flex()
             .w(rems(24.))
             .elevation_2(cx)

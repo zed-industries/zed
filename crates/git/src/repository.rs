@@ -675,7 +675,6 @@ impl GitRepository for RealGitRepository {
 
     fn fetch(&self, ask_pass: AskPassSession) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
-        dbg!(&ask_pass.script_path());
 
         let mut command = new_smol_command("git");
         command

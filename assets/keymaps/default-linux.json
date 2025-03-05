@@ -740,6 +740,12 @@
     }
   },
   {
+    "context": "AskPass > Editor",
+    "bindings": {
+      "enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "GitPanel > Editor",
     "bindings": {
       "escape": "git_panel::FocusChanges",

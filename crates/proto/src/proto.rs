@@ -452,6 +452,8 @@ messages!(
     (GetRemotesResponse, Background),
     (Pull, Background),
     (RemoteMessageResponse, Background),
+    (AskPassRequest, Background),
+    (AskPassResponse, Background),
 );
 
 request_messages!(
@@ -594,6 +596,7 @@ request_messages!(
     (Fetch, RemoteMessageResponse),
     (GetRemotes, GetRemotesResponse),
     (Pull, RemoteMessageResponse),
+    (AskPassRequest, AskPassResponse),
 );
 
 entity_messages!(
@@ -695,6 +698,7 @@ entity_messages!(
     Fetch,
     GetRemotes,
     Pull,
+    AskPassRequest,
 );
 
 entity_messages!(

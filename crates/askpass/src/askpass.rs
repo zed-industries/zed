@@ -24,19 +24,16 @@ pub enum AskPassResult {
 }
 
 pub struct AskPassDelegate {
-    tx: mpsc::UnboundedSender<(String, oneshot::Sender<anyhow::Result<String>>)>,
+    tx: mpsc::UnboundedSender<(String, oneshot::Sender<String>)>,
     _task: Task<()>,
 }
 
 impl AskPassDelegate {
     pub fn new(
         cx: &mut AsyncApp,
-        password_prompt: impl Fn(String, oneshot::Sender<anyhow::Result<String>>, &mut AsyncApp)
-            + Send
-            + Sync
-            + 'static,
+        password_prompt: impl Fn(String, oneshot::Sender<String>, &mut AsyncApp) + Send + Sync + 'static,
     ) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<anyhow::Result<String>>)>();
+        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<String>)>();
         let task = cx.spawn(|mut cx| async move {
             while let Some((prompt, channel)) = rx.next().await {
                 password_prompt(prompt, channel, &mut cx);
@@ -45,10 +42,10 @@ impl AskPassDelegate {
         Self { tx, _task: task }
     }
 
-    async fn ask_password(&mut self, prompt: String) -> anyhow::Result<String> {
+    pub async fn ask_password(&mut self, prompt: String) -> anyhow::Result<String> {
         let (tx, rx) = oneshot::channel();
         self.tx.send((prompt, tx)).await?;
-        rx.await?
+        Ok(rx.await?)
     }
 }
 
@@ -125,8 +122,6 @@ impl AskPassSession {
             shebang = "#!/bin/sh",
         );
         fs::write(&askpass_script_path, askpass_script).await?;
-        dbg!(&askpass_script_path);
-
         fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
 
         Ok(Self {
