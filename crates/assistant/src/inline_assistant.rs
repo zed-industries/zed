@@ -35,7 +35,7 @@ use language_model::{
     report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
-use language_model_selector::{InlineLanguageModelSelector, LanguageModelSelector};
+use language_model_selector::inline_language_model_selector;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
@@ -1425,7 +1425,6 @@ enum PromptEditorEvent {
 struct PromptEditor {
     id: InlineAssistId,
     editor: Entity<Editor>,
-    language_model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
@@ -1439,6 +1438,7 @@ struct PromptEditor {
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakEntity<Workspace>>,
     show_rate_limit_notice: bool,
+    fs: Arc<dyn Fs>,
 }
 
 #[derive(Copy, Clone)]
@@ -1567,6 +1567,7 @@ impl Render for PromptEditor {
                 ]
             }
         });
+        let fs_clone = self.fs.clone();
 
         h_flex()
             .key_context("PromptEditor")
@@ -1589,10 +1590,13 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(
-                        InlineLanguageModelSelector::new(self.language_model_selector.clone())
-                            .render(window, cx),
-                    )
+                    .child(inline_language_model_selector(move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs_clone.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    }))
                     .map(|el| {
                         let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
                             return el;
@@ -1705,21 +1709,8 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
+            fs,
             editor: prompt_editor,
-            language_model_selector: cx.new(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    window,
-                    cx,
-                )
-            }),
             edited_since_done: false,
             gutter_dimensions,
             prompt_history,
