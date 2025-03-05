@@ -306,7 +306,8 @@ impl rwh::HasDisplayHandle for RawWindow {
 
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
-        unimplemented!()
+        let mut handle = rwh::XlibWindowHandle::new(self.0.x_window as u64);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
