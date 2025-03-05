@@ -787,6 +787,7 @@ async fn test_remote_resolve_path_in_buffer(
     server_cx: &mut TestAppContext,
 ) {
     let fs = FakeFs::new(server_cx.executor());
+    // Even though we are not testing anything from project1, it is necessary to test if project2 is picking up correct worktree
     fs.insert_tree(
         path!("/code"),
         json!({
@@ -797,60 +798,75 @@ async fn test_remote_resolve_path_in_buffer(
                     "lib.rs": "fn one() -> usize { 1 }"
                 }
             },
+            "project2": {
+                ".git": {},
+                "README.md": "# project 2",
+                "src": {
+                    "lib.rs": "fn two() -> usize { 2 }"
+                }
+            }
         }),
     )
     .await;
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
-    let (worktree, _) = project
+
+    let _ = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
 
-    let worktree_id = cx.update(|cx| worktree.read(cx).id());
-
-    let buffer = project
+    let (worktree2, _) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.find_or_create_worktree(path!("/code/project2"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree2_id = cx.update(|cx| worktree2.read(cx).id());
+
+    let buffer2 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree2_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer(path!("/code/project1/README.md"), &buffer, cx)
+            project.resolve_path_in_buffer(path!("/code/project2/README.md"), &buffer2, cx)
         })
         .await
         .unwrap();
     assert!(path.is_file());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        path!("/code/project1/README.md")
+        path!("/code/project2/README.md")
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer("../README.md", &buffer, cx)
+            project.resolve_path_in_buffer("../README.md", &buffer2, cx)
         })
         .await
         .unwrap();
     assert!(path.is_file());
     assert_eq!(
         path.project_path().unwrap().clone(),
-        ProjectPath::from((worktree_id, "README.md"))
+        ProjectPath::from((worktree2_id, "README.md"))
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer("../src", &buffer, cx)
+            project.resolve_path_in_buffer("../src", &buffer2, cx)
         })
         .await
         .unwrap();
     assert_eq!(
         path.project_path().unwrap().clone(),
-        ProjectPath::from((worktree_id, "src"))
+        ProjectPath::from((worktree2_id, "src"))
     );
     assert!(path.is_dir());
 }

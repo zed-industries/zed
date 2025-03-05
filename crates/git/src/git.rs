@@ -26,6 +26,7 @@ pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
 pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
+pub static LFS_DIR: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("lfs"));
 pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
 pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
@@ -35,23 +36,15 @@ pub struct Push {
     pub options: Option<PushOptions>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct StageAndNext {
-    pub whole_excerpt: bool,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct UnstageAndNext {
-    pub whole_excerpt: bool,
-}
-
-impl_actions!(git, [Push, StageAndNext, UnstageAndNext]);
+impl_actions!(git, [Push]);
 
 actions!(
     git,
     [
         // per-hunk
         ToggleStaged,
+        StageAndNext,
+        UnstageAndNext,
         // per-file
         StageFile,
         UnstageFile,
@@ -64,7 +57,7 @@ actions!(
         Pull,
         Fetch,
         Commit,
-        ExpandCommitEditor,
+        ShowCommitEditor,
     ]
 );
 action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);

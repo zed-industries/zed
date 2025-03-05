@@ -197,20 +197,6 @@ pub struct DeleteToPreviousWordStart {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoToHunk {
-    #[serde(default)]
-    pub center_cursor: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoToPrevHunk {
-    #[serde(default)]
-    pub center_cursor: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct FoldAtLevel(pub u32);
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -240,8 +226,6 @@ impl_actions!(
         ExpandExcerptsDown,
         ExpandExcerptsUp,
         FoldAt,
-        GoToHunk,
-        GoToPrevHunk,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -281,7 +265,7 @@ gpui::actions!(
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
-        ContextMenuPrev,
+        ContextMenuPrevious,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
@@ -323,9 +307,11 @@ gpui::actions!(
         GoToDefinition,
         GoToDefinitionSplit,
         GoToDiagnostic,
+        GoToHunk,
+        GoToPreviousHunk,
         GoToImplementation,
         GoToImplementationSplit,
-        GoToPrevDiagnostic,
+        GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
         HalfPageDown,
@@ -420,7 +406,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,
-        TabPrev,
+        Backtab,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,

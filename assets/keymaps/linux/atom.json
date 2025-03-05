@@ -39,7 +39,7 @@
     "context": "BufferSearchBar",
     "bindings": {
       "ctrl-f3": "search::SelectNextMatch", // find-and-replace:find-next-selected
-      "ctrl-shift-f3": "search::SelectPrevMatch" // find-and-replace:find-previous-selected
+      "ctrl-shift-f3": "search::SelectPreviousMatch" // find-and-replace:find-previous-selected
     }
   },
   {

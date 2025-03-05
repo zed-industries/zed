@@ -19,7 +19,7 @@ use crate::{
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint,
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
-    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown,
     PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
@@ -32,15 +32,17 @@ use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
-    relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
-    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    Hsla, InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, Window,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
+    point, px, quad, relative, size, solid_background, svg, transparent_black, Action, AnyElement,
+    App, AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner,
+    Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
+    Focusable as _, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
+    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
+    TextStyleRefinement, Window,
 };
+use inline_completion::Direction;
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -54,7 +56,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
     RowInfo,
 };
-use project::project_settings::{self, GitGutterSetting, ProjectSettings};
+use project::project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -195,7 +197,7 @@ impl EditorElement {
         register_action(editor, window, Editor::backspace);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
-        register_action(editor, window, Editor::tab_prev);
+        register_action(editor, window, Editor::backtab);
         register_action(editor, window, Editor::indent);
         register_action(editor, window, Editor::outdent);
         register_action(editor, window, Editor::autoindent);
@@ -2016,7 +2018,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -2092,7 +2094,7 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_pixel_position,
                         gutter_hitbox,
-                        rows_with_hunk_bounds,
+                        display_hunks,
                         window,
                         cx,
                     );
@@ -2110,7 +2112,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -2135,7 +2137,7 @@ impl EditorElement {
             gutter_dimensions,
             scroll_pixel_position,
             gutter_hitbox,
-            rows_with_hunk_bounds,
+            display_hunks,
             window,
             cx,
         );
@@ -2722,7 +2724,10 @@ impl EditorElement {
                     .shadow_md()
                     .border_1()
                     .map(|div| {
-                        let border_color = if is_selected && is_folded {
+                        let border_color = if is_selected
+                            && is_folded
+                            && focus_handle.contains_focused(window, cx)
+                        {
                             colors.border_focused
                         } else {
                             colors.border
@@ -4343,7 +4348,7 @@ impl EditorElement {
         }
     }
 
-    fn paint_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+    fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         let is_light = cx.theme().appearance().is_light();
 
         if layout.display_hunks.is_empty() {
@@ -4413,10 +4418,19 @@ impl EditorElement {
                         background_color =
                             background_color.opacity(if is_light { 0.2 } else { 0.32 });
                     }
+
+                    // Flatten the background color with the editor color to prevent
+                    // elements below transparent hunks from showing through
+                    let flattened_background_color = cx
+                        .theme()
+                        .colors()
+                        .editor_background
+                        .blend(background_color);
+
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
-                        background_color,
+                        flattened_background_color,
                         Edges::default(),
                         transparent_black(),
                     ));
@@ -4544,7 +4558,7 @@ impl EditorElement {
                 )
             });
         if show_git_gutter {
-            Self::paint_diff_hunks(layout, window, cx)
+            Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -4682,7 +4696,7 @@ impl EditorElement {
             .read(cx)
             .buffer
             .read(cx)
-            .settings_at(0, cx)
+            .language_settings(cx)
             .show_whitespaces;
 
         for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
@@ -5675,7 +5689,7 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_pixel_position: gpui::Point<Pixels>,
     gutter_hitbox: &Hitbox,
-    rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+    display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -5687,9 +5701,23 @@ fn prepaint_gutter_button(
     let indicator_size = button.layout_as_root(available_space, window, cx);
 
     let blame_width = gutter_dimensions.git_blame_entries_width;
-    let gutter_width = rows_with_hunk_bounds
-        .get(&row)
-        .map(|bounds| bounds.size.width);
+    let gutter_width = display_hunks
+        .binary_search_by(|(hunk, _)| match hunk {
+            DisplayDiffHunk::Folded { display_row } => display_row.cmp(&row),
+            DisplayDiffHunk::Unfolded {
+                display_row_range, ..
+            } => {
+                if display_row_range.end <= row {
+                    Ordering::Less
+                } else if display_row_range.start > row {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            }
+        })
+        .ok()
+        .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
     let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
     let mut x = left_offset;
@@ -6708,14 +6736,15 @@ impl Element for EditorElement {
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     let is_light = cx.theme().appearance().is_light();
+                    let use_pattern = ProjectSettings::get_global(cx)
+                        .git
+                        .hunk_style
+                        .map_or(false, |style| matches!(style, GitHunkStyleSetting::Pattern));
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
-
-                        let staged_opacity = if is_light { 0.14 } else { 0.10 };
-                        let unstaged_opacity = 0.04;
 
                         let background_color = match diff_status.kind {
                             DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
@@ -6727,15 +6756,34 @@ impl Element for EditorElement {
                                 continue;
                             }
                         };
-                        let background_color = if diff_status.has_secondary_hunk() {
-                            background_color.opacity(unstaged_opacity)
+
+                        let unstaged = diff_status.has_secondary_hunk();
+                        let hunk_opacity = if is_light { 0.16 } else { 0.12 };
+
+                        let staged_background =
+                            solid_background(background_color.opacity(hunk_opacity));
+                        let unstaged_background = if use_pattern {
+                            pattern_slash(
+                                background_color.opacity(hunk_opacity),
+                                window.rem_size().0 * 1.125, // ~18 by default
+                            )
                         } else {
-                            background_color.opacity(staged_opacity)
+                            solid_background(background_color.opacity(if is_light {
+                                0.08
+                            } else {
+                                0.04
+                            }))
+                        };
+
+                        let background = if unstaged {
+                            unstaged_background
+                        } else {
+                            staged_background
                         };
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
-                            .or_insert(background_color.into());
+                            .or_insert(background);
                     }
 
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
@@ -7185,27 +7233,6 @@ impl Element for EditorElement {
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-                    let rows_with_hunk_bounds = display_hunks
-                        .iter()
-                        .filter_map(|(hunk, hitbox)| Some((hunk, hitbox.as_ref()?.bounds)))
-                        .fold(
-                            HashMap::default(),
-                            |mut rows_with_hunk_bounds, (hunk, bounds)| {
-                                match hunk {
-                                    DisplayDiffHunk::Folded { display_row } => {
-                                        rows_with_hunk_bounds.insert(*display_row, bounds);
-                                    }
-                                    DisplayDiffHunk::Unfolded {
-                                        display_row_range, ..
-                                    } => {
-                                        for display_row in display_row_range.iter_rows() {
-                                            rows_with_hunk_bounds.insert(display_row, bounds);
-                                        }
-                                    }
-                                }
-                                rows_with_hunk_bounds
-                            },
-                        );
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let newest_selection_point =
@@ -7255,7 +7282,7 @@ impl Element for EditorElement {
                                                     scroll_pixel_position,
                                                     &gutter_dimensions,
                                                     &gutter_hitbox,
-                                                    &rows_with_hunk_bounds,
+                                                    &display_hunks,
                                                     window,
                                                     cx,
                                                 );
@@ -7283,7 +7310,7 @@ impl Element for EditorElement {
                             scroll_pixel_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &rows_with_hunk_bounds,
+                            &display_hunks,
                             &snapshot,
                             window,
                             cx,
@@ -8873,7 +8900,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Next Hunk",
-                                    &GoToHunk::default(),
+                                    &GoToHunk,
                                     &focus_handle,
                                     window,
                                     cx,
@@ -8888,7 +8915,11 @@ fn diff_hunk_controls(
                                     let position =
                                         hunk_range.end.to_point(&snapshot.buffer_snapshot);
                                     editor.go_to_hunk_after_or_before_position(
-                                        &snapshot, position, true, true, window, cx,
+                                        &snapshot,
+                                        position,
+                                        Direction::Next,
+                                        window,
+                                        cx,
                                     );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
@@ -8905,7 +8936,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
-                                    &GoToPrevHunk::default(),
+                                    &GoToPreviousHunk,
                                     &focus_handle,
                                     window,
                                     cx,
@@ -8920,7 +8951,11 @@ fn diff_hunk_controls(
                                     let point =
                                         hunk_range.start.to_point(&snapshot.buffer_snapshot);
                                     editor.go_to_hunk_after_or_before_position(
-                                        &snapshot, point, false, true, window, cx,
+                                        &snapshot,
+                                        point,
+                                        Direction::Prev,
+                                        window,
+                                        cx,
                                     );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
