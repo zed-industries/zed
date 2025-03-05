@@ -970,6 +970,16 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
+## LSP Highlight Debounce
+
+- Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
+**Options**
+
+`integer` values representing milliseconds
+
 ## Format On Save
 
 - Description: Whether or not to perform a buffer format before saving.
