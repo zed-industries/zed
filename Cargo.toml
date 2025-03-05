@@ -168,7 +168,6 @@ members = [
     # Extensions
     #
 
-    "extensions/csharp",
     "extensions/elixir",
     "extensions/emmet",
     "extensions/erlang",
