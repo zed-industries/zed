@@ -346,7 +346,10 @@ fn toggle_boolean(boolean: &str) -> String {
 mod test {
     use indoc::indoc;
 
-    use crate::test::NeovimBackedTestContext;
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_increment(cx: &mut gpui::TestAppContext) {
@@ -693,67 +696,60 @@ mod test {
 
     #[gpui::test]
     async fn test_toggle_boolean(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.set_shared_state(indoc! {"
-                let enabled = trˇue;
-                "})
-            .await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = falsˇe;
-                "});
-        cx.simulate_shared_keystrokes("0 ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = truˇe;
-                "});
+        cx.set_state("let enabled = trˇue;", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("let enabled = falsˇe;", Mode::Normal);
 
-        cx.set_shared_state(indoc! {"
+        cx.simulate_keystrokes("0 ctrl-a");
+        cx.assert_state("let enabled = truˇe;", Mode::Normal);
+
+        cx.set_state(
+            indoc! {"
                 ˇlet enabled = TRUE;
                 let enabled = TRUE;
                 let enabled = TRUE;
-                "})
-            .await;
-        cx.simulate_shared_keystrokes("shift-v j j ctrl-x").await;
-        cx.shared_state().await.assert_eq(indoc! {"
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("shift-v j j ctrl-x");
+        cx.assert_state(
+            indoc! {"
                 ˇlet enabled = FALSE;
                 let enabled = FALSE;
                 let enabled = FALSE;
-                "});
+            "},
+            Mode::Normal,
+        );
 
-        cx.set_shared_state(indoc! {"
+        cx.set_state(
+            indoc! {"
                 let enabled = ˇYes;
                 let enabled = Yes;
                 let enabled = Yes;
-                "})
-            .await;
-        cx.simulate_shared_keystrokes("ctrl-v j j e ctrl-x").await;
-        cx.shared_state().await.assert_eq(indoc! {"
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("ctrl-v j j e ctrl-x");
+        cx.assert_state(
+            indoc! {"
                 let enabled = ˇNo;
                 let enabled = No;
                 let enabled = No;
-                "});
+            "},
+            Mode::Normal,
+        );
 
-        cx.set_shared_state(indoc! {"
-                ˇlet enabled = True;
-                "})
-            .await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = Falsˇe;
-                "});
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = Truˇe;
-                "});
+        cx.set_state("ˇlet enabled = True;", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("let enabled = Falsˇe;", Mode::Normal);
 
-        cx.set_shared_state(indoc! {"
-                let enabled = Onˇ;
-                "})
-            .await;
-        cx.simulate_shared_keystrokes("v b ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-                let enabled = ˇOff;
-                "});
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("let enabled = Truˇe;", Mode::Normal);
+
+        cx.set_state("let enabled = Onˇ;", Mode::Normal);
+        cx.simulate_keystrokes("v b ctrl-a");
+        cx.assert_state("let enabled = ˇOff;", Mode::Normal);
     }
 }
