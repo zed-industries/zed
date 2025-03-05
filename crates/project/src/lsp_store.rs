@@ -970,6 +970,8 @@ impl LocalLspStore {
                 }
             })
             .detach();
+
+        crate::clangd_ext::register_notifications(this, language_server, adapter);
     }
 
     fn shutdown_language_servers(
