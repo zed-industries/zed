@@ -603,9 +603,11 @@ features = [
 version = "0.58"
 features = [
     "implement",
+    "Foundation_Collections",
     "Foundation_Numerics",
     "Storage",
     "System_Threading",
+    "UI_StartScreen",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",

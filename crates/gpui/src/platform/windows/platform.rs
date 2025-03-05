@@ -25,7 +25,10 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::ViewManagement::UISettings,
+    UI::{
+        StartScreen::{JumpList, JumpListItem},
+        ViewManagement::UISettings,
+    },
 };
 
 use crate::{platform::blade::BladeContext, *};
@@ -49,6 +52,7 @@ pub(crate) struct WindowsPlatform {
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
+    dock_menu_actions: Vec<Box<dyn Action>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -66,10 +70,12 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
+        let dock_menu_actions = Vec::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
+            dock_menu_actions,
             current_cursor,
             menus: Vec::new(),
         }
@@ -184,6 +190,24 @@ impl WindowsPlatform {
         }
     }
 
+    fn handle_dock_action_event(&self, action_idx: usize) {
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
+            let Some(action) = lock
+                .dock_menu_actions
+                .get(action_idx)
+                .map(|action| action.boxed_clone())
+            else {
+                lock.callbacks.app_menu_action = Some(callback);
+                log::error!("Dock menu for index {action_idx} not found");
+                return;
+            };
+            drop(lock);
+            callback(&*action);
+            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        }
+    }
+
     // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
@@ -191,7 +215,9 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
-                    WM_GPUI_CLOSE_ONE_WINDOW | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => {
+                    WM_GPUI_CLOSE_ONE_WINDOW
+                    | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
+                    | WM_GPUI_DOCK_MENU_ACTION => {
                         if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
                             return true;
                         }
@@ -227,9 +253,39 @@ impl WindowsPlatform {
                 }
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
+            WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             _ => unreachable!(),
         }
         false
+    }
+
+    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
+        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
+        let items = jump_list.Items()?;
+        items.Clear()?;
+        let mut actions = Vec::new();
+        for item in menus.into_iter() {
+            let item = match item {
+                MenuItem::Separator => JumpListItem::CreateSeparator()?,
+                MenuItem::Submenu(_) => {
+                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
+                    continue;
+                }
+                MenuItem::Action { name, action, .. } => {
+                    let idx = actions.len();
+                    actions.push(action.boxed_clone());
+                    let item_args = format!("--dock-action {}", idx);
+                    JumpListItem::CreateWithArguments(
+                        &HSTRING::from(item_args),
+                        &HSTRING::from(name.as_ref()),
+                    )?
+                }
+            };
+            items.Append(&item)?;
+        }
+        jump_list.SaveAsync()?.get()?;
+        self.state.borrow_mut().dock_menu_actions = actions;
+        Ok(())
     }
 }
 
@@ -479,8 +535,9 @@ impl Platform for WindowsPlatform {
         Some(self.state.borrow().menus.clone())
     }
 
-    // todo(windows)
-    fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
+        self.configure_jump_list(menus).log_err();
+    }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
@@ -598,6 +655,18 @@ impl Platform for WindowsPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+
+    fn perform_dock_menu_action(&self, action: usize) {
+        unsafe {
+            PostThreadMessageW(
+                self.main_thread_id_win32,
+                WM_GPUI_DOCK_MENU_ACTION,
+                WPARAM(self.validation_number),
+                LPARAM(action as isize),
+            )
+            .log_err();
+        }
     }
 }
 

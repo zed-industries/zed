@@ -217,29 +217,27 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check =
-        if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-            false
-        } else {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            {
-                crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
-            }
+    let failed_single_instance_check = if *db::ZED_STATELESS
+        || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
+    {
+        false
+    } else {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
+        }
 
-            #[cfg(target_os = "windows")]
-            {
-                !crate::zed::windows_only_instance::check_single_instance(
-                    open_listener.clone(),
-                    args.foreground,
-                )
-            }
+        #[cfg(target_os = "windows")]
+        {
+            !crate::zed::windows_only_instance::check_single_instance(open_listener.clone(), &args)
+        }
 
-            #[cfg(target_os = "macos")]
-            {
-                use zed::mac_only_instance::*;
-                ensure_only_instance() != IsOnlyInstance::Yes
-            }
-        };
+        #[cfg(target_os = "macos")]
+        {
+            use zed::mac_only_instance::*;
+            ensure_only_instance() != IsOnlyInstance::Yes
+        }
+    };
     if failed_single_instance_check {
         println!("zed is already running");
         return;
@@ -946,6 +944,10 @@ struct Args {
     ///
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
+
+    /// The dock action to perform. This is used on Windows only.
+    #[arg(long)]
+    dock_action: Option<usize>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
