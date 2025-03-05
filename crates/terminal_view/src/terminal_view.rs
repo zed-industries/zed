@@ -13,7 +13,7 @@ use gpui::{
     Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity,
 };
 use persistence::TERMINAL_DB;
-use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
+use project::{search::SearchQuery, terminals::TerminalKind, Entry, Fs, Metadata, Project};
 use schemars::JsonSchema;
 use terminal::{
     alacritty_terminal::{
@@ -67,7 +67,7 @@ const REGEX_SPECIAL_CHARS: &[char] = &[
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
-const GIT_DIFF_PATH_PREFIXES: &[char] = &['a', 'b'];
+const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -876,20 +876,13 @@ fn subscribe_for_terminal_events(
                 this.can_navigate_to_selected_word = match maybe_navigation_target {
                     Some(MaybeNavigationTarget::Url(_)) => true,
                     Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
-                        if let Ok(fs) = workspace.update(cx, |workspace, cx| {
-                            workspace.project().read(cx).fs().clone()
-                        }) {
-                            let valid_files_to_open_task = possible_open_targets(
-                                fs,
-                                &workspace,
-                                &path_like_target.terminal_dir,
-                                &path_like_target.maybe_path,
-                                cx,
-                            );
-                            !smol::block_on(valid_files_to_open_task).is_empty()
-                        } else {
-                            false
-                        }
+                        let valid_files_to_open_task = possible_open_targets(
+                            &workspace,
+                            &path_like_target.terminal_dir,
+                            &path_like_target.maybe_path,
+                            cx,
+                        );
+                        !smol::block_on(valid_files_to_open_task).is_empty()
                     }
                     None => false,
                 };
@@ -904,21 +897,11 @@ fn subscribe_for_terminal_events(
                         return;
                     }
                     let task_workspace = workspace.clone();
-                    let Some(fs) = workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.project().read(cx).fs().clone()
-                        })
-                        .ok()
-                    else {
-                        return;
-                    };
-
                     let path_like_target = path_like_target.clone();
                     cx.spawn_in(window, |terminal_view, mut cx| async move {
                         let valid_files_to_open = terminal_view
                             .update(&mut cx, |_, cx| {
                                 possible_open_targets(
-                                    fs,
                                     &task_workspace,
                                     &path_like_target.terminal_dir,
                                     &path_like_target.maybe_path,
@@ -944,11 +927,11 @@ fn subscribe_for_terminal_events(
                             .await;
 
                         let mut has_dirs = false;
-                        for ((path, metadata), opened_item) in valid_files_to_open
+                        for ((path, open_target), opened_item) in valid_files_to_open
                             .into_iter()
                             .zip(opened_items.into_iter())
                         {
-                            if metadata.is_dir {
+                            if open_target.is_dir() {
                                 has_dirs = true;
                             } else if let Some(Ok(opened_item)) = opened_item {
                                 if let Some(row) = path.row {
@@ -997,7 +980,7 @@ fn subscribe_for_terminal_events(
 }
 
 fn possible_open_paths_metadata(
-    fs: Arc<dyn Fs>,
+    workspace: &WeakEntity<Workspace>,
     row: Option<u32>,
     column: Option<u32>,
     potential_paths: HashSet<PathBuf>,
@@ -1041,18 +1024,79 @@ fn possible_open_paths_metadata(
     })
 }
 
+#[derive(Debug, Clone)]
+enum OpenTarget {
+    Worktree(Entry),
+    File(Metadata),
+}
+
+impl OpenTarget {
+    fn is_dir(&self) -> bool {
+        match self {
+            OpenTarget::Worktree(entry) => entry.is_dir(),
+            OpenTarget::File(metadata) => metadata.is_dir,
+        }
+    }
+}
+
 fn possible_open_targets(
-    fs: Arc<dyn Fs>,
     workspace: &WeakEntity<Workspace>,
     cwd: &Option<PathBuf>,
-    maybe_path: &String,
-
+    maybe_path: &str,
     cx: &mut Context<TerminalView>,
-) -> Task<Vec<(PathWithPosition, Metadata)>> {
+) -> Task<Vec<(PathWithPosition, OpenTarget)>> {
+    let maybe_path_original = Path::new(maybe_path);
     let path_position = PathWithPosition::parse_str(maybe_path.as_str());
     let row = path_position.row;
     let column = path_position.column;
     let maybe_path = path_position.path;
+
+    let Some(workspace) = workspace.upgrade() else {
+        return Task::ready(Vec::new());
+    };
+    let fs = workspace.read(cx).project().read(cx).fs().clone();
+
+    for worktree in workspace.read(cx).worktrees(cx) {
+        let worktree_root = worktree.read(cx).root();
+        let mut paths_to_check = Vec::new();
+        paths_to_check.push(
+            maybe_path_original
+                .strip_prefix(worktree_root)
+                .unwrap_or(&maybe_path_original),
+        );
+        paths_to_check.push(
+            maybe_path
+                .strip_prefix(worktree_root)
+                .unwrap_or(&maybe_path),
+        );
+        for prefix_str in GIT_DIFF_PATH_PREFIXES {
+            if let Some(stripped) = maybe_path.strip_prefix(prefix_str).ok() {
+                paths_to_check.push(stripped.strip_prefix(worktree_root).unwrap_or(&stripped));
+            }
+        }
+
+        let mut traversal = worktree
+            .read(cx)
+            .traverse_from_path(true, true, false, "".as_ref());
+        while let Some(entry) = traversal.next() {
+            for path_to_check in &paths_to_check {
+                if entry.path.ends_with(path_to_check) {
+                    //
+                }
+            }
+        }
+    }
+
+    // check for presence in in the worktree
+    // if is remote, exit here
+    // if is local, check with FS more: absolute, canonicalize (to ensure digits is a real file)
+    //
+    // Path candidates:
+    // * original string
+    // * /a git prefix stripped
+    // * /b git prefix stripped
+    // * each of the above + PathWithPosition::parse_str
+    // + need to split off the worktree root, if possible
 
     let potential_paths = if maybe_path.is_absolute() {
         HashSet::from_iter([maybe_path])
@@ -1076,25 +1120,13 @@ fn possible_open_targets(
                 {
                     potential_cwd_and_workspace_paths.insert(potential_worktree_path);
                 }
-
-                for prefix in GIT_DIFF_PATH_PREFIXES {
-                    let prefix_str = &prefix.to_string();
-                    if maybe_path.starts_with(prefix_str) {
-                        let stripped = maybe_path.strip_prefix(prefix_str).unwrap_or(&maybe_path);
-                        for potential_worktree_path in workspace
-                            .worktrees(cx)
-                            .map(|worktree| worktree.read(cx).abs_path().join(&stripped))
-                        {
-                            potential_cwd_and_workspace_paths.insert(potential_worktree_path);
-                        }
-                    }
-                }
             });
         }
         potential_cwd_and_workspace_paths
     };
 
-    possible_open_paths_metadata(fs, row, column, potential_paths, cx)
+    // TODO kb rewrite here
+    possible_open_paths_metadata(&workspace, row, column, potential_paths, cx)
 }
 
 fn regex_to_literal(regex: &str) -> String {
