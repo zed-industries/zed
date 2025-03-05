@@ -2357,9 +2357,16 @@ impl Workspace {
 
         window.spawn(cx, |mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item.as_ref(), save_intent, relative_project_path, &mut cx)
-                    .await
-                    .map(|_| ())
+                Pane::save_item(
+                    project,
+                    &pane,
+                    item.as_ref(),
+                    save_intent,
+                    relative_project_path,
+                    &mut cx,
+                )
+                .await
+                .map(|_| ())
             } else {
                 Ok(())
             }
