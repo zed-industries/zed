@@ -72,10 +72,15 @@ The following commands use the language server to help you navigate and refactor
 
 ### Git
 
-| Command                   | Default Shortcut |
-| ------------------------- | ---------------- |
-| Go to next git change     | `] c`            |
-| Go to previous git change | `[ c`            |
+| Command                         | Default Shortcut |
+| ------------------------------- | ---------------- |
+| Go to next git change           | `] c`            |
+| Go to previous git change       | `[ c`            |
+| Expand diff hunk                | `d o`            |
+| Toggle staged                   | `d O`            |
+| Stage and next (in diff view)   | `d u`            |
+| Unstage and next (in diff view) | `d U`            |
+| Restore change                  | `d p`            |
 
 ### Treesitter
 

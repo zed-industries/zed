@@ -7,6 +7,8 @@ use std::ops::Range;
 
 use crate::{state::Mode, Vim};
 
+const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
+
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Increment {
@@ -27,13 +29,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &Increment, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
-        let step = if action.step { 1 } else { 0 };
+        let step = if action.step { count as i32 } else { 0 };
         vim.increment(count as i64, step, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Decrement, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
-        let step = if action.step { -1 } else { 0 };
+        let step = if action.step { -1 * (count as i32) } else { 0 };
         vim.increment(-(count as i64), step, window, cx)
     });
 }
@@ -72,6 +74,13 @@ impl Vim {
                             2 => increment_binary_string(&num, delta),
                             _ => unreachable!(),
                         };
+                        delta += step as i64;
+                        edits.push((range.clone(), replace));
+                        if selection.is_empty() {
+                            new_anchors.push((false, snapshot.anchor_after(range.end)))
+                        }
+                    } else if let Some((range, boolean)) = find_boolean(&snapshot, start) {
+                        let replace = toggle_boolean(&boolean);
                         delta += step as i64;
                         edits.push((range.clone(), replace));
                         if selection.is_empty() {
@@ -243,11 +252,104 @@ fn find_number(
     }
 }
 
+fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<Point>, String)> {
+    let mut offset = start.to_offset(snapshot);
+
+    let ch0 = snapshot.chars_at(offset).next();
+    if ch0.as_ref().is_some_and(|c| c.is_ascii_alphabetic()) {
+        for ch in snapshot.reversed_chars_at(offset) {
+            if ch.is_ascii_alphabetic() {
+                offset -= ch.len_utf8();
+                continue;
+            }
+            break;
+        }
+    }
+
+    let mut begin = None;
+    let mut end = None;
+    let mut word = String::new();
+
+    let mut chars = snapshot.chars_at(offset);
+
+    while let Some(ch) = chars.next() {
+        if ch.is_ascii_alphabetic() {
+            if begin.is_none() {
+                begin = Some(offset);
+            }
+            word.push(ch);
+        } else if begin.is_some() {
+            end = Some(offset);
+            let word_lower = word.to_lowercase();
+            if BOOLEAN_PAIRS
+                .iter()
+                .any(|(a, b)| word_lower == *a || word_lower == *b)
+            {
+                return Some((
+                    begin.unwrap().to_point(snapshot)..end.unwrap().to_point(snapshot),
+                    word,
+                ));
+            }
+            begin = None;
+            end = None;
+            word = String::new();
+        } else if ch == '\n' {
+            break;
+        }
+        offset += ch.len_utf8();
+    }
+    if let Some(begin) = begin {
+        let end = end.unwrap_or(offset);
+        let word_lower = word.to_lowercase();
+        if BOOLEAN_PAIRS
+            .iter()
+            .any(|(a, b)| word_lower == *a || word_lower == *b)
+        {
+            return Some((begin.to_point(snapshot)..end.to_point(snapshot), word));
+        }
+    }
+    None
+}
+
+fn toggle_boolean(boolean: &str) -> String {
+    let lower = boolean.to_lowercase();
+
+    let target = BOOLEAN_PAIRS
+        .iter()
+        .find_map(|(a, b)| {
+            if lower == *a {
+                Some(b)
+            } else if lower == *b {
+                Some(a)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(&boolean);
+
+    if boolean.chars().all(|c| c.is_uppercase()) {
+        // Upper case
+        target.to_uppercase()
+    } else if boolean.chars().next().unwrap_or(' ').is_uppercase() {
+        // Title case
+        let mut chars = target.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    } else {
+        target.to_string()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use indoc::indoc;
 
-    use crate::test::NeovimBackedTestContext;
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_increment(cx: &mut gpui::TestAppContext) {
@@ -590,5 +692,72 @@ mod test {
             0  2
             0
             0"});
+        cx.simulate_shared_keystrokes("v shift-g g ctrl-a").await;
+        cx.simulate_shared_keystrokes("v shift-g 5 g ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇ6
+            12
+            18  2
+            24
+            30"});
+    }
+
+    #[gpui::test]
+    async fn test_toggle_boolean(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("let enabled = trˇue;", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("let enabled = falsˇe;", Mode::Normal);
+
+        cx.simulate_keystrokes("0 ctrl-a");
+        cx.assert_state("let enabled = truˇe;", Mode::Normal);
+
+        cx.set_state(
+            indoc! {"
+                ˇlet enabled = TRUE;
+                let enabled = TRUE;
+                let enabled = TRUE;
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("shift-v j j ctrl-x");
+        cx.assert_state(
+            indoc! {"
+                ˇlet enabled = FALSE;
+                let enabled = FALSE;
+                let enabled = FALSE;
+            "},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+                let enabled = ˇYes;
+                let enabled = Yes;
+                let enabled = Yes;
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("ctrl-v j j e ctrl-x");
+        cx.assert_state(
+            indoc! {"
+                let enabled = ˇNo;
+                let enabled = No;
+                let enabled = No;
+            "},
+            Mode::Normal,
+        );
+
+        cx.set_state("ˇlet enabled = True;", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("let enabled = Falsˇe;", Mode::Normal);
+
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("let enabled = Truˇe;", Mode::Normal);
+
+        cx.set_state("let enabled = Onˇ;", Mode::Normal);
+        cx.simulate_keystrokes("v b ctrl-a");
+        cx.assert_state("let enabled = ˇOff;", Mode::Normal);
     }
 }

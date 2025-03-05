@@ -670,6 +670,14 @@ pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
     }
 }
 
+/// Creates a solid background color.
+pub fn solid_background(color: impl Into<Hsla>) -> Background {
+    Background {
+        solid: color.into(),
+        ..Default::default()
+    }
+}
+
 /// Creates a LinearGradient background color.
 ///
 /// The gradient line's angle of direction. A value of `0.` is equivalent to to top; increasing values rotate clockwise from there.

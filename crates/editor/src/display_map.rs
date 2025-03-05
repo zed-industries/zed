@@ -43,7 +43,7 @@ use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, Under
 pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
-use invisibles::{is_invisible, replacement};
+pub use invisibles::{is_invisible, replacement};
 use language::{
     language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
     Subscription as BufferSubscription,

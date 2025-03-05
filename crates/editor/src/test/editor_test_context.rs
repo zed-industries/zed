@@ -12,7 +12,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::{ExcerptRange, MultiBufferRow};
+use multi_buffer::{Anchor, ExcerptRange, MultiBufferRow};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
@@ -399,7 +399,7 @@ impl EditorTestContext {
             .split("[EXCERPT]\n")
             .collect::<Vec<_>>();
 
-        let (selections, excerpts) = self.update_editor(|editor, _, cx| {
+        let (multibuffer_snapshot, selections, excerpts) = self.update_editor(|editor, _, cx| {
             let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
 
             let selections = editor.selections.disjoint_anchors();
@@ -408,10 +408,15 @@ impl EditorTestContext {
                 .map(|(e_id, snapshot, range)| (e_id, snapshot.clone(), range))
                 .collect::<Vec<_>>();
 
-            (selections, excerpts)
+            (multibuffer_snapshot, selections, excerpts)
         });
 
-        assert_eq!(excerpts.len(), expected_excerpts.len());
+        assert!(
+            excerpts.len() == expected_excerpts.len(),
+            "should have {} excerpts, got {}",
+            expected_excerpts.len(),
+            excerpts.len()
+        );
 
         for (ix, (excerpt_id, snapshot, range)) in excerpts.into_iter().enumerate() {
             let is_folded = self
@@ -435,8 +440,12 @@ impl EditorTestContext {
             }
             assert!(!is_folded, "excerpt {} should not be folded", ix);
             assert_eq!(
-                snapshot
-                    .text_for_range(range.context.clone())
+                multibuffer_snapshot
+                    .text_for_range(Anchor::range_in_buffer(
+                        excerpt_id,
+                        snapshot.remote_id(),
+                        range.context.clone()
+                    ))
                     .collect::<String>(),
                 expected_text
             );

@@ -4,6 +4,7 @@ use git_panel_settings::GitPanelSettings;
 use gpui::App;
 use project_diff::ProjectDiff;
 use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
+use workspace::Workspace;
 
 pub mod branch_picker;
 mod commit_modal;
@@ -19,6 +20,34 @@ pub fn init(cx: &mut App) {
     branch_picker::init(cx);
     cx.observe_new(ProjectDiff::register).detach();
     commit_modal::init(cx);
+
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
+        workspace.register_action(|workspace, fetch: &git::Fetch, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.fetch(fetch, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, push: &git::Push, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.push(push, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, pull: &git::Pull, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.pull(pull, window, cx);
+            });
+        });
+    })
+    .detach();
 }
 
 // TODO: Add updated status colors to theme

@@ -154,6 +154,9 @@ impl Vim {
                     if action.regex {
                         options |= SearchOptions::REGEX;
                     }
+                    if action.backwards {
+                        options |= SearchOptions::BACKWARDS;
+                    }
                     search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {
                         Mode::Insert
@@ -198,7 +201,7 @@ impl Vim {
                     .last()
                     .map_or(true, |range| range.start != new_head);
 
-                if is_different_head && self.search.direction == Direction::Next {
+                if is_different_head {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
@@ -301,6 +304,7 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(window, cx);
+        let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity().clone();
 
         let searched = pane.update(cx, |pane, cx| {
@@ -322,10 +326,14 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar.query_suggestion(window, cx) else {
+                let Some(query) = search_bar
+                    .query_suggestion(window, cx)
+                    .or_else(|| cursor_word)
+                else {
                     drop(search_bar.search("", None, window, cx));
                     return None;
                 };
+
                 let query = regex::escape(&query);
                 Some(search_bar.search(&query, Some(options), window, cx))
             });
@@ -742,6 +750,12 @@ mod test {
         cx.assert_editor_state("«oneˇ» two one");
         cx.simulate_keystrokes("*");
         cx.assert_state("one two ˇone", Mode::Normal);
+
+        // check that a backward search after last match works correctly
+        cx.set_state("aa\naa\nbbˇ", Mode::Normal);
+        cx.simulate_keystrokes("? a a");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("aa\nˇaa\nbb", Mode::Normal);
 
         // check that searching with unable search wrap
         cx.update_global(|store: &mut SettingsStore, cx| {

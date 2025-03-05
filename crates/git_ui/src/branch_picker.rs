@@ -1,18 +1,16 @@
-use anyhow::{Context as _, Result};
+use anyhow::Context as _;
 use fuzzy::{StringMatch, StringMatchCandidate};
 
 use git::repository::Branch;
 use gpui::{
-    rems, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath};
 use std::sync::Arc;
-use ui::{
-    prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TriggerablePopover,
-};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -31,35 +29,16 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let project = workspace.project().clone();
-    let this = cx.entity();
     let style = BranchListStyle::Modal;
-    cx.spawn_in(window, |_, mut cx| async move {
-        // Modal branch picker has a longer trailoff than a popover one.
-        let delegate = BranchListDelegate::new(project.clone(), style, 70, &cx).await?;
-
-        this.update_in(&mut cx, move |workspace, window, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| {
-                let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
-                let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-                    cx.emit(DismissEvent);
-                });
-
-                let mut list = BranchList::new(project, style, 34., cx);
-                list._subscription = Some(_subscription);
-                list.picker = Some(picker);
-                list
-            })
-        })?;
-
-        Ok(())
+    workspace.toggle_modal(window, cx, |window, cx| {
+        BranchList::new(project, style, 34., window, cx)
     })
-    .detach_and_prompt_err("Failed to read branches", window, cx, |_, _, _| None)
 }
 
 pub fn popover(project: Entity<Project>, window: &mut Window, cx: &mut App) -> Entity<BranchList> {
     cx.new(|cx| {
-        let mut list = BranchList::new(project, BranchListStyle::Popover, 15., cx);
-        list.reload_branches(window, cx);
+        let list = BranchList::new(project, BranchListStyle::Popover, 15., window, cx);
+        list.focus_handle(cx).focus(window);
         list
     })
 }
@@ -72,59 +51,54 @@ enum BranchListStyle {
 
 pub struct BranchList {
     rem_width: f32,
-    popover_handle: PopoverMenuHandle<Self>,
-    default_focus_handle: FocusHandle,
-    project: Entity<Project>,
-    style: BranchListStyle,
-    pub picker: Option<Entity<Picker<BranchListDelegate>>>,
-    _subscription: Option<Subscription>,
-}
-
-impl TriggerablePopover for BranchList {
-    fn menu_handle(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> PopoverMenuHandle<Self> {
-        self.popover_handle.clone()
-    }
+    pub popover_handle: PopoverMenuHandle<Self>,
+    pub picker: Entity<Picker<BranchListDelegate>>,
+    _subscription: Subscription,
 }
 
 impl BranchList {
-    fn new(project: Entity<Project>, style: BranchListStyle, rem_width: f32, cx: &mut App) -> Self {
+    fn new(
+        project_handle: Entity<Project>,
+        style: BranchListStyle,
+        rem_width: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let popover_handle = PopoverMenuHandle::default();
-        Self {
-            project,
-            picker: None,
-            rem_width,
-            popover_handle,
-            default_focus_handle: cx.focus_handle(),
-            style,
-            _subscription: None,
-        }
-    }
+        let project = project_handle.read(cx);
+        let all_branches_request = project
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| project.branches(ProjectPath::root_path(worktree.read(cx).id()), cx))
+            .context("No worktrees found");
 
-    fn reload_branches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let project = self.project.clone();
-        let style = self.style;
         cx.spawn_in(window, |this, mut cx| async move {
-            let delegate = BranchListDelegate::new(project, style, 20, &cx).await?;
-            let picker =
-                cx.new_window_entity(|window, cx| Picker::uniform_list(delegate, window, cx))?;
+            let all_branches = all_branches_request?.await?;
 
-            this.update(&mut cx, |branch_list, cx| {
-                let subscription =
-                    cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| cx.emit(DismissEvent));
-
-                branch_list.picker = Some(picker);
-                branch_list._subscription = Some(subscription);
-
-                cx.notify();
+            this.update_in(&mut cx, |this, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker.delegate.all_branches = Some(all_branches);
+                    picker.refresh(window, cx);
+                })
             })?;
 
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+
+        let delegate = BranchListDelegate::new(project_handle.clone(), style, 20);
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        });
+
+        Self {
+            picker,
+            rem_width,
+            popover_handle,
+            _subscription,
+        }
     }
 }
 impl ModalView for BranchList {}
@@ -132,10 +106,7 @@ impl EventEmitter<DismissEvent> for BranchList {}
 
 impl Focusable for BranchList {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker
-            .as_ref()
-            .map(|picker| picker.focus_handle(cx))
-            .unwrap_or_else(|| self.default_focus_handle.clone())
+        self.picker.focus_handle(cx)
     }
 }
 
@@ -143,24 +114,13 @@ impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
-            .map(|parent| match self.picker.as_ref() {
-                Some(picker) => parent.child(picker.clone()).on_mouse_down_out({
-                    let picker = picker.clone();
-                    cx.listener(move |_, _, window, cx| {
-                        picker.update(cx, |this, cx| {
-                            this.cancel(&Default::default(), window, cx);
-                        })
+            .child(self.picker.clone())
+            .on_mouse_down_out({
+                cx.listener(move |this, _, window, cx| {
+                    this.picker.update(cx, |this, cx| {
+                        this.cancel(&Default::default(), window, cx);
                     })
-                }),
-                None => parent.child(
-                    h_flex()
-                        .id("branch-picker-error")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.reload_branches(window, cx)),
-                        )
-                        .child("Could not load branches.")
-                        .child("Click to retry"),
-                ),
+                })
             })
     }
 }
@@ -184,7 +144,7 @@ impl BranchEntry {
 
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
-    all_branches: Vec<Branch>,
+    all_branches: Option<Vec<Branch>>,
     project: Entity<Project>,
     style: BranchListStyle,
     selected_index: usize,
@@ -194,33 +154,20 @@ pub struct BranchListDelegate {
 }
 
 impl BranchListDelegate {
-    async fn new(
+    fn new(
         project: Entity<Project>,
         style: BranchListStyle,
         branch_name_trailoff_after: usize,
-        cx: &AsyncApp,
-    ) -> Result<Self> {
-        let all_branches_request = cx.update(|cx| {
-            let project = project.read(cx);
-            let first_worktree = project
-                .visible_worktrees(cx)
-                .next()
-                .context("No worktrees found")?;
-            let project_path = ProjectPath::root_path(first_worktree.read(cx).id());
-            anyhow::Ok(project.branches(project_path, cx))
-        })??;
-
-        let all_branches = all_branches_request.await?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             matches: vec![],
             project,
             style,
-            all_branches,
+            all_branches: None,
             selected_index: 0,
             last_query: Default::default(),
             branch_name_trailoff_after,
-        })
+        }
     }
 
     pub fn branch_count(&self) -> usize {
@@ -261,32 +208,31 @@ impl PickerDelegate for BranchListDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        let Some(mut all_branches) = self.all_branches.clone() else {
+            return Task::ready(());
+        };
+
         cx.spawn_in(window, move |picker, mut cx| async move {
-            let candidates = picker.update(&mut cx, |picker, _| {
-                const RECENT_BRANCHES_COUNT: usize = 10;
-                let mut branches = picker.delegate.all_branches.clone();
-                if query.is_empty() {
-                    if branches.len() > RECENT_BRANCHES_COUNT {
-                        // Truncate list of recent branches
-                        // Do a partial sort to show recent-ish branches first.
-                        branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
-                            rhs.priority_key().cmp(&lhs.priority_key())
-                        });
-                        branches.truncate(RECENT_BRANCHES_COUNT);
-                    }
-                    branches.sort_unstable_by(|lhs, rhs| {
-                        rhs.is_head.cmp(&lhs.is_head).then(lhs.name.cmp(&rhs.name))
+            const RECENT_BRANCHES_COUNT: usize = 10;
+            if query.is_empty() {
+                if all_branches.len() > RECENT_BRANCHES_COUNT {
+                    // Truncate list of recent branches
+                    // Do a partial sort to show recent-ish branches first.
+                    all_branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
+                        rhs.priority_key().cmp(&lhs.priority_key())
                     });
+                    all_branches.truncate(RECENT_BRANCHES_COUNT);
                 }
-                branches
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
-                    .collect::<Vec<StringMatchCandidate>>()
-            });
-            let Some(candidates) = candidates.log_err() else {
-                return;
-            };
+                all_branches.sort_unstable_by(|lhs, rhs| {
+                    rhs.is_head.cmp(&lhs.is_head).then(lhs.name.cmp(&rhs.name))
+                });
+            }
+
+            let candidates = all_branches
+                .into_iter()
+                .enumerate()
+                .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                .collect::<Vec<StringMatchCandidate>>();
             let matches: Vec<BranchEntry> = if query.is_empty() {
                 candidates
                     .into_iter()

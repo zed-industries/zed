@@ -23,14 +23,14 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
     KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
+use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::search::SearchSubmit;
@@ -152,6 +152,7 @@ actions!(
         PushLowercase,
         PushUppercase,
         PushOppositeCase,
+        ToggleRegistersView,
         PushRegister,
         PushRecordRegister,
         PushReplayRegister,
@@ -827,22 +828,9 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(
-            operator,
-            Operator::Change
-                | Operator::Delete
-                | Operator::Replace
-                | Operator::Indent
-                | Operator::Outdent
-                | Operator::AutoIndent
-                | Operator::Lowercase
-                | Operator::Uppercase
-                | Operator::OppositeCase
-                | Operator::ToggleComments
-                | Operator::ReplaceWithRegister
-        ) {
-            self.start_recording(cx)
-        };
+        if operator.starts_dot_recording() {
+            self.start_recording(cx);
+        }
         // Since these operations can only be entered with pre-operators,
         // we need to clear the previous operators when pushing,
         // so that the current stack is the most correct
@@ -853,9 +841,6 @@ impl Vim {
                 | Operator::DeleteSurrounds
         ) {
             self.operator_stack.clear();
-            if let Operator::AddSurrounds { target: None } = operator {
-                self.start_recording(cx);
-            }
         };
         self.operator_stack.push(operator);
         self.sync_vim_settings(window, cx);
@@ -996,7 +981,7 @@ impl Vim {
         count
     }
 
-    pub fn cursor_shape(&self) -> CursorShape {
+    pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
         match self.mode {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1022,7 +1007,10 @@ impl Vim {
             Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 CursorShape::Block
             }
-            Mode::Insert => CursorShape::Bar,
+            Mode::Insert => {
+                let editor_settings = EditorSettings::get_global(cx);
+                editor_settings.cursor_shape.unwrap_or_default()
+            }
         }
     }
 
@@ -1161,7 +1149,7 @@ impl Vim {
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
         self.update_editor(window, cx, |vim, editor, _, cx| {
-            if vim.cursor_shape() == CursorShape::Block {
+            if vim.cursor_shape(cx) == CursorShape::Block {
                 editor.set_cursor_shape(CursorShape::Hollow, cx);
             }
         });
@@ -1169,7 +1157,7 @@ impl Vim {
 
     fn cursor_shape_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |vim, editor, _, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), cx);
+            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
         });
     }
 
@@ -1195,6 +1183,28 @@ impl Vim {
                 .iter()
                 .map(|selection| selection.tail()..selection.head())
                 .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn editor_cursor_word(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let selection = editor.selections.newest::<usize>(cx);
+
+            let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
+            let (range, kind) = snapshot.surrounding_word(selection.start, true);
+            if kind == Some(CharKind::Word) {
+                let text: String = snapshot.text_for_range(range).collect();
+                if !text.trim().is_empty() {
+                    return Some(text);
+                }
+            }
+
+            None
         })
         .unwrap_or_default()
     }
@@ -1612,7 +1622,7 @@ impl Vim {
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), cx);
+            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());

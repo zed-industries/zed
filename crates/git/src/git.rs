@@ -36,23 +36,15 @@ pub struct Push {
     pub options: Option<PushOptions>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct StageAndNext {
-    pub whole_excerpt: bool,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct UnstageAndNext {
-    pub whole_excerpt: bool,
-}
-
-impl_actions!(git, [Push, StageAndNext, UnstageAndNext]);
+impl_actions!(git, [Push]);
 
 actions!(
     git,
     [
         // per-hunk
         ToggleStaged,
+        StageAndNext,
+        UnstageAndNext,
         // per-file
         StageFile,
         UnstageFile,

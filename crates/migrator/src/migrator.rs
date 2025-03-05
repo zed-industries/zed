@@ -90,12 +90,8 @@ const KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS: MigrationPatterns = &[
         ACTION_ARGUMENT_OBJECT_PATTERN,
         replace_action_argument_object_with_single_value,
     ),
-    (ACTION_STRING_PATTERN, rename_string_action),
+    (ACTION_STRING_PATTERN, replace_string_action),
     (CONTEXT_PREDICATE_PATTERN, rename_context_key),
-    (
-        ACTION_STRING_OF_ARRAY_PATTERN,
-        replace_first_string_of_array,
-    ),
 ];
 
 static KEYMAP_MIGRATION_TRANSFORMATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -269,51 +265,6 @@ static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(||
     ])
 });
 
-const ACTION_STRING_OF_ARRAY_PATTERN: &str = r#"(document
-    (array
-   	    (object
-            (pair
-                key: (string (string_content) @name)
-                value: (
-                    (object
-                        (pair
-                            key: (string)
-                            value: ((array
-                                . (string (string_content) @action_name)
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    )
-    (#eq? @name "bindings")
-)"#;
-
-// ["editor::GoToPrevHunk", { "center_cursor": true }] -> ["editor::GoToPreviousHunk", { "center_cursor": true }]
-fn replace_first_string_of_array(
-    contents: &str,
-    mat: &QueryMatch,
-    query: &Query,
-) -> Option<(Range<usize>, String)> {
-    let action_name_ix = query.capture_index_for_name("action_name")?;
-    let action_name = contents.get(
-        mat.nodes_for_capture_index(action_name_ix)
-            .next()?
-            .byte_range(),
-    )?;
-    let replacement = STRING_OF_ARRAY_REPLACE.get(action_name)?;
-    let range_to_replace = mat
-        .nodes_for_capture_index(action_name_ix)
-        .next()?
-        .byte_range();
-    Some((range_to_replace, replacement.to_string()))
-}
-
-static STRING_OF_ARRAY_REPLACE: LazyLock<HashMap<&str, &str>> =
-    LazyLock::new(|| HashMap::from_iter([("editor::GoToPrevHunk", "editor::GoToPreviousHunk")]));
-
 const ACTION_ARGUMENT_OBJECT_PATTERN: &str = r#"(document
     (array
         (object
@@ -433,19 +384,32 @@ const ACTION_STRING_PATTERN: &str = r#"(document
     (#eq? @name "bindings")
 )"#;
 
-fn rename_string_action(
+fn replace_string_action(
     contents: &str,
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
     let action_name_ix = query.capture_index_for_name("action_name")?;
-    let action_name_range = mat
-        .nodes_for_capture_index(action_name_ix)
-        .next()?
-        .byte_range();
+    let action_name_node = mat.nodes_for_capture_index(action_name_ix).next()?;
+    let action_name_range = action_name_node.byte_range();
     let action_name = contents.get(action_name_range.clone())?;
-    let new_action_name = STRING_REPLACE.get(&action_name)?;
-    Some((action_name_range, new_action_name.to_string()))
+
+    if let Some(new_action_name) = STRING_REPLACE.get(&action_name) {
+        return Some((action_name_range, new_action_name.to_string()));
+    }
+
+    if let Some((new_action_name, options)) = STRING_TO_ARRAY_REPLACE.get(action_name) {
+        let full_string_range = action_name_node.parent()?.byte_range();
+        let mut options_parts = Vec::new();
+        for (key, value) in options.iter() {
+            options_parts.push(format!("\"{}\": {}", key, value));
+        }
+        let options_str = options_parts.join(", ");
+        let replacement = format!("[\"{}\", {{ {} }}]", new_action_name, options_str);
+        return Some((full_string_range, replacement));
+    }
+
+    None
 }
 
 /// "ctrl-k ctrl-1": "inline_completion::ToggleMenu" -> "edit_prediction::ToggleMenu"
@@ -487,6 +451,27 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
         ("vim::MoveToPrevMatch", "vim::MoveToPreviousMatch"),
     ])
 });
+
+/// "editor::GoToPrevHunk" -> ["editor::GoToPreviousHunk", { "center_cursor": true }]
+static STRING_TO_ARRAY_REPLACE: LazyLock<HashMap<&str, (&str, HashMap<&str, bool>)>> =
+    LazyLock::new(|| {
+        HashMap::from_iter([
+            (
+                "editor::GoToHunk",
+                (
+                    "editor::GoToHunk",
+                    HashMap::from_iter([("center_cursor", true)]),
+                ),
+            ),
+            (
+                "editor::GoToPrevHunk",
+                (
+                    "editor::GoToPreviousHunk",
+                    HashMap::from_iter([("center_cursor", true)]),
+                ),
+            ),
+        ])
+    });
 
 const CONTEXT_PREDICATE_PATTERN: &str = r#"(document
     (array
@@ -1002,15 +987,14 @@ mod tests {
     }
 
     #[test]
-    fn test_string_of_array_replace() {
+    fn test_string_to_array_replace() {
         assert_migrate_keymap(
             r#"
                 [
                     {
                         "bindings": {
-                            "ctrl-p": ["editor::GoToPrevHunk", { "center_cursor": true }],
-                            "ctrl-q": ["editor::GoToPrevHunk"],
-                            "ctrl-q": "editor::GoToPrevHunk", // should remain same
+                            "ctrl-q": "editor::GoToHunk",
+                            "ctrl-w": "editor::GoToPrevHunk"
                         }
                     }
                 ]
@@ -1020,9 +1004,8 @@ mod tests {
                 [
                     {
                         "bindings": {
-                            "ctrl-p": ["editor::GoToPreviousHunk", { "center_cursor": true }],
-                            "ctrl-q": ["editor::GoToPreviousHunk"],
-                            "ctrl-q": "editor::GoToPrevHunk", // should remain same
+                            "ctrl-q": ["editor::GoToHunk", { "center_cursor": true }],
+                            "ctrl-w": ["editor::GoToPreviousHunk", { "center_cursor": true }]
                         }
                     }
                 ]

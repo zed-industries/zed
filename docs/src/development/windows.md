@@ -104,13 +104,13 @@ pacman -Syu
 pacman -S $MINGW_PACKAGE_PREFIX-zed
 ```
 
-then you can run `zed` in a shell.
+then you can run `zeditor` CLI. Editor executable is installed under `$MINGW_PREFIX/lib/zed` directory
 
 You can see the [build script](https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-zed/PKGBUILD) for more details on build process.
 
 > Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed) first.
 
-Note that `collab` is not supported for msys2.
+Note that `collab` is not supported for MSYS2.
 
 ## Troubleshooting
 

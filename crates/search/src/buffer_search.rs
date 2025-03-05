@@ -1306,7 +1306,16 @@ impl BufferSearchBar {
         done_rx
     }
 
+    fn reverse_direction_if_backwards(&self, direction: Direction) -> Direction {
+        if self.search_options.contains(SearchOptions::BACKWARDS) {
+            direction.opposite()
+        } else {
+            direction
+        }
+    }
+
     pub fn update_match_index(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let direction = self.reverse_direction_if_backwards(Direction::Next);
         let new_index = self
             .active_searchable_item
             .as_ref()
@@ -1314,7 +1323,7 @@ impl BufferSearchBar {
                 let matches = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())?;
-                searchable_item.active_match_index(matches, window, cx)
+                searchable_item.active_match_index(direction, matches, window, cx)
             });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;

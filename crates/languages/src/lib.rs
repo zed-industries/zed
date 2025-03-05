@@ -272,6 +272,17 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         let node_runtime = node_runtime.clone();
         move || Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone()))
     });
+    languages.register_available_lsp_adapter(LanguageServerName("vtsls".into()), {
+        let node_runtime = node_runtime.clone();
+        move || Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+    });
+    languages.register_available_lsp_adapter(
+        LanguageServerName("typescript-language-server".into()),
+        {
+            let node_runtime = node_runtime.clone();
+            move || Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone()))
+        },
+    );
 
     // Register Tailwind for the existing languages that should have it by default.
     //

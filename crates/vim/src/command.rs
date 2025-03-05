@@ -39,7 +39,7 @@ use crate::{
     object::Object,
     state::Mode,
     visual::VisualDeleteLine,
-    Vim,
+    ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -853,6 +853,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 .boxed_clone(),
             )
         }),
+        VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),

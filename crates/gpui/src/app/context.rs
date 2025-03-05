@@ -90,6 +90,21 @@ impl<'a, T: 'static> Context<'a, T> {
         })
     }
 
+    /// Subscribe to an event type from ourself
+    pub fn subscribe_self<Evt>(
+        &mut self,
+        mut on_event: impl FnMut(&mut T, &Evt, &mut Context<'_, T>) + 'static,
+    ) -> Subscription
+    where
+        T: 'static + EventEmitter<Evt>,
+        Evt: 'static,
+    {
+        let this = self.entity();
+        self.app.subscribe(&this, move |this, evt, cx| {
+            this.update(cx, |this, cx| on_event(this, evt, cx))
+        })
+    }
+
     /// Register a callback to be invoked when GPUI releases this entity.
     pub fn on_release(&self, on_release: impl FnOnce(&mut T, &mut App) + 'static) -> Subscription
     where
