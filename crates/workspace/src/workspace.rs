@@ -812,6 +812,7 @@ pub struct Workspace {
     panes: Vec<Entity<Pane>>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
     active_pane: Entity<Pane>,
+    last_active_pane: Option<WeakEntity<Pane>>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
@@ -1108,6 +1109,7 @@ impl Workspace {
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
+            last_active_pane: Some(center_pane.downgrade()),
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
             status_bar,
@@ -2334,7 +2336,7 @@ impl Workspace {
         if p.is_some() {
             return p;
         }
-        self.last_active_center_pane.clone().and_then(|p| {
+        self.last_active_pane.clone().and_then(|p| {
             p.upgrade().and_then(|pane| {
                 pane.read(cx)
                     .active_item()
@@ -3357,6 +3359,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.last_active_pane = Some(self.active_pane.downgrade());
         self.active_pane = pane.clone();
         self.active_item_path_changed(window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
@@ -4486,6 +4489,9 @@ impl Workspace {
                     .unwrap()
                     .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
             }
+        }
+        if self.last_active_pane == Some(pane.downgrade()) {
+            self.last_active_pane = None;
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
