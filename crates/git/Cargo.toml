@@ -16,6 +16,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 derive_more.workspace = true
@@ -30,11 +31,12 @@ schemars.workspace = true
 serde.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
+tempfile.workspace = true
 text.workspace = true
 time.workspace = true
 url.workspace = true
 util.workspace = true
-tempfile.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
