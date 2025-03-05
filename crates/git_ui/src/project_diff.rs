@@ -257,14 +257,12 @@ impl ProjectDiff {
                 }
             }
         }
-        let mut can_open_commit_editor = false;
         let mut stage_all = false;
         let mut unstage_all = false;
         self.workspace
             .read_with(cx, |workspace, cx| {
                 if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
                     let git_panel = git_panel.read(cx);
-                    can_open_commit_editor = git_panel.can_open_commit_editor();
                     stage_all = git_panel.can_stage_all();
                     unstage_all = git_panel.can_unstage_all();
                 }
@@ -276,7 +274,6 @@ impl ProjectDiff {
             unstage: has_staged_hunks,
             prev_next,
             selection,
-            can_open_commit_editor,
             stage_all,
             unstage_all,
         };
@@ -773,7 +770,6 @@ struct ButtonStates {
     selection: bool,
     stage_all: bool,
     unstage_all: bool,
-    can_open_commit_editor: bool,
 }
 
 impl Render for ProjectDiffToolbar {
@@ -917,7 +913,6 @@ impl Render for ProjectDiffToolbar {
                     )
                     .child(
                         Button::new("commit", "Commit")
-                            .disabled(!button_states.can_open_commit_editor)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Commit",
                                 &ShowCommitEditor,

@@ -115,27 +115,9 @@ impl CommitModal {
                 return;
             };
 
-            let (can_open_commit_editor, conflict) = git_panel.update(cx, |git_panel, cx| {
-                let can_open_commit_editor = git_panel.can_open_commit_editor();
-                let conflict = git_panel.has_unstaged_conflicts();
-                if can_open_commit_editor {
-                    git_panel.set_modal_open(true, cx);
-                }
-                (can_open_commit_editor, conflict)
+            git_panel.update(cx, |git_panel, cx| {
+                git_panel.set_modal_open(true, cx);
             });
-            if !can_open_commit_editor {
-                let message = if conflict {
-                    "There are still conflicts. You must stage these before committing."
-                } else {
-                    "No changes to commit."
-                };
-                let prompt = window.prompt(PromptLevel::Warning, message, None, &["Ok"], cx);
-                cx.spawn(|_, _| async move {
-                    prompt.await.ok();
-                })
-                .detach();
-                return;
-            }
 
             let dock = workspace.dock_at_position(git_panel.position(window, cx));
             let is_open = dock.read(cx).is_open();
@@ -168,8 +150,16 @@ impl CommitModal {
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
             let buffer = git_panel.commit_message_buffer(cx).clone();
+            let panel_editor = git_panel.commit_editor.clone();
             let project = git_panel.project.clone();
-            cx.new(|cx| commit_message_editor(buffer, None, project.clone(), false, window, cx))
+
+            cx.new(|cx| {
+                let mut editor =
+                    commit_message_editor(buffer, None, project.clone(), false, window, cx);
+                editor.sync_selections(panel_editor, cx).detach();
+
+                editor
+            })
         });
 
         let commit_message = commit_editor.read(cx).text(cx);
