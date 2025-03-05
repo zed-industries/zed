@@ -8,8 +8,9 @@ use futures::StreamExt as _;
 use gpui::{App, Context, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolUseId,
-    MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason,
 };
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
@@ -88,7 +89,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
-            tool_use: ToolUseState::default(),
+            tool_use: ToolUseState::new(),
         }
     }
 
@@ -98,7 +99,14 @@ impl Thread {
         tools: Arc<ToolWorkingSet>,
         _cx: &mut Context<Self>,
     ) -> Self {
-        let next_message_id = MessageId(saved.messages.len());
+        let next_message_id = MessageId(
+            saved
+                .messages
+                .last()
+                .map(|message| message.id.0 + 1)
+                .unwrap_or(0),
+        );
+        let tool_use = ToolUseState::from_saved_messages(&saved.messages);
 
         Self {
             id,
@@ -120,7 +128,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
-            tool_use: ToolUseState::default(),
+            tool_use,
         }
     }
 
@@ -189,6 +197,10 @@ impl Thread {
         self.tool_use.tool_uses_for_message(id)
     }
 
+    pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
+        self.tool_use.tool_results_for_message(id)
+    }
+
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
     }
@@ -221,6 +233,34 @@ impl Thread {
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
         id
+    }
+
+    pub fn edit_message(
+        &mut self,
+        id: MessageId,
+        new_role: Role,
+        new_text: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+            return false;
+        };
+        message.role = new_role;
+        message.text = new_text;
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageEdited(id));
+        true
+    }
+
+    pub fn delete_message(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self.messages.iter().position(|message| message.id == id) else {
+            return false;
+        };
+        self.messages.remove(index);
+        self.context_by_message.remove(&id);
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageDeleted(id));
+        true
     }
 
     /// Returns the representation of this [`Thread`] in a textual form.
@@ -561,6 +601,8 @@ pub enum ThreadEvent {
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     MessageAdded(MessageId),
+    MessageEdited(MessageId),
+    MessageDeleted(MessageId),
     SummaryChanged,
     UsePendingTools,
     ToolFinished {

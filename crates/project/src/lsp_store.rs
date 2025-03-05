@@ -1917,7 +1917,7 @@ impl LocalLspStore {
                             }
                         }
                         language::Attach::Shared => {
-                            let uri = Url::from_directory_path(
+                            let uri = Url::from_file_path(
                                 worktree.read(cx).abs_path().join(&path.path),
                             );
                             let key = (worktree_id, server_name.clone());
@@ -3825,7 +3825,7 @@ impl LspStore {
                                         }
                                     }
                                     language::Attach::Shared => {
-                                        let uri = Url::from_directory_path(
+                                        let uri = Url::from_file_path(
                                             worktree.read(cx).abs_path().join(&path.path),
                                         );
                                         let key = (worktree_id, server_name.clone());

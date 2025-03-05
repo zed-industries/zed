@@ -391,7 +391,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -786,7 +791,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             // We should revisit how the `Picker` is styled to make it more composable.
             .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::cancel))

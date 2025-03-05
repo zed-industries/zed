@@ -440,23 +440,14 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
         vec![1..3, 4..6, 7..8]
     );
 
+    assert_eq!(snapshot.diff_hunk_before(Point::new(1, 1)), None,);
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(1, 1))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        None,
+        snapshot.diff_hunk_before(Point::new(7, 0)),
+        Some(MultiBufferRow(4))
     );
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(7, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(4..6)
-    );
-    assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(4, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(1..3)
+        snapshot.diff_hunk_before(Point::new(4, 0)),
+        Some(MultiBufferRow(1))
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
@@ -478,16 +469,12 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(2, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(1..1),
+        snapshot.diff_hunk_before(Point::new(2, 0)),
+        Some(MultiBufferRow(1)),
     );
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(4, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(2..2)
+        snapshot.diff_hunk_before(Point::new(4, 0)),
+        Some(MultiBufferRow(2))
     );
 }
 
@@ -2160,6 +2147,7 @@ impl ReferenceMultibuffer {
             .unwrap();
         let excerpt = self.excerpts.remove(ix);
         let buffer = excerpt.buffer.read(cx);
+        let id = buffer.remote_id();
         log::info!(
             "Removing excerpt {}: {:?}",
             ix,
@@ -2167,6 +2155,13 @@ impl ReferenceMultibuffer {
                 .text_for_range(excerpt.range.to_offset(buffer))
                 .collect::<String>(),
         );
+        if !self
+            .excerpts
+            .iter()
+            .any(|excerpt| excerpt.buffer.read(cx).remote_id() == id)
+        {
+            self.diffs.remove(&id);
+        }
     }
 
     fn insert_excerpt_after(
@@ -2266,7 +2261,7 @@ impl ReferenceMultibuffer {
                 }
 
                 if !hunk.buffer_range.start.is_valid(&buffer) {
-                    log::trace!("skipping hunk with deleted start: {:?}", hunk.row_range);
+                    log::trace!("skipping hunk with deleted start: {:?}", hunk.range);
                     continue;
                 }
 
@@ -2415,6 +2410,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         .unwrap_or(10);
 
     let mut buffers: Vec<Entity<Buffer>> = Vec::new();
+    let mut base_texts: HashMap<BufferId, String> = HashMap::default();
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let mut reference = ReferenceMultibuffer::default();
     let mut anchors = Vec::new();
@@ -2522,9 +2518,10 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
 
                     log::info!(
-                        "expanding diff hunks in range {:?} (excerpt id {:?}) index {excerpt_ix:?})",
+                        "expanding diff hunks in range {:?} (excerpt id {:?}, index {excerpt_ix:?}, buffer id {:?})",
                         range.to_offset(&snapshot),
-                        excerpt.id
+                        excerpt.id,
+                        excerpt.buffer.read(cx).remote_id(),
                     );
                     reference.expand_diff_hunks(excerpt.id, start..end, cx);
                     multibuffer.expand_diff_hunks(vec![range], cx);
@@ -2534,7 +2531,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 multibuffer.update(cx, |multibuffer, cx| {
                     for buffer in multibuffer.all_buffers() {
                         let snapshot = buffer.read(cx).snapshot();
-                        let _ = multibuffer.diff_for(snapshot.remote_id()).unwrap().update(
+                        multibuffer.diff_for(snapshot.remote_id()).unwrap().update(
                             cx,
                             |diff, cx| {
                                 log::info!(
@@ -2551,17 +2548,16 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             }
             _ => {
                 let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
-                    let base_text = util::RandomCharIter::new(&mut rng)
+                    let mut base_text = util::RandomCharIter::new(&mut rng)
                         .take(256)
                         .collect::<String>();
 
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
-
-                    multibuffer.update(cx, |multibuffer, cx| {
-                        reference.add_diff(diff.clone(), cx);
-                        multibuffer.add_diff(diff, cx)
-                    });
+                    text::LineEnding::normalize(&mut base_text);
+                    base_texts.insert(
+                        buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                        base_text,
+                    );
                     buffers.push(buffer);
                     buffers.last().unwrap()
                 } else {
@@ -2593,6 +2589,18 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     );
 
                     (start_ix..end_ix, anchor_range)
+                });
+
+                multibuffer.update(cx, |multibuffer, cx| {
+                    let id = buffer_handle.read(cx).remote_id();
+                    if multibuffer.diff_for(id).is_none() {
+                        let base_text = base_texts.get(&id).unwrap();
+                        let diff = cx.new(|cx| {
+                            BufferDiff::new_with_base_text(base_text, &buffer_handle, cx)
+                        });
+                        reference.add_diff(diff.clone(), cx);
+                        multibuffer.add_diff(diff, cx)
+                    }
                 });
 
                 let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {

@@ -5,8 +5,8 @@ use assistant::AssistantPanel;
 use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
-    GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
-    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
+    GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
+    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
@@ -180,20 +180,10 @@ impl Render for QuickActionBar {
                             .action("Go to Line/Column", Box::new(ToggleGoToLine))
                             .separator()
                             .action("Next Problem", Box::new(GoToDiagnostic))
-                            .action("Previous Problem", Box::new(GoToPrevDiagnostic))
+                            .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
                             .separator()
-                            .action(
-                                "Next Hunk",
-                                Box::new(GoToHunk {
-                                    center_cursor: true,
-                                }),
-                            )
-                            .action(
-                                "Previous Hunk",
-                                Box::new(GoToPrevHunk {
-                                    center_cursor: true,
-                                }),
-                            )
+                            .action("Next Hunk", Box::new(GoToHunk))
+                            .action("Previous Hunk", Box::new(GoToPreviousHunk))
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))

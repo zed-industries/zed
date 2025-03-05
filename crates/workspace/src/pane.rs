@@ -1,7 +1,7 @@
 use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
+        ShowCloseButton, ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -172,7 +172,7 @@ impl_actions!(
 actions!(
     pane,
     [
-        ActivatePrevItem,
+        ActivatePreviousItem,
         ActivateNextItem,
         ActivateLastItem,
         AlternateFile,
@@ -2269,7 +2269,7 @@ impl Pane {
 
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
-        let always_show_close_button = settings.always_show_close_button;
+        let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
@@ -2373,18 +2373,21 @@ impl Pane {
                         close_pinned: false,
                     };
                     end_slot_tooltip_text = "Close Tab";
-                    IconButton::new("close tab", IconName::Close)
-                        .when(!always_show_close_button, |button| {
-                            button.visible_on_hover("")
-                        })
-                        .shape(IconButtonShape::Square)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
-                        .on_click(cx.listener(move |pane, _, window, cx| {
-                            pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                                .detach_and_log_err(cx);
-                        }))
+                    match show_close_button {
+                        ShowCloseButton::Always => IconButton::new("close tab", IconName::Close),
+                        ShowCloseButton::Hover => {
+                            IconButton::new("close tab", IconName::Close).visible_on_hover("")
+                        }
+                        ShowCloseButton::Hidden => return this,
+                    }
+                    .shape(IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::None)
+                    .icon_size(IconSize::XSmall)
+                    .on_click(cx.listener(move |pane, _, window, cx| {
+                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                            .detach_and_log_err(cx);
+                    }))
                 }
                 .map(|this| {
                     if is_active {
@@ -3200,7 +3203,7 @@ impl Render for Pane {
                 }),
             )
             .on_action(
-                cx.listener(|pane: &mut Pane, _: &ActivatePrevItem, window, cx| {
+                cx.listener(|pane: &mut Pane, _: &ActivatePreviousItem, window, cx| {
                     pane.activate_prev_item(true, window, cx);
                 }),
             )
@@ -3297,7 +3300,7 @@ impl Render for Pane {
                 pane.child(self.render_tab_bar(window, cx))
             })
             .child({
-                let has_worktrees = project.read(cx).worktrees(cx).next().is_some();
+                let has_worktrees = project.read(cx).visible_worktrees(cx).next().is_some();
                 // main content
                 div()
                     .flex_1()
