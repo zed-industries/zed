@@ -561,4 +561,41 @@ impl Operator {
             | Operator::ToggleComments => false,
         }
     }
+
+    pub fn starts_dot_recording(&self) -> bool {
+        match self {
+            Operator::Change
+            | Operator::Delete
+            | Operator::Replace
+            | Operator::Indent
+            | Operator::Outdent
+            | Operator::AutoIndent
+            | Operator::Lowercase
+            | Operator::Uppercase
+            | Operator::OppositeCase
+            | Operator::ToggleComments
+            | Operator::ReplaceWithRegister
+            | Operator::Rewrap
+            | Operator::ShellCommand
+            | Operator::AddSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None }
+            | Operator::DeleteSurrounds
+            | Operator::Exchange => true,
+            Operator::Yank
+            | Operator::Object { .. }
+            | Operator::FindForward { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Sneak { .. }
+            | Operator::SneakBackward { .. }
+            | Operator::Mark
+            | Operator::Digraph { .. }
+            | Operator::Literal { .. }
+            | Operator::AddSurrounds { .. }
+            | Operator::ChangeSurrounds { .. }
+            | Operator::Jump { .. }
+            | Operator::Register
+            | Operator::RecordRegister
+            | Operator::ReplayRegister => false,
+        }
+    }
 }
