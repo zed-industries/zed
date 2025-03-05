@@ -10,6 +10,7 @@ use gpui::{
     FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
     Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity,
 };
+use itertools::Itertools;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Entry, Metadata, Project};
 use schemars::JsonSchema;
@@ -1021,7 +1022,16 @@ fn possible_open_target(
     potential_paths.insert(0, original_path);
     potential_paths.insert(1, path_with_position);
 
-    for worktree in workspace.read(cx).worktrees(cx) {
+    for worktree in workspace.read(cx).worktrees(cx).sorted_by_key(|worktree| {
+        let worktree_root = worktree.read(cx).abs_path();
+        match cwd
+            .as_ref()
+            .and_then(|cwd| worktree_root.strip_prefix(cwd).ok())
+        {
+            Some(cwd_child) => cwd_child.components().count(),
+            None => usize::MAX,
+        }
+    }) {
         let worktree_root = worktree.read(cx).abs_path();
         let paths_to_check = potential_paths
             .iter()
@@ -1045,7 +1055,11 @@ fn possible_open_target(
                 .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
             {
                 return Task::ready(Some((
-                    path_in_worktree.clone(),
+                    PathWithPosition {
+                        path: worktree_root.join(&entry.path),
+                        row: path_in_worktree.row,
+                        column: path_in_worktree.column,
+                    },
                     OpenTarget::Worktree(entry.clone()),
                 )));
             }
