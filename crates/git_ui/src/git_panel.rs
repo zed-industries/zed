@@ -3327,6 +3327,11 @@ impl RenderOnce for PanelRepoFooter {
             .as_ref()
             .map(|panel| panel.read(cx).project.clone());
 
+        let repo = self
+            .git_panel
+            .as_ref()
+            .and_then(|panel| panel.read(cx).active_repository.clone());
+
         let single_repo = project
             .as_ref()
             .map(|project| project.read(cx).all_repositories(cx).len() == 1)
@@ -3366,7 +3371,7 @@ impl RenderOnce for PanelRepoFooter {
             });
 
         let branch_selector = PopoverMenu::new("popover-button")
-            .menu(move |window, cx| Some(branch_picker::popover(project.clone()?, window, cx)))
+            .menu(move |window, cx| Some(branch_picker::popover(repo.clone(), window, cx)))
             .trigger_with_tooltip(
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),

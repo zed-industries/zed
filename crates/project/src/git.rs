@@ -96,6 +96,9 @@ impl GitStore {
 
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
+        client.add_entity_request_handler(Self::handle_get_branches);
+        client.add_entity_request_handler(Self::handle_change_branch);
+        client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
         client.add_entity_request_handler(Self::handle_fetch);
@@ -457,6 +460,67 @@ impl GitStore {
                 })
                 .collect::<Vec<_>>(),
         })
+    }
+
+    async fn handle_get_branches(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitGetBranches>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitBranchesResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let branches = repository_handle
+            .update(&mut cx, |repository_handle, _| repository_handle.branches())?
+            .await??;
+
+        Ok(proto::GitBranchesResponse {
+            branches: branches
+                .into_iter()
+                .map(|branch| worktree::branch_to_proto(&branch))
+                .collect::<Vec<_>>(),
+        })
+    }
+    async fn handle_create_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let branch_name = envelope.payload.branch_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_change_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitChangeBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let branch_name = envelope.payload.branch_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.change_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_show(
@@ -1275,6 +1339,86 @@ impl Repository {
                         .collect();
 
                     Ok(remotes)
+                }
+            }
+        })
+    }
+
+    pub fn branches(&self) -> oneshot::Receiver<Result<Vec<Branch>>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.branches(),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    let response = client
+                        .request(proto::GitGetBranches {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                        })
+                        .await?;
+
+                    let branches = response
+                        .branches
+                        .into_iter()
+                        .map(|branch| worktree::proto_to_branch(&branch))
+                        .collect();
+
+                    Ok(branches)
+                }
+            }
+        })
+    }
+
+    pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.create_branch(&branch_name),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    client
+                        .request(proto::GitCreateBranch {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            branch_name,
+                        })
+                        .await?;
+
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.change_branch(&branch_name),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    client
+                        .request(proto::GitChangeBranch {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            branch_name,
+                        })
+                        .await?;
+
+                    Ok(())
                 }
             }
         })

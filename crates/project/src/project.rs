@@ -48,7 +48,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{
     blame::Blame,
-    repository::{Branch, GitRepository, RepoPath},
+    repository::{GitRepository, RepoPath},
     status::FileStatus,
 };
 use gpui::{
@@ -3703,21 +3703,6 @@ impl Project {
         let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
         let root_entry = worktree.root_git_entry()?;
         worktree.get_local_repo(&root_entry)?.repo().clone().into()
-    }
-
-    pub fn branches(&self, project_path: ProjectPath, cx: &App) -> Task<Result<Vec<Branch>>> {
-        self.worktree_store().read(cx).branches(project_path, cx)
-    }
-
-    pub fn update_or_create_branch(
-        &self,
-        repository: ProjectPath,
-        new_branch: String,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        self.worktree_store()
-            .read(cx)
-            .update_or_create_branch(repository, new_branch, cx)
     }
 
     pub fn blame_buffer(
