@@ -252,23 +252,6 @@ impl ContextEditor {
             cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
         ];
 
-        let language_model_selector = cx.new({
-            let fs = fs.clone();
-            |cx| {
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    window,
-                    cx,
-                )
-            }
-        });
-
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
@@ -281,7 +264,7 @@ impl ContextEditor {
             image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
-            fs,
+            fs: fs.clone(),
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
@@ -293,7 +276,19 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
-            language_model_selector,
+            language_model_selector: cx.new(|cx| {
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }),
             language_model_selector_menu_handle: PopoverMenuHandle::default(),
         };
         this.update_message_headers(cx);
