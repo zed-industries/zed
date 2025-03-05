@@ -17002,13 +17002,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_deno"
-version = "0.1.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_elixir"
 version = "0.1.4"
 dependencies = [
