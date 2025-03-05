@@ -72,6 +72,7 @@ pub enum GitEvent {
     ActiveRepositoryChanged,
     FileSystemUpdated,
     GitStateUpdated,
+    IndexWriteError(anyhow::Error),
 }
 
 struct GitJob {
@@ -247,22 +248,38 @@ impl GitStore {
         cx: &mut Context<'_, Self>,
     ) {
         if let BufferStoreEvent::BufferDiffAdded(diff) = event {
-            cx.subscribe(diff, |this, diff, event, cx| {
-                if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
-                    let buffer_id = diff.read(cx).buffer_id;
-                    if let Some((repo, path)) =
-                        this.repository_and_path_for_buffer_id(buffer_id, cx)
+            cx.subscribe(diff, Self::on_buffer_diff_event).detach();
+        }
+    }
+
+    fn on_buffer_diff_event(
+        this: &mut GitStore,
+        diff: Entity<buffer_diff::BufferDiff>,
+        event: &BufferDiffEvent,
+        cx: &mut Context<'_, GitStore>,
+    ) {
+        if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
+            let buffer_id = diff.read(cx).buffer_id;
+            if let Some((repo, path)) = this.repository_and_path_for_buffer_id(buffer_id, cx) {
+                let recv = repo
+                    .read(cx)
+                    .set_index_text(&path, new_index_text.as_ref().map(|rope| rope.to_string()));
+                let diff = diff.downgrade();
+                cx.spawn(|this, mut cx| async move {
+                    if let Some(result) = cx.background_spawn(async move { recv.await.ok() }).await
                     {
-                        let recv = repo.read(cx).set_index_text(
-                            &path,
-                            new_index_text.as_ref().map(|rope| rope.to_string()),
-                        );
-                        cx.background_spawn(async move { recv.await? })
-                            .detach_and_log_err(cx);
+                        if let Err(error) = result {
+                            diff.update(&mut cx, |diff, cx| {
+                                diff.clear_pending_hunks(cx);
+                            })
+                            .ok();
+                            this.update(&mut cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
+                                .ok();
+                        }
                     }
-                }
-            })
-            .detach();
+                })
+                .detach();
+            }
         }
     }
 
