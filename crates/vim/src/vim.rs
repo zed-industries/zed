@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
@@ -980,7 +980,7 @@ impl Vim {
         count
     }
 
-    pub fn cursor_shape(&self) -> CursorShape {
+    pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
         match self.mode {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1006,7 +1006,10 @@ impl Vim {
             Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 CursorShape::Block
             }
-            Mode::Insert => CursorShape::Bar,
+            Mode::Insert => {
+                let editor_settings = EditorSettings::get_global(cx);
+                editor_settings.cursor_shape.unwrap_or_default()
+            }
         }
     }
 
@@ -1145,7 +1148,7 @@ impl Vim {
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
         self.update_editor(window, cx, |vim, editor, _, cx| {
-            if vim.cursor_shape() == CursorShape::Block {
+            if vim.cursor_shape(cx) == CursorShape::Block {
                 editor.set_cursor_shape(CursorShape::Hollow, cx);
             }
         });
@@ -1153,7 +1156,7 @@ impl Vim {
 
     fn cursor_shape_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |vim, editor, _, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), cx);
+            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
         });
     }
 
@@ -1618,7 +1621,7 @@ impl Vim {
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), cx);
+            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());
