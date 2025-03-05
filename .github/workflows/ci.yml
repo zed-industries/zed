@@ -242,6 +242,18 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-2
     steps:
+      # Temporarily Collect some metadata about the hardware behind our runners.
+      - name: GHA Runner Info
+        run: |
+          Invoke-RestMethod -Headers @{"Metadata"="true"} -Method GET -Uri "http://169.254.169.254/metadata/instance/compute?api-version=2023-07-01" |
+            ConvertTo-Json -Depth 10 |
+            jq "{ vm_size: .vmSize, location: .location, os_disk_gb: (.storageProfile.osDisk.diskSizeGB | tonumber), rs_disk_gb: (.storageProfile.resourceDisk.size | tonumber / 1024) }"
+          @{
+              Cores = (Get-CimInstance Win32_Processor).NumberOfCores
+              vCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+              RamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
+              cpuid = (Get-CimInstance Win32_Processor).Name.Trim()
+          } | ConvertTo-Json
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
         run: git config --system core.longpaths true
