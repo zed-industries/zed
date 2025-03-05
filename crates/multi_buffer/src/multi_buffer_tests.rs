@@ -440,23 +440,14 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
         vec![1..3, 4..6, 7..8]
     );
 
+    assert_eq!(snapshot.diff_hunk_before(Point::new(1, 1)), None,);
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(1, 1))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        None,
+        snapshot.diff_hunk_before(Point::new(7, 0)),
+        Some(MultiBufferRow(4))
     );
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(7, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(4..6)
-    );
-    assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(4, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(1..3)
+        snapshot.diff_hunk_before(Point::new(4, 0)),
+        Some(MultiBufferRow(1))
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
@@ -478,16 +469,12 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(2, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(1..1),
+        snapshot.diff_hunk_before(Point::new(2, 0)),
+        Some(MultiBufferRow(1)),
     );
     assert_eq!(
-        snapshot
-            .diff_hunk_before(Point::new(4, 0))
-            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(2..2)
+        snapshot.diff_hunk_before(Point::new(4, 0)),
+        Some(MultiBufferRow(2))
     );
 }
 
