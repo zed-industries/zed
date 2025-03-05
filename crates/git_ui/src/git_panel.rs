@@ -1412,18 +1412,16 @@ index 1234567..abcdef0 100644
                 let stream = model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
 
-                let mut commit_message = String::new();
                 while let Some(message) = messages.stream.next().await {
                     let text = message?;
-                    commit_message.push_str(&text);
-                }
 
-                this.update(&mut cx, |this, cx| {
-                    if !commit_message.is_empty() {
-                        this.commit_message_buffer(cx)
-                            .update(cx, |buffer, cx| buffer.set_text(commit_message, cx));
-                    }
-                })?;
+                    this.update(&mut cx, |this, cx| {
+                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                            let insert_position = buffer.anchor_before(buffer.len());
+                            buffer.edit([(insert_position..insert_position, text)], None, cx);
+                        });
+                    })?;
+                }
 
                 anyhow::Ok(())
             }
