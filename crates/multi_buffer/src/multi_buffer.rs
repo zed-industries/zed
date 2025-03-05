@@ -2045,6 +2045,7 @@ impl MultiBuffer {
             .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
         let mut edits = Vec::new();
         let mut excerpt_ids = ids.iter().copied().peekable();
+        let mut removed_buffer_ids = Vec::new();
 
         while let Some(excerpt_id) = excerpt_ids.next() {
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
@@ -2067,7 +2068,7 @@ impl MultiBuffer {
                                 excerpt.buffer_id
                             );
                             buffers.remove(&excerpt.buffer_id);
-                            self.diffs.remove(&excerpt.buffer_id);
+                            removed_buffer_ids.push(excerpt.buffer_id);
                         }
                     }
                     cursor.next(&());
@@ -2108,6 +2109,10 @@ impl MultiBuffer {
         new_excerpts.append(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
+        for buffer_id in removed_buffer_ids {
+            self.diffs.remove(&buffer_id);
+            snapshot.diffs.remove(&buffer_id);
+        }
 
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
@@ -2741,9 +2746,10 @@ impl MultiBuffer {
         snapshot.has_deleted_file = has_deleted_file;
         snapshot.has_conflict = has_conflict;
 
-        snapshot.diffs.retain(|_, _| false);
         for (id, diff) in self.diffs.iter() {
-            snapshot.diffs.insert(*id, diff.diff.read(cx).snapshot(cx));
+            if snapshot.diffs.get(&id).is_none() {
+                snapshot.diffs.insert(*id, diff.diff.read(cx).snapshot(cx));
+            }
         }
 
         excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
