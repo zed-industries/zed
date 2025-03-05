@@ -1344,10 +1344,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     // Give the worktree a bit of time to index the file system
     cx.run_until_parked();
 
-    let remote_branches = project
-        .update(cx, |project, cx| {
-            project.active_repository(cx).unwrap().read(cx).branches()
-        })
+    let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
+
+    let remote_branches = repository
+        .update(cx, |repository, _| repository.branches())
         .await
         .unwrap()
         .unwrap();
@@ -1361,13 +1361,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     assert_eq!(&remote_branches, &branches_set);
 
-    cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
-        })
-    })
-    .await
-    .unwrap();
+    cx.update(|cx| repository.read(cx).change_branch(new_branch.to_string()))
+        .await
+        .unwrap()
+        .unwrap();
 
     cx.run_until_parked();
 
@@ -1387,11 +1384,12 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     // Also try creating a new branch
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
-        })
+        repository
+            .read(cx)
+            .change_branch("totally-new-branch".to_string())
     })
     .await
+    .unwrap()
     .unwrap();
 
     cx.run_until_parked();

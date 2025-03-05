@@ -271,6 +271,7 @@ async fn test_ssh_collaboration_git_branches(
 
     // User B joins the project.
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
 
     // Give client A sometime to see that B has joined, and that the headless server
     // has some git repositories
@@ -279,8 +280,9 @@ async fn test_ssh_collaboration_git_branches(
     let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
-        .update(|cx| project_b.update(cx, |project, cx| project.branches(root_path.clone(), cx)))
+        .update(|cx| repo_b.read(cx).branches())
         .await
+        .unwrap()
         .unwrap();
 
     let new_branch = branches[2];
@@ -292,13 +294,10 @@ async fn test_ssh_collaboration_git_branches(
 
     assert_eq!(&branches_b, &branches_set);
 
-    cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
-        })
-    })
-    .await
-    .unwrap();
+    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
+        .await
+        .unwrap()
+        .unwrap();
 
     executor.run_until_parked();
 
@@ -318,11 +317,12 @@ async fn test_ssh_collaboration_git_branches(
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
-        })
+        repo_b
+            .read(cx)
+            .create_branch("totally-new-branch".to_string())
     })
     .await
+    .unwrap()
     .unwrap();
 
     executor.run_until_parked();

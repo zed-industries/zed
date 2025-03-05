@@ -80,7 +80,6 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_delete_project_entry);
         client.add_entity_request_handler(Self::handle_expand_project_entry);
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
-        client.add_entity_request_handler(Self::handle_update_branch);
     }
 
     pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
@@ -981,30 +980,6 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
-    }
-
-    pub async fn handle_update_branch(
-        this: Entity<Self>,
-        update_branch: TypedEnvelope<proto::UpdateGitBranch>,
-        cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let project_path = update_branch
-            .payload
-            .repository
-            .clone()
-            .context("Invalid GitBranches call")?;
-        let project_path = ProjectPath {
-            worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Arc::<Path>::from_proto(project_path.path),
-        };
-        let new_branch = update_branch.payload.branch_name;
-
-        this.read_with(&cx, |this, cx| {
-            this.update_or_create_branch(project_path, new_branch, cx)
-        })?
-        .await?;
-
-        Ok(proto::Ack {})
     }
 }
 

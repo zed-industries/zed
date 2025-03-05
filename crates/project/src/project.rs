@@ -3705,17 +3705,6 @@ impl Project {
         worktree.get_local_repo(&root_entry)?.repo().clone().into()
     }
 
-    pub fn update_or_create_branch(
-        &self,
-        repository: ProjectPath,
-        new_branch: String,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        self.worktree_store()
-            .read(cx)
-            .update_or_create_branch(repository, new_branch, cx)
-    }
-
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,

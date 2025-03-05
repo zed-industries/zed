@@ -97,6 +97,8 @@ impl GitStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
         client.add_entity_request_handler(Self::handle_get_branches);
+        client.add_entity_request_handler(Self::handle_change_branch);
+        client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
         client.add_entity_request_handler(Self::handle_fetch);
@@ -480,6 +482,45 @@ impl GitStore {
                 .map(|branch| worktree::branch_to_proto(&branch))
                 .collect::<Vec<_>>(),
         })
+    }
+    async fn handle_create_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let branch_name = envelope.payload.branch_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_change_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitChangeBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let branch_name = envelope.payload.branch_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.change_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_show(
@@ -1333,23 +1374,17 @@ impl Repository {
         })
     }
 
-    pub fn create_branch(&self, branch_name: String, cx: &App) -> oneshot::Receiver<Result<()>> {
+    pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         self.send_job(|repo| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
-                    if !git_repository.branch_exits(&new_branch)? {
-                        git_repository.create_branch(&new_branch)?;
-                    }
-
-                    git_repository.change_branch(&new_branch)?;
-                }
+                GitRepo::Local(git_repository) => git_repository.create_branch(&branch_name),
                 GitRepo::Remote {
                     project_id,
                     client,
                     worktree_id,
                     work_directory_id,
                 } => {
-                    let response = client
+                    client
                         .request(proto::GitCreateBranch {
                             project_id: project_id.0,
                             worktree_id: worktree_id.to_proto(),
@@ -1364,12 +1399,10 @@ impl Repository {
         })
     }
 
-    pub fn change_branch(&self, branch_name: String, cx: &App) -> oneshot::Receiver<Result<()>> {
+    pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         self.send_job(|repo| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
-                    git_repository.change_branch(&new_branch)?;
-                }
+                GitRepo::Local(git_repository) => git_repository.change_branch(&branch_name),
                 GitRepo::Remote {
                     project_id,
                     client,
@@ -1383,7 +1416,9 @@ impl Repository {
                             work_directory_id: work_directory_id.to_proto(),
                             branch_name,
                         })
-                        .await?
+                        .await?;
+
+                    Ok(())
                 }
             }
         })
