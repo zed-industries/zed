@@ -454,6 +454,8 @@ messages!(
     (RemoteMessageResponse, Background),
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
+    (CheckForPushedCommits, Background),
+    (CheckForPushedCommitsResponse, Background),
 );
 
 request_messages!(
@@ -598,6 +600,7 @@ request_messages!(
     (Pull, RemoteMessageResponse),
     (GitCreateBranch, Ack),
     (GitChangeBranch, Ack),
+    (CheckForPushedCommits, CheckForPushedCommitsResponse),
 );
 
 entity_messages!(
@@ -701,6 +704,7 @@ entity_messages!(
     Pull,
     GitChangeBranch,
     GitCreateBranch,
+    CheckForPushedCommits,
 );
 
 entity_messages!(
