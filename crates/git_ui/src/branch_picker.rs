@@ -8,6 +8,7 @@ use gpui::{
     Task, Window,
 };
 use picker::{Picker, PickerDelegate};
+use project::git::Repository;
 use project::{Project, ProjectPath};
 use std::sync::Arc;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle};
@@ -58,22 +59,17 @@ pub struct BranchList {
 
 impl BranchList {
     fn new(
-        project_handle: Entity<Project>,
+        repo: Entity<Repository>,
         style: BranchListStyle,
         rem_width: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let popover_handle = PopoverMenuHandle::default();
-        let project = project_handle.read(cx);
-        let all_branches_request = project
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| project.branches(ProjectPath::root_path(worktree.read(cx).id()), cx))
-            .context("No worktrees found");
+        let all_branches_request = repo.read(cx).branches();
 
         cx.spawn_in(window, |this, mut cx| async move {
-            let all_branches = all_branches_request?.await?;
+            let all_branches = all_branches_request.await?;
 
             this.update_in(&mut cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
@@ -86,7 +82,7 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = BranchListDelegate::new(project_handle.clone(), style, 20);
+        let delegate = BranchListDelegate::new(repo.clone(), style, 20);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
@@ -145,7 +141,7 @@ impl BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Option<Vec<Branch>>,
-    project: Entity<Project>,
+    repo: Entity<Repository>,
     style: BranchListStyle,
     selected_index: usize,
     last_query: String,
@@ -155,13 +151,13 @@ pub struct BranchListDelegate {
 
 impl BranchListDelegate {
     fn new(
-        project: Entity<Project>,
+        repo: Entity<Repository>,
         style: BranchListStyle,
         branch_name_trailoff_after: usize,
     ) -> Self {
         Self {
             matches: vec![],
-            project,
+            repo,
             style,
             all_branches: None,
             selected_index: 0,
@@ -280,14 +276,11 @@ impl PickerDelegate for BranchListDelegate {
             return;
         };
 
-        let current_branch = self.project.update(cx, |project, cx| {
-            project
-                .active_repository(cx)
-                .and_then(|repo| repo.read(cx).current_branch())
-                .map(|branch| branch.name.to_string())
+        let current_branch = self.repo.update(cx, |repo, cx| {
+            repo.current_branch().map(|branch| branch.name.clone())
         });
 
-        if current_branch == Some(branch.name().to_string()) {
+        if current_branch == Some(branch.name()) {
             cx.emit(DismissEvent);
             return;
         }
@@ -296,7 +289,7 @@ impl PickerDelegate for BranchListDelegate {
             let branch = branch.clone();
             |picker, mut cx| async move {
                 let branch_change_task = picker.update(&mut cx, |this, cx| {
-                    let project = this.delegate.project.read(cx);
+                    let project = this.delegate.repo.read(cx);
                     let branch_to_checkout = match branch {
                         BranchEntry::Branch(branch) => branch.string,
                         BranchEntry::History(string) => string,

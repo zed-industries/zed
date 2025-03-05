@@ -96,6 +96,7 @@ impl GitStore {
 
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
+        client.add_entity_request_handler(Self::handle_get_branches);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
         client.add_entity_request_handler(Self::handle_fetch);
@@ -455,6 +456,28 @@ impl GitStore {
                 .map(|remotes| proto::get_remotes_response::Remote {
                     name: remotes.name.to_string(),
                 })
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    async fn handle_get_branches(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitGetBranches>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitBranchesResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let branches = repository_handle
+            .update(&mut cx, |repository_handle, _| repository_handle.branches())?
+            .await??;
+
+        Ok(proto::GitBranchesResponse {
+            branches: branches
+                .into_iter()
+                .map(|branch| worktree::branch_to_proto(&branch))
                 .collect::<Vec<_>>(),
         })
     }
@@ -1275,6 +1298,92 @@ impl Repository {
                         .collect();
 
                     Ok(remotes)
+                }
+            }
+        })
+    }
+
+    pub fn branches(&self) -> oneshot::Receiver<Result<Vec<Branch>>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.branches(),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    let response = client
+                        .request(proto::GitGetBranches {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                        })
+                        .await?;
+
+                    let branches = response
+                        .branches
+                        .into_iter()
+                        .map(|branch| worktree::proto_to_branch(&branch))
+                        .collect();
+
+                    Ok(branches)
+                }
+            }
+        })
+    }
+
+    pub fn create_branch(&self, branch_name: String, cx: &App) -> oneshot::Receiver<Result<()>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => {
+                    if !git_repository.branch_exits(&new_branch)? {
+                        git_repository.create_branch(&new_branch)?;
+                    }
+
+                    git_repository.change_branch(&new_branch)?;
+                }
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    let response = client
+                        .request(proto::GitCreateBranch {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            branch_name,
+                        })
+                        .await?;
+
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    pub fn change_branch(&self, branch_name: String, cx: &App) -> oneshot::Receiver<Result<()>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => {
+                    git_repository.change_branch(&new_branch)?;
+                }
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    client
+                        .request(proto::GitChangeBranch {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            branch_name,
+                        })
+                        .await?
                 }
             }
         })

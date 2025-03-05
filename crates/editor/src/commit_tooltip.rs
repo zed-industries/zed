@@ -7,10 +7,10 @@ use gpui::{
 };
 use markdown::Markdown;
 use settings::Settings;
+use time_format::format_local_timestamp;
 use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use time_format::format_local_timestamp;
 use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
 use url::Url;
 

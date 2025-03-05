@@ -1345,8 +1345,11 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     let remote_branches = project
-        .update(cx, |project, cx| project.branches(root_path.clone(), cx))
+        .update(cx, |project, cx| {
+            project.active_repository(cx).unwrap().read(cx).branches()
+        })
         .await
+        .unwrap()
         .unwrap();
 
     let new_branch = branches[2];

@@ -1,3 +1,4 @@
+
 syntax = "proto3";
 package zed.messages;
 
@@ -278,7 +279,6 @@ message Envelope {
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
 
-        GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
         UpdateGitBranch update_git_branch = 272;
@@ -332,7 +332,10 @@ message Envelope {
         ApplyCodeActionKind apply_code_action_kind = 309;
         ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
 
-        RemoteMessageResponse remote_message_response = 311; // current max
+        RemoteMessageResponse remote_message_response = 311;
+        GitGetBranches git_get_branches = 312;
+        GitCreateBranch git_create_branch = 313;
+        GitChangeBranch git_change_branch = 314; // current max
     }
 
     reserved 87 to 88;
@@ -348,6 +351,7 @@ message Envelope {
     reserved 221;
     reserved 224 to 229;
     reserved 246;
+    reserved 270;
     reserved 247 to 254;
     reserved 255 to 256;
 }
@@ -2850,4 +2854,24 @@ message Pull {
 message RemoteMessageResponse {
     string stdout = 1;
     string stderr = 2;
+}
+
+message GitGetBranches {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message GitCreateBranch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string branch_name = 4;
+}
+
+message GitChangeBranch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string branch_name = 4;
 }
