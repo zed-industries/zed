@@ -1386,6 +1386,15 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.update(|cx| {
         repository
             .read(cx)
+            .create_branch("totally-new-branch".to_string())
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    cx.update(|cx| {
+        repository
+            .read(cx)
             .change_branch("totally-new-branch".to_string())
     })
     .await

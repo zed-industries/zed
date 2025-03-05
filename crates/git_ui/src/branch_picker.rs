@@ -306,22 +306,31 @@ impl PickerDelegate for BranchListDelegate {
                         .repo
                         .as_ref()
                         .ok_or_else(|| anyhow!("No active repository"))?
-                        .read(cx);
-                    match branch {
-                        BranchEntry::Branch(StringMatch {
-                            string: branch_name,
-                            ..
-                        })
-                        | BranchEntry::History(branch_name) => {
-                            anyhow::Ok(repo.change_branch(branch_name))
+                        .clone();
+
+                    let cx = cx.to_async();
+
+                    anyhow::Ok(async move {
+                        match branch {
+                            BranchEntry::Branch(StringMatch {
+                                string: branch_name,
+                                ..
+                            })
+                            | BranchEntry::History(branch_name) => {
+                                cx.update(|cx| repo.read(cx).change_branch(branch_name))?
+                                    .await?
+                            }
+                            BranchEntry::NewBranch { name: branch_name } => {
+                                cx.update(|cx| repo.read(cx).create_branch(branch_name.clone()))?
+                                    .await??;
+                                cx.update(|cx| repo.read(cx).change_branch(branch_name))?
+                                    .await?
+                            }
                         }
-                        BranchEntry::NewBranch { name: branch_name } => {
-                            anyhow::Ok(repo.create_branch(branch_name))
-                        }
-                    }
+                    })
                 })??;
 
-                branch_change_task.await??;
+                branch_change_task.await?;
 
                 picker.update(&mut cx, |_, cx| {
                     cx.emit(DismissEvent);

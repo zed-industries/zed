@@ -271,12 +271,12 @@ async fn test_ssh_collaboration_git_branches(
 
     // User B joins the project.
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
-    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
 
     // Give client A sometime to see that B has joined, and that the headless server
     // has some git repositories
     executor.run_until_parked();
 
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
     let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
@@ -320,6 +320,15 @@ async fn test_ssh_collaboration_git_branches(
         repo_b
             .read(cx)
             .create_branch("totally-new-branch".to_string())
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    cx_b.update(|cx| {
+        repo_b
+            .read(cx)
+            .change_branch("totally-new-branch".to_string())
     })
     .await
     .unwrap()
