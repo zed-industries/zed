@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -12,6 +13,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason,
 };
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
@@ -195,6 +197,10 @@ impl Thread {
 
     pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
         self.tool_use.tool_uses_for_message(id)
+    }
+
+    pub fn fs_changes(&self) -> Arc<Mutex<HashMap<PathBuf, Vec<u8>>>> {
+        self.tool_use.fs_changes()
     }
 
     pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
