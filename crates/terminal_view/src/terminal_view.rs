@@ -22,8 +22,8 @@ use terminal::{
     },
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
-    ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
-    TerminalBounds, ToggleViMode,
+    ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState, TaskStatus,
+    Terminal, TerminalBounds, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
@@ -807,6 +807,33 @@ impl TerminalView {
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
     }
+
+    fn rerun_button(task: &TaskState) -> Option<IconButton> {
+        if !task.show_rerun {
+            return None;
+        }
+
+        let task_id = task.id.clone();
+        Some(
+            IconButton::new("rerun-icon", IconName::Rerun)
+                .icon_size(IconSize::Small)
+                .size(ButtonSize::Compact)
+                .icon_color(Color::Default)
+                .shape(ui::IconButtonShape::Square)
+                .tooltip(Tooltip::text("Rerun task"))
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::Rerun {
+                            task_id: Some(task_id.0.clone()),
+                            allow_concurrent_runs: Some(true),
+                            use_new_terminal: Some(false),
+                            reevaluate_context: false,
+                        }),
+                        cx,
+                    );
+                }),
+        )
+    }
 }
 
 fn subscribe_for_terminal_events(
@@ -1220,44 +1247,26 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let rerun_button = |task_id: task::TaskId| {
-            IconButton::new("rerun-icon", IconName::Rerun)
-                .icon_size(IconSize::Small)
-                .size(ButtonSize::Compact)
-                .icon_color(Color::Default)
-                .shape(ui::IconButtonShape::Square)
-                .tooltip(Tooltip::text("Rerun task"))
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(
-                        Box::new(zed_actions::Rerun {
-                            task_id: Some(task_id.0.clone()),
-                            allow_concurrent_runs: Some(true),
-                            use_new_terminal: Some(false),
-                            reevaluate_context: false,
-                        }),
-                        cx,
-                    );
-                })
-        };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
                     IconName::Play,
                     Color::Disabled,
-                    Some(rerun_button(terminal_task.id.clone())),
+                    TerminalView::rerun_button(&terminal_task),
                 ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
-                    Some(rerun_button(terminal_task.id.clone())),
+                    TerminalView::rerun_button(&terminal_task),
                 ),
                 TaskStatus::Completed { success } => {
-                    let rerun_button = rerun_button(terminal_task.id.clone());
+                    let rerun_button = TerminalView::rerun_button(&terminal_task);
+
                     if *success {
-                        (IconName::Check, Color::Success, Some(rerun_button))
+                        (IconName::Check, Color::Success, rerun_button)
                     } else {
-                        (IconName::XCircle, Color::Error, Some(rerun_button))
+                        (IconName::XCircle, Color::Error, rerun_button)
                     }
                 }
             },
