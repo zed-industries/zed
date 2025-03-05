@@ -566,7 +566,6 @@ impl CompletionsQuery {
 }
 
 pub enum SessionEvent {
-    Invalidate,
     Modules,
     LoadedSources,
     Stopped,
@@ -1357,7 +1356,7 @@ impl Session {
                             stack_frame.scopes = scopes.clone();
                         });
 
-                    cx.emit(SessionEvent::Invalidate);
+                    cx.emit(SessionEvent::Variables);
 
                     debug_assert!(
                         matches!(entry, indexmap::map::Entry::Occupied(_)),

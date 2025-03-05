@@ -69,7 +69,7 @@ impl StackFrameList {
                 SessionEvent::Stopped => {
                     this.build_entries(true, window, cx);
                 }
-                SessionEvent::Invalidate | SessionEvent::StackTrace => {
+                SessionEvent::StackTrace => {
                     this.build_entries(this.entries.is_empty(), window, cx);
                 }
                 _ => {}

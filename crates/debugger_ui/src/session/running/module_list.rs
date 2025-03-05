@@ -29,7 +29,7 @@ impl ModuleList {
         );
 
         let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::Invalidate | SessionEvent::Stopped | SessionEvent::Modules => {
+            SessionEvent::Stopped | SessionEvent::Modules => {
                 this.invalidate = true;
                 cx.notify();
             }

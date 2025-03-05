@@ -31,7 +31,7 @@ impl LoadedSourceList {
         );
 
         let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::Invalidate | SessionEvent::Stopped | SessionEvent::LoadedSources => {
+            SessionEvent::Stopped | SessionEvent::LoadedSources => {
                 this.invalidate = true;
                 cx.notify();
             }
