@@ -303,7 +303,7 @@ jobs:
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Tests
-    if: (github.repository_owner == 'zed-industries' && (github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'windows'))
+    if: ${{ github.repository_owner == 'zed-industries' && (github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'windows')) }}
     runs-on: hosted-windows-2
     steps:
       # Temporarily Collect some metadata about the hardware behind our runners.
