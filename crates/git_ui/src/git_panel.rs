@@ -1364,22 +1364,7 @@ impl GitPanel {
             return;
         }
 
-        const PROMPT: &str = r#"You an expert at writing Git commits. Your job is to write a clear commit message that summarizes the changes.
-
-Only return the commit message in your response. Do not include any additional meta-commentary about the task.
-
-Follow good Git style:
-
-- Separate the subject from the body with a blank line
-- Try to limit the subject line to 50 characters
-- Capitalize the subject line
-- Do not end the subject line with a period
-- Use the imperative mood in the subject line
-- Wrap the body at 72 characters
-- Use the body to explain *what* and *why* vs. how
-
-Here are the changes in this commit:
-        "#;
+        const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
         // Example diff:
         let diff_text = "diff --git a/src/main.rs b/src/main.rs
