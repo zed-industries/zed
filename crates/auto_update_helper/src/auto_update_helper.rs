@@ -1,4 +1,8 @@
-use std::{fmt::Debug, fs::File, path::Path};
+use std::{
+    fmt::Debug,
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -51,8 +55,8 @@ fn write_to_log_file(log: &mut File, message: impl Debug) {
 
 #[derive(Debug, PartialEq, Eq)]
 enum UpdateStatus {
-    RemoveOld,
-    CopyNew,
+    RemoveOld(Vec<PathBuf>),
+    CopyNew(Vec<(PathBuf, PathBuf)>),
     DeleteInstall,
     DeleteUpdates,
     Done,
@@ -61,33 +65,83 @@ enum UpdateStatus {
 fn update(log: &mut File, app_dir: &Path) -> Result<()> {
     let install_dir = app_dir.join("install");
     let update_dir = app_dir.join("updates");
-    let zed_exe = app_dir.join("Zed.exe");
 
     let start = std::time::Instant::now();
-    let mut status = UpdateStatus::RemoveOld;
+    let mut status =
+        UpdateStatus::RemoveOld(vec![app_dir.join("Zed.exe"), app_dir.join("bin\\zed.exe")]);
     while start.elapsed().as_secs() < 10 {
         match status {
-            UpdateStatus::RemoveOld => {
-                if zed_exe.exists() {
-                    let result = std::fs::remove_file(&zed_exe);
-                    if let Err(error) = result {
-                        write_to_log_file(log, format!("Failed to remove Zed.exe: {:?}", error));
-                        continue;
+            UpdateStatus::RemoveOld(old_files) => {
+                let mut sccess = Vec::with_capacity(old_files.len());
+                for old_file in old_files.iter() {
+                    if old_file.exists() {
+                        let result = std::fs::remove_file(&old_file);
+                        if let Err(error) = result {
+                            write_to_log_file(
+                                log,
+                                format!(
+                                    "Failed to remove old file {}: {:?}",
+                                    old_file.display(),
+                                    error
+                                ),
+                            );
+                        } else {
+                            sccess.push(old_file);
+                        }
+                    } else {
+                        sccess.push(old_file);
                     }
                 }
-                status = UpdateStatus::CopyNew;
+                let left_old_files = old_files
+                    .iter()
+                    .filter(|old_file| !sccess.contains(old_file))
+                    .map(|old_file| old_file.clone())
+                    .collect::<Vec<_>>();
+                if left_old_files.is_empty() {
+                    status = UpdateStatus::CopyNew(vec![
+                        (install_dir.join("Zed.exe"), app_dir.join("Zed.exe")),
+                        (
+                            install_dir.join("bin\\zed.exe"),
+                            app_dir.join("bin\\zed.exe"),
+                        ),
+                    ]);
+                } else {
+                    status = UpdateStatus::RemoveOld(left_old_files);
+                }
             }
-            UpdateStatus::CopyNew => {
-                let new_exe = install_dir.join("Zed.exe");
-                if !new_exe.exists() {
-                    return Err(anyhow::anyhow!("New Zed.exe does not exist"));
+            UpdateStatus::CopyNew(new_files) => {
+                let mut sccess = Vec::with_capacity(new_files.len());
+                for (new_file, old_file) in new_files.iter() {
+                    if new_file.exists() {
+                        let result = std::fs::copy(&new_file, &old_file);
+                        if let Err(error) = result {
+                            write_to_log_file(
+                                log,
+                                format!(
+                                    "Failed to copy new file {} to {}: {:?}",
+                                    new_file.display(),
+                                    old_file.display(),
+                                    error
+                                ),
+                            );
+                        } else {
+                            sccess.push((new_file, old_file));
+                        }
+                    } else {
+                        sccess.push((new_file, old_file));
+                    }
                 }
-                let result = std::fs::copy(new_exe, &zed_exe);
-                if let Err(error) = result {
-                    write_to_log_file(log, format!("Failed to copy new Zed.exe: {:?}", error));
-                    continue;
+                let left_new_files = new_files
+                    .iter()
+                    .filter(|(new_file, _)| !sccess.iter().any(|(n, _)| *n == new_file))
+                    .map(|(new_file, old_file)| (new_file.clone(), old_file.clone()))
+                    .collect::<Vec<_>>();
+
+                if left_new_files.is_empty() {
+                    status = UpdateStatus::DeleteInstall;
+                } else {
+                    status = UpdateStatus::CopyNew(left_new_files);
                 }
-                status = UpdateStatus::DeleteInstall;
             }
             UpdateStatus::DeleteInstall => {
                 let result = std::fs::remove_dir_all(&install_dir);
