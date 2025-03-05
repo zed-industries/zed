@@ -1006,17 +1006,25 @@ fn possible_open_target(
     let Some(workspace) = workspace.upgrade() else {
         return Task::ready(None);
     };
-    // We have to check for both paths, as on Unux, certain paths with positions are valid file paths.
+    // We have to check for both paths, as on Unix, certain paths with positions are valid file paths too.
     // We can be on FS remote part, without real FS, so cannot canonicalize or check for existence the path right away.
     let mut potential_paths = Vec::new();
     let original_path = PathWithPosition::from_path(PathBuf::from(maybe_path));
     let path_with_position = PathWithPosition::parse_str(maybe_path);
     for prefix_str in GIT_DIFF_PATH_PREFIXES {
         if let Some(stripped) = original_path.path.strip_prefix(prefix_str).ok() {
-            potential_paths.push(PathWithPosition::from_path(stripped.to_owned()));
+            potential_paths.push(PathWithPosition {
+                path: stripped.to_owned(),
+                row: original_path.row,
+                column: original_path.column,
+            });
         }
         if let Some(stripped) = path_with_position.path.strip_prefix(prefix_str).ok() {
-            potential_paths.push(PathWithPosition::from_path(stripped.to_owned()));
+            potential_paths.push(PathWithPosition {
+                path: stripped.to_owned(),
+                row: path_with_position.row,
+                column: path_with_position.column,
+            });
         }
     }
     potential_paths.insert(0, original_path);
