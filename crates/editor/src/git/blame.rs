@@ -195,9 +195,12 @@ impl GitBlame {
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
+        let buffer_id = self.buffer_snapshot.remote_id();
         let mut cursor = self.entries.cursor::<u32>(&());
         rows.into_iter().map(move |info| {
-            let row = info.buffer_row?;
+            let row = info
+                .buffer_row
+                .filter(|_| info.buffer_id == Some(buffer_id))?;
             cursor.seek_forward(&row, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
