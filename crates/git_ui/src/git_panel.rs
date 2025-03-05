@@ -42,7 +42,7 @@ use settings::Settings as _;
 use smallvec::smallvec;
 use std::cell::RefCell;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -180,6 +180,7 @@ impl GitListEntry {
 pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
     pub(crate) worktree_path: Arc<Path>,
+    pub(crate) abs_path: PathBuf,
     pub(crate) status: FileStatus,
     pub(crate) is_staged: Option<bool>,
 }
@@ -724,12 +725,21 @@ impl GitPanel {
                 }
             };
 
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
-                })
-                .ok();
-            self.focus_handle.focus(window);
+            if entry.worktree_path.starts_with("..") {
+                self.workspace.update(cx, |workspace, cx| {
+                    let path;
+                    workspace
+                        .open_path(path, None, false, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            } else {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    })
+                    .ok();
+                self.focus_handle.focus(window);
+            }
 
             Some(())
         });
@@ -1752,10 +1762,17 @@ impl GitPanel {
                 continue;
             }
 
+            // dot_git_abs path always has at least one component, namely .git.
+            let abs_path = repo
+                .dot_git_abs_path
+                .parent()
+                .unwrap()
+                .join(&entry.repo_path);
             let worktree_path = repo.repository_entry.unrelativize(&entry.repo_path);
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
                 worktree_path,
+                abs_path,
                 status: entry.status,
                 is_staged,
             };
@@ -3816,12 +3833,14 @@ mod tests {
                     header: Section::Tracked
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/gpui/gpui.rs".into(),
                     repo_path: "crates/gpui/gpui.rs".into(),
                     worktree_path: Path::new("gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     is_staged: Some(false),
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/util/util.rs".into(),
                     repo_path: "crates/util/util.rs".into(),
                     worktree_path: Path::new("../util/util.rs").into(),
                     status: StatusCode::Modified.worktree(),
