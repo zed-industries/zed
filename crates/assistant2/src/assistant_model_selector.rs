@@ -33,17 +33,19 @@ impl AssistantModelSelector {
 
 impl Render for AssistantModelSelector {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let fs_clone = self.fs.clone();
         assistant_language_model_selector(
             self.focus_handle.clone(),
             Some(self.menu_handle.clone()),
             cx,
-            move |model, cx| {
-                update_settings_file::<AssistantSettings>(
-                    fs_clone.clone(),
-                    cx,
-                    move |settings, _| settings.set_model(model.clone()),
-                );
+            {
+                let fs = self.fs.clone();
+                move |model, cx| {
+                    update_settings_file::<AssistantSettings>(
+                        fs.clone(),
+                        cx,
+                        move |settings, _| settings.set_model(model.clone()),
+                    );
+                }
             },
         )
     }

@@ -2818,7 +2818,6 @@ impl Render for ContextEditor {
         } else {
             None
         };
-        let fs_clone = self.fs.clone();
 
         let language_model_selector = self.language_model_selector.clone();
         v_flex()
@@ -2877,12 +2876,17 @@ impl Render for ContextEditor {
                                     self.editor().focus_handle(cx),
                                     Some(self.language_model_selector.clone()),
                                     cx,
-                                    move |model, cx| {
-                                        update_settings_file::<AssistantSettings>(
-                                            fs_clone.clone(),
-                                            cx,
-                                            move |settings, _| settings.set_model(model.clone()),
-                                        );
+                                    {
+                                        let fs = self.fs.clone();
+                                        move |model, cx| {
+                                            update_settings_file::<AssistantSettings>(
+                                                fs.clone(),
+                                                cx,
+                                                move |settings, _| {
+                                                    settings.set_model(model.clone())
+                                                },
+                                            );
+                                        }
                                     },
                                 ))),
                         )

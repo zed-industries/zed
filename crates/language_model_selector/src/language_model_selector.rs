@@ -484,17 +484,17 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 }
 
 pub fn inline_language_model_selector(
-    f: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
-) -> AnyElement {
-    let f = Rc::new(f);
+    on_model_changed: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+) -> PopoverMenu<LanguageModelSelector> {
+    let on_model_changed = Rc::new(on_model_changed);
     PopoverMenu::new("popover-button")
         .menu(move |window, cx| {
             Some(cx.new(|cx| {
                 LanguageModelSelector::new(
                     {
-                        let f = f.clone();
+                        let on_model_changed = on_model_changed.clone();
                         move |model, cx| {
-                            f(model, cx);
+                            on_model_changed(model, cx);
                         }
                     },
                     window,
@@ -524,36 +524,34 @@ pub fn inline_language_model_selector(
             },
         )
         .anchor(gpui::Corner::TopRight)
-        // .when_some(menu_handle, |el, handle| el.with_handle(handle))
         .offset(gpui::Point {
             x: px(0.0),
             y: px(-2.0),
         })
-        .into_any_element()
 }
 
 pub fn assistant_language_model_selector(
     keybinding_target: FocusHandle,
     menu_handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
     cx: &App,
-    f: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
-) -> AnyElement {
+    on_model_changed: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+) -> PopoverMenu<LanguageModelSelector> {
     let active_model = LanguageModelRegistry::read_global(cx).active_model();
     let model_name = match active_model {
         Some(model) => model.name().0,
         _ => SharedString::from("No model selected"),
     };
 
-    let f = Rc::new(f);
+    let on_model_changed = Rc::new(on_model_changed);
 
     PopoverMenu::new("popover-button")
         .menu(move |window, cx| {
             Some(cx.new(|cx| {
                 LanguageModelSelector::new(
                     {
-                        let f = f.clone();
+                        let on_model_changed = on_model_changed.clone();
                         move |model, cx| {
-                            f(model, cx);
+                            on_model_changed(model, cx);
                         }
                     },
                     window,
@@ -594,5 +592,4 @@ pub fn assistant_language_model_selector(
             x: px(0.0),
             y: px(-2.0),
         })
-        .into_any_element()
 }

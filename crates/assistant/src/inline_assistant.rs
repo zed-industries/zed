@@ -1567,7 +1567,6 @@ impl Render for PromptEditor {
                 ]
             }
         });
-        let fs_clone = self.fs.clone();
 
         h_flex()
             .key_context("PromptEditor")
@@ -1590,12 +1589,15 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(inline_language_model_selector(move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs_clone.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
+                    .child(inline_language_model_selector({
+                        let fs = self.fs.clone();
+                        move |model, cx| {
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| settings.set_model(model.clone()),
+                            );
+                        }
                     }))
                     .map(|el| {
                         let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
