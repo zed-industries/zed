@@ -867,7 +867,7 @@ impl LanguageRegistry {
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
                                 anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
-                                    let grammar = store.load_language(grammar_name, &wasm_bytes);
+                                    let grammar = store.load_language(&grammar_name.replace("-", "_"), &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();
                                     grammar
                                 })?)
