@@ -16093,6 +16093,7 @@ impl Editor {
                         project.filter(|_| multi_buffer.all_diff_hunks_expanded())
                     {
                         project.update(cx, |project, cx| {
+                            tasks.push((buffer.clone(), project.save_buffers(buffers, cx))
                             tasks.push((buffer.clone(), project.save_buffer(buffer, cx)));
                         })
                     }
