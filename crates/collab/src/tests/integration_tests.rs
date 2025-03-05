@@ -6742,7 +6742,6 @@ async fn test_remote_git_branches(
 
     let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
 
-    let repo_a = cx_a.update(|cx| project_a.read(cx).active_repository(cx).unwrap());
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -6755,7 +6754,7 @@ async fn test_remote_git_branches(
     executor.run_until_parked();
 
     let branches_b = cx_b
-        .update(|cx| repo_b.update(cx, |repository, cx| repository.branches()))
+        .update(|cx| repo_b.update(cx, |repository, _| repository.branches()))
         .await
         .unwrap()
         .unwrap();
@@ -6769,14 +6768,10 @@ async fn test_remote_git_branches(
 
     assert_eq!(branches_b, branches_set);
 
-    cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
-            repo_b.read(cx).change_branch(new_branch.to_string())
-        })
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
+        .await
+        .unwrap()
+        .unwrap();
 
     executor.run_until_parked();
 
@@ -6794,11 +6789,9 @@ async fn test_remote_git_branches(
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
-            repo_b
-                .read(cx)
-                .create_branch("totally-new-branch".to_string())
-        })
+        repo_b
+            .read(cx)
+            .create_branch("totally-new-branch".to_string())
     })
     .await
     .unwrap()
