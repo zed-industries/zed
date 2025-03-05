@@ -659,7 +659,6 @@ pub struct RejoinedProject {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: Vec<RejoinedWorktree>,
     pub language_servers: Vec<proto::LanguageServer>,
-    pub breakpoints: HashMap<proto::ProjectPath, HashSet<proto::Breakpoint>>,
 }
 
 impl RejoinedProject {
@@ -682,17 +681,6 @@ impl RejoinedProject {
                 .map(|collaborator| collaborator.to_proto())
                 .collect(),
             language_servers: self.language_servers.clone(),
-            breakpoints: self
-                .breakpoints
-                .iter()
-                .map(
-                    |(project_path, breakpoints)| proto::SynchronizeBreakpoints {
-                        project_id: self.id.to_proto(),
-                        breakpoints: breakpoints.iter().cloned().collect(),
-                        project_path: Some(project_path.clone()),
-                    },
-                )
-                .collect(),
         }
     }
 }
@@ -739,7 +727,6 @@ pub struct Project {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
-    pub breakpoints: HashMap<proto::ProjectPath, HashSet<proto::Breakpoint>>,
 }
 
 pub struct ProjectCollaborator {

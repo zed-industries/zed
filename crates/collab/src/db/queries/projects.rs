@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use util::ResultExt;
 
 use super::*;
@@ -571,60 +571,6 @@ impl Database {
         .await
     }
 
-    pub async fn update_breakpoints(
-        &self,
-        connection_id: ConnectionId,
-        update: &proto::SynchronizeBreakpoints,
-    ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
-        let project_id = ProjectId::from_proto(update.project_id);
-        self.project_transaction(project_id, |tx| async move {
-            let project_path = update
-                .project_path
-                .as_ref()
-                .ok_or_else(|| anyhow!("invalid project path"))?;
-
-            // Ensure the update comes from the host.
-            let project = project::Entity::find_by_id(project_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
-
-            // remove all existing breakpoints
-            breakpoints::Entity::delete_many()
-                .filter(breakpoints::Column::ProjectId.eq(project.id))
-                .exec(&*tx)
-                .await?;
-
-            if !update.breakpoints.is_empty() {
-                breakpoints::Entity::insert_many(update.breakpoints.iter().map(|breakpoint| {
-                    breakpoints::ActiveModel {
-                        id: ActiveValue::NotSet,
-                        project_id: ActiveValue::Set(project_id),
-                        worktree_id: ActiveValue::Set(project_path.worktree_id as i64),
-                        path: ActiveValue::Set(project_path.path.clone()),
-                        kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
-                            Some(proto::BreakpointKind::Log) => {
-                                ActiveValue::Set(breakpoints::BreakpointKind::Log)
-                            }
-                            Some(proto::BreakpointKind::Standard) => {
-                                ActiveValue::Set(breakpoints::BreakpointKind::Standard)
-                            }
-                            None => ActiveValue::Set(breakpoints::BreakpointKind::Standard),
-                        },
-                        log_message: ActiveValue::Set(breakpoint.message.clone()),
-                        position: ActiveValue::Set(breakpoint.cached_position as i32),
-                    }
-                }))
-                .exec_without_returning(&*tx)
-                .await?;
-            }
-
-            self.internal_project_connection_ids(project_id, connection_id, true, &tx)
-                .await
-        })
-        .await
-    }
-
     /// Updates the worktree settings for the given connection.
     pub async fn update_worktree_settings(
         &self,
@@ -906,33 +852,6 @@ impl Database {
             }
         }
 
-        let mut breakpoints: HashMap<proto::ProjectPath, HashSet<proto::Breakpoint>> =
-            HashMap::default();
-
-        let db_breakpoints = project.find_related(breakpoints::Entity).all(tx).await?;
-
-        for breakpoint in db_breakpoints.iter() {
-            let project_path = proto::ProjectPath {
-                worktree_id: breakpoint.worktree_id as u64,
-                path: breakpoint.path.clone(),
-            };
-
-            breakpoints
-                .entry(project_path)
-                .or_default()
-                .insert(proto::Breakpoint {
-                    position: None,
-                    cached_position: breakpoint.position as u32,
-                    kind: match breakpoint.kind {
-                        breakpoints::BreakpointKind::Standard => {
-                            proto::BreakpointKind::Standard.into()
-                        }
-                        breakpoints::BreakpointKind::Log => proto::BreakpointKind::Log.into(),
-                    },
-                    message: breakpoint.log_message.clone(),
-                });
-        }
-
         // Populate language servers.
         let language_servers = project
             .find_related(language_server::Entity)
@@ -960,7 +879,6 @@ impl Database {
                     worktree_id: None,
                 })
                 .collect(),
-            breakpoints,
         };
         Ok((project, replica_id as ReplicaId))
     }
