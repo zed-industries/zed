@@ -658,6 +658,7 @@ dependencies = [
  "assistant_tool",
  "chrono",
  "gpui",
+ "project",
  "schemars",
  "serde",
  "serde_json",
