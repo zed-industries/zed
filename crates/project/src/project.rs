@@ -650,6 +650,7 @@ impl Project {
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
         DapStore::init(&client);
+        BreakpointStore::init(&client);
     }
 
     pub fn local(
@@ -1066,11 +1067,8 @@ impl Project {
 
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
 
-        let breakpoint_store = cx.new(|_| {
-            let bp_store = { BreakpointStore::remote(remote_id, client.clone().into()) };
-
-            bp_store
-        })?;
+        let breakpoint_store =
+            cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
 
         let dap_store = cx.new(|_cx| {
             DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())

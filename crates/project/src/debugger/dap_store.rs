@@ -104,7 +104,7 @@ pub struct DapStore {
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
-    pub fn init(client: &AnyProtoClient) {
+    pub(crate) fn init(client: &AnyProtoClient) {
         client.add_entity_message_handler(Self::handle_shutdown_debug_client);
         client.add_entity_message_handler(Self::handle_set_debug_client_capabilities);
         client.add_entity_message_handler(Self::handle_update_debug_adapter);

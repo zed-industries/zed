@@ -1,11 +1,14 @@
 //! Module for managing breakpoints in a project.
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use collections::BTreeMap;
-use gpui::{App, Context, Entity, EventEmitter, Task};
+use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
-use rpc::{proto, AnyProtoClient};
+use rpc::{
+    proto::{self},
+    AnyProtoClient, TypedEnvelope,
+};
 use std::{
     hash::{Hash, Hasher},
     ops::Range,
@@ -14,11 +17,11 @@ use std::{
 };
 use text::Point;
 
-use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, ProjectPath};
+use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, Project, ProjectPath};
 
 #[derive(Clone)]
 struct RemoteBreakpointStore {
-    _upstream_client: Option<AnyProtoClient>,
+    upstream_client: AnyProtoClient,
     _upstream_project_id: u64,
 }
 
@@ -38,7 +41,6 @@ struct LocalBreakpointStore {
 #[derive(Clone)]
 enum BreakpointStoreMode {
     Local(LocalBreakpointStore),
-    #[expect(dead_code)]
     Remote(RemoteBreakpointStore),
 }
 pub struct BreakpointStore {
@@ -50,6 +52,10 @@ pub struct BreakpointStore {
 }
 
 impl BreakpointStore {
+    pub(crate) fn init(client: &AnyProtoClient) {
+        client.add_entity_request_handler(Self::handle_toggle_breakpoint);
+        client.add_entity_message_handler(Self::handle_breakpoints_for_file);
+    }
     pub fn local(worktree_store: Entity<WorktreeStore>, buffer_store: Entity<BufferStore>) -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
@@ -66,7 +72,7 @@ impl BreakpointStore {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
             mode: BreakpointStoreMode::Remote(RemoteBreakpointStore {
-                _upstream_client: Some(upstream_client),
+                upstream_client,
                 _upstream_project_id: upstream_project_id,
             }),
             downstream_client: None,
@@ -82,6 +88,57 @@ impl BreakpointStore {
         self.downstream_client.take();
 
         cx.notify();
+    }
+
+    async fn handle_breakpoints_for_file(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::BreakpointsForFile>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        //let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
+        // breakpoints.update(&mut cx, |_, _| {})?;
+
+        Ok(())
+    }
+
+    async fn handle_toggle_breakpoint(
+        this: Entity<Project>,
+        payload: TypedEnvelope<proto::ToggleBreakpoint>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let breakpoints = this.update(&mut cx, |this, _| this.breakpoint_store())?;
+        let path = this
+            .update(&mut cx, |this, cx| {
+                this.project_path_for_absolute_path(payload.payload.path.as_ref(), cx)
+            })?
+            .ok_or_else(|| anyhow!("Could not resolve provided abs path"))?;
+        let buffer = this
+            .update(&mut cx, |this, cx| {
+                this.buffer_store().read(cx).get_by_path(&path, cx)
+            })?
+            .ok_or_else(|| anyhow!("Could not find buffer for a given path"))?;
+        let breakpoint = payload
+            .payload
+            .breakpoint
+            .ok_or_else(|| anyhow!("Breakpoint not present in RPC payload"))?;
+        let anchor = language::proto::deserialize_anchor(
+            breakpoint
+                .position
+                .clone()
+                .ok_or_else(|| anyhow!("Anchor not present in RPC payload"))?,
+        )
+        .ok_or_else(|| anyhow!("Anchor deserialization failed"))?;
+        let breakpoint = Breakpoint::from_proto(breakpoint)
+            .ok_or_else(|| anyhow!("Could not deserialize breakpoint"))?;
+        breakpoints.update(&mut cx, |this, cx| {
+            this.toggle_breakpoint(
+                buffer,
+                (anchor, breakpoint),
+                BreakpointEditAction::Toggle,
+                cx,
+            );
+        })?;
+        Ok(proto::Ack {})
     }
 
     fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -117,7 +174,7 @@ impl BreakpointStore {
                     .retain(|value| &breakpoint != value);
                 if len_before == breakpoint_set.breakpoints.len() {
                     // We did not remove any breakpoint, hence let's toggle one.
-                    breakpoint_set.breakpoints.push(breakpoint);
+                    breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {
@@ -129,7 +186,7 @@ impl BreakpointStore {
                         .retain(|value| &breakpoint != value);
                     if len_before == breakpoint_set.breakpoints.len() {
                         // We did not remove any breakpoint, hence let's toggle one.
-                        breakpoint_set.breakpoints.push(breakpoint);
+                        breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if matches!(&breakpoint.1.kind, BreakpointKind::Log(_)) {
                     breakpoint_set
@@ -143,6 +200,17 @@ impl BreakpointStore {
             self.breakpoints.remove(&abs_path);
         }
 
+        if let BreakpointStoreMode::Remote(remote) = &self.mode {
+            if let Some(breakpoint) = breakpoint.1._to_proto(&abs_path, &breakpoint.0) {
+                let _ = cx
+                    .background_executor()
+                    .spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
+                        project_id: remote._upstream_project_id,
+                        path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
+                        breakpoint: Some(breakpoint),
+                    }));
+            }
+        }
         cx.emit(BreakpointStoreEvent::BreakpointsUpdated(abs_path));
         cx.notify();
     }
@@ -360,17 +428,15 @@ impl Breakpoint {
         })
     }
 
-    fn _from_proto(_breakpoint: client::proto::Breakpoint) -> Option<Self> {
-        None
-        // Some(Self {
-        //     position: deserialize_anchor(breakpoint.position?)?,
-        //     kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
-        //         Some(proto::BreakpointKind::Log) => {
-        //             BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
-        //         }
-        //         None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
-        //     },
-        // })
+    fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
+        Some(Self {
+            kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
+                Some(proto::BreakpointKind::Log) => {
+                    BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
+                }
+                None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
+            },
+        })
     }
 }
 

@@ -1318,7 +1318,7 @@ impl Editor {
                         BreakpointStoreEvent::ActiveDebugLineChanged => {
                             editor.go_to_active_debug_line(window, cx);
                         }
-                        BreakpointStoreEvent::BreakpointsUpdated(_) => {}
+                        _ => {}
                     },
                 ));
             }
@@ -8204,7 +8204,7 @@ impl Editor {
 
     pub fn toggle_breakpoint(
         &mut self,
-        _: &ToggleBreakpoint,
+        _: &crate::actions::ToggleBreakpoint,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

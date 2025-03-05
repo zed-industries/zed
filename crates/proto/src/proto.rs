@@ -425,6 +425,7 @@ messages!(
     (SyncExtensions, Background),
     (SyncExtensionsResponse, Background),
     (BreakpointsForFile, Background),
+    (ToggleBreakpoint, Foreground),
     (SynchronizeBuffers, Foreground),
     (SynchronizeBuffersResponse, Foreground),
     (SynchronizeContexts, Foreground),
@@ -652,6 +653,7 @@ request_messages!(
     (DapThreadsRequest, DapThreadsResponse),
     (DapTerminateRequest, Ack),
     (ShutdownDebugClient, Ack),
+    (ToggleBreakpoint, Ack)
 );
 
 entity_messages!(
@@ -756,6 +758,7 @@ entity_messages!(
     GetRemotes,
     Pull,
     BreakpointsForFile,
+    ToggleBreakpoint,
     ShutdownDebugClient,
     SetDebugClientCapabilities,
     DapNextRequest,
