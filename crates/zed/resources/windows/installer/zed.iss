@@ -52,8 +52,8 @@ Name: "runcode"; Description: "{cm:RunAfter,{#AppDisplayName}}"; GroupDescriptio
 Name: "{app}"; AfterInstall: DisableAppDirInheritance
 
 [Files]
-Source: "{#ResourcesDir}\Zed.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#ResourcesDir}\installer\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "{#ResourcesDir}\Zed.exe"; DestDir: "{code:GetInstallDir}"; Flags: ignoreversion
+Source: "{#ResourcesDir}\installer\bin\*"; DestDir: "{code:GetInstallDir}\bin"; Flags: ignoreversion
 Source: "{#ResourcesDir}\installer\appx\*"; DestDir: "{app}\appx";  BeforeInstall: RemoveAppxPackage; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: IsWindows11OrLater
 
 [Icons]
@@ -1395,4 +1395,12 @@ begin
     Result := ''
   else
     Result := '{#AppMutex}';
+end;
+
+function GetInstallDir(Param: string): string;
+begin
+  if WizardSilent() then
+    Result := ExpandConstant('{app}\install')
+  else
+    Result := ExpandConstant('{app}');
 end;
