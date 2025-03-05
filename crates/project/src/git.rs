@@ -1,7 +1,8 @@
-use crate::buffer_store::BufferStore;
+use crate::buffer_store::{BufferStore, BufferStoreEvent};
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
-use crate::{Project, ProjectPath};
+use crate::{Project, ProjectItem, ProjectPath};
 use anyhow::{Context as _, Result};
+use buffer_diff::BufferDiffEvent;
 use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
@@ -30,7 +31,7 @@ pub struct GitStore {
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<GitJob>,
-    _subscription: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 pub struct Repository {
@@ -81,7 +82,10 @@ impl GitStore {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let update_sender = Self::spawn_git_worker(cx);
-        let _subscription = cx.subscribe(worktree_store, Self::on_worktree_store_event);
+        let _subscriptions = [
+            cx.subscribe(worktree_store, Self::on_worktree_store_event),
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event),
+        ];
 
         GitStore {
             project_id,
@@ -90,7 +94,7 @@ impl GitStore {
             repositories: Vec::new(),
             active_index: None,
             update_sender,
-            _subscription,
+            _subscriptions,
         }
     }
 
@@ -223,8 +227,58 @@ impl GitStore {
         }
     }
 
+    fn on_buffer_store_event(
+        &mut self,
+        _: Entity<BufferStore>,
+        event: &BufferStoreEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let BufferStoreEvent::BufferDiffAdded(diff) = event {
+            cx.subscribe(diff, |this, diff, event, cx| {
+                if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
+                    let buffer_id = diff.read(cx).buffer_id;
+                    if let Some((repo, path)) =
+                        this.repository_and_path_for_buffer_id(buffer_id, cx)
+                    {
+                        let recv = repo.read(cx).set_index_text(
+                            &path,
+                            new_index_text.as_ref().map(|rope| rope.to_string()),
+                        );
+                        cx.background_spawn(async move { recv.await? })
+                            .detach_and_log_err(cx);
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
     pub fn all_repositories(&self) -> Vec<Entity<Repository>> {
         self.repositories.clone()
+    }
+
+    pub fn repository_and_path_for_buffer_id(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, RepoPath)> {
+        let buffer = self.buffer_store.read(cx).get(buffer_id)?;
+        let path = buffer.read(cx).project_path(cx)?;
+        let mut result: Option<(Entity<Repository>, RepoPath)> = None;
+        for repo_handle in &self.repositories {
+            let repo = repo_handle.read(cx);
+            if repo.worktree_id == path.worktree_id {
+                if let Ok(relative_path) = repo.repository_entry.relativize(&path.path) {
+                    if result
+                        .as_ref()
+                        .is_none_or(|(result, _)| !repo.contains_sub_repo(result, cx))
+                    {
+                        result = Some((repo_handle.clone(), relative_path))
+                    }
+                }
+            }
+        }
+        result
     }
 
     fn spawn_git_worker(cx: &mut Context<'_, GitStore>) -> mpsc::UnboundedSender<GitJob> {
@@ -570,9 +624,8 @@ impl GitStore {
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
         this.update(cx, |this, cx| {
-            let repository_handle = this
-                .all_repositories()
-                .into_iter()
+            this.repositories
+                .iter()
                 .find(|repository_handle| {
                     repository_handle.read(cx).worktree_id == worktree_id
                         && repository_handle
@@ -581,8 +634,8 @@ impl GitStore {
                             .work_directory_id()
                             == work_directory_id
                 })
-                .context("missing repository handle")?;
-            anyhow::Ok(repository_handle)
+                .context("missing repository handle")
+                .cloned()
         })?
     }
 }

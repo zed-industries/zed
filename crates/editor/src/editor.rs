@@ -7843,7 +7843,7 @@ impl Editor {
             for hunk in &hunks {
                 self.prepare_restore_change(&mut revert_changes, hunk, cx);
             }
-            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), window, cx);
+            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), cx);
         }
         drop(chunk_by);
         if !revert_changes.is_empty() {
@@ -13657,13 +13657,13 @@ impl Editor {
     pub fn toggle_staged_selected_diff_hunks(
         &mut self,
         _: &::git::ToggleStaged,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
-        self.stage_or_unstage_diff_hunks(stage, &ranges, window, cx);
+        self.stage_or_unstage_diff_hunks(stage, &ranges, cx);
     }
 
     pub fn stage_and_next(
@@ -13688,7 +13688,6 @@ impl Editor {
         &mut self,
         stage: bool,
         ranges: &[Range<Anchor>],
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -13696,7 +13695,7 @@ impl Editor {
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            self.do_stage_or_unstage(stage, buffer_id, hunks, window, cx);
+            self.do_stage_or_unstage(stage, buffer_id, hunks, cx);
         }
     }
 
@@ -13709,7 +13708,7 @@ impl Editor {
         let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
 
         if ranges.iter().any(|range| range.start != range.end) {
-            self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
+            self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
             return;
         }
 
@@ -13728,7 +13727,7 @@ impl Editor {
         if run_twice {
             self.go_to_next_hunk(&GoToHunk, window, cx);
         }
-        self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
+        self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
         self.go_to_next_hunk(&GoToHunk, window, cx);
     }
 
@@ -13737,7 +13736,6 @@ impl Editor {
         stage: bool,
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
-        window: &mut Window,
         cx: &mut App,
     ) {
         let Some(project) = self.project.as_ref() else {
@@ -13753,15 +13751,8 @@ impl Editor {
         let file_exists = buffer_snapshot
             .file()
             .is_some_and(|file| file.disk_state().exists());
-        let Some((repo, path)) = project
-            .read(cx)
-            .repository_and_path_for_buffer_id(buffer_id, cx)
-        else {
-            log::debug!("no git repo for buffer id");
-            return;
-        };
 
-        let new_index_text = diff.update(cx, |diff, cx| {
+        diff.update(cx, |diff, cx| {
             diff.stage_or_unstage_hunks(
                 stage,
                 &hunks
@@ -13784,13 +13775,6 @@ impl Editor {
                 .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
                 .detach_and_log_err(cx);
         }
-
-        let recv = repo
-            .read(cx)
-            .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));
-
-        cx.background_spawn(async move { recv.await? })
-            .detach_and_notify_err(window, cx);
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {

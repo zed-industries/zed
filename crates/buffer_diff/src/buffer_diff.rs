@@ -668,6 +668,7 @@ pub enum BufferDiffEvent {
         changed_range: Option<Range<text::Anchor>>,
     },
     LanguageChanged,
+    HunksStagedOrUnstaged(Option<Rope>),
 }
 
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
@@ -790,6 +791,9 @@ impl BufferDiff {
                 changed_range: Some(changed_range),
             });
         }
+        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
+            new_index_text.clone(),
+        ));
         new_index_text
     }
 

@@ -2276,7 +2276,6 @@ impl Project {
             BufferStoreEvent::BufferAdded(buffer) => {
                 self.register_buffer(buffer, cx).log_err();
             }
-            BufferStoreEvent::BufferChangedFilePath { .. } => {}
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 if let Some(ref ssh_client) = self.ssh_client {
                     ssh_client
@@ -2289,6 +2288,7 @@ impl Project {
                         .log_err();
                 }
             }
+            _ => {}
         }
     }
 
@@ -4356,30 +4356,9 @@ impl Project {
         buffer_id: BufferId,
         cx: &App,
     ) -> Option<(Entity<Repository>, RepoPath)> {
-        let path = self
-            .buffer_for_id(buffer_id, cx)?
+        self.git_store
             .read(cx)
-            .project_path(cx)?;
-
-        let mut found: Option<(Entity<Repository>, RepoPath)> = None;
-        for repo_handle in self.git_store.read(cx).all_repositories() {
-            let repo = repo_handle.read(cx);
-            if repo.worktree_id != path.worktree_id {
-                continue;
-            }
-            let Ok(relative_path) = repo.repository_entry.relativize(&path.path) else {
-                continue;
-            };
-            if found
-                .as_ref()
-                .is_some_and(|(found, _)| repo.contains_sub_repo(found, cx))
-            {
-                continue;
-            }
-            found = Some((repo_handle.clone(), relative_path))
-        }
-
-        found
+            .repository_and_path_for_buffer_id(buffer_id, cx)
     }
 }
 

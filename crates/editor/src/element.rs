@@ -8822,12 +8822,11 @@ fn diff_hunk_controls(
                 })
                 .on_click({
                     let editor = editor.clone();
-                    move |_event, window, cx| {
+                    move |_event, _window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 true,
                                 &[hunk_range.start..hunk_range.start],
-                                window,
                                 cx,
                             );
                         });
@@ -8850,12 +8849,11 @@ fn diff_hunk_controls(
                 })
                 .on_click({
                     let editor = editor.clone();
-                    move |_event, window, cx| {
+                    move |_event, _window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 false,
                                 &[hunk_range.start..hunk_range.start],
-                                window,
                                 cx,
                             );
                         });
