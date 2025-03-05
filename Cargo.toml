@@ -540,7 +540,7 @@ tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.2", features = ["wasm"] }
+tree-sitter = { version = "0.25.3", features = ["wasm"] }
 tree-sitter-bash = "0.23"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
