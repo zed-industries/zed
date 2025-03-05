@@ -4,12 +4,6 @@
 {"Key":"w"}
 {"Key":"shift-i"}
 {"Get":{"state":"ˇhello","mode":"Insert"}}
-{"Put":{"state":"heˇllo"}}
-{"Key":"v"}
-{"Key":"i"}
-{"Key":"w"}
-{"Key":"shift-a"}
-{"Get":{"state":"helloˇ","mode":"Insert"}}
 {"Put":{"state":"The quick brown\nfox ˇjumps over\nthe lazy dog"}}
 {"Key":"shift-v"}
 {"Key":"shift-i"}

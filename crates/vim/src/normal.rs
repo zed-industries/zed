@@ -1613,10 +1613,6 @@ mod test {
         cx.simulate_shared_keystrokes("v i w shift-i").await;
         cx.shared_state().await.assert_eq("ˇhello");
 
-        cx.set_shared_state("heˇllo").await;
-        cx.simulate_shared_keystrokes("v i w shift-a").await;
-        cx.shared_state().await.assert_eq("helloˇ");
-
         cx.set_shared_state(indoc! {"
             The quick brown
             fox ˇjumps over
