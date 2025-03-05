@@ -1,55 +1,31 @@
-use gpui::{AnyView, DismissEvent, Entity, FocusHandle, Focusable as _, ManagedView, Subscription};
+use std::time::Duration;
+
+use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::prelude::*;
 
-pub enum DismissDecision {
-    Dismiss(bool),
-    Pending,
-}
+const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(1000);
 
-pub trait ToastView: ManagedView {
-    fn on_before_dismiss(
-        &mut self,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> DismissDecision {
-        DismissDecision::Dismiss(true)
-    }
-
-    fn fade_out_background(&self) -> bool {
-        false
-    }
-}
+pub trait ToastView: ManagedView {}
 
 trait ToastViewHandle {
-    fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision;
     fn view(&self) -> AnyView;
-    fn fade_out_background(&self, cx: &mut App) -> bool;
 }
 
 impl<V: ToastView> ToastViewHandle for Entity<V> {
-    fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision {
-        self.update(cx, |this, cx| this.on_before_dismiss(window, cx))
-    }
-
     fn view(&self) -> AnyView {
         self.clone().into()
-    }
-
-    fn fade_out_background(&self, cx: &mut App) -> bool {
-        self.read(cx).fade_out_background()
     }
 }
 
 pub struct ActiveToast {
     toast: Box<dyn ToastViewHandle>,
-    _subscriptions: [Subscription; 2],
-    previous_focus_handle: Option<FocusHandle>,
+    _subscriptions: [Subscription; 1],
     focus_handle: FocusHandle,
 }
 
 pub struct ToastLayer {
     active_toast: Option<ActiveToast>,
-    dismiss_on_focus_lost: bool,
+    dismiss_timer: Option<Task<()>>,
 }
 
 impl Default for ToastLayer {
@@ -62,7 +38,7 @@ impl ToastLayer {
     pub fn new() -> Self {
         Self {
             active_toast: None,
-            dismiss_on_focus_lost: false,
+            dismiss_timer: None,
         }
     }
 
@@ -82,63 +58,36 @@ impl ToastLayer {
         self.show_toast(new_toast, window, cx);
     }
 
-    fn show_toast<V>(&mut self, new_toast: Entity<V>, window: &mut Window, cx: &mut Context<Self>)
-    where
+    pub fn show_toast<V>(
+        &mut self,
+        new_toast: Entity<V>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) where
         V: ToastView,
     {
         let focus_handle = cx.focus_handle();
+
         self.active_toast = Some(ActiveToast {
             toast: Box::new(new_toast.clone()),
-            _subscriptions: [
-                cx.subscribe_in(
-                    &new_toast,
-                    window,
-                    |this, _, _: &DismissEvent, window, cx| {
-                        this.hide_toast(window, cx);
-                    },
-                ),
-                cx.on_focus_out(&focus_handle, window, |this, _event, window, cx| {
-                    if this.dismiss_on_focus_lost {
-                        this.hide_toast(window, cx);
-                    }
-                }),
-            ],
-            previous_focus_handle: window.focused(cx),
+            _subscriptions: [cx.subscribe_in(
+                &new_toast,
+                window,
+                |this, _, _: &DismissEvent, window, cx| {
+                    this.hide_toast(window, cx);
+                },
+            )],
             focus_handle,
         });
-        cx.defer_in(window, move |_, window, cx| {
-            window.focus(&new_toast.focus_handle(cx));
-        });
+
+        self.start_dismiss_timer(DEFAULT_TOAST_DURATION, window, cx);
+
         cx.notify();
     }
 
     pub fn hide_toast(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(active_toast) = self.active_toast.as_mut() else {
-            self.dismiss_on_focus_lost = false;
-            return false;
-        };
+        cx.notify();
 
-        match active_toast.toast.on_before_dismiss(window, cx) {
-            DismissDecision::Dismiss(dismiss) => {
-                self.dismiss_on_focus_lost = !dismiss;
-                if !dismiss {
-                    return false;
-                }
-            }
-            DismissDecision::Pending => {
-                self.dismiss_on_focus_lost = false;
-                return false;
-            }
-        }
-
-        if let Some(active_toast) = self.active_toast.take() {
-            if let Some(previous_focus) = active_toast.previous_focus_handle {
-                if active_toast.focus_handle.contains_focused(window, cx) {
-                    previous_focus.focus(window);
-                }
-            }
-            cx.notify();
-        }
         true
     }
 
@@ -153,6 +102,48 @@ impl ToastLayer {
     pub fn has_active_toast(&self) -> bool {
         self.active_toast.is_some()
     }
+
+    /// Starts a timer to automatically dismiss the toast after the specified duration
+    pub fn start_dismiss_timer(
+        &mut self,
+        duration: Duration,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_dismiss_timer(cx);
+
+        let task = cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(duration).await;
+
+            if let Some(this) = this.upgrade() {
+                this.update(&mut cx, |this, cx| {
+                    this.active_toast.take();
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+
+        self.dismiss_timer = Some(task);
+        cx.notify();
+    }
+
+    /// Restarts the dismiss timer with a new duration
+    pub fn restart_dismiss_timer(
+        &mut self,
+        duration: Duration,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_dismiss_timer(duration, window, cx);
+        cx.notify();
+    }
+
+    /// Clears the dismiss timer if one exists
+    pub fn clear_dismiss_timer(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_timer.take();
+        cx.notify();
+    }
 }
 
 impl Render for ToastLayer {
@@ -161,29 +152,15 @@ impl Render for ToastLayer {
             return div();
         };
 
-        div()
-            .absolute()
-            .size_full()
-            .top_0()
-            .left_0()
-            .when(active_toast.toast.fade_out_background(cx), |el| {
-                let mut background = cx.theme().colors().elevated_surface_background;
-                background.fade_out(0.2);
-                el.bg(background)
-                    .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                        this.hide_toast(window, cx);
-                    }))
-            })
-            .child(
-                v_flex()
-                    .h(px(0.0))
-                    .top_20()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .track_focus(&active_toast.focus_handle)
-                    .child(h_flex().occlude().child(active_toast.toast.view())),
-            )
+        div().absolute().size_full().bottom_0().left_0().child(
+            v_flex()
+                .w_full()
+                .top_12()
+                .flex()
+                .flex_col()
+                .items_center()
+                .track_focus(&active_toast.focus_handle)
+                .child(h_flex().occlude().child(active_toast.toast.view())),
+        )
     }
 }

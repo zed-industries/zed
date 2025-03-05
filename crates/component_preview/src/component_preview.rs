@@ -4,15 +4,17 @@
 
 use std::iter::Iterator;
 use std::sync::Arc;
+use std::time::Duration;
 
 use client::UserStore;
 use component::{components, ComponentMetadata};
 use gpui::{
-    list, prelude::*, uniform_list, App, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    WeakEntity, Window,
+    list, percentage, prelude::*, uniform_list, Animation, AnimationExt, App, Entity, EventEmitter,
+    FocusHandle, Focusable, Task, Transformation, WeakEntity, Window,
 };
 use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
+use notifications::status_toast::StatusToast;
 use project::Project;
 use ui::{prelude::*, Divider, ListItem, ListSubHeader};
 
@@ -22,8 +24,9 @@ use workspace::{AppState, ItemId, SerializableItem};
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     let app_state = app_state.clone();
 
-    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+    cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         let app_state = app_state.clone();
+        let weak_workspace = cx.entity().downgrade();
 
         workspace.register_action(
             move |workspace, _: &workspace::OpenComponentPreview, window, cx| {
@@ -32,8 +35,16 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                 let language_registry = app_state.languages.clone();
                 let user_store = app_state.user_store.clone();
 
-                let component_preview =
-                    cx.new(|cx| ComponentPreview::new(language_registry, user_store, None, cx));
+                let component_preview = cx.new(|cx| {
+                    ComponentPreview::new(
+                        weak_workspace.clone(),
+                        language_registry,
+                        user_store,
+                        None,
+                        cx,
+                    )
+                });
+
                 workspace.add_item_to_active_pane(
                     Box::new(component_preview),
                     None,
@@ -72,11 +83,13 @@ struct ComponentPreview {
     component_list: ListState,
     selected_index: usize,
     language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
 }
 
 impl ComponentPreview {
     pub fn new(
+        workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         user_store: Entity<UserStore>,
         selected_index: impl Into<Option<usize>>,
@@ -103,6 +116,7 @@ impl ComponentPreview {
             nav_scroll_handle: UniformListScrollHandle::new(),
             language_registry,
             user_store,
+            workspace,
             components,
             component_list,
             selected_index,
@@ -318,11 +332,28 @@ impl ComponentPreview {
             )
             .into_any_element()
     }
+
+    fn test_status_toast(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_status_toast(window, cx, |_, cx| {
+                    StatusToast::with_icon(
+                        "success-toast-pr",
+                        IconName::GitBranchSmall,
+                        "`zed/new-notification-system` created!",
+                        cx,
+                    )
+                    .action("Open Pull Request")
+                });
+            });
+        }
+    }
 }
 
 impl Render for ComponentPreview {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let sidebar_entries = self.sidebar_entries();
+        let weak_workspace = self.workspace.clone();
 
         h_flex()
             .id("component-preview")
@@ -333,6 +364,14 @@ impl Render for ComponentPreview {
             .track_focus(&self.focus_handle)
             .px_2()
             .bg(cx.theme().colors().editor_background)
+            .child(
+                Button::new("toast-test", "Click me!").on_click(cx.listener({
+                    move |this, _, window, cx| {
+                        this.test_status_toast(window, cx);
+                        cx.notify();
+                    }
+                })),
+            )
             .child(
                 uniform_list(
                     cx.entity().clone(),
@@ -406,9 +445,18 @@ impl Item for ComponentPreview {
     {
         let language_registry = self.language_registry.clone();
         let user_store = self.user_store.clone();
+        let weak_workspace = self.workspace.clone();
         let selected_index = self.selected_index;
 
-        Some(cx.new(|cx| Self::new(language_registry, user_store, selected_index, cx)))
+        Some(cx.new(|cx| {
+            Self::new(
+                weak_workspace,
+                language_registry,
+                user_store,
+                selected_index,
+                cx,
+            )
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
@@ -423,7 +471,7 @@ impl SerializableItem for ComponentPreview {
 
     fn deserialize(
         project: Entity<Project>,
-        _workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
         window: &mut Window,
@@ -435,8 +483,11 @@ impl SerializableItem for ComponentPreview {
         window.spawn(cx, |mut cx| async move {
             let user_store = user_store.clone();
             let language_registry = language_registry.clone();
+            let weak_workspace = workspace.clone();
             cx.update(|_, cx| {
-                Ok(cx.new(|cx| ComponentPreview::new(language_registry, user_store, None, cx)))
+                Ok(cx.new(|cx| {
+                    ComponentPreview::new(weak_workspace, language_registry, user_store, None, cx)
+                }))
             })?
         })
     }

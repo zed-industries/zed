@@ -3039,6 +3039,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "languages",
+ "notifications",
  "project",
  "ui",
  "workspace",
@@ -8313,13 +8314,17 @@ dependencies = [
  "channel",
  "client",
  "collections",
+ "component",
  "db",
  "gpui",
+ "linkme",
  "rpc",
  "settings",
  "sum_tree",
  "time",
+ "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
