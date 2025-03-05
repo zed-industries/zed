@@ -509,7 +509,6 @@ fn main() {
         project_panel::init(cx);
         git_ui::git_panel::init(cx);
         outline_panel::init(cx);
-        component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -621,6 +620,9 @@ fn main() {
         }
 
         let app_state = app_state.clone();
+
+        component_preview::init(app_state.clone(), cx);
+
         cx.spawn(move |cx| async move {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {

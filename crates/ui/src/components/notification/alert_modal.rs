@@ -1,7 +1,5 @@
-use std::time::Duration;
-
-use crate::{prelude::*, AnyIcon};
-use gpui::{percentage, Animation, AnimationExt, IntoElement, Transformation};
+use crate::prelude::*;
+use gpui::IntoElement;
 use smallvec::{smallvec, SmallVec};
 
 #[derive(IntoElement, IntoComponent)]

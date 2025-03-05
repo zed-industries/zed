@@ -2,18 +2,35 @@
 //!
 //! A view for exploring Zed components.
 
+use std::sync::Arc;
+
+use client::UserStore;
 use component::{components, ComponentMetadata};
-use gpui::{list, prelude::*, uniform_list, App, EventEmitter, FocusHandle, Focusable, Window};
+use gpui::{
+    list, prelude::*, uniform_list, App, Entity, EventEmitter, FocusHandle, Focusable, Window,
+};
 use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
+use languages::LanguageRegistry;
 use ui::{prelude::*, ListItem};
 
+use workspace::AppState;
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
+pub fn init(app_state: Arc<AppState>, cx: &mut App) {
+    let app_state = app_state.clone();
+
+    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+        let app_state = app_state.clone();
+
         workspace.register_action(
-            |workspace, _: &workspace::OpenComponentPreview, window, cx| {
-                let component_preview = cx.new(|cx| ComponentPreview::new(window, cx));
+            move |workspace, _: &workspace::OpenComponentPreview, window, cx| {
+                let app_state = app_state.clone();
+
+                let language_registry = app_state.languages.clone();
+                let user_store = app_state.user_store.clone();
+
+                let component_preview =
+                    cx.new(|cx| ComponentPreview::new(language_registry, user_store, window, cx));
                 workspace.add_item_to_active_pane(
                     Box::new(component_preview),
                     None,
@@ -34,10 +51,17 @@ struct ComponentPreview {
     components: Vec<ComponentMetadata>,
     component_list: ListState,
     selected_index: usize,
+    language_registry: Arc<LanguageRegistry>,
+    user_store: Entity<UserStore>,
 }
 
 impl ComponentPreview {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        language_registry: Arc<LanguageRegistry>,
+        user_store: Entity<UserStore>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let components = components().all_sorted();
         let initial_length = components.len();
 
@@ -55,6 +79,8 @@ impl ComponentPreview {
             focus_handle: cx.focus_handle(),
             _view_scroll_handle: ScrollHandle::new(),
             nav_scroll_handle: UniformListScrollHandle::new(),
+            language_registry,
+            user_store,
             components,
             component_list,
             selected_index: 0,
@@ -219,7 +245,10 @@ impl Item for ComponentPreview {
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self::new(window, cx)))
+        let language_registry = self.language_registry.clone();
+        let user_store = self.user_store.clone();
+
+        Some(cx.new(|cx| Self::new(language_registry, user_store, window, cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

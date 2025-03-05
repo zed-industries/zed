@@ -3033,8 +3033,10 @@ dependencies = [
 name = "component_preview"
 version = "0.1.0"
 dependencies = [
+ "client",
  "component",
  "gpui",
+ "languages",
  "ui",
  "workspace",
 ]
