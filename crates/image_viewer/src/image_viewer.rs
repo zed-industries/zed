@@ -4,7 +4,7 @@ mod image_viewer_settings;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use editor::{items::entry_git_aware_label_color, EditorSettings};
+use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
@@ -145,7 +145,7 @@ impl Item for ImageView {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        let show_breadcrumb = EditorSettings::get_global(cx).toolbar.breadcrumbs;
+        let show_breadcrumb = ImageViewerSettings::get_global(cx).breadcrumbs;
         if show_breadcrumb {
             ToolbarItemLocation::PrimaryLeft
         } else {
