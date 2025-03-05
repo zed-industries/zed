@@ -5,7 +5,7 @@ use crate::git_panel::{commit_message_editor, GitPanel};
 use git::{Commit, ShowCommitEditor};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use project::Project;
-use ui::{prelude::*, KeybindingHint, PopoverButton, Tooltip, TriggerablePopover};
+use ui::{prelude::*, KeybindingHint, PopoverMenu, Tooltip};
 
 use editor::{Editor, EditorElement};
 use gpui::*;
@@ -265,12 +265,20 @@ impl CommitModal {
             }))
             .style(ButtonStyle::Transparent);
 
-        let branch_picker = PopoverButton::new(
-            self.branch_list.clone(),
-            Corner::BottomLeft,
-            branch_picker_button,
-            Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
-        );
+        let branch_picker = PopoverMenu::new("popover-button")
+            .menu({
+                let branch_list = self.branch_list.clone();
+                move |_window, _cx| Some(branch_list.clone())
+            })
+            .trigger_with_tooltip(
+                branch_picker_button,
+                Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
+            )
+            .anchor(Corner::BottomLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            });
 
         let close_kb_hint =
             if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
@@ -305,12 +313,7 @@ impl CommitModal {
             .w_full()
             .h(px(self.properties.footer_height))
             .gap_1()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(branch_picker.render(window, cx))
-                    .children(co_authors),
-            )
+            .child(h_flex().gap_1().child(branch_picker).children(co_authors))
             .child(div().flex_1())
             .child(
                 h_flex()
@@ -351,7 +354,7 @@ impl Render for CommitModal {
             .on_action(
                 cx.listener(|this, _: &zed_actions::git::Branch, window, cx| {
                     this.branch_list.update(cx, |branch_list, cx| {
-                        branch_list.menu_handle(window, cx).toggle(window, cx);
+                        branch_list.popover_handle.toggle(window, cx);
                     })
                 }),
             )

@@ -10,9 +10,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath};
 use std::sync::Arc;
-use ui::{
-    prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TriggerablePopover,
-};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -53,19 +51,9 @@ enum BranchListStyle {
 
 pub struct BranchList {
     rem_width: f32,
-    popover_handle: PopoverMenuHandle<Self>,
+    pub popover_handle: PopoverMenuHandle<Self>,
     pub picker: Entity<Picker<BranchListDelegate>>,
     _subscription: Subscription,
-}
-
-impl TriggerablePopover for BranchList {
-    fn menu_handle(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> PopoverMenuHandle<Self> {
-        self.popover_handle.clone()
-    }
 }
 
 impl BranchList {

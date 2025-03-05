@@ -12,7 +12,7 @@ use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{
     prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverMenu,
-    PopoverMenuHandle, Tooltip, TriggerablePopover,
+    PopoverMenuHandle, Tooltip,
 };
 use workspace::ShowConfiguration;
 
@@ -198,16 +198,6 @@ impl Focusable for LanguageModelSelector {
 impl Render for LanguageModelSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
-    }
-}
-
-impl TriggerablePopover for LanguageModelSelector {
-    fn menu_handle(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> PopoverMenuHandle<Self> {
-        self.popover_menu_handle.clone()
     }
 }
 
