@@ -827,22 +827,9 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(
-            operator,
-            Operator::Change
-                | Operator::Delete
-                | Operator::Replace
-                | Operator::Indent
-                | Operator::Outdent
-                | Operator::AutoIndent
-                | Operator::Lowercase
-                | Operator::Uppercase
-                | Operator::OppositeCase
-                | Operator::ToggleComments
-                | Operator::ReplaceWithRegister
-        ) {
-            self.start_recording(cx)
-        };
+        if operator.starts_dot_recording() {
+            self.start_recording(cx);
+        }
         // Since these operations can only be entered with pre-operators,
         // we need to clear the previous operators when pushing,
         // so that the current stack is the most correct
@@ -853,9 +840,6 @@ impl Vim {
                 | Operator::DeleteSurrounds
         ) {
             self.operator_stack.clear();
-            if let Operator::AddSurrounds { target: None } = operator {
-                self.start_recording(cx);
-            }
         };
         self.operator_stack.push(operator);
         self.sync_vim_settings(window, cx);
