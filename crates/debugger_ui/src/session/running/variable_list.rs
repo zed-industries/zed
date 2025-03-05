@@ -307,41 +307,25 @@ impl VariableList {
     #[track_caller]
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_visual_entries(&self, expected: Vec<&str>) {
-        // TODO(debugger): Implement this method
-        // const INDENT: &'static str = "    ";
+        const INDENT: &'static str = "    ";
 
-        // let entries = &self.entries;
-        // let mut visual_entries = Vec::with_capacity(entries.len());
-        // for entry in entries {
-        //     match entry {
-        //         VariableListEntry::Scope((scope, state)) => {
-        //             visual_entries.push(format!(
-        //                 "{} {}",
-        //                 if state.is_expanded { "v" } else { ">" },
-        //                 scope.name,
-        //             ));
-        //         }
-        //         // TODO(debugger): make this work again
-        //         // VariableListEntry::SetVariableEditor { depth, state } => {
-        //         //     visual_entries.push(format!(
-        //         //         "{}  [EDITOR: {}]{}",
-        //         //         INDENT.repeat(*depth),
-        //         //         state.name,
-        //         //         if is_selected { " <=== selected" } else { "" }
-        //         //     ));
-        //         // }
-        //         VariableListEntry::Variable((variable, _, state)) => {
-        //             visual_entries.push(format!(
-        //                 "{}{} {}",
-        //                 INDENT.repeat(state.depth),
-        //                 if state.is_expanded { "v" } else { ">" },
-        //                 variable.name,
-        //             ));
-        //         }
-        //     };
-        // }
+        let entries = &self.entries;
+        let mut visual_entries = Vec::with_capacity(entries.len());
+        for variable in entries {
+            let state = self
+                .variable_states
+                .get(&variable.dap.path)
+                .expect("If there's a variable entry there has to be a state that goes with it");
 
-        // pretty_assertions::assert_eq!(expected, visual_entries);
+            visual_entries.push(format!(
+                "{}{} {}",
+                INDENT.repeat(state.depth),
+                if state.is_expanded { "v" } else { ">" },
+                variable.dap.name,
+            ));
+        }
+
+        pretty_assertions::assert_eq!(expected, visual_entries);
     }
 
     #[allow(clippy::too_many_arguments)]

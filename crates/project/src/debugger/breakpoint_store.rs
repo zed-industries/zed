@@ -91,9 +91,9 @@ impl BreakpointStore {
     }
 
     async fn handle_breakpoints_for_file(
-        this: Entity<Self>,
+        _this: Entity<Self>,
         _: TypedEnvelope<proto::BreakpointsForFile>,
-        mut cx: AsyncApp,
+        mut _cx: AsyncApp,
     ) -> Result<()> {
         //let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
         // breakpoints.update(&mut cx, |_, _| {})?;
