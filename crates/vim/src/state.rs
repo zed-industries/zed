@@ -5,10 +5,11 @@ use crate::{motion::Motion, object::Object};
 use crate::{ToggleRegistersView, UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor};
 use gpui::{
-    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, Render, Task, WeakEntity,
+    Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, HighlightStyle,
+    StyledText, Task, TextStyle, WeakEntity,
 };
 use language::Point;
 use picker::{Picker, PickerDelegate};
@@ -16,13 +17,13 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
+use theme::ThemeSettings;
 use ui::{
-    h_flex, rems, v_flex, Context, IntoElement, KeyBinding, Label, ListItem, ListItemSpacing,
-    ParentElement, SharedString, Styled, Toggleable, Window,
+    h_flex, rems, ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement,
+    SharedString, Styled, StyledTypography, Window,
 };
-use util::ResultExt;
 use workspace::searchable::Direction;
-use workspace::{ModalView, Workspace};
+use workspace::Workspace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -327,10 +328,10 @@ impl VimGlobals {
     }
 
     pub(crate) fn read_register(
-        &mut self,
+        &self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &mut Context<Editor>,
+        cx: &mut App,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
@@ -375,7 +376,7 @@ impl VimGlobals {
         }
     }
 
-    fn system_clipboard_is_newer(&self, cx: &mut Context<Editor>) -> bool {
+    fn system_clipboard_is_newer(&self, cx: &App) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
                 Some(last_state.as_ref()) != item.text().as_deref()
@@ -577,20 +578,16 @@ impl Operator {
 
 struct RegisterMatch {
     name: char,
-    contents: String,
+    contents: SharedString,
 }
 
 pub struct RegistersViewDelegate {
-    // select_last: bool,
-    registers_view: WeakEntity<RegistersView>,
     selected_index: usize,
-    // pane: WeakEntity<Pane>,
-    // project: Entity<Project>,
     matches: Vec<RegisterMatch>,
 }
 
 impl PickerDelegate for RegistersViewDelegate {
-    type ListItem = ListItem;
+    type ListItem = Div;
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -609,98 +606,98 @@ impl PickerDelegate for RegistersViewDelegate {
         Arc::default()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "All registers are empty".into()
-    }
-
     fn update_matches(
         &mut self,
         _: String,
         _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        self.matches.clear();
-
-        for (name, register) in cx.global::<VimGlobals>().registers.iter() {
-            self.matches.push(RegisterMatch {
-                name: *name,
-                contents: register.text.to_string(),
-            })
-        }
-
-        self.matches.sort_by_key(|r| r.name);
-
         Task::ready(())
     }
 
-    fn confirm(&mut self, _: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.registers_view
-            .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
-    }
+    fn confirm(&mut self, _: bool, _: &mut Window, _: &mut Context<Picker<Self>>) {}
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.registers_view
-            .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
-    }
+    fn dismissed(&mut self, _: &mut Window, _: &mut Context<Picker<Self>>) {}
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
         _: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let register_match = self
             .matches
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
 
-        let max_length = 28;
+        let mut output = String::new();
+        let mut runs = Vec::new();
+        output.push('"');
+        output.push(register_match.name);
+        runs.push((
+            0..output.len(),
+            HighlightStyle::color(cx.theme().colors().text_accent),
+        ));
+        output.push(' ');
+        output.push(' ');
+        let mut base = output.len();
+        for (ix, c) in register_match.contents.char_indices() {
+            if ix > 100 {
+                break;
+            }
+            let replace = match c {
+                '\t' => Some("\\t".to_string()),
+                '\n' => Some("\\n".to_string()),
+                '\r' => Some("\\r".to_string()),
+                c if is_invisible(c) => {
+                    if c <= '\x1f' {
+                        replacement(c).map(|s| s.to_string())
+                    } else {
+                        Some(format!("\\u{:04X}", c as u32))
+                    }
+                }
+                _ => None,
+            };
+            let Some(replace) = replace else {
+                output.push(c);
+                continue;
+            };
+            output.push_str(&replace);
+            runs.push((
+                base + ix..base + ix + replace.len(),
+                HighlightStyle::color(cx.theme().colors().text_muted),
+            ));
+            base += replace.len() - c.len_utf8();
+        }
 
-        let contents = if register_match.contents.len() > max_length {
-            register_match
-                .contents
-                .clone()
-                .split_at(max_length - 3)
-                .0
-                .to_owned()
-                + "..."
-        } else {
-            register_match.contents.clone()
+        let theme = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().editor_foreground,
+            font_family: theme.buffer_font.family.clone(),
+            font_features: theme.buffer_font.features.clone(),
+            font_fallbacks: theme.buffer_font.fallbacks.clone(),
+            font_size: theme.buffer_font_size(cx).into(),
+            line_height: (theme.line_height() * theme.buffer_font_size(cx)).into(),
+            font_weight: theme.buffer_font.weight,
+            font_style: theme.buffer_font.style,
+            ..Default::default()
         };
-        let contents: String = contents
-            .chars()
-            .map(|c| match c {
-                '\t' => "\\t".to_string(),
-                '\n' => "\\n".to_string(),
-                '\r' => "\\r".to_string(),
-                _ => c.to_string(),
-            })
-            .collect();
+
         Some(
-            ListItem::new(ix)
-                .spacing(ListItemSpacing::Sparse)
-                .inset(true)
-                .toggle_state(selected)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .py_px()
-                        .justify_between()
-                        .child(Label::new(register_match.name.to_string().clone()))
-                        .child(Label::new(contents)),
-                ),
+            h_flex()
+                .when(selected, |el| el.bg(cx.theme().colors().element_selected))
+                .font_buffer(cx)
+                .text_buffer(cx)
+                .h(theme.buffer_font_size(cx) * theme.line_height())
+                .px_2()
+                .gap_1()
+                .child(StyledText::new(output).with_default_highlights(&text_style, runs)),
         )
     }
 }
 
-pub struct RegistersView {
-    picker: Entity<Picker<RegistersViewDelegate>>,
-}
-
-impl ModalView for RegistersView {}
+pub struct RegistersView {}
 
 impl RegistersView {
     fn register(workspace: &mut Workspace, _window: Option<&mut Window>) {
@@ -708,34 +705,60 @@ impl RegistersView {
             Self::toggle(workspace, window, cx);
         });
     }
+
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-        let Some(previous_focus_handle) = window.focused(cx) else {
-            return;
-        };
+        let editor = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx));
         workspace.toggle_modal(window, cx, move |window, cx| {
-            RegistersView::new(previous_focus_handle, window, cx)
+            RegistersView::new(editor, window, cx)
         });
     }
-    fn new(_: FocusHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+
+    fn new(
+        editor: Option<Entity<Editor>>,
+        window: &mut Window,
+        cx: &mut Context<Picker<RegistersViewDelegate>>,
+    ) -> Picker<RegistersViewDelegate> {
+        let mut matches = Vec::default();
+        cx.update_global(|globals: &mut VimGlobals, cx| {
+            for name in ['"', '+', '*'] {
+                if let Some(register) = globals.read_register(Some(name), None, cx) {
+                    matches.push(RegisterMatch {
+                        name,
+                        contents: register.text.clone(),
+                    })
+                }
+            }
+            if let Some(editor) = editor {
+                let register = editor.update(cx, |editor, cx| {
+                    globals.read_register(Some('%'), Some(editor), cx)
+                });
+                if let Some(register) = register {
+                    matches.push(RegisterMatch {
+                        name: '%',
+                        contents: register.text.clone(),
+                    })
+                }
+            }
+            for (name, register) in globals.registers.iter() {
+                if ['"', '+', '*', '%'].contains(name) {
+                    continue;
+                };
+                matches.push(RegisterMatch {
+                    name: *name,
+                    contents: register.text.clone(),
+                })
+            }
+        });
+        matches.sort_by(|a, b| a.name.cmp(&b.name));
         let delegate = RegistersViewDelegate {
             selected_index: 0,
-            matches: vec![],
-            registers_view: cx.entity().downgrade(),
+            matches,
         };
 
-        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
-        Self { picker }
-    }
-}
-
-impl EventEmitter<DismissEvent> for RegistersView {}
-impl Focusable for RegistersView {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
-    }
-}
-impl Render for RegistersView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(18.)).child(self.picker.clone())
+        Picker::nonsearchable_uniform_list(delegate, window, cx)
+            .width(rems(36.))
+            .modal(true)
     }
 }
