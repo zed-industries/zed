@@ -20,15 +20,19 @@ pub fn init(cx: &App) {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct ScriptingToolInput {
-    lua_script: String,
+pub struct ScriptingToolInput {
+    pub lua_script: String,
 }
 
-struct ScriptingTool;
+pub struct ScriptingTool;
+
+impl ScriptingTool {
+    pub const NAME: &str = "lua-interpreter";
+}
 
 impl Tool for ScriptingTool {
     fn name(&self) -> String {
-        "lua-interpreter".into()
+        Self::NAME.into()
     }
 
     fn description(&self) -> String {
