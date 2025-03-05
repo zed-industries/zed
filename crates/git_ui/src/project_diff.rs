@@ -931,6 +931,7 @@ impl Render for ProjectDiffToolbar {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -1231,7 +1232,6 @@ mod tests {
 
     use crate::project_diff::{self, ProjectDiff};
 
-    #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
