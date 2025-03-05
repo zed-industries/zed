@@ -3518,7 +3518,7 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
 }
 
 #[track_caller]
-fn git_branch(name: &str, repo: git2::Repository) {
+fn git_branch(name: &str, repo: &git2::Repository) {
     let head = repo
         .head()
         .expect("Couldn't get repo head")
