@@ -252,19 +252,21 @@ impl ContextEditor {
             cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
         ];
 
-        let fs_clone = fs.clone();
-        let language_model_selector = cx.new(|cx| {
-            LanguageModelSelector::new(
-                move |model, cx| {
-                    update_settings_file::<AssistantSettings>(
-                        fs_clone.clone(),
-                        cx,
-                        move |settings, _| settings.set_model(model.clone()),
-                    );
-                },
-                window,
-                cx,
-            )
+        let language_model_selector = cx.new({
+            let fs = fs.clone();
+            |cx| {
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }
         });
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
