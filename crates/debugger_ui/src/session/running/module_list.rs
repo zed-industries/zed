@@ -1,13 +1,14 @@
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
-use project::debugger::session::Session;
+use project::debugger::session::{Session, SessionEvent};
 use ui::prelude::*;
+use util::maybe;
 
 pub struct ModuleList {
     list: ListState,
+    invalidate: bool,
+    session: Entity<Session>,
     focus_handle: FocusHandle,
     _subscription: Subscription,
-    session: Entity<Session>,
-    pending_render: bool,
 }
 
 impl ModuleList {
@@ -27,9 +28,12 @@ impl ModuleList {
             },
         );
 
-        let _subscription = cx.subscribe(&session, |this, _, _, cx| {
-            this.pending_render = true;
-            cx.notify();
+        let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
+            SessionEvent::Invalidate | SessionEvent::Stopped | SessionEvent::Modules => {
+                this.invalidate = true;
+                cx.notify();
+            }
+            _ => {}
         });
 
         Self {
@@ -37,7 +41,7 @@ impl ModuleList {
             session,
             focus_handle,
             _subscription,
-            pending_render: false,
+            invalidate: true,
         }
     }
 
@@ -74,30 +78,19 @@ impl Focusable for ModuleList {
 
 impl Render for ModuleList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.pending_render {
+        if self.invalidate {
             let len = self
                 .session
                 .update(cx, |session, cx| session.modules(cx).len());
             self.list.reset(len);
-            self.pending_render = false;
+            self.invalidate = false;
+            cx.notify();
         }
+
         div()
             .track_focus(&self.focus_handle)
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-use dap::Module;
-use util::maybe;
-
-#[cfg(any(test, feature = "test-support"))]
-impl ModuleList {
-    pub fn modules(&self, cx: &mut Context<Self>) -> Vec<Module> {
-        self.session.update(cx, |session, cx| {
-            session.modules(cx).iter().cloned().collect()
-        })
     }
 }

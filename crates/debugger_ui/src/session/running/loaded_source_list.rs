@@ -1,10 +1,11 @@
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
-use project::debugger::session::Session;
+use project::debugger::session::{Session, SessionEvent};
 use ui::prelude::*;
 use util::maybe;
 
 pub struct LoadedSourceList {
     list: ListState,
+    invalidate: bool,
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
@@ -29,11 +30,12 @@ impl LoadedSourceList {
             },
         );
 
-        let _subscription = cx.observe(&session, |loaded_source_list, state, cx| {
-            let len = state.update(cx, |state, cx| state.loaded_sources(cx).len());
-
-            loaded_source_list.list.reset(len);
-            cx.notify();
+        let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
+            SessionEvent::Invalidate | SessionEvent::Stopped | SessionEvent::LoadedSources => {
+                this.invalidate = true;
+                cx.notify();
+            }
+            _ => {}
         });
 
         Self {
@@ -41,6 +43,7 @@ impl LoadedSourceList {
             session,
             focus_handle,
             _subscription,
+            invalidate: true,
         }
     }
 
@@ -82,9 +85,14 @@ impl Focusable for LoadedSourceList {
 
 impl Render for LoadedSourceList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.session.update(cx, |state, cx| {
-            state.loaded_sources(cx);
-        });
+        if self.invalidate {
+            let len = self
+                .session
+                .update(cx, |session, cx| session.loaded_sources(cx).len());
+            self.list.reset(len);
+            self.invalidate = false;
+            cx.notify();
+        }
 
         div()
             .track_focus(&self.focus_handle)
