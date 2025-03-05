@@ -12,6 +12,7 @@ use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
 };
+use futures::StreamExt as _;
 use git::repository::{
     Branch, CommitDetails, CommitSummary, PushOptions, Remote, RemoteCommandOutput, ResetMode,
     Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -21,6 +22,9 @@ use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
 use language::{Buffer, File};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
 use panel::{
@@ -195,6 +199,7 @@ pub struct GitPanel {
     conflicted_staged_count: usize,
     current_modifiers: Modifiers,
     add_coauthors: bool,
+    generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
@@ -318,6 +323,7 @@ impl GitPanel {
                 conflicted_staged_count: 0,
                 current_modifiers: window.modifiers(),
                 add_coauthors: true,
+                generate_commit_message_task: None,
                 entries: Vec::new(),
                 focus_handle: cx.focus_handle(),
                 fs,
@@ -1346,6 +1352,85 @@ impl GitPanel {
         Some(format!("{} {}", action_text, file_name))
     }
 
+    fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
+
+        if !provider.is_authenticated(cx) {
+            return;
+        }
+
+        const PROMPT: &str = r#"You an expert at writing Git commits. Your job is to write a clear commit message that summarizes the changes.
+
+Only return the commit message in your response. Do not include any additional meta-commentary about the task.
+
+Follow good Git style:
+
+- Separate the subject from the body with a blank line
+- Try to limit the subject line to 50 characters
+- Capitalize the subject line
+- Do not end the subject line with a period
+- Use the imperative mood in the subject line
+- Wrap the body at 72 characters
+- Use the body to explain *what* and *why* vs. how
+
+Here are the changes in this commit:
+        "#;
+
+        // Example diff:
+        let diff_text = "diff --git a/src/main.rs b/src/main.rs
+index 1234567..abcdef0 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -10,7 +10,7 @@ fn main() {
+     println!(\"Hello, world!\");
+-    let unused_var = 42;
++    let important_value = 42;
+
+     // Do something with the value
+-    // TODO: Implement this later
++    println!(\"The answer is {}\", important_value);
+ }";
+
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![format!("{PROMPT}\n{diff_text}").into()],
+                cache: false,
+            }],
+            tools: Vec::new(),
+            stop: Vec::new(),
+            temperature: None,
+        };
+
+        self.generate_commit_message_task = Some(cx.spawn(|this, mut cx| {
+            async move {
+                let stream = model.stream_completion_text(request, &cx);
+                let mut messages = stream.await?;
+
+                let mut commit_message = String::new();
+                while let Some(message) = messages.stream.next().await {
+                    let text = message?;
+                    commit_message.push_str(&text);
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    if !commit_message.is_empty() {
+                        this.commit_message_buffer(cx)
+                            .update(cx, |buffer, cx| buffer.set_text(commit_message, cx));
+                    }
+                })?;
+
+                anyhow::Ok(())
+            }
+            .log_err()
+        }));
+    }
+
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
         let suggested_commit_message = self.suggest_commit_message();
         let placeholder_text = suggested_commit_message
@@ -2062,6 +2147,14 @@ impl GitPanel {
                             .right_2()
                             .h(footer_size)
                             .flex_none()
+                            .child(
+                                Button::new("generate-commit-message", "Generate Commit Message")
+                                    .on_click(cx.listener(
+                                        move |this, _: &ClickEvent, _window, cx| {
+                                            this.generate_commit_message(cx);
+                                        },
+                                    )),
+                            )
                             .children(enable_coauthors)
                             .child(
                                 panel_filled_button(title)
