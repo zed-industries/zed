@@ -143,6 +143,7 @@ impl BreakpointStore {
             self.breakpoints.remove(&abs_path);
         }
 
+        cx.emit(BreakpointStoreEvent::BreakpointsUpdated(abs_path));
         cx.notify();
     }
 
@@ -196,7 +197,7 @@ impl BreakpointStore {
         cx: &mut Context<Self>,
     ) {
         self.active_stack_frame = position;
-        cx.emit(BreakpointEvent::ActiveDebugLineChanged);
+        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
         cx.notify();
     }
 
@@ -282,11 +283,12 @@ impl BreakpointStore {
     }
 }
 
-pub enum BreakpointEvent {
+pub enum BreakpointStoreEvent {
     ActiveDebugLineChanged,
+    BreakpointsUpdated(Arc<Path>),
 }
 
-impl EventEmitter<BreakpointEvent> for BreakpointStore {}
+impl EventEmitter<BreakpointStoreEvent> for BreakpointStore {}
 
 type LogMessage = Arc<str>;
 

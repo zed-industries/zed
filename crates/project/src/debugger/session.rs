@@ -1,6 +1,6 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::BreakpointStore;
+use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent};
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
@@ -223,8 +223,53 @@ impl LocalMode {
                 breakpoint_store: breakpoint_store.clone(),
             };
 
-            Self::initialize(session, adapter, breakpoint_store, initialized_rx, &mut cx).await
+            Self::initialize(session, adapter, initialized_rx, &mut cx).await
         })
+    }
+
+    fn send_breakpoints(
+        &mut self,
+        ignore_breakpoints: bool,
+        last_updated_path: Option<Arc<Path>>,
+        cx: &mut App,
+    ) -> Task<std::vec::Vec<Result<std::vec::Vec<dap::Breakpoint>>>> {
+        let mut breakpoint_tasks = Vec::new();
+        let mut breakpoints = self
+            .breakpoint_store
+            .update(cx, |store, cx| store.all_breakpoints(cx));
+
+        if let Some(last_updated_path) = last_updated_path {
+            breakpoints.entry(last_updated_path).or_default();
+        }
+
+        for (path, breakpoints) in breakpoints {
+            let breakpoints = if ignore_breakpoints {
+                vec![]
+            } else {
+                breakpoints
+                    .into_iter()
+                    .map(|bp| SourceBreakpoint {
+                        line: bp.position as u64 + 1,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: bp.kind.log_message().as_deref().map(Into::into),
+                        mode: None,
+                    })
+                    .collect()
+            };
+
+            breakpoint_tasks.push(self.request(
+                dap_command::SetBreakpoints {
+                    source: client_source(&path),
+                    breakpoints,
+                },
+                cx.background_executor().clone(),
+            ));
+        }
+
+        let task = futures::future::join_all(breakpoint_tasks);
+        cx.background_spawn(task)
     }
 
     async fn get_adapter_binary(
@@ -273,7 +318,6 @@ impl LocalMode {
     async fn initialize(
         this: Self,
         adapter: Arc<dyn DebugAdapter>,
-        breakpoint_store: Entity<BreakpointStore>,
         initialized_rx: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     ) -> Result<(Self, Capabilities)> {
@@ -295,35 +339,13 @@ impl LocalMode {
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = this.request(Launch { raw }, cx.background_executor().clone());
         let that = this.clone();
-        let breakpoints = breakpoint_store.update(cx, |this, cx| this.all_breakpoints(cx))?;
 
         let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
         let configuration_sequence = async move {
             let _ = initialized_rx.await?;
 
-            let mut breakpoint_tasks = Vec::new();
-
-            for (path, breakpoints) in breakpoints.iter() {
-                let breakpoints = breakpoints
-                    .into_iter()
-                    .map(|bp| SourceBreakpoint {
-                        line: bp.position as u64 + 1,
-                        column: None,
-                        condition: None,
-                        hit_condition: None,
-                        log_message: bp.kind.log_message().as_deref().map(Into::into),
-                        mode: None,
-                    })
-                    .collect();
-                breakpoint_tasks.push(that.request(
-                    dap_command::SetBreakpoints {
-                        source: client_source(&path),
-                        breakpoints,
-                    },
-                    cx.background_executor().clone(),
-                ));
-            }
-            let _ = futures::future::join_all(breakpoint_tasks).await;
+            cx.update(|cx| that.clone().send_breakpoints(false, None, cx))?
+                .await;
 
             if configuration_done_supported {
                 that.request(ConfigurationDone, cx.background_executor().clone())
@@ -558,7 +580,7 @@ impl EventEmitter<SessionEvent> for Session {}
 // BreakpointStore notifies session on breakpoint changes
 impl Session {
     pub(crate) fn local(
-        breakpoints: Entity<BreakpointStore>,
+        breakpoint_store: Entity<BreakpointStore>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         delegate: DapAdapterDelegate,
@@ -572,7 +594,7 @@ impl Session {
             let (mode, capabilities) = LocalMode::new(
                 session_id,
                 parent_session.clone(),
-                breakpoints.clone(),
+                breakpoint_store.clone(),
                 config.clone(),
                 delegate,
                 message_tx,
@@ -599,6 +621,19 @@ impl Session {
                             }
                         }
                     })];
+
+                cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
+                    BreakpointStoreEvent::BreakpointsUpdated(path) => {
+                        let ignore = this.ignore_breakpoints;
+                        if let Some(local) = this.as_local_mut() {
+                            local
+                                .send_breakpoints(ignore, Some(path.clone()), cx)
+                                .detach();
+                        };
+                    }
+                    BreakpointStoreEvent::ActiveDebugLineChanged => {}
+                })
+                .detach();
 
                 Self {
                     mode: Mode::Local(mode),
@@ -679,6 +714,13 @@ impl Session {
 
     pub fn is_local(&self) -> bool {
         matches!(self.mode, Mode::Local(_))
+    }
+
+    pub fn as_local_mut(&mut self) -> Option<&mut LocalMode> {
+        match &mut self.mode {
+            Mode::Local(local_mode) => Some(local_mode),
+            Mode::Remote(_) => None,
+        }
     }
 
     pub fn as_local(&self) -> Option<&LocalMode> {
