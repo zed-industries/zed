@@ -60,3 +60,5 @@ mkShell' {
       # LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs; # TODO: try this?
     };
 }
+
+# todo: maybe unset LK_CUSTOM_WEBRTC...

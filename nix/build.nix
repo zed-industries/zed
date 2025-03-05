@@ -3,9 +3,9 @@
   crane,
   rustToolchain,
   rustPlatform,
-  fetchpatch,
   cmake,
   copyDesktopItems,
+  fetchFromGitHub,
   curl,
   clang,
   perl,
@@ -36,7 +36,6 @@
   darwinMinVersionHook,
   makeWrapper,
   nodejs_22,
-  nix-gitignore,
 
   withGLES ? false,
 }:
@@ -44,157 +43,202 @@
 assert withGLES -> stdenv.hostPlatform.isLinux;
 
 let
-  includeFilter =
-    path: type:
+  mkIncludeFilter =
+    root': path: type:
     let
-      baseName = baseNameOf (toString path);
-      parentDir = dirOf path;
-      inRootDir = type == "directory" && parentDir == ../.;
-    in
-    !(
-      inRootDir
-      && (baseName == "docs" || baseName == ".github" || baseName == ".git" || baseName == "target")
-    );
-  craneLib = crane.overrideToolchain rustToolchain;
-  commonSrc = lib.cleanSourceWith {
-    src = nix-gitignore.gitignoreSource [ ] ../.;
-    filter = includeFilter;
-    name = "source";
-  };
-  gpu-lib = if withGLES then libglvnd else vulkan-loader;
-  pname = "zed-editor";
-  version = "nightly";
-  commonArgs = rec {
-    inherit pname version;
-    src = commonSrc;
-
-    nativeBuildInputs =
-      [
-        # TODO: use pkgs.clangStdenv or ignore cargo config?
-        # also make it linux only since darwin stdenv has clang by default
-        clang
-        cmake
-        copyDesktopItems
-        curl
-        perl
-        pkg-config
-        protobuf
-        cargo-about
-        rustPlatform.bindgenHook
-      ]
-      ++ lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ]
-      ++ lib.optionals stdenv.hostPlatform.isDarwin [ cargo-bundle ];
-
-    buildInputs =
-      [
-        curl
-        fontconfig
-        freetype
-        # TODO: need staticlib of this for linking the musl remote server.
-        # should make it a separate derivation/flake output
-        libgit2
-        openssl
-        sqlite
-        zlib
-        zstd
-      ]
-      ++ lib.optionals stdenv.hostPlatform.isLinux [
-        alsa-lib
-        libxkbcommon
-        wayland
-        gpu-lib
-        xorg.libxcb
-      ]
-      ++ lib.optionals stdenv.hostPlatform.isDarwin [
-        apple-sdk_15
-        darwin.apple_sdk.frameworks.System
-        (darwinMinVersionHook "10.15")
+      # note: under lazy-trees this introduces an extra copy
+      root = toString root' + "/";
+      relPath = lib.removePrefix root path;
+      topLevelIncludes = [
+        "crates"
+        "assets"
+        "extensions"
+        "script"
+        "tooling"
+        "Cargo.toml"
+        ".config" # nextest?
       ];
+      firstComp = builtins.head (lib.path.subpath.components relPath);
+    in
+    builtins.elem firstComp topLevelIncludes;
 
-    env = {
-      ZSTD_SYS_USE_PKG_CONFIG = true;
-      FONTCONFIG_FILE = makeFontsConf {
-        fontDirectories = [
-          "${src}/assets/fonts/plex-mono"
-          "${src}/assets/fonts/plex-sans"
-        ];
+  craneLib = crane.overrideToolchain rustToolchain;
+  gpu-lib = if withGLES then libglvnd else vulkan-loader;
+  commonArgs =
+    let
+      zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
+    in
+    rec {
+      pname = "zed-editor";
+      version = zedCargoLock.package.version + "-nightly";
+      src = builtins.path {
+        path = ../.;
+        filter = mkIncludeFilter ../.;
+        name = "source";
       };
-      ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
-      RELEASE_VERSION = version;
-      RUSTFLAGS = if withGLES then "--cfg gles" else "";
-      LK_CUSTOM_WEBRTC = livekit-libwebrtc;
 
-      # TODO: why are these not handled by the linker given that they're in buildInputs?
-      NIX_LDFLAGS = "-rpath ${
-        lib.makeLibraryPath [
-          gpu-lib
-          wayland
+      cargoLock = ../Cargo.lock;
+
+      nativeBuildInputs =
+        [
+          # TODO: use pkgs.clangStdenv or ignore cargo config?
+          # also make it linux only since darwin stdenv has clang by default
+          # see https://crane.dev/examples/cross-musl.html
+          clang
+          cmake
+          copyDesktopItems
+          curl
+          perl
+          pkg-config
+          protobuf
+          cargo-about
+          rustPlatform.bindgenHook
         ]
-      }";
+        ++ lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ]
+        ++ lib.optionals stdenv.hostPlatform.isDarwin [
+          # TODO: move to overlay so it's usable in the shell
+          (cargo-bundle.overrideAttrs (old: {
+            version = "0.6.0-zed";
+            src = fetchFromGitHub {
+              owner = "zed-industries";
+              repo = "cargo-bundle";
+              rev = "zed-deploy";
+              hash = "sha256-OxYdTSiR9ueCvtt7Y2OJkvzwxxnxu453cMS+l/Bi5hM=";
+            };
+          }))
+        ];
+
+      buildInputs =
+        [
+          curl
+          fontconfig
+          freetype
+          # TODO: need staticlib of this for linking the musl remote server.
+          # should make it a separate derivation/flake output
+          libgit2
+          openssl
+          sqlite
+          zlib
+          zstd
+        ]
+        ++ lib.optionals stdenv.hostPlatform.isLinux [
+          alsa-lib
+          libxkbcommon
+          wayland
+          gpu-lib
+          xorg.libxcb
+        ]
+        ++ lib.optionals stdenv.hostPlatform.isDarwin [
+          apple-sdk_15
+          darwin.apple_sdk.frameworks.System
+          (darwinMinVersionHook "10.15")
+        ];
+
+      cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
+
+      env = {
+        ZSTD_SYS_USE_PKG_CONFIG = true;
+        FONTCONFIG_FILE = makeFontsConf {
+          fontDirectories = [
+            ../assets/fonts/plex-mono
+            ../assets/fonts/plex-sans
+          ];
+        };
+        ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
+        RELEASE_VERSION = version;
+        RUSTFLAGS = if withGLES then "--cfg gles" else "";
+        # TODO: why are these not handled by the linker given that they're in buildInputs?
+        NIX_LDFLAGS = "-rpath ${
+          lib.makeLibraryPath [
+            gpu-lib
+            wayland
+          ]
+        }";
+        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
+      };
+
+      cargoVendorDir = craneLib.vendorCargoDeps {
+        inherit src cargoLock;
+        overrideVendorGitCheckout =
+          let
+            hasWebRtcSys = builtins.any (crate: crate.name == "webrtc-sys");
+            # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
+            # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
+            # TODO: send livekit sdk a PR to make this configurable
+            postPatch = ''
+              substituteInPlace webrtc-sys/build.rs \
+                --replace-fail "cargo:rustc-link-lib=static=webrtc" \
+                               "cargo:rustc-link-lib=dylib=webrtc"
+            '';
+          in
+          crates: drv:
+          if hasWebRtcSys crates then
+            drv.overrideAttrs (o: {
+              postPatch = (o.postPatch or "") + postPatch;
+            })
+          else
+            drv;
+      };
     };
-  };
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (
+    commonArgs
+    // {
+      # TODO: figure out why the main derivation is still rebuilding deps...
+      # disable pre-building the deps for now
+      buildPhaseCargoCommand = "true";
+
+      # forcibly inhibit `doInstallCargoArtifacts`...
+      # https://github.com/ipetkov/crane/blob/1d19e2ec7a29dcc25845eec5f1527aaf275ec23e/lib/setupHooks/installCargoArtifactsHook.sh#L111
+      #
+      # it is, unfortunately, not overridable in `buildDepsOnly`:
+      # https://github.com/ipetkov/crane/blob/1d19e2ec7a29dcc25845eec5f1527aaf275ec23e/lib/buildDepsOnly.nix#L85
+      preBuild = "postInstallHooks=()";
+      doCheck = false;
+    }
+  );
 in
 craneLib.buildPackage (
-  commonArgs
-  // {
+  lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
 
-    patches =
-      [
-        ./generate-licenses.patch
-      ]
-      ++ lib.optionals stdenv.hostPlatform.isDarwin [
-        # Livekit requires Swift 6
-        # We need this until livekit-rust sdk is used
-        ../script/patches/use-cross-platform-livekit.patch
-      ];
-
-    # Dynamically link WebRTC instead of static
-    postPatch = ''
-      substituteInPlace ../${pname}-${version}-vendor/webrtc-sys-*/build.rs \
-        --replace-fail "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
-    '';
+    patches = lib.optionals stdenv.hostPlatform.isDarwin [
+      # Livekit requires Swift 6
+      # We need this until livekit-rust sdk is used
+      ../script/patches/use-cross-platform-livekit.patch
+    ];
 
     dontUseCmakeConfigure = true;
+
+    # without the env var generate-licenses fails due to crane's fetchCargoVendor, see:
+    # https://github.com/zed-industries/zed/issues/19971#issuecomment-2688455390
     preBuild = ''
-      bash script/generate-licenses
+      ALLOW_MISSING_LICENSES=yes bash script/generate-licenses
+      echo nightly > crates/zed/RELEASE_CHANNEL
     '';
 
-    cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
+    # TODO: try craneLib.cargoNextest separate output and doCheck=false
+    # do we even care about running our test suite in the nix sandbox?
 
-    # TODO: override the cargo-bundle package with our fork, get rid of this
+    # see crane bug: https://github.com/ipetkov/crane/issues/808
+    doNotRemoveReferencesToRustToolchain = true;
+    doNotRemoveReferencesToVendorDir = true;
+
     installPhase =
       if stdenv.hostPlatform.isDarwin then
         ''
           runHook preInstall
 
-          # cargo-bundle expects the binary in target/release
-          mv target/release/zed target/release/zed
-
           pushd crates/zed
-
-          # Note that this is GNU sed, while Zed's bundle-mac uses BSD sed
-          sed -i "s/package.metadata.bundle-stable/package.metadata.bundle/" Cargo.toml
+          sed -i "s/package.metadata.bundle-nightly/package.metadata.bundle/" Cargo.toml
           export CARGO_BUNDLE_SKIP_BUILD=true
-          app_path=$(cargo bundle --release | xargs)
-
-          # We're not using the fork of cargo-bundle, so we must manually append plist extensions
-          # Remove closing tags from Info.plist (last two lines)
-          head -n -2 $app_path/Contents/Info.plist > Info.plist
-          # Append extensions
-          cat resources/info/*.plist >> Info.plist
-          # Add closing tags
-          printf "</dict>\n</plist>\n" >> Info.plist
-          mv Info.plist $app_path/Contents/Info.plist
-
+          app_path="$(cargo bundle --release | xargs)"
           popd
 
           mkdir -p $out/Applications $out/bin
           # Zed expects git next to its own binary
-          ln -s ${git}/bin/git $app_path/Contents/MacOS/git
-          mv target/release/cli $app_path/Contents/MacOS/cli
-          mv $app_path $out/Applications/
+          ln -s ${git}/bin/git "$app_path/Contents/MacOS/git"
+          mv target/release/cli "$app_path/Contents/MacOS/cli"
+          mv "$app_path" $out/Applications/
 
           # Physical location of the CLI must be inside the app bundle as this is used
           # to determine which app to start
@@ -203,6 +247,7 @@ craneLib.buildPackage (
           runHook postInstall
         ''
       else
+        # TODO: icons should probably be named "zed-nightly". fix bundle-linux first
         ''
           runHook preInstall
 
@@ -210,11 +255,13 @@ craneLib.buildPackage (
           cp target/release/zed $out/libexec/zed-editor
           cp target/release/cli $out/bin/zed
 
-          install -D ${commonSrc}/crates/zed/resources/app-icon-nightly@2x.png $out/share/icons/hicolor/1024x1024@2x/apps/zed.png
-          install -D ${commonSrc}/crates/zed/resources/app-icon-nightly.png $out/share/icons/hicolor/512x512/apps/zed.png
+          install -D ${../crates/zed/resources/${"app-icon-nightly@2x.png"}} \
+            $out/share/icons/hicolor/1024x1024@2x/apps/zed.png
+          install -D ${../crates/zed/resources/app-icon-nightly.png} \
+            $out/share/icons/hicolor/512x512/apps/zed.png
 
-          # extracted from ../scripts/bundle-linux (envsubst) and
-          # ../scripts/install.sh (final desktop file name)
+          # extracted from ../script/bundle-linux (envsubst) and
+          # ../script/install.sh (final desktop file name)
           (
             export DO_STARTUP_NOTIFY="true"
             export APP_CLI="zed"
@@ -232,23 +279,6 @@ craneLib.buildPackage (
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
       wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';
-
-    preCheck = ''
-      export HOME=$(mktemp -d);
-    '';
-
-    cargoTestExtraArgs =
-      "-- "
-      + lib.concatStringsSep " " (
-        [
-          # Flakey: unreliably fails on certain hosts (including Hydra)
-          "--skip=zed::tests::test_window_edit_state_restoring_enabled"
-        ]
-        ++ lib.optionals stdenv.hostPlatform.isLinux [
-          # Fails on certain hosts (including Hydra) for unclear reason
-          "--skip=test_open_paths_action"
-        ]
-      );
 
     meta = {
       description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
