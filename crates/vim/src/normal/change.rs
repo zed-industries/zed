@@ -27,7 +27,7 @@ impl Vim {
             Motion::Left
                 | Motion::Right
                 | Motion::EndOfLine { .. }
-                | Motion::Backspace
+                | Motion::WrappingLeft
                 | Motion::StartOfLine { .. }
         );
         self.update_editor(window, cx, |vim, editor, window, cx| {

@@ -6,7 +6,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::ThreadStore;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
-use crate::{RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
@@ -20,7 +20,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
-use language_model_selector::LanguageModelSelector;
+use language_model_selector::ToggleModelSelector;
 use parking_lot::Mutex;
 use settings::Settings;
 use std::cmp;
@@ -40,7 +40,6 @@ pub struct PromptEditor<T> {
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -56,7 +55,7 @@ impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
 
         let left_gutter_width = match &self.mode {
@@ -104,7 +103,10 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .items_start()
                     .cursor(CursorStyle::Arrow)
                     .on_action(cx.listener(Self::toggle_context_picker))
-                    .on_action(cx.listener(Self::toggle_model_selector))
+                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                        this.model_selector
+                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                    }))
                     .on_action(cx.listener(Self::confirm))
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
@@ -345,15 +347,6 @@ impl<T: 'static> PromptEditor<T> {
         cx: &mut Context<Self>,
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
-    }
-
-    fn toggle_model_selector(
-        &mut self,
-        _: &ToggleModelSelector,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.model_selector_menu_handle.toggle(window, cx);
     }
 
     pub fn remove_all_context(
@@ -823,6 +816,7 @@ impl InlineAssistId {
 }
 
 impl PromptEditor<BufferCodegen> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_buffer(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -889,13 +883,12 @@ impl PromptEditor<BufferCodegen> {
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs,
-                    model_selector_menu_handle.clone(),
+                    model_selector_menu_handle,
                     prompt_editor.focus_handle(cx),
                     window,
                     cx,
                 )
             }),
-            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -983,6 +976,7 @@ impl TerminalInlineAssistId {
 }
 
 impl PromptEditor<TerminalCodegen> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
@@ -1050,7 +1044,6 @@ impl PromptEditor<TerminalCodegen> {
                     cx,
                 )
             }),
-            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,

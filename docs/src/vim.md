@@ -72,10 +72,15 @@ The following commands use the language server to help you navigate and refactor
 
 ### Git
 
-| Command                   | Default Shortcut |
-| ------------------------- | ---------------- |
-| Go to next git change     | `] c`            |
-| Go to previous git change | `[ c`            |
+| Command                         | Default Shortcut |
+| ------------------------------- | ---------------- |
+| Go to next git change           | `] c`            |
+| Go to previous git change       | `[ c`            |
+| Expand diff hunk                | `d o`            |
+| Toggle staged                   | `d O`            |
+| Stage and next (in diff view)   | `d u`            |
+| Unstage and next (in diff view) | `d U`            |
+| Restore change                  | `d p`            |
 
 ### Treesitter
 
@@ -160,6 +165,7 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
 - You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
+- You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 
 ## Command palette
 
@@ -402,6 +408,22 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 }
 ```
 
+In non-modal text editors, cursor navigation typically wraps when moving past line ends. Zed, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
+
+```json
+// In VimScript, this would look like this:
+// set whichwrap+=<,>,[,],h,l
+{
+  "context": "VimControl && !menu",
+  "bindings": {
+    "left": "vim::WrappingLeft",
+    "right": "vim::WrappingRight",
+    "h": "vim::WrappingLeft",
+    "l": "vim::WrappingRight"
+  }
+}
+```
+
 The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for quick navigation to any two-character sequence in your text. You can enable it by adding the following keybindings to your keymap. By default, the `s` key is mapped to `vim::Substitute`. Adding these bindings will override that behavior, so ensure this change aligns with your workflow preferences.
 
 ```json
@@ -410,6 +432,17 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
   "bindings": {
     "s": "vim::PushSneak",
     "shift-s": "vim::PushSneakBackward"
+  }
+}
+```
+
+The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not have a default binding for visual mode, as the `shift-x` binding conflicts with the default `shift-x` binding for visual mode (`vim::VisualDeleteLine`). To assign the default vim-exchange binding, add the following keybinding to your keymap:
+
+```json
+{
+  "context": "vim_mode == visual",
+  "bindings": {
+    "shift-x": "vim::Exchange"
   }
 }
 ```
@@ -439,6 +472,7 @@ You can change the following settings to modify vim mode's behavior:
 
 | Property                     | Description                                                                                                                                                                                   | Default Value |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                  | "normal"      |
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | If `true`, `f` and `t` motions extend across multiple lines.                                                                                                                                  | false         |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |

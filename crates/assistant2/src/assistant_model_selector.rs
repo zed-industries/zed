@@ -2,12 +2,12 @@ use assistant_settings::AssistantSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
 use language_model::LanguageModelRegistry;
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::{
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+};
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{prelude::*, ButtonLike, PopoverMenuHandle, Tooltip};
-
-use crate::ToggleModelSelector;
 
 pub struct AssistantModelSelector {
     selector: Entity<LanguageModelSelector>,
@@ -41,6 +41,10 @@ impl AssistantModelSelector {
             menu_handle,
             focus_handle,
         }
+    }
+
+    pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_handle.toggle(window, cx);
     }
 }
 

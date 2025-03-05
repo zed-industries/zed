@@ -49,6 +49,7 @@ pub fn panel_button(label: impl Into<SharedString>) -> ui::Button {
     let id = ElementId::Name(label.clone().to_lowercase().replace(' ', "_").into());
     ui::Button::new(id, label)
         .label_size(ui::LabelSize::Small)
+        .icon_size(ui::IconSize::Small)
         // TODO: Change this once we use on_surface_bg in button_like
         .layer(ui::ElevationIndex::ModalSurface)
         .size(ui::ButtonSize::Compact)
@@ -78,7 +79,7 @@ pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
         .bg(cx.theme().colors().editor_background)
 }
 
-pub fn panel_editor_style(monospace: bool, window: &mut Window, cx: &mut App) -> EditorStyle {
+pub fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorStyle {
     let settings = ThemeSettings::get_global(cx);
 
     let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());

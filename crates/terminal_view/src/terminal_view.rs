@@ -22,8 +22,8 @@ use terminal::{
     },
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
-    ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
-    TerminalBounds, ToggleViMode,
+    ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState, TaskStatus,
+    Terminal, TerminalBounds, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
@@ -41,7 +41,7 @@ use workspace::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
-    searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
     WorkspaceId,
 };
@@ -807,6 +807,33 @@ impl TerminalView {
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
     }
+
+    fn rerun_button(task: &TaskState) -> Option<IconButton> {
+        if !task.show_rerun {
+            return None;
+        }
+
+        let task_id = task.id.clone();
+        Some(
+            IconButton::new("rerun-icon", IconName::Rerun)
+                .icon_size(IconSize::Small)
+                .size(ButtonSize::Compact)
+                .icon_color(Color::Default)
+                .shape(ui::IconButtonShape::Square)
+                .tooltip(Tooltip::text("Rerun task"))
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::Rerun {
+                            task_id: Some(task_id.0.clone()),
+                            allow_concurrent_runs: Some(true),
+                            use_new_terminal: Some(false),
+                            reevaluate_context: false,
+                        }),
+                        cx,
+                    );
+                }),
+        )
+    }
 }
 
 fn subscribe_for_terminal_events(
@@ -1220,44 +1247,26 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let rerun_button = |task_id: task::TaskId| {
-            IconButton::new("rerun-icon", IconName::Rerun)
-                .icon_size(IconSize::Small)
-                .size(ButtonSize::Compact)
-                .icon_color(Color::Default)
-                .shape(ui::IconButtonShape::Square)
-                .tooltip(Tooltip::text("Rerun task"))
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(
-                        Box::new(zed_actions::Rerun {
-                            task_id: Some(task_id.0.clone()),
-                            allow_concurrent_runs: Some(true),
-                            use_new_terminal: Some(false),
-                            reevaluate_context: false,
-                        }),
-                        cx,
-                    );
-                })
-        };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
                     IconName::Play,
                     Color::Disabled,
-                    Some(rerun_button(terminal_task.id.clone())),
+                    TerminalView::rerun_button(&terminal_task),
                 ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
-                    Some(rerun_button(terminal_task.id.clone())),
+                    TerminalView::rerun_button(&terminal_task),
                 ),
                 TaskStatus::Completed { success } => {
-                    let rerun_button = rerun_button(terminal_task.id.clone());
+                    let rerun_button = TerminalView::rerun_button(&terminal_task);
+
                     if *success {
-                        (IconName::Check, Color::Success, Some(rerun_button))
+                        (IconName::Check, Color::Success, rerun_button)
                     } else {
-                        (IconName::XCircle, Color::Error, Some(rerun_button))
+                        (IconName::XCircle, Color::Error, rerun_button)
                     }
                 }
             },
@@ -1583,6 +1592,7 @@ impl SearchableItem for TerminalView {
     /// Reports back to the search toolbar what the active match should be (the selection)
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -1593,19 +1603,36 @@ impl SearchableItem for TerminalView {
         let res = if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
-                if let Some(ix) = matches
-                    .iter()
-                    .enumerate()
-                    .find(|(_, search_match)| {
-                        search_match.contains(&selection_head)
-                            || search_match.start() > &selection_head
-                    })
-                    .map(|(ix, _)| ix)
-                {
-                    Some(ix)
-                } else {
-                    // If no selection after selection head, return the last match
-                    Some(matches.len().saturating_sub(1))
+                match direction {
+                    Direction::Prev => {
+                        // If no selection before selection head, return the first match
+                        Some(
+                            matches
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .find(|(_, search_match)| {
+                                    search_match.contains(&selection_head)
+                                        || search_match.start() < &selection_head
+                                })
+                                .map(|(ix, _)| ix)
+                                .unwrap_or(0),
+                        )
+                    }
+                    Direction::Next => {
+                        // If no selection after selection head, return the last match
+                        Some(
+                            matches
+                                .iter()
+                                .enumerate()
+                                .find(|(_, search_match)| {
+                                    search_match.contains(&selection_head)
+                                        || search_match.start() > &selection_head
+                                })
+                                .map(|(ix, _)| ix)
+                                .unwrap_or(matches.len().saturating_sub(1)),
+                        )
+                    }
                 }
             } else {
                 // Matches found but no active selection, return the first last one (closest to cursor)

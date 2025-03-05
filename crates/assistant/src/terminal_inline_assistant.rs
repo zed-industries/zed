@@ -16,11 +16,11 @@ use gpui::{
 };
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -506,7 +506,7 @@ struct PromptEditor {
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = &self.codegen.read(cx).status;
         let buttons = match status {
             CodegenStatus::Idle => {
@@ -643,7 +643,7 @@ impl Render for PromptEditor {
                     .gap_2()
                     .child(LanguageModelSelectorPopoverMenu::new(
                         self.language_model_selector.clone(),
-                        IconButton::new("context", IconName::SettingsAlt)
+                        IconButton::new("change-model", IconName::SettingsAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted),
@@ -702,6 +702,7 @@ impl Focusable for PromptEditor {
 impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
@@ -1048,7 +1049,7 @@ impl PromptEditor {
             },
             font_family: settings.buffer_font.family.clone(),
             font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size.into(),
+            font_size: settings.buffer_font_size(cx).into(),
             font_weight: settings.buffer_font.weight,
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
@@ -1072,7 +1073,10 @@ pub enum CodegenEvent {
 
 impl EventEmitter<CodegenEvent> for Codegen {}
 
+#[cfg(not(target_os = "windows"))]
 const CLEAR_INPUT: &str = "\x15";
+#[cfg(target_os = "windows")]
+const CLEAR_INPUT: &str = "\x03";
 const CARRIAGE_RETURN: &str = "\x0d";
 
 struct TerminalTransaction {

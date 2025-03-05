@@ -13,8 +13,8 @@ use client::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
+    Action, AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -42,7 +42,7 @@ pub struct ItemSettings {
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
     pub show_diagnostics: ShowDiagnostics,
-    pub always_show_close_button: bool,
+    pub show_close_button: ShowCloseButton,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +58,15 @@ pub enum ClosePosition {
     Left,
     #[default]
     Right,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ShowCloseButton {
+    Always,
+    #[default]
+    Hover,
+    Hidden,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -104,7 +113,7 @@ pub struct ItemSettingsContent {
     /// Whether to always show the close button on tabs.
     ///
     /// Default: false
-    always_show_close_button: Option<bool>,
+    show_close_button: Option<ShowCloseButton>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -518,6 +527,7 @@ pub trait ItemHandle: 'static + Send {
     fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings;
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
+    fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -977,6 +987,13 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn include_in_nav_history(&self) -> bool {
         T::include_in_nav_history()
+    }
+
+    fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.focus_handle(cx).focus(window);
+            window.dispatch_action(action, cx);
+        })
     }
 }
 

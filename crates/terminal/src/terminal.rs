@@ -325,6 +325,7 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
         python_venv_directory: Option<PathBuf>,
@@ -642,6 +643,7 @@ pub struct TaskState {
     pub hide: HideStrategy,
     pub show_summary: bool,
     pub show_command: bool,
+    pub show_rerun: bool,
 }
 
 /// A status of the current terminal tab's task.

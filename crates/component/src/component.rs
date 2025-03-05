@@ -1,9 +1,9 @@
 use std::ops::{Deref, DerefMut};
+use std::sync::LazyLock;
 
 use collections::HashMap;
 use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
 use linkme::distributed_slice;
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use theme::ActiveTheme;
 
@@ -18,7 +18,7 @@ pub trait Component {
 }
 
 pub trait ComponentPreview: Component {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement;
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement;
 }
 
 #[distributed_slice]
@@ -27,12 +27,12 @@ pub static __ALL_COMPONENTS: [fn()] = [..];
 #[distributed_slice]
 pub static __ALL_PREVIEWS: [fn()] = [..];
 
-pub static COMPONENT_DATA: Lazy<RwLock<ComponentRegistry>> =
-    Lazy::new(|| RwLock::new(ComponentRegistry::new()));
+pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
+    LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
 
 pub struct ComponentRegistry {
     components: Vec<(Option<&'static str>, &'static str, Option<&'static str>)>,
-    previews: HashMap<&'static str, fn(&mut Window, &App) -> AnyElement>,
+    previews: HashMap<&'static str, fn(&mut Window, &mut App) -> AnyElement>,
 }
 
 impl ComponentRegistry {
@@ -62,7 +62,10 @@ pub fn register_component<T: Component>() {
 }
 
 pub fn register_preview<T: ComponentPreview>() {
-    let preview_data = (T::name(), T::preview as fn(&mut Window, &App) -> AnyElement);
+    let preview_data = (
+        T::name(),
+        T::preview as fn(&mut Window, &mut App) -> AnyElement,
+    );
     COMPONENT_DATA
         .write()
         .previews
@@ -77,7 +80,7 @@ pub struct ComponentMetadata {
     name: SharedString,
     scope: Option<SharedString>,
     description: Option<SharedString>,
-    preview: Option<fn(&mut Window, &App) -> AnyElement>,
+    preview: Option<fn(&mut Window, &mut App) -> AnyElement>,
 }
 
 impl ComponentMetadata {
@@ -93,7 +96,7 @@ impl ComponentMetadata {
         self.description.clone()
     }
 
-    pub fn preview(&self) -> Option<fn(&mut Window, &App) -> AnyElement> {
+    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> AnyElement> {
         self.preview
     }
 }
@@ -173,9 +176,9 @@ pub enum ExampleLabelSide {
     Left,
     /// Right side
     Right,
-    #[default]
     /// Top side
     Top,
+    #[default]
     /// Bottom side
     Bottom,
 }
@@ -200,10 +203,10 @@ impl RenderOnce for ComponentExample {
             ExampleLabelSide::Top => base.flex_col_reverse(),
         };
 
-        base.gap_1()
+        base.gap_2()
             .p_2()
-            .text_sm()
-            .text_color(cx.theme().colors().text)
+            .text_size(px(10.))
+            .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.flex_1())
             .child(self.element)
             .child(self.variant_name)
@@ -235,6 +238,7 @@ pub struct ComponentExampleGroup {
     pub title: Option<SharedString>,
     pub examples: Vec<ComponentExample>,
     pub grow: bool,
+    pub vertical: bool,
 }
 
 impl RenderOnce for ComponentExampleGroup {
@@ -245,12 +249,13 @@ impl RenderOnce for ComponentExampleGroup {
             .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.w_full().flex_1())
             .when_some(self.title, |this, title| {
-                this.gap_4().pb_5().child(
+                this.gap_4().child(
                     div()
                         .flex()
                         .items_center()
                         .gap_3()
-                        .child(div().h_px().w_4().bg(cx.theme().colors().border_variant))
+                        .pb_1()
+                        .child(div().h_px().w_4().bg(cx.theme().colors().border))
                         .child(
                             div()
                                 .flex_none()
@@ -269,9 +274,10 @@ impl RenderOnce for ComponentExampleGroup {
             .child(
                 div()
                     .flex()
+                    .when(self.vertical, |this| this.flex_col())
                     .items_start()
                     .w_full()
-                    .gap_8()
+                    .gap_6()
                     .children(self.examples)
                     .into_any_element(),
             )
@@ -286,6 +292,7 @@ impl ComponentExampleGroup {
             title: None,
             examples,
             grow: false,
+            vertical: false,
         }
     }
 
@@ -295,12 +302,19 @@ impl ComponentExampleGroup {
             title: Some(title.into()),
             examples,
             grow: false,
+            vertical: false,
         }
     }
 
     /// Set the group to grow to fill the available horizontal space.
     pub fn grow(mut self) -> Self {
         self.grow = true;
+        self
+    }
+
+    /// Lay the group out vertically.
+    pub fn vertical(mut self) -> Self {
+        self.vertical = true;
         self
     }
 }

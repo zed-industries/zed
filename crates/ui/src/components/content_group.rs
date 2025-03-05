@@ -11,14 +11,14 @@ pub fn content_group() -> ContentGroup {
 /// A [ContentGroup] that vertically stacks its children.
 ///
 /// This is a convenience function that simply combines [`ContentGroup`] and [`v_flex`](crate::v_flex).
-pub fn v_group() -> ContentGroup {
+pub fn v_container() -> ContentGroup {
     content_group().v_flex()
 }
 
 /// Creates a new horizontal [ContentGroup].
 ///
 /// This is a convenience function that simply combines [`ContentGroup`] and [`h_flex`](crate::h_flex).
-pub fn h_group() -> ContentGroup {
+pub fn h_container() -> ContentGroup {
     content_group().h_flex()
 }
 
@@ -90,7 +90,7 @@ impl RenderOnce for ContentGroup {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for ContentGroup {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         example_group(vec![
             single_example(
                 "Default",

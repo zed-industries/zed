@@ -26,6 +26,7 @@ log.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
 rope.workspace = true
+schemars.workspace = true
 serde.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
@@ -33,6 +34,7 @@ text.workspace = true
 time.workspace = true
 url.workspace = true
 util.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

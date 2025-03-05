@@ -1,7 +1,7 @@
 use super::*;
 use editor::Editor;
 use gpui::{TestAppContext, VisualTestContext};
-use menu::SelectPrev;
+use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
 use std::path::Path;
@@ -64,7 +64,7 @@ async fn test_open_with_prev_tab_selected_and_cycle_on_toggle_action(
         assert_match_selection(tab_switcher, 3, tab_1.boxed_clone());
     });
 
-    cx.dispatch_action(SelectPrev);
+    cx.dispatch_action(SelectPrevious);
     tab_switcher.update(cx, |tab_switcher, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 4);
         assert_match_at_position(tab_switcher, 0, tab_4.boxed_clone());

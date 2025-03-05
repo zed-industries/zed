@@ -122,6 +122,7 @@ impl Database {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_or_create_user_by_github_account_tx(
         &self,
         github_login: &str,

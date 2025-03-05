@@ -1,3 +1,4 @@
+use assistant_context_editor::SavedContextMetadata;
 use gpui::{
     uniform_list, App, Entity, FocusHandle, Focusable, ScrollStrategy, UniformListScrollHandle,
     WeakEntity,
@@ -5,13 +6,14 @@ use gpui::{
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
-use crate::thread_store::{SavedThreadMetadata, ThreadStore};
+use crate::history_store::{HistoryEntry, HistoryStore};
+use crate::thread_store::SavedThreadMetadata;
 use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
     assistant_panel: WeakEntity<AssistantPanel>,
-    thread_store: Entity<ThreadStore>,
+    history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
 }
@@ -19,26 +21,27 @@ pub struct ThreadHistory {
 impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakEntity<AssistantPanel>,
-        thread_store: Entity<ThreadStore>,
-
+        history_store: Entity<HistoryStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             assistant_panel,
-            thread_store,
+            history_store,
             scroll_handle: UniformListScrollHandle::default(),
             selected_index: 0,
         }
     }
 
-    pub fn select_prev(
+    pub fn select_previous(
         &mut self,
-        _: &menu::SelectPrev,
+        _: &menu::SelectPrevious,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             if self.selected_index == 0 {
                 self.set_selected_index(count - 1, window, cx);
@@ -54,7 +57,9 @@ impl ThreadHistory {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             if self.selected_index == count - 1 {
                 self.set_selected_index(0, window, cx);
@@ -65,14 +70,18 @@ impl ThreadHistory {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             self.set_selected_index(0, window, cx);
         }
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             self.set_selected_index(count - 1, window, cx);
         }
@@ -86,12 +95,23 @@ impl ThreadHistory {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
+        let entries = self.history_store.update(cx, |this, cx| this.entries(cx));
 
-        if let Some(thread) = threads.get(self.selected_index) {
-            self.assistant_panel
-                .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
-                .ok();
+        if let Some(entry) = entries.get(self.selected_index) {
+            match entry {
+                HistoryEntry::Thread(thread) => {
+                    self.assistant_panel
+                        .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
+                        .ok();
+                }
+                HistoryEntry::Context(context) => {
+                    self.assistant_panel
+                        .update(cx, move |this, cx| {
+                            this.open_saved_prompt_editor(context.path.clone(), window, cx)
+                        })
+                        .ok();
+                }
+            }
 
             cx.notify();
         }
@@ -103,14 +123,25 @@ impl ThreadHistory {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
+        let entries = self.history_store.update(cx, |this, cx| this.entries(cx));
 
-        if let Some(thread) = threads.get(self.selected_index) {
-            self.assistant_panel
-                .update(cx, |this, cx| {
-                    this.delete_thread(&thread.id, cx);
-                })
-                .ok();
+        if let Some(entry) = entries.get(self.selected_index) {
+            match entry {
+                HistoryEntry::Thread(thread) => {
+                    self.assistant_panel
+                        .update(cx, |this, cx| {
+                            this.delete_thread(&thread.id, cx);
+                        })
+                        .ok();
+                }
+                HistoryEntry::Context(context) => {
+                    self.assistant_panel
+                        .update(cx, |this, cx| {
+                            this.delete_context(context.path.clone(), cx);
+                        })
+                        .ok();
+                }
+            }
 
             cx.notify();
         }
@@ -125,7 +156,7 @@ impl Focusable for ThreadHistory {
 
 impl Render for ThreadHistory {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
+        let history_entries = self.history_store.update(cx, |this, cx| this.entries(cx));
         let selected_index = self.selected_index;
 
         v_flex()
@@ -135,14 +166,14 @@ impl Render for ThreadHistory {
             .overflow_y_scroll()
             .size_full()
             .p_1()
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
             .map(|history| {
-                if threads.is_empty() {
+                if history_entries.is_empty() {
                     history
                         .justify_center()
                         .child(
@@ -156,17 +187,26 @@ impl Render for ThreadHistory {
                         uniform_list(
                             cx.entity().clone(),
                             "thread-history",
-                            threads.len(),
+                            history_entries.len(),
                             move |history, range, _window, _cx| {
-                                threads[range]
+                                history_entries[range]
                                     .iter()
                                     .enumerate()
-                                    .map(|(index, thread)| {
-                                        h_flex().w_full().pb_1().child(PastThread::new(
-                                            thread.clone(),
-                                            history.assistant_panel.clone(),
-                                            selected_index == index,
-                                        ))
+                                    .map(|(index, entry)| {
+                                        h_flex().w_full().pb_1().child(match entry {
+                                            HistoryEntry::Thread(thread) => PastThread::new(
+                                                thread.clone(),
+                                                history.assistant_panel.clone(),
+                                                selected_index == index,
+                                            )
+                                            .into_any_element(),
+                                            HistoryEntry::Context(context) => PastContext::new(
+                                                context.clone(),
+                                                history.assistant_panel.clone(),
+                                                selected_index == index,
+                                            )
+                                            .into_any_element(),
+                                        })
                                     })
                                     .collect()
                             },
@@ -214,18 +254,28 @@ impl RenderOnce for PastThread {
         );
 
         ListItem::new(SharedString::from(self.thread.id.to_string()))
-            .outlined()
+            .rounded()
             .toggle_state(self.selected)
-            .start_slot(
-                Icon::new(IconName::MessageCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
             .spacing(ListItemSpacing::Sparse)
-            .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
+            .start_slot(
+                div()
+                    .max_w_4_5()
+                    .child(Label::new(summary).size(LabelSize::Small).truncate()),
+            )
             .end_slot(
                 h_flex()
                     .gap_1p5()
+                    .child(
+                        Label::new("Thread")
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    )
+                    .child(
+                        div()
+                            .size(px(3.))
+                            .rounded_full()
+                            .bg(cx.theme().colors().text_disabled),
+                    )
                     .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
@@ -260,5 +310,102 @@ impl RenderOnce for PastThread {
                         .ok();
                 }
             })
+    }
+}
+
+#[derive(IntoElement)]
+pub struct PastContext {
+    context: SavedContextMetadata,
+    assistant_panel: WeakEntity<AssistantPanel>,
+    selected: bool,
+}
+
+impl PastContext {
+    pub fn new(
+        context: SavedContextMetadata,
+        assistant_panel: WeakEntity<AssistantPanel>,
+        selected: bool,
+    ) -> Self {
+        Self {
+            context,
+            assistant_panel,
+            selected,
+        }
+    }
+}
+
+impl RenderOnce for PastContext {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let summary = self.context.title;
+
+        let context_timestamp = time_format::format_localized_timestamp(
+            OffsetDateTime::from_unix_timestamp(self.context.mtime.timestamp()).unwrap(),
+            OffsetDateTime::now_utc(),
+            self.assistant_panel
+                .update(cx, |this, _cx| this.local_timezone())
+                .unwrap_or(UtcOffset::UTC),
+            time_format::TimestampFormat::EnhancedAbsolute,
+        );
+
+        ListItem::new(SharedString::from(
+            self.context.path.to_string_lossy().to_string(),
+        ))
+        .rounded()
+        .toggle_state(self.selected)
+        .spacing(ListItemSpacing::Sparse)
+        .start_slot(
+            div()
+                .max_w_4_5()
+                .child(Label::new(summary).size(LabelSize::Small).truncate()),
+        )
+        .end_slot(
+            h_flex()
+                .gap_1p5()
+                .child(
+                    Label::new("Prompt Editor")
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    div()
+                        .size(px(3.))
+                        .rounded_full()
+                        .bg(cx.theme().colors().text_disabled),
+                )
+                .child(
+                    Label::new(context_timestamp)
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    IconButton::new("delete", IconName::TrashAlt)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::text("Delete Prompt Editor"))
+                        .on_click({
+                            let assistant_panel = self.assistant_panel.clone();
+                            let path = self.context.path.clone();
+                            move |_event, _window, cx| {
+                                assistant_panel
+                                    .update(cx, |this, cx| {
+                                        this.delete_context(path.clone(), cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
+                ),
+        )
+        .on_click({
+            let assistant_panel = self.assistant_panel.clone();
+            let path = self.context.path.clone();
+            move |_event, window, cx| {
+                assistant_panel
+                    .update(cx, |this, cx| {
+                        this.open_saved_prompt_editor(path.clone(), window, cx)
+                            .detach_and_log_err(cx);
+                    })
+                    .ok();
+            }
+        })
     }
 }

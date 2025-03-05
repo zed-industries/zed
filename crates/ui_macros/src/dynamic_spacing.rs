@@ -157,7 +157,7 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
 
             /// Returns the spacing value in pixels.
             pub fn px(&self, cx: &App) -> Pixels {
-                let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size.into();
+                let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size(cx).into();
                 px(ui_font_size_f32 * self.spacing_ratio(cx))
             }
         }

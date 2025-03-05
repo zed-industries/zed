@@ -2533,7 +2533,7 @@ impl<'a> RopeBuilder<'a> {
     }
 }
 
-impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, D, F> {
+impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'_, D, F> {
     type Item = (Edit<D>, Range<Anchor>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -2801,7 +2801,7 @@ impl ops::Sub for FullOffset {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
+impl sum_tree::Dimension<'_, FragmentSummary> for usize {
     fn zero(_: &Option<clock::Global>) -> Self {
         Default::default()
     }
@@ -2811,7 +2811,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FullOffset {
+impl sum_tree::Dimension<'_, FragmentSummary> for FullOffset {
     fn zero(_: &Option<clock::Global>) -> Self {
         Default::default()
     }
@@ -2831,7 +2831,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for Option<&'a Locator> {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, FragmentTextSummary> for usize {
+impl sum_tree::SeekTarget<'_, FragmentSummary, FragmentTextSummary> for usize {
     fn cmp(
         &self,
         cursor_location: &FragmentTextSummary,
@@ -2880,7 +2880,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedFullOffset {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, Self> for VersionedFullOffset {
+impl sum_tree::SeekTarget<'_, FragmentSummary, Self> for VersionedFullOffset {
     fn cmp(&self, cursor_position: &Self, _: &Option<clock::Global>) -> cmp::Ordering {
         match (self, cursor_position) {
             (Self::Offset(a), Self::Offset(b)) => Ord::cmp(a, b),
@@ -2934,6 +2934,7 @@ impl ToOffset for Point {
 }
 
 impl ToOffset for usize {
+    #[track_caller]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         assert!(
             *self <= snapshot.len(),
@@ -2951,7 +2952,7 @@ impl ToOffset for Anchor {
     }
 }
 
-impl<'a, T: ToOffset> ToOffset for &'a T {
+impl<T: ToOffset> ToOffset for &T {
     fn to_offset(&self, content: &BufferSnapshot) -> usize {
         (*self).to_offset(content)
     }

@@ -109,8 +109,16 @@ jobs:
       - name: cargo clippy
         run: ./script/clippy
 
+      - name: Install cargo-machete
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+        with:
+          command: install
+          args: cargo-machete@0.7.0
+
       - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+        with:
+          command: machete
 
       - name: Check licenses
         run: |
@@ -232,7 +240,7 @@ jobs:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
-    runs-on: hosted-windows-1
+    runs-on: hosted-windows-2
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
@@ -265,8 +273,7 @@ jobs:
 
       - name: cargo clippy
         working-directory: ${{ env.ZED_WORKSPACE }}
-        # Windows can't run shell scripts, so we need to use `cargo xtask`.
-        run: cargo xtask clippy
+        run: ./script/clippy.ps1
 
       - name: Run tests
         uses: ./.github/actions/run_tests_windows
@@ -298,8 +305,9 @@ jobs:
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
-      APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -350,14 +358,14 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -408,7 +416,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -456,7 +464,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz

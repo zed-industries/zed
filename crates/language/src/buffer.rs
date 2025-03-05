@@ -1,7 +1,6 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    markdown::ParsedMarkdown,
     proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
@@ -13,6 +12,7 @@ use crate::{
         SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
+    text_diff::text_diff,
     LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
     TreeSitterOptions,
 };
@@ -33,7 +33,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
-use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -111,7 +110,7 @@ pub struct Buffer {
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
-    parsing_in_background: bool,
+    reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -369,6 +368,14 @@ impl DiskState {
             DiskState::Deleted => None,
         }
     }
+
+    pub fn exists(&self) -> bool {
+        match self {
+            DiskState::New => false,
+            DiskState::Present { .. } => true,
+            DiskState::Deleted => false,
+        }
+    }
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
@@ -394,9 +401,17 @@ pub enum AutoindentMode {
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
-        /// The original indentation level of the first line of each
-        /// insertion, if it has been copied.
-        original_indent_columns: Vec<u32>,
+        /// The original start column of each insertion, if it was
+        /// copied from elsewhere.
+        ///
+        /// Knowing this start column makes it possible to preserve the
+        /// relative indentation of every line in the insertion from
+        /// when it was copied.
+        ///
+        /// If the start column is `a`, and the first line of insertion
+        /// is then auto-indented to column `b`, then every other line of
+        /// the insertion will be auto-indented to column `b - a`
+        original_start_columns: Vec<u32>,
     },
 }
 
@@ -494,7 +509,7 @@ impl fmt::Debug for ChunkRenderer {
     }
 }
 
-impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
+impl Deref for ChunkRendererContext<'_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {
@@ -502,7 +517,7 @@ impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
     }
 }
 
-impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
+impl DerefMut for ChunkRendererContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.context
     }
@@ -575,7 +590,7 @@ impl HighlightedText {
 
     pub fn to_styled_text(&self, default_style: &TextStyle) -> StyledText {
         gpui::StyledText::new(self.text.clone())
-            .with_highlights(default_style, self.highlights.iter().cloned())
+            .with_default_highlights(default_style, self.highlights.iter().cloned())
     }
 
     /// Returns the first line without leading whitespace unless highlighted
@@ -783,6 +798,13 @@ impl EditPreview {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BracketMatch {
+    pub open_range: Range<usize>,
+    pub close_range: Range<usize>,
+    pub newline_only: bool,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
@@ -942,7 +964,7 @@ impl Buffer {
             file,
             capability,
             syntax_map,
-            parsing_in_background: false,
+            reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
             parse_status: async_watch::channel(ParseStatus::Idle),
@@ -1398,7 +1420,7 @@ impl Buffer {
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
-        self.parsing_in_background
+        self.reparse.is_some()
     }
 
     /// Indicates whether the buffer contains any regions that may be
@@ -1436,7 +1458,7 @@ impl Buffer {
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
-        if self.parsing_in_background {
+        if self.reparse.is_some() {
             return;
         }
         let language = if let Some(language) = self.language.clone() {
@@ -1470,10 +1492,10 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
+                self.reparse = None;
             }
             Err(parse_task) => {
-                self.parsing_in_background = true;
-                cx.spawn(move |this, mut cx| async move {
+                self.reparse = Some(cx.spawn(move |this, mut cx| async move {
                     let new_syntax_map = parse_task.await;
                     this.update(&mut cx, move |this, cx| {
                         let grammar_changed =
@@ -1489,14 +1511,13 @@ impl Buffer {
                             || grammar_changed
                             || this.version.changed_since(&parsed_version);
                         this.did_finish_parsing(new_syntax_map, cx);
-                        this.parsing_in_background = false;
+                        this.reparse = None;
                         if parse_again {
                             this.reparse(cx);
                         }
                     })
                     .ok();
-                })
-                .detach();
+                }));
             }
         }
     }
@@ -1793,61 +1814,7 @@ impl Buffer {
                 let old_text = old_text.to_string();
                 let line_ending = LineEnding::detect(&new_text);
                 LineEnding::normalize(&mut new_text);
-
-                let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-                let empty: Arc<str> = Arc::default();
-
-                let mut edits = Vec::new();
-                let mut old_offset = 0;
-                let mut new_offset = 0;
-                let mut last_edit: Option<(Range<usize>, Range<usize>)> = None;
-                for change in diff.iter_all_changes().map(Some).chain([None]) {
-                    if let Some(change) = &change {
-                        let len = change.value().len();
-                        match change.tag() {
-                            ChangeTag::Equal => {
-                                old_offset += len;
-                                new_offset += len;
-                            }
-                            ChangeTag::Delete => {
-                                let old_end_offset = old_offset + len;
-                                if let Some((last_old_range, _)) = &mut last_edit {
-                                    last_old_range.end = old_end_offset;
-                                } else {
-                                    last_edit =
-                                        Some((old_offset..old_end_offset, new_offset..new_offset));
-                                }
-                                old_offset = old_end_offset;
-                            }
-                            ChangeTag::Insert => {
-                                let new_end_offset = new_offset + len;
-                                if let Some((_, last_new_range)) = &mut last_edit {
-                                    last_new_range.end = new_end_offset;
-                                } else {
-                                    last_edit =
-                                        Some((old_offset..old_offset, new_offset..new_end_offset));
-                                }
-                                new_offset = new_end_offset;
-                            }
-                        }
-                    }
-
-                    if let Some((old_range, new_range)) = &last_edit {
-                        if old_offset > old_range.end
-                            || new_offset > new_range.end
-                            || change.is_none()
-                        {
-                            let text = if new_range.is_empty() {
-                                empty.clone()
-                            } else {
-                                new_text[new_range.clone()].into()
-                            };
-                            edits.push((old_range.clone(), text));
-                            last_edit.take();
-                        }
-                    }
-                }
-
+                let edits = text_diff(&old_text, &new_text);
                 Diff {
                     base_version,
                     line_ending,
@@ -2239,16 +2206,16 @@ impl Buffer {
 
                     let mut original_indent_column = None;
                     if let AutoindentMode::Block {
-                        original_indent_columns,
+                        original_start_columns,
                     } = &mode
                     {
-                        original_indent_column =
-                            Some(original_indent_columns.get(ix).copied().unwrap_or_else(|| {
-                                indent_size_for_text(
+                        original_indent_column = Some(
+                            original_start_columns.get(ix).copied().unwrap_or(0)
+                                + indent_size_for_text(
                                     new_text[range_of_insertion_to_indent.clone()].chars(),
                                 )
-                                .len
-                            }));
+                                .len,
+                        );
 
                         // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
@@ -3539,24 +3506,13 @@ impl BufferSnapshot {
             true,
         );
         let mut last_buffer_range_end = 0;
+
         for (buffer_range, is_name) in buffer_ranges {
-            if !text.is_empty() && buffer_range.start > last_buffer_range_end {
+            let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
+            if space_added {
                 text.push(' ');
             }
-            last_buffer_range_end = buffer_range.end;
-            if is_name {
-                let mut start = text.len();
-                let end = start + buffer_range.len();
-
-                // When multiple names are captured, then the matchable text
-                // includes the whitespace in between the names.
-                if !name_ranges.is_empty() {
-                    start -= 1;
-                }
-
-                name_ranges.push(start..end);
-            }
-
+            let before_append_len = text.len();
             let mut offset = buffer_range.start;
             chunks.seek(buffer_range.clone());
             for mut chunk in chunks.by_ref() {
@@ -3580,6 +3536,16 @@ impl BufferSnapshot {
                     break;
                 }
             }
+            if is_name {
+                let after_append_len = text.len();
+                let start = if space_added && !name_ranges.is_empty() {
+                    before_append_len - 1
+                } else {
+                    before_append_len
+                };
+                name_ranges.push(start..after_append_len);
+            }
+            last_buffer_range_end = buffer_range.end;
         }
 
         Some(OutlineItem {
@@ -3611,15 +3577,10 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<T: ToOffset>(
+    pub fn all_bracket_ranges(
         &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
-        // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
-
+        range: Range<usize>,
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.brackets_config.as_ref().map(|c| &c.query)
         });
@@ -3634,6 +3595,7 @@ impl BufferSnapshot {
                 let mut open = None;
                 let mut close = None;
                 let config = &configs[mat.grammar_index];
+                let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
                         open = Some(capture.node.byte_range());
@@ -3644,19 +3606,35 @@ impl BufferSnapshot {
 
                 matches.advance();
 
-                let Some((open, close)) = open.zip(close) else {
+                let Some((open_range, close_range)) = open.zip(close) else {
                     continue;
                 };
 
-                let bracket_range = open.start..=close.end;
+                let bracket_range = open_range.start..=close_range.end;
                 if !bracket_range.overlaps(&range) {
                     continue;
                 }
 
-                return Some((open, close));
+                return Some(BracketMatch {
+                    open_range,
+                    close_range,
+                    newline_only: pattern.newline_only,
+                });
             }
             None
         })
+    }
+
+    /// Returns bracket range pairs overlapping or adjacent to `range`
+    pub fn bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
+        // Find bracket pairs that *inclusively* contain the given range.
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+        self.all_bracket_ranges(range)
+            .filter(|pair| !pair.newline_only)
     }
 
     pub fn text_object_ranges<T: ToOffset>(
@@ -3729,11 +3707,12 @@ impl BufferSnapshot {
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        self.bracket_ranges(range.clone())
-            .filter(move |(open, close)| open.start <= range.start && close.end >= range.end)
+        self.bracket_ranges(range.clone()).filter(move |pair| {
+            pair.open_range.start <= range.start && pair.close_range.end >= range.end
+        })
     }
 
     /// Returns the smallest enclosing bracket ranges containing the given range or None if no brackets contain range
@@ -3749,14 +3728,14 @@ impl BufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        for (open, close) in self.enclosing_bracket_ranges(range.clone()) {
+        for pair in self.enclosing_bracket_ranges(range.clone()) {
             if let Some(range_filter) = range_filter {
-                if !range_filter(open.clone(), close.clone()) {
+                if !range_filter(pair.open_range.clone(), pair.close_range.clone()) {
                     continue;
                 }
             }
 
-            let len = close.end - open.start;
+            let len = pair.close_range.end - pair.open_range.start;
 
             if let Some((existing_open, existing_close)) = &result {
                 let existing_len = existing_close.end - existing_open.start;
@@ -3765,7 +3744,7 @@ impl BufferSnapshot {
                 }
             }
 
-            result = Some((open, close));
+            result = Some((pair.open_range, pair.close_range));
         }
 
         result
@@ -4157,7 +4136,7 @@ impl Deref for BufferSnapshot {
     }
 }
 
-unsafe impl<'a> Send for BufferChunks<'a> {}
+unsafe impl Send for BufferChunks<'_> {}
 
 impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
@@ -4497,6 +4476,7 @@ impl IndentSize {
 pub struct TestFile {
     pub path: Arc<Path>,
     pub root_name: String,
+    pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4510,7 +4490,11 @@ impl File for TestFile {
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
-        None
+        if self.local_root.is_some() {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn disk_state(&self) -> DiskState {
@@ -4535,6 +4519,23 @@ impl File for TestFile {
 
     fn is_private(&self) -> bool {
         false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LocalFile for TestFile {
+    fn abs_path(&self, _cx: &App) -> PathBuf {
+        PathBuf::from(self.local_root.as_ref().unwrap())
+            .join(&self.root_name)
+            .join(self.path.as_ref())
+    }
+
+    fn load(&self, _cx: &App) -> Task<Result<String>> {
+        unimplemented!()
+    }
+
+    fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
+        unimplemented!()
     }
 }
 

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{
@@ -30,11 +29,9 @@ impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
     pub fn for_action(action: &dyn Action, window: &mut Window, cx: &App) -> Option<Self> {
-        let key_binding = window
-            .bindings_for_action(action)
-            .into_iter()
-            .rev()
-            .next()?;
+        let key_binding =
+            gpui::Keymap::binding_to_display_from_bindings(&window.bindings_for_action(action))
+                .cloned()?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -45,11 +42,10 @@ impl KeyBinding {
         window: &mut Window,
         cx: &App,
     ) -> Option<Self> {
-        let key_binding = window
-            .bindings_for_action_in(action, focus)
-            .into_iter()
-            .rev()
-            .next()?;
+        let key_binding = gpui::Keymap::binding_to_display_from_bindings(
+            &window.bindings_for_action_in(action, focus),
+        )
+        .cloned()?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -101,6 +97,11 @@ impl KeyBinding {
 
 impl RenderOnce for KeyBinding {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let use_text = self.vim_mode
+            || matches!(
+                self.platform_style,
+                PlatformStyle::Linux | PlatformStyle::Windows
+            );
         h_flex()
             .debug_selector(|| {
                 format!(
@@ -121,7 +122,7 @@ impl RenderOnce for KeyBinding {
                     .py_0p5()
                     .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
-                    .when(self.vim_mode, |el| {
+                    .when(use_text, |el| {
                         el.child(
                             Key::new(
                                 keystroke_text(&keystroke, self.platform_style, self.vim_mode),
@@ -130,7 +131,7 @@ impl RenderOnce for KeyBinding {
                             .size(self.size),
                         )
                     })
-                    .when(!self.vim_mode, |el| {
+                    .when(!use_text, |el| {
                         el.children(render_modifiers(
                             &keystroke.modifiers,
                             self.platform_style,
@@ -367,7 +368,7 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
 
     let delimiter = match (platform_style, vim_mode) {
         (PlatformStyle::Mac, false) => '-',
-        (PlatformStyle::Linux | PlatformStyle::Windows, false) => '+',
+        (PlatformStyle::Linux | PlatformStyle::Windows, false) => '-',
         (_, true) => '-',
     };
 
@@ -455,7 +456,7 @@ mod tests {
                 PlatformStyle::Linux,
                 false
             ),
-            "Super+C".to_string()
+            "Super-C".to_string()
         );
         assert_eq!(
             keystroke_text(
@@ -463,7 +464,7 @@ mod tests {
                 PlatformStyle::Windows,
                 false
             ),
-            "Win+C".to_string()
+            "Win-C".to_string()
         );
 
         assert_eq!(
@@ -480,7 +481,7 @@ mod tests {
                 PlatformStyle::Linux,
                 false
             ),
-            "Ctrl+Alt+Delete".to_string()
+            "Ctrl-Alt-Delete".to_string()
         );
         assert_eq!(
             keystroke_text(
@@ -488,7 +489,7 @@ mod tests {
                 PlatformStyle::Windows,
                 false
             ),
-            "Ctrl+Alt+Delete".to_string()
+            "Ctrl-Alt-Delete".to_string()
         );
 
         assert_eq!(
@@ -505,7 +506,7 @@ mod tests {
                 PlatformStyle::Linux,
                 false,
             ),
-            "Shift+PageUp".to_string()
+            "Shift-PageUp".to_string()
         );
         assert_eq!(
             keystroke_text(
@@ -513,7 +514,7 @@ mod tests {
                 PlatformStyle::Windows,
                 false
             ),
-            "Shift+PageUp".to_string()
+            "Shift-PageUp".to_string()
         );
     }
 }

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
