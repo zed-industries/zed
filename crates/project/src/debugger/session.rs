@@ -568,6 +568,7 @@ impl CompletionsQuery {
 pub enum SessionEvent {
     Invalidate,
     Modules,
+    LoadedSources,
     Stopped,
     StackTrace,
     Variables,
@@ -867,6 +868,11 @@ impl Session {
                 "Only requests marked as cacheable should invoke `fetch`"
             );
         }
+
+        if !self.thread_states.any_stopped_thread() {
+            return;
+        }
+
         let request_map = self.requests.entry(T::command_id()).or_default();
 
         if let Entry::Vacant(vacant) = request_map.entry(request.into()) {
@@ -981,16 +987,15 @@ impl Session {
     }
 
     pub fn modules(&mut self, cx: &mut Context<Self>) -> &[Module] {
-        if self.thread_states.any_stopped_thread() {
-            self.fetch(
-                dap_command::ModulesCommand,
-                |this, result, cx| {
-                    this.modules = result.iter().cloned().collect();
-                    cx.emit(SessionEvent::Modules);
-                },
-                cx,
-            );
-        }
+        self.fetch(
+            dap_command::ModulesCommand,
+            |this, result, cx| {
+                this.modules = result.iter().cloned().collect();
+                cx.emit(SessionEvent::Modules);
+                cx.notify();
+            },
+            cx,
+        );
 
         &self.modules
     }
@@ -1052,16 +1057,15 @@ impl Session {
     }
 
     pub fn loaded_sources(&mut self, cx: &mut Context<Self>) -> &[Source] {
-        if self.thread_states.any_stopped_thread() {
-            self.fetch(
-                dap_command::LoadedSourcesCommand,
-                |this, result, cx| {
-                    this.loaded_sources = result.iter().cloned().collect();
-                    cx.notify();
-                },
-                cx,
-            );
-        }
+        self.fetch(
+            dap_command::LoadedSourcesCommand,
+            |this, result, cx| {
+                this.loaded_sources = result.iter().cloned().collect();
+                cx.emit(SessionEvent::LoadedSources);
+                cx.notify();
+            },
+            cx,
+        );
 
         &self.loaded_sources
     }
