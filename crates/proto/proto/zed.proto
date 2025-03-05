@@ -332,7 +332,10 @@ message Envelope {
         ApplyCodeActionKind apply_code_action_kind = 309;
         ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
 
-        RemoteMessageResponse remote_message_response = 311; // current max
+        RemoteMessageResponse remote_message_response = 311;
+
+        CheckForPushedCommits check_for_pushed_commits = 312;
+        CheckForPushedCommitsResponse check_for_pushed_commits_response = 313; // current max
     }
 
     reserved 87 to 88;
@@ -2850,4 +2853,14 @@ message Pull {
 message RemoteMessageResponse {
     string stdout = 1;
     string stderr = 2;
+}
+
+message CheckForPushedCommits {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message CheckForPushedCommitsResponse {
+  repeated string pushed_to = 1;
 }

@@ -452,6 +452,8 @@ messages!(
     (GetRemotesResponse, Background),
     (Pull, Background),
     (RemoteMessageResponse, Background),
+    (CheckForPushedCommits, Background),
+    (CheckForPushedCommitsResponse, Background),
 );
 
 request_messages!(
@@ -594,6 +596,7 @@ request_messages!(
     (Fetch, RemoteMessageResponse),
     (GetRemotes, GetRemotesResponse),
     (Pull, RemoteMessageResponse),
+    (CheckForPushedCommits, CheckForPushedCommitsResponse),
 );
 
 entity_messages!(
@@ -695,6 +698,7 @@ entity_messages!(
     Fetch,
     GetRemotes,
     Pull,
+    CheckForPushedCommits,
 );
 
 entity_messages!(
