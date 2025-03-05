@@ -372,7 +372,7 @@ impl Render for ProjectSearchView {
 
             let page_content = page_content.map(|text| div().child(text));
 
-            v_flex()
+            h_flex()
                 .size_full()
                 .items_center()
                 .justify_center()
@@ -383,7 +383,6 @@ impl Render for ProjectSearchView {
                     v_flex()
                         .id("project-search-landing-page")
                         .overflow_y_scroll()
-                        .max_w_80()
                         .gap_1()
                         .child(heading_text)
                         .children(page_content),
