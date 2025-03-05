@@ -3462,10 +3462,7 @@ impl Project {
             }
         }
 
-        let buffer_worktree_id = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.worktree_id(cx)));
+        let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
         let worktrees_with_ids: Vec<_> = self
             .worktrees(cx)
             .map(|worktree| {
@@ -3478,7 +3475,7 @@ impl Project {
             if let Some(buffer_worktree_id) = buffer_worktree_id {
                 if let Some((worktree, _)) = worktrees_with_ids
                     .iter()
-                    .find(|w| w.1 == buffer_worktree_id)
+                    .find(|(_, id)| *id == buffer_worktree_id)
                 {
                     for candidate in candidates.iter() {
                         if let Some(path) =
