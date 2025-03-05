@@ -2061,7 +2061,7 @@ impl Workspace {
                 let (singleton, project_entry_ids) =
                     cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
-                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, &mut cx)
+                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, None, &mut cx)
                         .await?
                     {
                         return Ok(false);
@@ -2357,7 +2357,7 @@ impl Workspace {
 
         window.spawn(cx, |mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
+                Pane::save_item(project, &pane, item.as_ref(), save_intent, relative_project_path, &mut cx)
                     .await
                     .map(|_| ())
             } else {
