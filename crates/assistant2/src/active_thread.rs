@@ -343,7 +343,7 @@ impl ActiveThread {
 
     /// Spawns a task to save the active thread.
     ///
-    /// Only one task to save the thread will be in-flight at a time.
+    /// Only one task to save the thread will be in flight at a time.
     fn save_thread(&mut self, cx: &mut Context<Self>) {
         let thread = self.thread.clone();
         self.save_thread_task = Some(cx.spawn(|this, mut cx| async move {
