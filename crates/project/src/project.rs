@@ -48,7 +48,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{
     blame::Blame,
-    repository::{Branch, GitRepository, RepoPath},
+    repository::{Branch, GitRepository},
     status::FileStatus,
 };
 use gpui::{
@@ -4351,14 +4351,8 @@ impl Project {
         self.git_store.read(cx).all_repositories()
     }
 
-    pub fn repository_and_path_for_buffer_id(
-        &self,
-        buffer_id: BufferId,
-        cx: &App,
-    ) -> Option<(Entity<Repository>, RepoPath)> {
-        self.git_store
-            .read(cx)
-            .repository_and_path_for_buffer_id(buffer_id, cx)
+    pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        self.git_store.read(cx).status_for_buffer_id(buffer_id, cx)
     }
 }
 

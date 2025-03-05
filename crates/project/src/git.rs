@@ -1,25 +1,38 @@
-use crate::buffer_store::{BufferStore, BufferStoreEvent};
-use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
-use crate::{Project, ProjectItem, ProjectPath};
+use crate::{
+    buffer_store::{BufferStore, BufferStoreEvent},
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    Project, ProjectItem, ProjectPath,
+};
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiffEvent;
 use client::ProjectId;
-use futures::channel::{mpsc, oneshot};
-use futures::StreamExt as _;
-use git::repository::{Branch, CommitDetails, PushOptions, Remote, RemoteCommandOutput, ResetMode};
-use git::repository::{GitRepository, RepoPath};
+use futures::{
+    channel::{mpsc, oneshot},
+    StreamExt as _,
+};
+use git::{
+    repository::{
+        Branch, CommitDetails, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
+        ResetMode,
+    },
+    status::FileStatus,
+};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
-use rpc::proto::{git_reset, ToProto};
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{
+    proto::{self, git_reset, ToProto},
+    AnyProtoClient, TypedEnvelope,
+};
 use settings::WorktreeId;
-use std::collections::VecDeque;
-use std::future::Future;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    collections::VecDeque,
+    future::Future,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use text::BufferId;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
@@ -257,7 +270,13 @@ impl GitStore {
         self.repositories.clone()
     }
 
-    pub fn repository_and_path_for_buffer_id(
+    pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        let (repo, path) = self.repository_and_path_for_buffer_id(buffer_id, cx)?;
+        let status = repo.read(cx).repository_entry.status_for_path(&path)?;
+        Some(status.status)
+    }
+
+    fn repository_and_path_for_buffer_id(
         &self,
         buffer_id: BufferId,
         cx: &App,
@@ -1262,7 +1281,7 @@ impl Repository {
         })
     }
 
-    pub fn set_index_text(
+    fn set_index_text(
         &self,
         path: &RepoPath,
         content: Option<String>,
