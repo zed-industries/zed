@@ -1,8 +1,11 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use assistant_tool::Tool;
+use collections::HashMap;
 use gpui::{App, Entity, Task, Window};
+use parking_lot::Mutex;
 
 use crate::manager::ContextServerManager;
 use crate::types;
@@ -51,6 +54,7 @@ impl Tool for ContextServerTool {
     fn run(
         self: std::sync::Arc<Self>,
         input: serde_json::Value,
+        _fs_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
         _workspace: gpui::WeakEntity<workspace::Workspace>,
         _: &mut Window,
         cx: &mut App,
