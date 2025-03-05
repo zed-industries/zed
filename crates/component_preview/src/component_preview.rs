@@ -2,8 +2,6 @@
 //!
 //! A view for exploring Zed components.
 
-use collections::HashMap;
-use itertools::Itertools;
 use std::iter::Iterator;
 use std::sync::Arc;
 
@@ -113,8 +111,6 @@ impl ComponentPreview {
         if component_preview.selected_index > 0 {
             component_preview.scroll_to_preview(component_preview.selected_index, cx);
         }
-
-        component_preview.update_component_list(cx);
 
         component_preview
     }

@@ -127,7 +127,7 @@ impl ComponentPreview for StatusToast {
                             StatusToast::with_icon(
                                 "success-toast",
                                 Some(Icon::new(IconName::Check).color(Color::Success).into()),
-                                "Successfully saved",
+                                "Pushed 4 changes to `zed/main`",
                             )
                             .into_any_element(),
                         ),
@@ -136,8 +136,9 @@ impl ComponentPreview for StatusToast {
                             StatusToast::with_icon(
                                 "error-toast",
                                 Some(Icon::new(IconName::XCircle).color(Color::Error).into()),
-                                "Failed to connect",
+                                "git push: Couldn't find remote origin `iamnbutler/zed`",
                             )
+                            .action("More Info")
                             .into_any_element(),
                         ),
                         single_example(
@@ -158,8 +159,23 @@ impl ComponentPreview for StatusToast {
                             )
                             .into_any_element(),
                         ),
+                        single_example(
+                            "Create PR",
+                            StatusToast::with_icon(
+                                "success-toast-pr",
+                                Some(
+                                    Icon::new(IconName::GitBranchSmall)
+                                        .color(Color::Muted)
+                                        .into(),
+                                ),
+                                "`zed/new-notification-system` created!",
+                            )
+                            .action("Open Pull Request")
+                            .into_any_element(),
+                        ),
                     ],
-                ),
+                )
+                .vertical(),
             ])
             .into_any_element()
     }

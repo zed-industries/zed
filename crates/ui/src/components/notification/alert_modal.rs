@@ -91,19 +91,7 @@ impl ComponentPreview for AlertModal {
                             )
                             .primary_action("Leave Call")
                             .into_any_element(),
-                    ),
-                    single_example(
-                        "Basic Alert",
-                        AlertModal::new("simple-modal", "Do you want to leave the current call?")
-                            .child("The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated."
-                            )
-                            .child("The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated."
-                            )
-                            .child("The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated. The current window will be closed, and connections to any shared projects will be terminated."
-                            )
-                            .primary_action("Leave Call")
-                            .into_any_element(),
-                    ),
+                    )
                 ],
             )])
             .into_any_element()
