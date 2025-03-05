@@ -116,6 +116,7 @@ pub struct CommitSummary {
     pub subject: SharedString,
     /// This is a unix timestamp
     pub commit_timestamp: i64,
+    pub has_parent: bool,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -536,6 +537,7 @@ impl GitRepository for RealGitRepository {
         let fields = [
             "%(HEAD)",
             "%(objectname)",
+            "%(parent)",
             "%(refname)",
             "%(upstream)",
             "%(upstream:track)",
@@ -1292,6 +1294,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
         let mut fields = line.split('\x00');
         let is_current_branch = fields.next().context("no HEAD")? == "*";
         let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
+        let parent_sha: SharedString = fields.next().context("no parent")?.to_string().into();
         let ref_name: SharedString = fields
             .next()
             .context("no refname")?
@@ -1315,6 +1318,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
                 sha: head_sha,
                 subject,
                 commit_timestamp: commiterdate,
+                has_parent: !parent_sha.is_empty(),
             }),
             upstream: if upstream_name.is_empty() {
                 None
@@ -1367,7 +1371,7 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
 fn test_branches_parsing() {
     // suppress "help: octal escapes are not supported, `\0` is always null"
     #[allow(clippy::octal_escapes)]
-    let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
+    let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
     assert_eq!(
         parse_branch_input(&input).unwrap(),
         vec![Branch {
@@ -1384,6 +1388,7 @@ fn test_branches_parsing() {
                 sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
                 subject: "generated protobuf".into(),
                 commit_timestamp: 1733187470,
+                has_parent: false,
             })
         }]
     )
