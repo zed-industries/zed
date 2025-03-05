@@ -170,7 +170,7 @@ pub fn components() -> AllComponents {
     all_components
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComponentScope {
     Layout,
     Input,

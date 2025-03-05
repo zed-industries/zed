@@ -2,6 +2,9 @@
 //!
 //! A view for exploring Zed components.
 
+use collections::HashMap;
+use itertools::Itertools;
+use std::iter::Iterator;
 use std::sync::Arc;
 
 use client::UserStore;
@@ -13,7 +16,7 @@ use gpui::{
 use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use project::Project;
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, ListItem, ListSubHeader};
 
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 use workspace::{AppState, ItemId, SerializableItem};
@@ -44,6 +47,23 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         );
     })
     .detach();
+}
+
+enum SidebarEntry {
+    Component(ComponentMetadata),
+    SectionHeader(SharedString),
+}
+
+impl From<ComponentMetadata> for SidebarEntry {
+    fn from(component: ComponentMetadata) -> Self {
+        SidebarEntry::Component(component)
+    }
+}
+
+impl From<SharedString> for SidebarEntry {
+    fn from(section_header: SharedString) -> Self {
+        SidebarEntry::SectionHeader(section_header)
+    }
 }
 
 struct ComponentPreview {
@@ -107,22 +127,106 @@ impl ComponentPreview {
         self.components[ix].clone()
     }
 
+    fn sidebar_entries(&self) -> Vec<SidebarEntry> {
+        use std::collections::HashMap;
+
+        // Group components by scope
+        let mut scope_groups: HashMap<Option<ComponentScope>, Vec<ComponentMetadata>> =
+            HashMap::default();
+
+        for component in &self.components {
+            scope_groups
+                .entry(component.scope())
+                .or_insert_with(Vec::new)
+                .push(component.clone());
+        }
+
+        // Sort components within each scope by name
+        for components in scope_groups.values_mut() {
+            components.sort_by_key(|c| c.name().to_lowercase());
+        }
+
+        // Build entries with scopes in a defined order
+        let mut entries = Vec::new();
+
+        // Define scope order (we want Unknown at the end)
+        let known_scopes = [
+            ComponentScope::Layout,
+            ComponentScope::Input,
+            ComponentScope::Editor,
+            ComponentScope::Notification,
+            ComponentScope::Collaboration,
+            ComponentScope::VersionControl,
+        ];
+
+        // First add components with known scopes
+        for scope in known_scopes.iter() {
+            let scope_key = Some(scope.clone());
+            if let Some(components) = scope_groups.remove(&scope_key) {
+                if !components.is_empty() {
+                    // Add section header
+                    entries.push(SidebarEntry::SectionHeader(scope.to_string().into()));
+
+                    // Add all components under this scope
+                    for component in components {
+                        entries.push(SidebarEntry::Component(component));
+                    }
+                }
+            }
+        }
+
+        // Handle components with Unknown scope
+        for (scope, components) in &scope_groups {
+            if let Some(ComponentScope::Unknown(_)) = scope {
+                if !components.is_empty() {
+                    // Add the unknown scope header
+                    if let Some(scope_value) = scope {
+                        entries.push(SidebarEntry::SectionHeader(scope_value.to_string().into()));
+                    }
+
+                    // Add all components under this unknown scope
+                    for component in components {
+                        entries.push(SidebarEntry::Component(component.clone()));
+                    }
+                }
+            }
+        }
+
+        // Handle components with no scope
+        if let Some(components) = scope_groups.get(&None) {
+            if !components.is_empty() {
+                entries.push(SidebarEntry::SectionHeader("Uncategorized".into()));
+
+                for component in components {
+                    entries.push(SidebarEntry::Component(component.clone()));
+                }
+            }
+        }
+
+        entries
+    }
+
     fn render_sidebar_entry(
         &self,
         ix: usize,
+        entry: &SidebarEntry,
         selected: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let component = self.get_component(ix);
-
-        ListItem::new(ix)
-            .child(Label::new(component.name().clone()).color(Color::Default))
-            .selectable(true)
-            .toggle_state(selected)
-            .inset(true)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.scroll_to_preview(ix, cx);
-            }))
+        match entry {
+            SidebarEntry::Component(component_metadata) => ListItem::new(ix)
+                .child(Label::new(component_metadata.name().clone()).color(Color::Default))
+                .selectable(true)
+                .toggle_state(selected)
+                .inset(true)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_preview(ix, cx);
+                }))
+                .into_any_element(),
+            SidebarEntry::SectionHeader(shared_string) => ListSubHeader::new(shared_string)
+                .inset(true)
+                .into_any_element(),
+        }
     }
 
     fn render_preview(
@@ -182,6 +286,8 @@ impl ComponentPreview {
 
 impl Render for ComponentPreview {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let sidebar_entries = self.sidebar_entries();
+
         h_flex()
             .id("component-preview")
             .key_context("ComponentPreview")
@@ -195,10 +301,17 @@ impl Render for ComponentPreview {
                 uniform_list(
                     cx.entity().clone(),
                     "component-nav",
-                    self.components.len(),
+                    sidebar_entries.len(),
                     move |this, range, _window, cx| {
                         range
-                            .map(|ix| this.render_sidebar_entry(ix, ix == this.selected_index, cx))
+                            .map(|ix| {
+                                this.render_sidebar_entry(
+                                    ix,
+                                    &sidebar_entries[ix],
+                                    ix == this.selected_index,
+                                    cx,
+                                )
+                            })
                             .collect()
                     },
                 )

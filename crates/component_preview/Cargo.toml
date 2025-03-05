@@ -22,3 +22,5 @@ languages.workspace = true
 project.workspace = true
 ui.workspace = true
 workspace.workspace = true
+itertools.workspace = true
+collections.workspace = true
