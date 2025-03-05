@@ -14987,6 +14987,7 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
+ "picker",
  "project",
  "project_panel",
  "regex",

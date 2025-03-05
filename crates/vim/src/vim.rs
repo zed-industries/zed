@@ -152,6 +152,7 @@ actions!(
         PushLowercase,
         PushUppercase,
         PushOppositeCase,
+        ToggleRegistersView,
         PushRegister,
         PushRecordRegister,
         PushReplayRegister,
