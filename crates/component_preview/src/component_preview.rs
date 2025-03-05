@@ -16,7 +16,7 @@ use gpui::{
 use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use project::Project;
-use ui::{prelude::*, ListItem, ListSubHeader};
+use ui::{prelude::*, Divider, ListItem, ListSubHeader};
 
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 use workspace::{AppState, ItemId, SerializableItem};
@@ -113,6 +113,8 @@ impl ComponentPreview {
         if component_preview.selected_index > 0 {
             component_preview.scroll_to_preview(component_preview.selected_index, cx);
         }
+
+        component_preview.update_component_list(cx);
 
         component_preview
     }
@@ -229,12 +231,50 @@ impl ComponentPreview {
         }
     }
 
-    fn render_preview(
+    fn update_component_list(&mut self, cx: &mut Context<Self>) {
+        let new_len = self.sidebar_entries().len();
+        let entries = self.sidebar_entries();
+        let weak_entity = cx.entity().downgrade();
+
+        let new_list = ListState::new(
+            new_len,
+            gpui::ListAlignment::Top,
+            px(1500.0),
+            move |ix, window, cx| {
+                let entry = &entries[ix];
+
+                weak_entity
+                    .update(cx, |this, cx| match entry {
+                        SidebarEntry::Component(_) => {
+                            this.render_preview(ix, window, cx).into_any_element()
+                        }
+                        SidebarEntry::SectionHeader(shared_string) => this
+                            .render_scope_header(ix, shared_string.clone(), window, cx)
+                            .into_any_element(),
+                    })
+                    .unwrap()
+            },
+        );
+
+        self.component_list = new_list;
+    }
+
+    fn render_scope_header(
         &self,
         ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        title: SharedString,
+        window: &Window,
+        cx: &App,
     ) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .h_10()
+            .items_center()
+            .child(Headline::new(title).size(HeadlineSize::XSmall))
+            .child(Divider::horizontal())
+    }
+
+    fn render_preview(&self, ix: usize, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let component = self.get_component(ix);
 
         let name = component.name();
