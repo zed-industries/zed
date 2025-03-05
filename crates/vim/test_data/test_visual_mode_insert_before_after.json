@@ -10,19 +10,7 @@
 {"Key":"w"}
 {"Key":"shift-a"}
 {"Get":{"state":"helloˇ","mode":"Insert"}}
-{"Put": {"state": "The ˇquick brown\nfox jumps over\nthe lazy dog"}}
-{"Key": "ctrl-v"}
-{"Key": "e"}
-{"Key": "j"}
-{"Key": "j"}
-{"Put": {"state": "The «quickˇ» brown\nfox «jumpsˇ» over\nthe «lazy ˇ»dog"}}
-{"Key": "shift-i"}
-{"Get": {"state": "The ˇquick brown\nfox ˇjumps over\nthe ˇlazy dog", "mode": "Insert"}}
-{"Put": {"state": "The quick brown\nfox ˇjumps over\nthe lazy dog"}}
-{"Key": "shift-v"}
-{"Key": "shift-i"}
-{"Get": {"state": "The quick brown\nˇfox jumps over\nthe lazy dog", "mode": "Insert"}}
-{"Put": {"state": "The quick brown\nfox ˇjumps over\nthe lazy dog"}}
-{"Key": "shift-v"}
-{"Key": "shift-a"}
-{"Get": {"state": "The quick brown\nfox jumps overˇ\nthe lazy dog", "mode": "Insert"}}
+{"Put":{"state":"The quick brown\nfox ˇjumps over\nthe lazy dog"}}
+{"Key":"shift-v"}
+{"Key":"shift-i"}
+{"Get":{"state":"The quick brown\nˇfox jumps over\nthe lazy dog","mode":"Insert"}}

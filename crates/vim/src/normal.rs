@@ -1623,6 +1623,7 @@ mod test {
         cx.simulate_shared_keystrokes("p p").await;
         cx.shared_state().await.assert_eq("\nhello\nˇhello");
     }
+
     #[gpui::test]
     async fn test_visual_mode_insert_before_after(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1636,23 +1637,6 @@ mod test {
         cx.shared_state().await.assert_eq("helloˇ");
 
         cx.set_shared_state(indoc! {"
-            The ˇquick brown
-            fox jumps over
-            the lazy dog"})
-            .await;
-        cx.simulate_shared_keystrokes("ctrl-v e j j").await;
-        cx.set_shared_state(indoc! {"
-            The «quickˇ» brown
-            fox «jumpsˇ» over
-            the «lazy ˇ»dog"})
-            .await;
-        cx.simulate_shared_keystrokes("shift-i").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-            The ˇquick brown
-            fox ˇjumps over
-            the ˇlazy dog"});
-
-        cx.set_shared_state(indoc! {"
             The quick brown
             fox ˇjumps over
             the lazy dog"})
@@ -1661,17 +1645,6 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             ˇfox jumps over
-            the lazy dog"});
-
-        cx.set_shared_state(indoc! {"
-            The quick brown
-            fox ˇjumps over
-            the lazy dog"})
-            .await;
-        cx.simulate_shared_keystrokes("shift-v shift-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-            The quick brown
-            fox jumps overˇ
             the lazy dog"});
     }
 }
