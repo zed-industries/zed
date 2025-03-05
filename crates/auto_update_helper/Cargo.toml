@@ -15,7 +15,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
