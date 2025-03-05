@@ -1634,7 +1634,7 @@ impl SshRemoteConnection {
     }
 
     async fn platform(&self) -> Result<SshPlatform> {
-        let uname = self.socket.run_command("uname", &["-sm"]).await?;
+        let uname = self.socket.run_command("sh", &["-c", "uname -sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             Err(anyhow!("unknown uname: {uname:?}"))?
         };
