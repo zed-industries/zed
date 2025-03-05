@@ -3818,104 +3818,57 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn diff_hunk_before<T: ToOffset>(&self, position: T) -> Option<MultiBufferDiffHunk> {
+    pub fn diff_hunk_before<T: ToOffset>(&self, position: T) -> Option<MultiBufferRow> {
         let offset = position.to_offset(self);
 
-        // Go to the region containing the given offset.
         let mut cursor = self.cursor::<DimensionPair<usize, Point>>();
         cursor.seek(&DimensionPair {
             key: offset,
             value: None,
         });
-        let mut region = cursor.region()?;
-        if region.range.start.key == offset || !region.is_main_buffer {
-            cursor.prev();
-            region = cursor.region()?;
+        cursor.seek_to_start_of_current_excerpt();
+        let excerpt = cursor.excerpt()?;
+
+        let excerpt_end = excerpt.range.context.end.to_offset(&excerpt.buffer);
+        let current_position = self
+            .anchor_before(offset)
+            .text_anchor
+            .to_offset(&excerpt.buffer);
+        let excerpt_end = excerpt
+            .buffer
+            .anchor_before(excerpt_end.min(current_position));
+
+        if let Some(diff) = self.diffs.get(&excerpt.buffer_id) {
+            for hunk in diff.hunks_intersecting_range_rev(
+                excerpt.range.context.start..excerpt_end,
+                &excerpt.buffer,
+            ) {
+                let hunk_end = hunk.buffer_range.end.to_offset(&excerpt.buffer);
+                if hunk_end >= current_position {
+                    continue;
+                }
+                let start =
+                    Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
+                        .to_point(&self);
+                return Some(MultiBufferRow(start.row));
+            }
         }
 
-        // Find the corresponding buffer offset.
-        let overshoot = if region.is_main_buffer {
-            offset - region.range.start.key
-        } else {
-            0
-        };
-        let mut max_buffer_offset = region
-            .buffer
-            .clip_offset(region.buffer_range.start.key + overshoot, Bias::Right);
-
         loop {
-            let excerpt = cursor.excerpt()?;
-            let excerpt_end = excerpt.range.context.end.to_offset(&excerpt.buffer);
-            let buffer_offset = excerpt_end.min(max_buffer_offset);
-            let buffer_end = excerpt.buffer.anchor_before(buffer_offset);
-            let buffer_end_row = buffer_end.to_point(&excerpt.buffer).row;
-
-            if let Some(diff) = self.diffs.get(&excerpt.buffer_id) {
-                for hunk in diff.hunks_intersecting_range_rev(
-                    excerpt.range.context.start..buffer_end,
-                    &excerpt.buffer,
-                ) {
-                    let hunk_range = hunk.buffer_range.to_offset(&excerpt.buffer);
-                    if hunk.range.end >= Point::new(buffer_end_row, 0) {
-                        continue;
-                    }
-
-                    let hunk_start = hunk.range.start;
-                    let hunk_end = hunk.range.end;
-
-                    cursor.seek_to_buffer_position_in_current_excerpt(&DimensionPair {
-                        key: hunk_range.start,
-                        value: None,
-                    });
-
-                    let mut region = cursor.region()?;
-                    while !region.is_main_buffer || region.buffer_range.start.key >= hunk_range.end
-                    {
-                        cursor.prev();
-                        region = cursor.region()?;
-                    }
-
-                    let overshoot = if region.is_main_buffer {
-                        hunk_start.saturating_sub(region.buffer_range.start.value.unwrap())
-                    } else {
-                        Point::zero()
-                    };
-                    let start = region.range.start.value.unwrap() + overshoot;
-
-                    while let Some(region) = cursor.region() {
-                        if !region.is_main_buffer
-                            || region.buffer_range.end.value.unwrap() <= hunk_end
-                        {
-                            cursor.next();
-                        } else {
-                            break;
-                        }
-                    }
-
-                    let end = if let Some(region) = cursor.region() {
-                        let overshoot = if region.is_main_buffer {
-                            hunk_end.saturating_sub(region.buffer_range.start.value.unwrap())
-                        } else {
-                            Point::zero()
-                        };
-                        region.range.start.value.unwrap() + overshoot
-                    } else {
-                        self.max_point()
-                    };
-
-                    return Some(MultiBufferDiffHunk {
-                        row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
-                        buffer_id: excerpt.buffer_id,
-                        excerpt_id: excerpt.id,
-                        buffer_range: hunk.buffer_range.clone(),
-                        diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                        secondary_status: hunk.secondary_status,
-                    });
-                }
-            }
-
             cursor.prev_excerpt();
-            max_buffer_offset = usize::MAX;
+            let excerpt = cursor.excerpt()?;
+
+            let Some(diff) = self.diffs.get(&excerpt.buffer_id) else {
+                continue;
+            };
+            let mut hunks =
+                diff.hunks_intersecting_range_rev(excerpt.range.context.clone(), &excerpt.buffer);
+            let Some(hunk) = hunks.next() else {
+                continue;
+            };
+            let start = Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
+                .to_point(&self);
+            return Some(MultiBufferRow(start.row));
         }
     }
 
@@ -6129,21 +6082,6 @@ where
             .seek_forward(&ExcerptDimension(excerpt_position), Bias::Right, &());
         if self.excerpts.item().is_none() && excerpt_position == self.excerpts.start().0 {
             self.excerpts.prev(&());
-        }
-    }
-
-    fn seek_to_buffer_position_in_current_excerpt(&mut self, position: &D) {
-        self.cached_region.take();
-        if let Some(excerpt) = self.excerpts.item() {
-            let excerpt_start = excerpt.range.context.start.summary::<D>(&excerpt.buffer);
-            let position_in_excerpt = *position - excerpt_start;
-            let mut excerpt_position = self.excerpts.start().0;
-            excerpt_position.add_assign(&position_in_excerpt);
-            self.diff_transforms
-                .seek(&ExcerptDimension(excerpt_position), Bias::Left, &());
-            if self.diff_transforms.item().is_none() {
-                self.diff_transforms.next(&());
-            }
         }
     }
 

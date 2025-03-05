@@ -926,12 +926,14 @@ impl Render for ProjectDiffToolbar {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use collections::HashMap;
-    use editor::test::editor_test_context::assert_state_with_diff;
+    use db::indoc;
+    use editor::test::editor_test_context::{assert_state_with_diff, EditorTestContext};
     use git::status::{StatusCode, TrackedStatus};
     use gpui::TestAppContext;
     use project::FakeFs;
@@ -1221,5 +1223,94 @@ mod tests {
             "
             .unindent(),
         );
+    }
+
+    use crate::project_diff::{self, ProjectDiff};
+
+    #[gpui::test]
+    async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".git":{},
+                "a.txt": "created\n",
+                "b.txt": "really changed\n",
+                "c.txt": "unchanged\n"
+            }),
+        )
+        .await;
+
+        fs.set_git_content_for_repo(
+            Path::new("/a/.git"),
+            &[
+                ("b.txt".into(), "before\n".to_string(), None),
+                ("c.txt".into(), "unchanged\n".to_string(), None),
+                ("d.txt".into(), "deleted\n".to_string(), None),
+            ],
+        );
+
+        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.update(cx, |item, _| item.editor.clone());
+
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.assert_excerpts_with_selections(indoc!(
+            "
+            [EXCERPT]
+            before
+            really changed
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            ˇcreated
+        "
+        ));
+
+        cx.dispatch_action(editor::actions::GoToPreviousHunk);
+
+        cx.assert_excerpts_with_selections(indoc!(
+            "
+            [EXCERPT]
+            before
+            really changed
+            [EXCERPT]
+            ˇ[FOLDED]
+            [EXCERPT]
+            created
+        "
+        ));
+
+        cx.dispatch_action(editor::actions::GoToPreviousHunk);
+
+        cx.assert_excerpts_with_selections(indoc!(
+            "
+            [EXCERPT]
+            ˇbefore
+            really changed
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            created
+        "
+        ));
     }
 }

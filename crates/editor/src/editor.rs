@@ -11544,15 +11544,16 @@ impl Editor {
         direction: Direction,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<MultiBufferDiffHunk> {
-        let hunk = if direction == Direction::Next {
+    ) {
+        let row = if direction == Direction::Next {
             self.hunk_after_position(snapshot, position)
+                .map(|hunk| hunk.row_range.start)
         } else {
             self.hunk_before_position(snapshot, position)
         };
 
-        if let Some(hunk) = &hunk {
-            let destination = Point::new(hunk.row_range.start.0, 0);
+        if let Some(row) = row {
+            let destination = Point::new(row.0, 0);
             let autoscroll = Autoscroll::center();
 
             self.unfold_ranges(&[destination..destination], false, false, cx);
@@ -11560,8 +11561,6 @@ impl Editor {
                 s.select_ranges([destination..destination]);
             });
         }
-
-        hunk
     }
 
     fn hunk_after_position(
@@ -11602,7 +11601,7 @@ impl Editor {
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
-    ) -> Option<MultiBufferDiffHunk> {
+    ) -> Option<MultiBufferRow> {
         snapshot
             .buffer_snapshot
             .diff_hunk_before(position)
