@@ -4,7 +4,9 @@ pub mod words;
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    proto, Grammar, Language, LanguageRegistry,
+    proto,
+    words::Words,
+    Grammar, Language, LanguageRegistry,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
@@ -70,7 +72,6 @@ use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{debug_panic, maybe, RangeExt};
-use words::Words;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -1555,7 +1556,7 @@ impl Buffer {
                         if parse_again {
                             this.reparse(cx);
                         } else if let Some(words) = &mut this.words {
-                            words.schedule_symbol_update(cx);
+                            words.update_outlines(cx);
                         }
                     })
                     .ok();
@@ -2297,7 +2298,7 @@ impl Buffer {
         self.reparse(cx);
         if let Some(mut words) = self.words.take() {
             let snapshot = self.snapshot();
-            words.schedule_word_update(Some(snapshot), edits, true, cx);
+            words.update_words(Some(snapshot), edits, true, cx);
             self.words = Some(words);
         }
         cx.emit(BufferEvent::Edited);
@@ -2700,6 +2701,11 @@ impl Buffer {
     /// Whether we should preserve the preview status of a tab containing this buffer.
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
+    }
+
+    /// If configured to gather, returns a current collection of word data in the buffer.
+    pub fn words(&self) -> Option<&Words> {
+        self.words.as_ref()
     }
 }
 

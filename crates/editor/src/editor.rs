@@ -4005,6 +4005,20 @@ impl Editor {
             .show_completion_documentation;
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
+        if let Some(query) = query.clone() {
+            buffer.update(cx, |buffer, cx| {
+                if let Some(words) = buffer.words() {
+                    let found_words = words.fuzzy_search_words(query.clone(), cx);
+                    let found_outlines = words.fuzzy_search_outlines(query.clone(), cx);
+                    cx.background_spawn(async move {
+                        let found_words = found_words.await;
+                        let found_outlines = found_outlines.await;
+                        dbg!(found_words, found_outlines);
+                    })
+                    .detach();
+                }
+            });
+        }
 
         let trigger_kind = match &options.trigger {
             Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {

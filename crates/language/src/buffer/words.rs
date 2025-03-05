@@ -9,40 +9,49 @@ use std::{
 use collections::HashMap;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, AppContext, Task};
-use text::{Edit, Point};
+use parking_lot::RwLock;
+use text::{Anchor, Edit, Point};
 use theme::ActiveTheme;
-use util::paths::PathMatcher;
+use util::{debug_panic, paths::PathMatcher};
 
 use crate::{search::SearchQuery, Outline};
 
 use super::{BufferRow, BufferSnapshot};
 
 pub struct Words {
-    words_to_query: Arc<Vec<StringMatchCandidate>>,
-    unique: HashMap<String, ()>,
+    unique_words: Arc<RwLock<UniqueWords>>,
+    outlines: Arc<RwLock<Option<Arc<Outline<Anchor>>>>>,
 
-    update_tasks: HashMap<BufferRow, Task<()>>,
+    word_update_tasks: HashMap<BufferRow, Task<()>>,
+    outline_update_task: Task<()>,
     buffer: BufferSnapshot,
     cancel_flag: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Default)]
+struct UniqueWords {
+    words: HashMap<String, ()>,
+    word_matches: Arc<Vec<StringMatchCandidate>>,
 }
 
 impl Words {
     pub fn new(buffer: BufferSnapshot, cx: &App) -> Self {
         let mut this = Self {
-            words_to_query: Arc::default(),
-            unique: HashMap::default(),
-            update_tasks: HashMap::default(),
+            unique_words: Arc::default(),
+            outlines: Arc::default(),
+            word_update_tasks: HashMap::default(),
+            outline_update_task: Task::ready(()),
             buffer,
             cancel_flag: Arc::default(),
         };
 
-        this.schedule_word_update(None, Vec::new(), false, cx);
+        this.update_words(None, Vec::new(), false, cx);
 
         this
     }
 
     pub fn fuzzy_search_words(&self, query: String, cx: &App) -> Task<Vec<StringMatch>> {
-        let words = Arc::clone(&self.words_to_query);
+        let words = self.unique_words.read().word_matches.clone();
         let cancel_flag = Arc::clone(&self.cancel_flag);
         let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
@@ -50,7 +59,26 @@ impl Words {
         })
     }
 
-    pub fn schedule_word_update(
+    pub fn fuzzy_search_outlines(&self, query: String, cx: &App) -> Task<Vec<StringMatch>> {
+        let Some(outlines) = self.outlines.read().clone() else {
+            return Task::ready(Vec::new());
+        };
+        let cancel_flag = Arc::clone(&self.cancel_flag);
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            fuzzy::match_strings(
+                &outlines.path_candidates,
+                &query,
+                false,
+                usize::MAX,
+                &cancel_flag,
+                executor,
+            )
+            .await
+        })
+    }
+
+    pub fn update_words(
         &mut self,
         new_snapshot: Option<BufferSnapshot>,
         edits: Vec<Edit<Point>>,
@@ -74,42 +102,73 @@ impl Words {
         } else {
             None
         };
-        let search_results = cx
-            .background_spawn(async move {
+        let unique_words = self.unique_words.clone();
+        self.word_update_tasks.insert(
+            0,
+            cx.background_spawn(async move {
                 if let Some(debounce) = debounce {
                     debounce.await;
                 }
-                let search_results = SearchQuery::regex(
-                    r"\w+",
+                let query = r"[\p{L}\p{N}_]+";
+                let word_search_results = match SearchQuery::regex(
+                    query,
                     false,
                     false,
                     false,
                     PathMatcher::default(),
                     PathMatcher::default(),
                     None,
-                )
-                .expect("TODO kb")
+                ) {
+                    Ok(query) => query,
+                    Err(e) => {
+                        debug_panic!("Error creating search with query {query}: {e}");
+                        return;
+                    }
+                }
                 .search(&buffer, None)
                 .await;
-                dbg!(search_results.len());
-                search_results
-            })
-            .detach();
+                let rope = buffer.as_rope();
+                let mut cursor = rope.cursor(0);
+                let matched_words = word_search_results.into_iter().map(|word_range| {
+                    cursor.seek_forward(word_range.start);
+                    cursor.slice(word_range.end).to_string()
+                });
+                let mut unique_words = unique_words.write();
+                // TODO kb proper state management, query by cached ranges (500 lines hunks?)
+                unique_words.word_matches = Arc::default();
+                unique_words.words.clear();
+                for matched_word in matched_words {
+                    if unique_words
+                        .words
+                        .insert(matched_word.clone(), ())
+                        .is_none()
+                    {
+                        let mut new_word_matches = unique_words.word_matches.as_slice().to_vec();
+                        new_word_matches.push(StringMatchCandidate::new(
+                            new_word_matches.len(),
+                            &matched_word,
+                        ));
+                        unique_words.word_matches = Arc::new(new_word_matches);
+                    }
+                }
+
+                dbg!(unique_words.word_matches.len());
+            }),
+        );
     }
 
-    pub fn schedule_symbol_update(&mut self, cx: &App) {
+    pub fn update_outlines(&mut self, cx: &App) {
         let theme = cx.theme().syntax().clone();
         let buffer = self.buffer.clone();
-        // TODO kb proper state management, query by cached ranges (500 lines hunks?)
-        let outline_results = cx
-            .background_spawn(async move {
-                let outline = buffer
-                    .outline_items_containing(0..buffer.len(), false, Some(&theme))
-                    .map(Outline::new);
-                dbg!(outline.as_ref().map(|o| o.path_candidates.len()));
-                outline
-            })
-            .detach();
+        let outlines = self.outlines.clone();
+        self.outline_update_task = cx.background_spawn(async move {
+            let outline = buffer
+                .outline_items_containing(0..buffer.len(), false, Some(&theme))
+                .map(Outline::new)
+                .map(Arc::new);
+            dbg!(outline.as_ref().map(|o| o.path_candidates.len()));
+            *outlines.write() = outline;
+        });
     }
 }
 
