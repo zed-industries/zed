@@ -2233,6 +2233,43 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn sync_selections(
+        &mut self,
+        other: Entity<Editor>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Subscription {
+        let other_selections = other.read(cx).selections.disjoint.to_vec();
+        self.selections.change_with(cx, |selections| {
+            selections.select_anchors(other_selections);
+        });
+
+        let other_subscription =
+            cx.subscribe(&other, |this, other, other_evt, cx| match other_evt {
+                EditorEvent::SelectionsChanged { local: true } => {
+                    let other_selections = other.read(cx).selections.disjoint.to_vec();
+                    this.selections.change_with(cx, |selections| {
+                        selections.select_anchors(other_selections);
+                    });
+                }
+                _ => {}
+            });
+
+        let this_subscription =
+            cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| match this_evt {
+                EditorEvent::SelectionsChanged { local: true } => {
+                    let these_selections = this.selections.disjoint.to_vec();
+                    other.update(cx, |other_editor, cx| {
+                        other_editor.selections.change_with(cx, |selections| {
+                            selections.select_anchors(these_selections);
+                        })
+                    });
+                }
+                _ => {}
+            });
+
+        Subscription::join(other_subscription, this_subscription)
+    }
+
     pub fn change_selections<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
