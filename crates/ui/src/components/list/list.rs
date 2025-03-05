@@ -13,6 +13,7 @@ pub struct List {
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: EmptyMessage,
+    id: Option<ElementId>,
     header: Option<ListHeader>,
     toggle: Option<bool>,
     children: SmallVec<[AnyElement; 2]>,
@@ -30,8 +31,14 @@ impl List {
             empty_message: EmptyMessage::Text("No items".into()),
             header: None,
             toggle: None,
+            id: None,
             children: SmallVec::new(),
         }
+    }
+
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     pub fn empty_message(mut self, message: impl Into<EmptyMessage>) -> Self {
@@ -77,6 +84,7 @@ impl From<AnyElement> for EmptyMessage {
 impl RenderOnce for List {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
+            .id(self.id.unwrap_or_else(|| 0.into()))
             .w_full()
             .py(DynamicSpacing::Base04.rems(cx))
             .children(self.header)

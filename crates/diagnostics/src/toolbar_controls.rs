@@ -65,7 +65,7 @@ impl Render for ToolbarControls {
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = this.diagnostics() {
                             editor.update(cx, |editor, cx| {
-                                editor.toggle_warnings(&Default::default(), window, cx);
+                                editor.toggle_warnings_click(window, cx);
                             });
                         }
                     })),
