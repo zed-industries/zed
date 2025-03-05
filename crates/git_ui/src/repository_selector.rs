@@ -21,12 +21,15 @@ pub struct RepositorySelector {
 impl RepositorySelector {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let git_store = project.read(cx).git_store().clone();
-        let all_repositories = git_store.read(cx).all_repositories();
-        let filtered_repositories = all_repositories.clone();
+        let repository_entries = git_store.update(cx, |git_store, cx| {
+            deduplicated_repository_entries(git_store, cx)
+        });
+        let filtered_repositories = repository_entries.clone();
+
         let delegate = RepositorySelectorDelegate {
             project: project.downgrade(),
             repository_selector: cx.entity().downgrade(),
-            repository_entries: all_repositories,
+            repository_entries,
             filtered_repositories,
             selected_index: 0,
         };
@@ -61,11 +64,26 @@ impl RepositorySelector {
         // TODO handle events individually
         let task = self.picker.update(cx, |this, cx| {
             let query = this.query(cx);
-            this.delegate.repository_entries = git_store.read(cx).all_repositories();
+            this.delegate.repository_entries = git_store.update(cx, |git_store, cx| {
+                deduplicated_repository_entries(git_store, cx)
+            });
             this.delegate.update_matches(query, window, cx)
         });
         self.update_matches_task = Some(task);
     }
+}
+
+fn deduplicated_repository_entries(git_store: &GitStore, cx: &App) -> Vec<Entity<Repository>> {
+    let mut repository_entries = git_store.all_repositories();
+    repository_entries.sort_by_key(|repo| {
+        let repo = repo.read(cx);
+        (
+            repo.dot_git_abs_path.clone(),
+            repo.worktree_abs_path.clone(),
+        )
+    });
+    repository_entries.dedup_by_key(|repo| repo.read(cx).dot_git_abs_path.clone());
+    repository_entries
 }
 
 impl EventEmitter<DismissEvent> for RepositorySelector {}
