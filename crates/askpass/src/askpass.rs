@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use futures::channel::oneshot;
+use futures::channel::{mpsc, oneshot};
 use futures::{io::BufReader, AsyncBufReadExt as _};
-use futures::{select_biased, AsyncWriteExt as _, FutureExt as _};
-use gpui::{AsyncApp, Task};
+use futures::{select_biased, AsyncWriteExt as _, FutureExt as _, SinkExt, StreamExt};
+use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
 use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
 use util::ResultExt as _;
@@ -23,8 +23,33 @@ pub enum AskPassResult {
     Timedout,
 }
 
-pub trait AskPassDelegate {
-    fn ask_password(&self, prompt: String) -> oneshot::Receiver<anyhow::Result<String>>;
+pub struct AskPassDelegate {
+    tx: mpsc::UnboundedSender<(String, oneshot::Sender<anyhow::Result<String>>)>,
+    _task: Task<()>,
+}
+
+impl AskPassDelegate {
+    pub fn new(
+        cx: &mut AsyncApp,
+        password_prompt: impl Fn(String, oneshot::Sender<anyhow::Result<String>>, &mut AsyncApp)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<anyhow::Result<String>>)>();
+        let task = cx.spawn(|mut cx| async move {
+            while let Some((prompt, channel)) = rx.next().await {
+                password_prompt(prompt, channel, &mut cx);
+            }
+        });
+        Self { tx, _task: task }
+    }
+
+    async fn ask_password(&mut self, prompt: String) -> anyhow::Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send((prompt, tx)).await?;
+        rx.await?
+    }
 }
 
 impl AskPassSession {
@@ -32,14 +57,10 @@ impl AskPassSession {
     /// You must retain this session until the master process exits.
     #[must_use]
     pub async fn new(
-        cx: &mut AsyncApp,
-        password_prompt: impl Fn(String, &mut AsyncApp) -> oneshot::Receiver<anyhow::Result<String>>
-            + Send
-            + Sync
-            + 'static,
+        executor: &BackgroundExecutor,
+        mut delegate: AskPassDelegate,
     ) -> anyhow::Result<Self> {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
-        dbg!(&temp_dir);
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join("askpass.sh");
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
@@ -49,7 +70,7 @@ impl AskPassSession {
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
 
-        let askpass_task = cx.spawn(|mut cx| async move {
+        let askpass_task = executor.spawn(async move {
             let mut askpass_opened_tx = Some(askpass_opened_tx);
 
             while let Ok((mut stream, _)) = listener.accept().await {
@@ -62,10 +83,10 @@ impl AskPassSession {
                     buffer.clear();
                 }
                 let prompt = String::from_utf8_lossy(&buffer);
-                if let Some(password) = password_prompt(prompt.to_string(), &mut cx)
+                if let Some(password) = delegate
+                    .ask_password(prompt.to_string())
                     .await
                     .context("failed to get askpass password")
-                    .and_then(|p| p)
                     .log_err()
                 {
                     stream.write_all(password.as_bytes()).await.log_err();

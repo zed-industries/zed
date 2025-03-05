@@ -1,3 +1,4 @@
+use crate::askpass_modal::AskPassModal;
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
@@ -7,7 +8,7 @@ use crate::{
 };
 use crate::{picker_prompt, project_diff, ProjectDiff};
 use anyhow::Result;
-use askpass::AskPassSession;
+use askpass::{AskPassDelegate, AskPassSession};
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
 use editor::{
@@ -1345,17 +1346,14 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn fetch(&mut self, _: &git::Fetch, _window: &mut Window, cx: &mut Context<Self>) {
+    fn fetch(&mut self, _: &git::Fetch, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
         let guard = self.start_remote_operation();
+        let askpass = self.askpass_delegate("git fetch", window, cx);
         cx.spawn(|this, mut cx| async move {
-            let askpass = this
-                .update(&mut cx, |this, cx| this.setup_askpass(cx))?
-                .await?;
-
-            let fetch = repo.update(&mut cx, |repo, cx| repo.fetch(askpass))?;
+            let fetch = repo.update(&mut cx, |repo, cx| repo.fetch(askpass, cx))?;
 
             let remote_message = fetch.await?;
             drop(guard);
@@ -1387,6 +1385,7 @@ impl GitPanel {
         let branch = branch.clone();
         let guard = self.start_remote_operation();
         let remote = self.get_current_remote(window, cx);
+        let askpass = self.askpass_delegate("git pull", window, cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
@@ -1401,12 +1400,8 @@ impl GitPanel {
                 }
             };
 
-            let askpass = this
-                .update(&mut cx, |this, cx| this.setup_askpass(cx))?
-                .await?;
-
-            let pull = repo.update(&mut cx, |repo, _cx| {
-                repo.pull(branch.name.clone(), remote.name.clone(), askpass)
+            let pull = repo.update(&mut cx, |repo, cx| {
+                repo.pull(branch.name.clone(), remote.name.clone(), askpass, cx)
             })?;
 
             let remote_message = pull.await?;
@@ -1436,6 +1431,7 @@ impl GitPanel {
         let guard = self.start_remote_operation();
         let options = action.options;
         let remote = self.get_current_remote(window, cx);
+        let askpass_delegate = self.askpass_delegate("git push", window, cx);
 
         cx.spawn(move |this, mut cx| async move {
             let remote = match remote.await {
@@ -1450,12 +1446,15 @@ impl GitPanel {
                     return Ok(());
                 }
             };
-            let askpass = this
-                .update(&mut cx, |this, cx| this.setup_askpass(cx))?
-                .await?;
 
-            let push = repo.update(&mut cx, |repo, _cx| {
-                repo.push(branch.name.clone(), remote.name.clone(), options, askpass)
+            let push = repo.update(&mut cx, |repo, cx| {
+                repo.push(
+                    branch.name.clone(),
+                    remote.name.clone(),
+                    options,
+                    askpass_delegate,
+                    cx,
+                )
             })?;
 
             let remote_output = push.await?;
@@ -1476,26 +1475,27 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn setup_askpass(&self, cx: &mut Context<Self>) -> Task<Result<AskPassSession>> {
-        cx.spawn(|this, mut cx| async move {
-            AskPassSession::new(&mut cx, move |prompt, cx| {
-                let (tx, rx) = oneshot::channel();
-                this.update(cx, |this, cx| this.askpass_prompt(prompt, tx, cx))
-                    .ok();
-                rx
-            })
-            .await
-        })
-    }
-
-    fn askpass_prompt(
+    fn askpass_delegate(
         &self,
-        prompt: String,
-        tx: oneshot::Sender<Result<String>>,
+        operation: impl Into<SharedString>,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        dbg!("ohai!", &prompt);
-        tx.send(Ok("not my password".to_string()));
+    ) -> AskPassDelegate {
+        let this = cx.weak_entity();
+        let window = window.window_handle();
+        AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |_window, cx| {
+                                AskPassModal::new(operation, prompt, tx, cx)
+                            });
+                        })
+                    })
+                })
+                .ok();
+        })
     }
 
     fn get_current_remote(

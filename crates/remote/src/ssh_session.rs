@@ -316,7 +316,7 @@ impl SshPlatform {
 }
 
 pub trait SshClientDelegate: Send + Sync {
-    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>>;
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<Result<String>>, cx: &mut AsyncApp);
     fn get_download_params(
         &self,
         platform: SshPlatform,
@@ -1463,12 +1463,13 @@ impl SshRemoteConnection {
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
             .tempdir()?;
-
-        let mut askpass = askpass::AskPassSession::new(cx, {
+        let askpass_delegate = askpass::AskPassDelegate::new(cx, {
             let delegate = delegate.clone();
-            move |prompt, cx| delegate.ask_password(prompt, cx)
-        })
-        .await?;
+            move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
+        });
+
+        let mut askpass =
+            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
@@ -2486,7 +2487,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl SshClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
+        fn ask_password(&self, _: String, _: oneshot::Sender<Result<String>>, _: &mut AsyncApp) {
             unreachable!()
         }
 

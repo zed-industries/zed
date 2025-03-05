@@ -5,6 +5,7 @@ use gpui::App;
 use project_diff::ProjectDiff;
 use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
+mod askpass_modal;
 pub mod branch_picker;
 mod commit_modal;
 pub mod git_panel;

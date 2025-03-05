@@ -429,8 +429,7 @@ pub struct SshClientDelegate {
 }
 
 impl remote::SshClientDelegate for SshClientDelegate {
-    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
-        let (tx, rx) = oneshot::channel();
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<Result<String>>, cx: &mut AsyncApp) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
             tx.send(Ok(password)).ok();
@@ -443,7 +442,6 @@ impl remote::SshClientDelegate for SshClientDelegate {
                 })
                 .ok();
         }
-        rx
     }
 
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
