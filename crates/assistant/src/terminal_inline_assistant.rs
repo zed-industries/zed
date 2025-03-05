@@ -19,7 +19,7 @@ use language_model::{
     report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, Role,
 };
-use language_model_selector::inline_language_model_selector;
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
@@ -487,9 +487,9 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: TerminalInlineAssistId,
-    fs: Arc<dyn Fs>,
     height_in_lines: u8,
     editor: Entity<Editor>,
+    language_model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -641,16 +641,29 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(inline_language_model_selector({
-                        let fs = self.fs.clone();
-                        move |model, cx| {
-                            update_settings_file::<AssistantSettings>(
-                                fs.clone(),
+                    .child(LanguageModelSelectorPopoverMenu::new(
+                        self.language_model_selector.clone(),
+                        IconButton::new("change-model", IconName::SettingsAlt)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted),
+                        move |window, cx| {
+                            Tooltip::with_meta(
+                                format!(
+                                    "Using {}",
+                                    LanguageModelRegistry::read_global(cx)
+                                        .active_model()
+                                        .map(|model| model.name().0)
+                                        .unwrap_or_else(|| "No model selected".into()),
+                                ),
+                                None,
+                                "Change Model",
+                                window,
                                 cx,
-                                move |settings, _| settings.set_model(model.clone()),
-                            );
-                        }
-                    }))
+                            )
+                        },
+                        gpui::Corner::TopRight,
+                    ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());
@@ -728,9 +741,22 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
-            fs,
             height_in_lines: 1,
             editor: prompt_editor,
+            language_model_selector: cx.new(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }),
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
