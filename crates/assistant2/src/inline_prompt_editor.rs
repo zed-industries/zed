@@ -20,7 +20,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
-use language_model_selector::ToggleModelSelector;
+use language_model_selector::{LanguageModelSelector, ToggleModelSelector};
 use parking_lot::Mutex;
 use settings::Settings;
 use std::cmp;
@@ -40,6 +40,7 @@ pub struct PromptEditor<T> {
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
+    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -857,6 +858,7 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let context_strip = cx.new(|cx| {
             ContextStrip::new(
@@ -880,8 +882,15 @@ impl PromptEditor<BufferCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(fs, prompt_editor.focus_handle(cx), window, cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle.clone(),
+                    prompt_editor.focus_handle(cx),
+                    window,
+                    cx,
+                )
             }),
+            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -1005,6 +1014,7 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let context_strip = cx.new(|cx| {
             ContextStrip::new(
@@ -1028,8 +1038,15 @@ impl PromptEditor<TerminalCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(fs, prompt_editor.focus_handle(cx), window, cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle.clone(),
+                    prompt_editor.focus_handle(cx),
+                    window,
+                    cx,
+                )
             }),
+            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
