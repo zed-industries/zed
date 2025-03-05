@@ -377,7 +377,7 @@ impl WorktreeStore {
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedEntries(
-                        worktree.read(cx).id(),
+                        worktree_id,
                         changes.clone(),
                     ));
                 }

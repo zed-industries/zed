@@ -110,7 +110,7 @@ pub struct Buffer {
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
-    parsing_in_background: bool,
+    reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -368,6 +368,14 @@ impl DiskState {
             DiskState::Deleted => None,
         }
     }
+
+    pub fn exists(&self) -> bool {
+        match self {
+            DiskState::New => false,
+            DiskState::Present { .. } => true,
+            DiskState::Deleted => false,
+        }
+    }
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
@@ -501,7 +509,7 @@ impl fmt::Debug for ChunkRenderer {
     }
 }
 
-impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
+impl Deref for ChunkRendererContext<'_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {
@@ -509,7 +517,7 @@ impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
     }
 }
 
-impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
+impl DerefMut for ChunkRendererContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.context
     }
@@ -582,7 +590,7 @@ impl HighlightedText {
 
     pub fn to_styled_text(&self, default_style: &TextStyle) -> StyledText {
         gpui::StyledText::new(self.text.clone())
-            .with_highlights(default_style, self.highlights.iter().cloned())
+            .with_default_highlights(default_style, self.highlights.iter().cloned())
     }
 
     /// Returns the first line without leading whitespace unless highlighted
@@ -956,7 +964,7 @@ impl Buffer {
             file,
             capability,
             syntax_map,
-            parsing_in_background: false,
+            reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
             parse_status: async_watch::channel(ParseStatus::Idle),
@@ -1412,7 +1420,7 @@ impl Buffer {
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
-        self.parsing_in_background
+        self.reparse.is_some()
     }
 
     /// Indicates whether the buffer contains any regions that may be
@@ -1450,7 +1458,7 @@ impl Buffer {
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
-        if self.parsing_in_background {
+        if self.reparse.is_some() {
             return;
         }
         let language = if let Some(language) = self.language.clone() {
@@ -1484,10 +1492,10 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
+                self.reparse = None;
             }
             Err(parse_task) => {
-                self.parsing_in_background = true;
-                cx.spawn(move |this, mut cx| async move {
+                self.reparse = Some(cx.spawn(move |this, mut cx| async move {
                     let new_syntax_map = parse_task.await;
                     this.update(&mut cx, move |this, cx| {
                         let grammar_changed =
@@ -1503,14 +1511,13 @@ impl Buffer {
                             || grammar_changed
                             || this.version.changed_since(&parsed_version);
                         this.did_finish_parsing(new_syntax_map, cx);
-                        this.parsing_in_background = false;
+                        this.reparse = None;
                         if parse_again {
                             this.reparse(cx);
                         }
                     })
                     .ok();
-                })
-                .detach();
+                }));
             }
         }
     }
@@ -3499,24 +3506,13 @@ impl BufferSnapshot {
             true,
         );
         let mut last_buffer_range_end = 0;
+
         for (buffer_range, is_name) in buffer_ranges {
-            if !text.is_empty() && buffer_range.start > last_buffer_range_end {
+            let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
+            if space_added {
                 text.push(' ');
             }
-            last_buffer_range_end = buffer_range.end;
-            if is_name {
-                let mut start = text.len();
-                let end = start + buffer_range.len();
-
-                // When multiple names are captured, then the matchable text
-                // includes the whitespace in between the names.
-                if !name_ranges.is_empty() {
-                    start -= 1;
-                }
-
-                name_ranges.push(start..end);
-            }
-
+            let before_append_len = text.len();
             let mut offset = buffer_range.start;
             chunks.seek(buffer_range.clone());
             for mut chunk in chunks.by_ref() {
@@ -3540,6 +3536,16 @@ impl BufferSnapshot {
                     break;
                 }
             }
+            if is_name {
+                let after_append_len = text.len();
+                let start = if space_added && !name_ranges.is_empty() {
+                    before_append_len - 1
+                } else {
+                    before_append_len
+                };
+                name_ranges.push(start..after_append_len);
+            }
+            last_buffer_range_end = buffer_range.end;
         }
 
         Some(OutlineItem {
@@ -4130,7 +4136,7 @@ impl Deref for BufferSnapshot {
     }
 }
 
-unsafe impl<'a> Send for BufferChunks<'a> {}
+unsafe impl Send for BufferChunks<'_> {}
 
 impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
@@ -4470,6 +4476,7 @@ impl IndentSize {
 pub struct TestFile {
     pub path: Arc<Path>,
     pub root_name: String,
+    pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4483,7 +4490,11 @@ impl File for TestFile {
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
-        None
+        if self.local_root.is_some() {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn disk_state(&self) -> DiskState {
@@ -4508,6 +4519,23 @@ impl File for TestFile {
 
     fn is_private(&self) -> bool {
         false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LocalFile for TestFile {
+    fn abs_path(&self, _cx: &App) -> PathBuf {
+        PathBuf::from(self.local_root.as_ref().unwrap())
+            .join(&self.root_name)
+            .join(self.path.as_ref())
+    }
+
+    fn load(&self, _cx: &App) -> Task<Result<String>> {
+        unimplemented!()
+    }
+
+    fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
+        unimplemented!()
     }
 }
 

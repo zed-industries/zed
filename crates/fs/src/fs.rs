@@ -5,12 +5,20 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use anyhow::{anyhow, Context as _, Result};
+#[cfg(any(test, feature = "test-support"))]
+use collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
+use git::status::StatusCode;
+#[cfg(any(test, feature = "test-support"))]
+use git::status::TrackedStatus;
 use git::GitHostingProviderRegistry;
 #[cfg(any(test, feature = "test-support"))]
 use git::{repository::RepoPath, status::FileStatus};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::fd::AsFd;
 #[cfg(unix)]
@@ -127,6 +135,7 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
+    fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
@@ -805,6 +814,10 @@ impl Fs for RealFs {
         temp_dir.close()?;
         case_sensitive
     }
+
+    fn home_dir(&self) -> Option<PathBuf> {
+        Some(paths::home_dir().clone())
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -838,6 +851,7 @@ struct FakeFsState {
     metadata_call_count: usize,
     read_dir_call_count: usize,
     moves: std::collections::HashMap<u64, PathBuf>,
+    home_dir: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1023,6 +1037,7 @@ impl FakeFs {
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
                 moves: Default::default(),
+                home_dir: None,
             }),
         });
 
@@ -1253,7 +1268,7 @@ impl FakeFs {
         self.with_git_state(dot_git, true, |state| {
             let branch = branch.map(Into::into);
             state.branches.extend(branch.clone());
-            state.current_branch_name = branch.map(Into::into)
+            state.current_branch_name = branch
         })
     }
 
@@ -1289,6 +1304,105 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
+        });
+    }
+
+    pub fn set_git_content_for_repo(
+        &self,
+        dot_git: &Path,
+        head_state: &[(RepoPath, String, Option<String>)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.head_contents.clear();
+            state.head_contents.extend(
+                head_state
+                    .iter()
+                    .map(|(path, head_content, _)| (path.clone(), head_content.clone())),
+            );
+            state.index_contents.clear();
+            state.index_contents.extend(head_state.iter().map(
+                |(path, head_content, index_content)| {
+                    (
+                        path.clone(),
+                        index_content.as_ref().unwrap_or(head_content).clone(),
+                    )
+                },
+            ));
+        });
+        self.recalculate_git_status(dot_git);
+    }
+
+    pub fn recalculate_git_status(&self, dot_git: &Path) {
+        let git_files: HashMap<_, _> = self
+            .files()
+            .iter()
+            .filter_map(|path| {
+                let repo_path =
+                    RepoPath::new(path.strip_prefix(dot_git.parent().unwrap()).ok()?.into());
+                let content = self
+                    .read_file_sync(path)
+                    .ok()
+                    .map(|content| String::from_utf8(content).unwrap());
+                Some((repo_path, content?))
+            })
+            .collect();
+        self.with_git_state(dot_git, false, |state| {
+            state.statuses.clear();
+            let mut paths: HashSet<_> = state.head_contents.keys().collect();
+            paths.extend(state.index_contents.keys());
+            paths.extend(git_files.keys());
+            for path in paths {
+                let head = state.head_contents.get(path);
+                let index = state.index_contents.get(path);
+                let fs = git_files.get(path);
+                let status = match (head, index, fs) {
+                    (Some(head), Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
+                        index_status: if head == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                        worktree_status: if fs == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                    }),
+                    (Some(head), Some(index), None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: if head == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (Some(_), None, Some(_)) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Added,
+                    }),
+                    (Some(_), None, None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (None, Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: if fs == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                    }),
+                    (None, Some(_), None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (None, None, Some(_)) => FileStatus::Untracked,
+                    (None, None, None) => {
+                        unreachable!();
+                    }
+                };
+                state.statuses.insert(path.clone(), status);
+            }
         });
     }
 
@@ -1416,6 +1530,10 @@ impl FakeFs {
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
+    }
+
+    pub fn set_home_dir(&self, home_dir: PathBuf) {
+        self.state.lock().home_dir = Some(home_dir);
     }
 }
 
@@ -1971,6 +2089,10 @@ impl Fs for FakeFs {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
+    }
+
+    fn home_dir(&self) -> Option<PathBuf> {
+        self.state.lock().home_dir.clone()
     }
 }
 

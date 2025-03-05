@@ -41,7 +41,7 @@ use workspace::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
-    searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
     WorkspaceId,
 };
@@ -1583,6 +1583,7 @@ impl SearchableItem for TerminalView {
     /// Reports back to the search toolbar what the active match should be (the selection)
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -1593,19 +1594,36 @@ impl SearchableItem for TerminalView {
         let res = if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
-                if let Some(ix) = matches
-                    .iter()
-                    .enumerate()
-                    .find(|(_, search_match)| {
-                        search_match.contains(&selection_head)
-                            || search_match.start() > &selection_head
-                    })
-                    .map(|(ix, _)| ix)
-                {
-                    Some(ix)
-                } else {
-                    // If no selection after selection head, return the last match
-                    Some(matches.len().saturating_sub(1))
+                match direction {
+                    Direction::Prev => {
+                        // If no selection before selection head, return the first match
+                        Some(
+                            matches
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .find(|(_, search_match)| {
+                                    search_match.contains(&selection_head)
+                                        || search_match.start() < &selection_head
+                                })
+                                .map(|(ix, _)| ix)
+                                .unwrap_or(0),
+                        )
+                    }
+                    Direction::Next => {
+                        // If no selection after selection head, return the last match
+                        Some(
+                            matches
+                                .iter()
+                                .enumerate()
+                                .find(|(_, search_match)| {
+                                    search_match.contains(&selection_head)
+                                        || search_match.start() > &selection_head
+                                })
+                                .map(|(ix, _)| ix)
+                                .unwrap_or(matches.len().saturating_sub(1)),
+                        )
+                    }
                 }
             } else {
                 // Matches found but no active selection, return the first last one (closest to cursor)

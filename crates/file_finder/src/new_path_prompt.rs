@@ -108,7 +108,7 @@ impl Match {
     fn styled_text(&self, project: &Project, window: &Window, cx: &App) -> StyledText {
         let mut text = "./".to_string();
         let mut highlights = Vec::new();
-        let mut offset = text.as_bytes().len();
+        let mut offset = text.len();
 
         let separator = '/';
         let dir_indicator = "[…]";
@@ -125,7 +125,7 @@ impl Match {
                 highlights.push((range.start + offset..range.end + offset, style))
             }
             text.push(separator);
-            offset = text.as_bytes().len();
+            offset = text.len();
 
             if let Some(suffix) = &self.suffix {
                 text.push_str(suffix);
@@ -140,10 +140,10 @@ impl Match {
                     Color::Created
                 };
                 highlights.push((
-                    offset..offset + suffix.as_bytes().len(),
+                    offset..offset + suffix.len(),
                     HighlightStyle::color(color.color(cx)),
                 ));
-                offset += suffix.as_bytes().len();
+                offset += suffix.len();
                 if entry.is_some_and(|e| e.is_dir()) {
                     text.push(separator);
                     offset += separator.len_utf8();
@@ -165,7 +165,7 @@ impl Match {
             text.push_str(suffix);
             let existing_prefix_len = self
                 .existing_prefix(project, cx)
-                .map(|prefix| prefix.to_string_lossy().as_bytes().len())
+                .map(|prefix| prefix.to_string_lossy().len())
                 .unwrap_or(0);
 
             if existing_prefix_len > 0 {
@@ -175,14 +175,14 @@ impl Match {
                 ));
             }
             highlights.push((
-                offset + existing_prefix_len..offset + suffix.as_bytes().len(),
+                offset + existing_prefix_len..offset + suffix.len(),
                 HighlightStyle::color(if self.entry(project, cx).is_some() {
                     Color::Conflict.color(cx)
                 } else {
                     Color::Created.color(cx)
                 }),
             ));
-            offset += suffix.as_bytes().len();
+            offset += suffix.len();
             if suffix.ends_with('/') {
                 text.push_str(dir_indicator);
                 highlights.push((
@@ -192,7 +192,7 @@ impl Match {
             }
         }
 
-        StyledText::new(text).with_highlights(&window.text_style().clone(), highlights)
+        StyledText::new(text).with_default_highlights(&window.text_style().clone(), highlights)
     }
 }
 

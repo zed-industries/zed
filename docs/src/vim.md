@@ -72,10 +72,15 @@ The following commands use the language server to help you navigate and refactor
 
 ### Git
 
-| Command                   | Default Shortcut |
-| ------------------------- | ---------------- |
-| Go to next git change     | `] c`            |
-| Go to previous git change | `[ c`            |
+| Command                         | Default Shortcut |
+| ------------------------------- | ---------------- |
+| Go to next git change           | `] c`            |
+| Go to previous git change       | `[ c`            |
+| Expand diff hunk                | `d o`            |
+| Toggle staged                   | `d O`            |
+| Stage and next (in diff view)   | `d u`            |
+| Unstage and next (in diff view) | `d U`            |
+| Restore change                  | `d p`            |
 
 ### Treesitter
 
@@ -451,6 +456,7 @@ You can change the following settings to modify vim mode's behavior:
 
 | Property                     | Description                                                                                                                                                                                   | Default Value |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                  | "normal"      |
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | If `true`, `f` and `t` motions extend across multiple lines.                                                                                                                                  | false         |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |

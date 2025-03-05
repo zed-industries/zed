@@ -160,7 +160,7 @@ impl Vim {
                     .buffer()
                     .read(cx)
                     .snapshot(cx)
-                    .settings_at(cursor_offset, cx)
+                    .language_settings_at(cursor_offset, cx)
                     .auto_indent_on_paste
                 {
                     editor.edit_with_block_indent(edits, original_start_columns, cx);
@@ -941,6 +941,22 @@ mod test {
                 fish fisˇh
                 two three
                 "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("g r r");
+        cx.assert_state(
+            indoc! {"
+                fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j w g r $");
+        cx.assert_state(
+            indoc! {"
+                fish
+                two fisˇh
+            "},
             Mode::Normal,
         );
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();

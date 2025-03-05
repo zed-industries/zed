@@ -784,7 +784,7 @@ List of `string` values
   "file_icons": false,
   "git_status": false,
   "activate_on_close": "history",
-  "always_show_close_button": false
+  "show_close_button": "hover"
 },
 ```
 
@@ -856,11 +856,37 @@ List of `string` values
 }
 ```
 
-### Always show the close button
+### Show close button
 
-- Description: Whether to always show the close button on tabs.
-- Setting: `always_show_close_button`
-- Default: `false`
+- Description: Controls the appearance behavior of the tab's close button.
+- Setting: `show_close_button`
+- Default: `hover`
+
+**Options**
+
+1.  Show it just upon hovering the tab:
+
+```json
+{
+  "show_close_button": "hover"
+}
+```
+
+2. Show it persistently:
+
+```json
+{
+  "show_close_button": "always"
+}
+```
+
+3. Never show it, even if hovering it:
+
+```json
+{
+  "show_close_button": "hidden"
+}
+```
 
 ## Editor Toolbar
 
@@ -1517,7 +1543,8 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "show_other_hints": true,
   "show_background": false,
   "edit_debounce_ms": 700,
-  "scroll_debounce_ms": 50
+  "scroll_debounce_ms": 50,
+  "toggle_on_modifiers_press": null
 }
 ```
 
@@ -1538,6 +1565,22 @@ Use the `lsp` section for the server configuration. Examples are provided in the
 
 Hints are not instantly queried in Zed, two kinds of debounces are used, either may be set to 0 to be disabled.
 Settings-related hint updates are not debounced.
+
+All possible config values for `toggle_on_modifiers_press` are:
+
+```json
+"inlay_hints": {
+  "toggle_on_modifiers_press": {
+    "control": true,
+    "shift": true,
+    "alt": true,
+    "platform": true,
+    "function": true
+  }
+}
+```
+
+Unspecified values have a `false` value, hints won't be toggled if all the modifiers are `false` or not all the modifiers are pressed.
 
 ## Journal
 
@@ -1761,6 +1804,35 @@ Or to set a `socks5` proxy:
   "regex": false
 },
 ```
+
+## Seed Search Query From Cursor
+
+- Description: When to populate a new search's query based on the text under the cursor.
+- Setting: `seed_search_query_from_cursor`
+- Default: `always`
+
+**Options**
+
+1. `always` always populate the search query with the word under the cursor
+2. `selection` only populate the search query when there is text selected
+3. `never` never populate the search query
+
+## Use Smartcase Search
+
+- Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \
+  This applies to both in-file searches and project-wide searches.
+
+  Examples:
+
+  - Searching for "function" would match "function", "Function", "FUNCTION", etc.
+  - Searching for "Function" would only match "Function", not "function" or "FUNCTION"
+
+- Setting: `use_smartcase_search`
+- Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Show Call Status Icon
 

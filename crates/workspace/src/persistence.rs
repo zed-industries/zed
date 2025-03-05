@@ -1156,11 +1156,14 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+    use std::time::Duration;
+
     use super::*;
     use crate::persistence::model::SerializedWorkspace;
     use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
     use db::open_test_db;
-    use gpui::{self};
+    use gpui;
 
     #[gpui::test]
     async fn test_next_id_stability() {
@@ -1556,31 +1559,33 @@ mod tests {
         };
 
         db.save_workspace(workspace_1.clone()).await;
+        thread::sleep(Duration::from_millis(1000)); // Force timestamps to increment
         db.save_workspace(workspace_2.clone()).await;
         db.save_workspace(workspace_3.clone()).await;
+        thread::sleep(Duration::from_millis(1000)); // Force timestamps to increment
         db.save_workspace(workspace_4.clone()).await;
         db.save_workspace(workspace_5.clone()).await;
         db.save_workspace(workspace_6.clone()).await;
 
         let locations = db.session_workspaces("session-id-1".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].0, LocalPaths::new(["/tmp1"]));
+        assert_eq!(locations[0].0, LocalPaths::new(["/tmp2"]));
         assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[0].2, Some(10));
-        assert_eq!(locations[1].0, LocalPaths::new(["/tmp2"]));
+        assert_eq!(locations[0].2, Some(20));
+        assert_eq!(locations[1].0, LocalPaths::new(["/tmp1"]));
         assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[1].2, Some(20));
+        assert_eq!(locations[1].2, Some(10));
 
         let locations = db.session_workspaces("session-id-2".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].0, LocalPaths::new(["/tmp3"]));
-        assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[0].2, Some(30));
         let empty_paths: Vec<&str> = Vec::new();
-        assert_eq!(locations[1].0, LocalPaths::new(empty_paths.iter()));
-        assert_eq!(locations[1].1, LocalPathsOrder::new([]));
-        assert_eq!(locations[1].2, Some(50));
-        assert_eq!(locations[1].3, Some(ssh_project.id.0));
+        assert_eq!(locations[0].0, LocalPaths::new(empty_paths.iter()));
+        assert_eq!(locations[0].1, LocalPathsOrder::new([]));
+        assert_eq!(locations[0].2, Some(50));
+        assert_eq!(locations[0].3, Some(ssh_project.id.0));
+        assert_eq!(locations[1].0, LocalPaths::new(["/tmp3"]));
+        assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[1].2, Some(30));
 
         let locations = db.session_workspaces("session-id-3".to_owned()).unwrap();
         assert_eq!(locations.len(), 1);

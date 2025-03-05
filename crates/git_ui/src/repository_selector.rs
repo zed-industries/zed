@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
+    Task, WeakEntity,
 };
 use picker::{Picker, PickerDelegate};
 use project::{
@@ -8,7 +8,7 @@ use project::{
     Project,
 };
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 
 pub struct RepositorySelector {
     picker: Entity<Picker<RepositorySelectorDelegate>>,
@@ -75,54 +75,6 @@ impl Focusable for RepositorySelector {
 impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
-    }
-}
-
-#[derive(IntoElement)]
-pub struct RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    repository_selector: Entity<RepositorySelector>,
-    trigger: T,
-    tooltip: TT,
-    handle: Option<PopoverMenuHandle<RepositorySelector>>,
-}
-
-impl<T, TT> RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    pub fn new(repository_selector: Entity<RepositorySelector>, trigger: T, tooltip: TT) -> Self {
-        Self {
-            repository_selector,
-            trigger,
-            tooltip,
-            handle: None,
-        }
-    }
-
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<RepositorySelector>) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-}
-
-impl<T, TT> RenderOnce for RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let repository_selector = self.repository_selector.clone();
-
-        PopoverMenu::new("repository-switcher")
-            .menu(move |_window, _cx| Some(repository_selector.clone()))
-            .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
-            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
     }
 }
 

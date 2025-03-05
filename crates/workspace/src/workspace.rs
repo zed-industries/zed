@@ -47,7 +47,9 @@ use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-use notifications::{simple_message_notification::MessageNotification, DetachAndPromptErr};
+use notifications::{
+    simple_message_notification::MessageNotification, DetachAndPromptErr, Notifications,
+};
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
@@ -815,7 +817,7 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(NotificationId, AnyView)>,
+    notifications: Notifications,
     project: Entity<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, PeerId>,
@@ -920,7 +922,7 @@ impl Workspace {
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
                     cx,
-                    |cx| cx.new(|_| MessageNotification::new(message.clone())),
+                    |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
                 ),
 
                 project::Event::HideToast { notification_id } => {
@@ -937,7 +939,11 @@ impl Workspace {
                     this.show_notification(
                         NotificationId::composite::<LanguageServerPrompt>(id as usize),
                         cx,
-                        |cx| cx.new(|_| notifications::LanguageServerPrompt::new(request.clone())),
+                        |cx| {
+                            cx.new(|cx| {
+                                notifications::LanguageServerPrompt::new(request.clone(), cx)
+                            })
+                        },
                     );
                 }
 
@@ -1499,6 +1505,7 @@ impl Workspace {
                                 project_entry_id,
                                 true,
                                 entry.is_preview,
+                                true,
                                 None,
                                 window, cx,
                                 build_item,
@@ -2801,15 +2808,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.open_path_preview(path, pane, focus_item, false, window, cx)
+        self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
         pane: Option<WeakEntity<Pane>>,
         focus_item: bool,
         allow_preview: bool,
+        activate: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
@@ -2830,6 +2839,7 @@ impl Workspace {
                     project_entry_id,
                     focus_item,
                     allow_preview,
+                    activate,
                     None,
                     window,
                     cx,
@@ -2888,6 +2898,7 @@ impl Workspace {
                         project_entry_id,
                         true,
                         allow_preview,
+                        true,
                         None,
                         window,
                         cx,
@@ -5218,8 +5229,8 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
                     |cx| {
-                        cx.new(|_| {
-                            MessageNotification::new("Failed to load the database file.")
+                        cx.new(|cx| {
+                            MessageNotification::new("Failed to load the database file.", cx)
                                 .primary_message("File an Issue")
                                 .primary_icon(IconName::Plus)
                                 .primary_on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
