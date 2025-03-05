@@ -281,31 +281,12 @@ impl Vim {
 
     fn insert_after(&mut self, _: &InsertAfter, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
-        if self.mode.is_visual() {
-            let current_mode = self.mode;
-            self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.move_with(|map, selection| {
-                        if current_mode == Mode::VisualLine {
-                            let end_point = motion::end_of_line(map, false, selection.end, 1);
-                            selection.collapse_to(end_point, SelectionGoal::None)
-                        } else {
-                            selection.collapse_to(selection.end, SelectionGoal::None)
-                        }
-                    });
-                });
+        self.switch_mode(Mode::Insert, false, window, cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
             });
-            self.switch_mode(Mode::Insert, false, window, cx);
-        } else {
-            self.switch_mode(Mode::Insert, false, window, cx);
-            self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.move_cursors_with(|map, cursor, _| {
-                        (right(map, cursor, 1), SelectionGoal::None)
-                    });
-                });
-            });
-        }
+        });
     }
 
     fn insert_before(&mut self, _: &InsertBefore, window: &mut Window, cx: &mut Context<Self>) {
@@ -1645,6 +1626,17 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             ˇfox jumps over
+            the lazy dog"});
+
+        cx.set_shared_state(indoc! {"
+            The quick brown
+            fox ˇjumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("shift-v shift-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox jˇumps over
             the lazy dog"});
     }
 }
