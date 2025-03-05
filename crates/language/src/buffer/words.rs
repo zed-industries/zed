@@ -1,15 +1,19 @@
-use std::sync::{
-    atomic::{self, AtomicBool},
-    Arc,
+use std::{
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
+    time::Duration,
 };
 
 use collections::HashMap;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, AppContext, Task};
 use text::{Edit, Point};
+use theme::ActiveTheme;
 use util::paths::PathMatcher;
 
-use crate::search::SearchQuery;
+use crate::{search::SearchQuery, Outline};
 
 use super::{BufferRow, BufferSnapshot};
 
@@ -32,7 +36,7 @@ impl Words {
             cancel_flag: Arc::default(),
         };
 
-        this.schedule_update(None, Vec::new(), cx);
+        this.schedule_word_update(None, Vec::new(), false, cx);
 
         this
     }
@@ -46,32 +50,66 @@ impl Words {
         })
     }
 
-    pub fn schedule_update(
+    pub fn schedule_word_update(
         &mut self,
         new_snapshot: Option<BufferSnapshot>,
         edits: Vec<Edit<Point>>,
+        debounce: bool,
         cx: &App,
     ) {
-        // TODO kb need to search by words
+        let new_snapshot = match new_snapshot {
+            Some(new_snapshot) => {
+                if self.buffer.version().changed_since(&new_snapshot.version()) {
+                    return;
+                }
+                self.buffer = new_snapshot.clone();
+                new_snapshot
+            }
+            None => self.buffer.clone(),
+        };
+
+        let buffer = new_snapshot.clone();
+        let debounce = if debounce {
+            Some(cx.background_executor().timer(Duration::from_millis(50)))
+        } else {
+            None
+        };
+        let search_results = cx
+            .background_spawn(async move {
+                if let Some(debounce) = debounce {
+                    debounce.await;
+                }
+                let search_results = SearchQuery::regex(
+                    r"\w+",
+                    false,
+                    false,
+                    false,
+                    PathMatcher::default(),
+                    PathMatcher::default(),
+                    None,
+                )
+                .expect("TODO kb")
+                .search(&buffer, None)
+                .await;
+                dbg!(search_results.len());
+                search_results
+            })
+            .detach();
+    }
+
+    pub fn schedule_symbol_update(&mut self, cx: &App) {
+        let theme = cx.theme().syntax().clone();
         let buffer = self.buffer.clone();
-        cx.spawn(|cx| async move {
-            let search_results = SearchQuery::regex(
-                r"\w+",
-                false,
-                false,
-                false,
-                PathMatcher::default(),
-                PathMatcher::default(),
-                None,
-            )
-            .expect("TODO kb")
-            // TODO kb proper state management, query by cached ranges (500 lines hunks?)
-            .search(&buffer, None)
-            .await;
-            dbg!(search_results.len());
-            //
-        })
-        .detach();
+        // TODO kb proper state management, query by cached ranges (500 lines hunks?)
+        let outline_results = cx
+            .background_spawn(async move {
+                let outline = buffer
+                    .outline_items_containing(0..buffer.len(), false, Some(&theme))
+                    .map(Outline::new);
+                dbg!(outline.as_ref().map(|o| o.path_candidates.len()));
+                outline
+            })
+            .detach();
     }
 }
 

@@ -1506,7 +1506,8 @@ impl Buffer {
             return;
         };
 
-        let text = self.text_snapshot();
+        let buffer_snapshot = self.snapshot();
+        let text = buffer_snapshot.text.clone();
         let parsed_version = self.version();
 
         let mut syntax_map = self.syntax_map.lock();
@@ -1553,6 +1554,8 @@ impl Buffer {
                         this.reparse = None;
                         if parse_again {
                             this.reparse(cx);
+                        } else if let Some(words) = &mut this.words {
+                            words.schedule_symbol_update(cx);
                         }
                     })
                     .ok();
@@ -2293,10 +2296,10 @@ impl Buffer {
 
         self.reparse(cx);
         if let Some(mut words) = self.words.take() {
-            words.schedule_update(Some(self.snapshot()), edits, cx);
+            let snapshot = self.snapshot();
+            words.schedule_word_update(Some(snapshot), edits, true, cx);
             self.words = Some(words);
         }
-
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);
