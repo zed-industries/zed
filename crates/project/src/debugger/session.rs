@@ -751,7 +751,7 @@ impl Session {
                     self.thread_states
                         .thread_continued(ThreadId(event.thread_id));
                 }
-                self.invalidate(cx);
+                self.invalidate_command_type(TypeId::of::<dap_command::GenericCommand>());
             }
             Events::Exited(_event) => {}
             Events::Terminated(_) => {
@@ -1256,6 +1256,7 @@ impl Session {
                     );
 
                     this.invalidate_command_type(ScopesCommand::command_id());
+                    this.invalidate_command_type(VariablesCommand::command_id());
 
                     cx.emit(SessionEvent::StackTrace);
                     cx.notify();
