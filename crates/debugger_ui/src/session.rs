@@ -107,7 +107,7 @@ impl DebugSession {
     pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
         match &self.mode {
             DebugSessionState::Inert(_) => None,
-            DebugSessionState::Starting(_entity) => unimplemented!(),
+            DebugSessionState::Starting(_) => None,
             DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
         }
     }

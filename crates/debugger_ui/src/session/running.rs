@@ -1,16 +1,16 @@
 mod console;
 mod loaded_source_list;
 mod module_list;
-mod stack_frame_list;
+pub mod stack_frame_list;
 pub mod variable_list;
 
 use super::{DebugPanelItemEvent, ThreadItem};
 use console::Console;
-use dap::{client::SessionId, debugger_settings::DebuggerSettings, Capabilities};
+use dap::{client::SessionId, debugger_settings::DebuggerSettings, Capabilities, Thread};
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity};
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
-use project::debugger::session::{Session, ThreadId, ThreadStatus};
+use project::debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus};
 use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::{StackFrameList, StackFrameListEvent};
@@ -44,9 +44,8 @@ pub struct RunningState {
 impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
-        if let Some((thread, _)) = threads.first().filter(|_| self.thread.is_none()) {
-            self.select_thread(ThreadId(thread.id), thread.name.clone(), window, cx);
-        }
+        self.select_first_thread(&threads, window, cx);
+
         let thread_status = self
             .thread
             .as_ref()
@@ -386,15 +385,26 @@ impl RunningState {
             )
         });
 
-        cx.observe(&module_list, |_, _, cx| cx.notify()).detach();
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
-
-        let _subscriptions = vec![cx.subscribe(
-            &stack_frame_list,
-            move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
-                StackFrameListEvent::SelectedStackFrameChanged(_) => this.clear_highlights(cx),
-            },
-        )];
+        let _subscriptions = vec![
+            cx.subscribe(
+                &stack_frame_list,
+                move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
+                    StackFrameListEvent::SelectedStackFrameChanged(_) => this.clear_highlights(cx),
+                },
+            ),
+            cx.subscribe(
+                &session,
+                move |this: &mut Self, _, event: &SessionEvent, cx| match event {
+                    SessionEvent::Stopped => {
+                        this.thread.take();
+                        cx.notify();
+                    }
+                    _ => {}
+                },
+            ),
+            cx.observe(&module_list, |_, _, cx| cx.notify()),
+            cx.observe(&session, |_, _, cx| cx.notify()),
+        ];
 
         Self {
             session,
@@ -491,6 +501,21 @@ impl RunningState {
         self.session().read(cx).capabilities().clone()
     }
 
+    pub fn select_first_thread(
+        &mut self,
+        threads: &Vec<(Thread, ThreadStatus)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread.is_some() {
+            return;
+        }
+
+        if let Some((thread, _)) = threads.first() {
+            self.select_thread(ThreadId(thread.id), thread.name.clone(), window, cx);
+        }
+    }
+
     fn select_thread(
         &mut self,
         thread_id: ThreadId,
@@ -524,21 +549,6 @@ impl RunningState {
         //         })
         //         .ok();
         // }
-    }
-
-    pub fn _go_to_current_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.stack_frame_list.update(cx, |stack_frame_list, cx| {
-            if let Some(stack_frame) = stack_frame_list
-                .stack_frames(cx)
-                .iter()
-                .find(|frame| frame.dap.id == stack_frame_list.current_stack_frame_id())
-                .cloned()
-            {
-                stack_frame_list
-                    .select_stack_frame(&stack_frame.dap, true, window, cx)
-                    .detach_and_log_err(cx);
-            }
-        });
     }
 
     fn render_entry_button(

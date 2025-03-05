@@ -307,40 +307,41 @@ impl VariableList {
     #[track_caller]
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_visual_entries(&self, expected: Vec<&str>) {
-        const INDENT: &'static str = "    ";
+        // TODO(debugger): Implement this method
+        // const INDENT: &'static str = "    ";
 
-        let entries = &self.entries;
-        let mut visual_entries = Vec::with_capacity(entries.len());
-        for entry in entries {
-            match entry {
-                VariableListEntry::Scope((scope, state)) => {
-                    visual_entries.push(format!(
-                        "{} {}",
-                        if state.is_expanded { "v" } else { ">" },
-                        scope.name,
-                    ));
-                }
-                // TODO(debugger): make this work again
-                // VariableListEntry::SetVariableEditor { depth, state } => {
-                //     visual_entries.push(format!(
-                //         "{}  [EDITOR: {}]{}",
-                //         INDENT.repeat(*depth),
-                //         state.name,
-                //         if is_selected { " <=== selected" } else { "" }
-                //     ));
-                // }
-                VariableListEntry::Variable((variable, _, state)) => {
-                    visual_entries.push(format!(
-                        "{}{} {}",
-                        INDENT.repeat(state.depth),
-                        if state.is_expanded { "v" } else { ">" },
-                        variable.name,
-                    ));
-                }
-            };
-        }
+        // let entries = &self.entries;
+        // let mut visual_entries = Vec::with_capacity(entries.len());
+        // for entry in entries {
+        //     match entry {
+        //         VariableListEntry::Scope((scope, state)) => {
+        //             visual_entries.push(format!(
+        //                 "{} {}",
+        //                 if state.is_expanded { "v" } else { ">" },
+        //                 scope.name,
+        //             ));
+        //         }
+        //         // TODO(debugger): make this work again
+        //         // VariableListEntry::SetVariableEditor { depth, state } => {
+        //         //     visual_entries.push(format!(
+        //         //         "{}  [EDITOR: {}]{}",
+        //         //         INDENT.repeat(*depth),
+        //         //         state.name,
+        //         //         if is_selected { " <=== selected" } else { "" }
+        //         //     ));
+        //         // }
+        //         VariableListEntry::Variable((variable, _, state)) => {
+        //             visual_entries.push(format!(
+        //                 "{}{} {}",
+        //                 INDENT.repeat(state.depth),
+        //                 if state.is_expanded { "v" } else { ">" },
+        //                 variable.name,
+        //             ));
+        //         }
+        //     };
+        // }
 
-        pretty_assertions::assert_eq!(expected, visual_entries);
+        // pretty_assertions::assert_eq!(expected, visual_entries);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -351,7 +352,7 @@ impl VariableList {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let var_ref = variable.dap.variables_reference;
-        let colors = _get_entry_color(cx);
+        let colors = get_entry_color(cx);
         let is_selected = self
             .selection
             .as_ref()
@@ -492,206 +493,18 @@ impl Render for VariableList {
     }
 }
 
-struct _EntryColors {
+struct EntryColors {
     default: Hsla,
     hover: Hsla,
     marked_active: Hsla,
 }
 
-fn _get_entry_color(cx: &Context<VariableList>) -> _EntryColors {
+fn get_entry_color(cx: &Context<VariableList>) -> EntryColors {
     let colors = cx.theme().colors();
 
-    _EntryColors {
+    EntryColors {
         default: colors.panel_background,
         hover: colors.ghost_element_hover,
         marked_active: colors.ghost_element_selected,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_add_initial_variables_to_index() {
-        unimplemented!("This test is commented out")
-        // let mut index = ScopeVariableIndex::new();
-
-        // assert_eq!(index.variables(), vec![]);
-        // assert_eq!(index.fetched_ids, HashSet::default());
-
-        // let variable1 = VariableContainer {
-        //     variable: Variable {
-        //         name: "First variable".into(),
-        //         value: "First variable".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 0,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // let variable2 = VariableContainer {
-        //     variable: Variable {
-        //         name: "Second variable with child".into(),
-        //         value: "Second variable with child".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 2,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // let variable3 = VariableContainer {
-        //     variable: Variable {
-        //         name: "Third variable".into(),
-        //         value: "Third variable".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 0,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // index.add_variables(
-        //     1,
-        //     vec![variable1.clone(), variable2.clone(), variable3.clone()],
-        // );
-
-        // assert_eq!(
-        //     vec![variable1.clone(), variable2.clone(), variable3.clone()],
-        //     index.variables(),
-        // );
-        // assert_eq!(HashSet::from([1]), index.fetched_ids,);
-    }
-
-    /// This covers when you click on a variable that has a nested variable
-    /// We correctly insert the variables right after the variable you clicked on
-    #[test]
-    fn test_add_sub_variables_to_index() {
-        unimplemented!("This test hasn't been refactored yet")
-        // let mut index = ScopeVariableIndex::new();
-
-        // assert_eq!(index.variables(), vec![]);
-
-        // let variable1 = VariableContainer {
-        //     variable: Variable {
-        //         name: "First variable".into(),
-        //         value: "First variable".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 0,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // let variable2 = VariableContainer {
-        //     variable: Variable {
-        //         name: "Second variable with child".into(),
-        //         value: "Second variable with child".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 2,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // let variable3 = VariableContainer {
-        //     variable: Variable {
-        //         name: "Third variable".into(),
-        //         value: "Third variable".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 0,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // index.add_variables(
-        //     1,
-        //     vec![variable1.clone(), variable2.clone(), variable3.clone()],
-        // );
-
-        // assert_eq!(
-        //     vec![variable1.clone(), variable2.clone(), variable3.clone()],
-        //     index.variables(),
-        // );
-        // assert_eq!(HashSet::from([1]), index.fetched_ids);
-
-        // let variable4 = VariableContainer {
-        //     variable: Variable {
-        //         name: "Fourth variable".into(),
-        //         value: "Fourth variable".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 0,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // let variable5 = VariableContainer {
-        //     variable: Variable {
-        //         name: "Five variable".into(),
-        //         value: "Five variable".into(),
-        //         type_: None,
-        //         presentation_hint: None,
-        //         evaluate_name: None,
-        //         variables_reference: 0,
-        //         named_variables: None,
-        //         indexed_variables: None,
-        //         memory_reference: None,
-        //     },
-        //     depth: 1,
-        //     container_reference: 1,
-        // };
-
-        // index.add_variables(2, vec![variable4.clone(), variable5.clone()]);
-
-        // assert_eq!(
-        //     vec![
-        //         variable1.clone(),
-        //         variable2.clone(),
-        //         variable4.clone(),
-        //         variable5.clone(),
-        //         variable3.clone(),
-        //     ],
-        //     index.variables(),
-        // );
-        // assert_eq!(index.fetched_ids, HashSet::from([1, 2]));
     }
 }

@@ -30,7 +30,7 @@ pub struct StackFrameList {
     state: WeakEntity<RunningState>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
-    current_stack_frame_id: StackFrameId,
+    current_stack_frame_id: Option<StackFrameId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -83,7 +83,7 @@ impl StackFrameList {
             state,
             _subscription,
             entries: Default::default(),
-            current_stack_frame_id: Default::default(),
+            current_stack_frame_id: None,
         }
     }
 
@@ -92,7 +92,7 @@ impl StackFrameList {
         &self.entries
     }
 
-    pub fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
+    fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
         self.state
             .read_with(cx, |state, _| state.thread.as_ref().map(|(id, _)| *id))
             .log_err()
@@ -119,7 +119,7 @@ impl StackFrameList {
             .unwrap_or(0)
     }
 
-    pub fn current_stack_frame_id(&self) -> u64 {
+    pub fn current_stack_frame_id(&self) -> Option<u64> {
         self.current_stack_frame_id
     }
 
@@ -129,7 +129,7 @@ impl StackFrameList {
         });
     }
 
-    fn build_entries(
+    pub fn build_entries(
         &mut self,
         select_first_stack_frame: bool,
         window: &mut Window,
@@ -181,7 +181,7 @@ impl StackFrameList {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.current_stack_frame_id = stack_frame.id;
+        self.current_stack_frame_id = Some(stack_frame.id);
 
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame.id,
@@ -211,7 +211,7 @@ impl StackFrameList {
                 })??
                 .await?;
             let position = buffer.update(&mut cx, |this, _| {
-                this.snapshot().anchor_before(Point::new(row, 0))
+                this.snapshot().anchor_after(Point::new(row, 0))
             })?;
             this.update_in(&mut cx, |this, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {
@@ -263,7 +263,7 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let source = stack_frame.source.clone();
-        let is_selected_frame = stack_frame.id == self.current_stack_frame_id;
+        let is_selected_frame = Some(stack_frame.id) == self.current_stack_frame_id;
 
         let formatted_path = format!(
             "{}:{}",
