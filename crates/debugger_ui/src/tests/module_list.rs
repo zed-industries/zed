@@ -27,7 +27,8 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         project.start_debug_session(dap::test_config(), cx)
     });
 
-    let (session, client) = task.await.unwrap();
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, cx| session.adapter_client().unwrap());
 
     client
         .on_request::<Initialize, _>(move |_, _| {
@@ -114,13 +115,20 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     cx.run_until_parked();
 
+    let running_state = active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
+        item.mode()
+            .as_running()
+            .expect("Session should be running by this point")
+            .clone()
+    });
+
     assert!(
         !called_modules.load(std::sync::atomic::Ordering::SeqCst),
         "Request Modules shouldn't be called before it's needed"
     );
 
-    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
-        item.set_thread_item(ThreadItem::Modules, cx);
+    running_state.update(cx, |state, cx| {
+        state.set_thread_item(ThreadItem::Modules, cx)
     });
 
     cx.run_until_parked();
@@ -130,10 +138,14 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         "Request Modules should be called because a user clicked on the module list"
     );
 
-    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
-        item.set_thread_item(ThreadItem::Modules, cx);
+    active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
+        running_state.update(cx, |state, cx| {
+            state.set_thread_item(ThreadItem::Modules, cx)
+        });
+        let actual_modules = running_state.update(cx, |state, cx| {
+            state.module_list().update(cx, |list, cx| list.modules(cx))
+        });
 
-        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(modules, actual_modules);
     });
 
@@ -164,8 +176,10 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     cx.run_until_parked();
 
-    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
-        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
+    active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
+        let actual_modules = running_state.update(cx, |state, cx| {
+            state.module_list().update(cx, |list, cx| list.modules(cx))
+        });
         assert_eq!(actual_modules.len(), 3);
         assert!(actual_modules.contains(&new_module));
     });
@@ -192,8 +206,11 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     cx.run_until_parked();
 
-    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
-        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
+    active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
+        let actual_modules = running_state.update(cx, |state, cx| {
+            state.module_list().update(cx, |list, cx| list.modules(cx))
+        });
+
         assert_eq!(actual_modules.len(), 3);
         assert!(actual_modules.contains(&changed_module));
     });
@@ -207,17 +224,16 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     cx.run_until_parked();
 
-    active_debug_session_panel(workspace, cx).update(cx, |item, cx| {
-        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
+    active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
+        let actual_modules = running_state.update(cx, |state, cx| {
+            state.module_list().update(cx, |list, cx| list.modules(cx))
+        });
+
         assert_eq!(actual_modules.len(), 2);
         assert!(!actual_modules.contains(&changed_module));
     });
 
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).id(), cx)
-        })
-    });
+    let shutdown_session = session.update(cx, |session, cx| session.shutdown(cx));
 
-    shutdown_session.await.unwrap();
+    shutdown_session.await;
 }

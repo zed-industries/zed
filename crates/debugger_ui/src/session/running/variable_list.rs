@@ -314,7 +314,7 @@ impl VariableList {
         for variable in entries {
             let state = self
                 .variable_states
-                .get(&variable.dap.path)
+                .get(&variable.path)
                 .expect("If there's a variable entry there has to be a state that goes with it");
 
             visual_entries.push(format!(

@@ -70,6 +70,14 @@ impl ModuleList {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl ModuleList {
+    pub fn modules(&self, cx: &mut Context<Self>) -> Vec<dap::Module> {
+        self.session
+            .update(cx, |session, cx| session.modules(cx).to_vec())
+    }
+}
+
 impl Focusable for ModuleList {
     fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
         self.focus_handle.clone()

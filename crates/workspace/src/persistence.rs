@@ -1900,7 +1900,6 @@ mod tests {
             docks: Default::default(),
             breakpoints: Default::default(),
             centered_layout: false,
-            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         }
