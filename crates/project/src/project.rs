@@ -3462,39 +3462,68 @@ impl Project {
             }
         }
 
-        let worktrees = self.worktrees(cx).collect::<Vec<_>>();
+        let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
+        let worktrees_with_ids: Vec<_> = self
+            .worktrees(cx)
+            .map(|worktree| {
+                let id = worktree.read(cx).id();
+                (worktree, id)
+            })
+            .collect();
+
         cx.spawn(|_, mut cx| async move {
-            for worktree in worktrees {
+            if let Some(buffer_worktree_id) = buffer_worktree_id {
+                if let Some((worktree, _)) = worktrees_with_ids
+                    .iter()
+                    .find(|(_, id)| *id == buffer_worktree_id)
+                {
+                    for candidate in candidates.iter() {
+                        if let Some(path) =
+                            Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
+                        {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+            for (worktree, id) in worktrees_with_ids {
+                if Some(id) == buffer_worktree_id {
+                    continue;
+                }
                 for candidate in candidates.iter() {
-                    let path = worktree
-                        .update(&mut cx, |worktree, _| {
-                            let root_entry_path = &worktree.root_entry()?.path;
-
-                            let resolved = resolve_path(root_entry_path, candidate);
-
-                            let stripped =
-                                resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
-
-                            worktree.entry_for_path(stripped).map(|entry| {
-                                let project_path = ProjectPath {
-                                    worktree_id: worktree.id(),
-                                    path: entry.path.clone(),
-                                };
-                                ResolvedPath::ProjectPath {
-                                    project_path,
-                                    is_dir: entry.is_dir(),
-                                }
-                            })
-                        })
-                        .ok()?;
-
-                    if path.is_some() {
-                        return path;
+                    if let Some(path) =
+                        Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
+                    {
+                        return Some(path);
                     }
                 }
             }
             None
         })
+    }
+
+    fn resolve_path_in_worktree(
+        worktree: &Entity<Worktree>,
+        path: &PathBuf,
+        cx: &mut AsyncApp,
+    ) -> Option<ResolvedPath> {
+        worktree
+            .update(cx, |worktree, _| {
+                let root_entry_path = &worktree.root_entry()?.path;
+                let resolved = resolve_path(root_entry_path, path);
+                let stripped = resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
+                worktree.entry_for_path(stripped).map(|entry| {
+                    let project_path = ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    };
+                    ResolvedPath::ProjectPath {
+                        project_path,
+                        is_dir: entry.is_dir(),
+                    }
+                })
+            })
+            .ok()?
     }
 
     pub fn list_directory(

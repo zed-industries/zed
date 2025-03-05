@@ -372,7 +372,7 @@ impl Render for ProjectSearchView {
 
             let page_content = page_content.map(|text| div().child(text));
 
-            v_flex()
+            h_flex()
                 .size_full()
                 .items_center()
                 .justify_center()
@@ -383,7 +383,6 @@ impl Render for ProjectSearchView {
                     v_flex()
                         .id("project-search-landing-page")
                         .overflow_y_scroll()
-                        .max_w_80()
                         .gap_1()
                         .child(heading_text)
                         .children(page_content),
@@ -1241,6 +1240,7 @@ impl ProjectSearchView {
     fn update_match_index(&mut self, cx: &mut Context<Self>) {
         let results_editor = self.results_editor.read(cx);
         let new_index = active_match_index(
+            Direction::Next,
             &self.entity.read(cx).match_ranges,
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),

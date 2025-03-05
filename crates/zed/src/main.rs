@@ -477,6 +477,7 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
+        scripting_tool::init(cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,

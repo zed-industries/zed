@@ -8,6 +8,7 @@ use gpui::{
     TextStyle, WeakEntity,
 };
 use language_model::LanguageModelRegistry;
+use language_model_selector::ToggleModelSelector;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
@@ -53,6 +54,7 @@ impl MessageEditor {
         let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(10, window, cx);
@@ -105,8 +107,15 @@ impl MessageEditor {
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
-            model_selector: cx
-                .new(|cx| AssistantModelSelector::new(fs, editor.focus_handle(cx), window, cx)),
+            model_selector: cx.new(|cx| {
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle,
+                    editor.focus_handle(cx),
+                    window,
+                    cx,
+                )
+            }),
             use_tools: false,
             _subscriptions: subscriptions,
         }
@@ -297,11 +306,9 @@ impl Render for MessageEditor {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
-            .on_action(cx.listener(|this, action, window, cx| {
-                let selector = this.model_selector.read(cx).selector.clone();
-                selector.update(cx, |this, cx| {
-                    this.toggle_model_selector(action, window, cx);
-                })
+            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                this.model_selector
+                    .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
             }))
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))

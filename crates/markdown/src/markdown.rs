@@ -6,6 +6,7 @@ use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     actions, point, quad, AnyElement, App, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
@@ -611,13 +612,19 @@ impl Element for MarkdownElement {
                                 None
                             };
 
+                            // This is a parent container that we can position the copy button inside.
+                            builder.push_div(div().relative().w_full(), range, markdown_end);
+
                             let mut code_block = div()
                                 .id(("code-block", range.start))
-                                .flex()
                                 .rounded_lg()
-                                .when(self.style.code_block_overflow_x_scroll, |mut code_block| {
-                                    code_block.style().restrict_scroll_to_axis = Some(true);
-                                    code_block.overflow_x_scroll()
+                                .map(|mut code_block| {
+                                    if self.style.code_block_overflow_x_scroll {
+                                        code_block.style().restrict_scroll_to_axis = Some(true);
+                                        code_block.flex().overflow_x_scroll()
+                                    } else {
+                                        code_block.w_full()
+                                    }
                                 });
                             code_block.style().refine(&self.style.code_block);
                             if let Some(code_block_text_style) = &self.style.code_block.text {
@@ -747,6 +754,12 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
 
+                        builder.pop_div();
+                        builder.pop_code_block();
+                        if self.style.code_block.text.is_some() {
+                            builder.pop_text_style();
+                        }
+
                         if self.markdown.read(cx).options.copy_code_block_buttons {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
@@ -774,12 +787,28 @@ impl Element for MarkdownElement {
                                         )
                                         .to_string();
                                         move |_event, _window, cx| {
+                                            let id = id.clone();
                                             markdown.update(cx, |this, cx| {
                                                 this.copied_code_blocks.insert(id.clone());
 
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     code.clone(),
                                                 ));
+
+                                                cx.spawn(|this, cx| async move {
+                                                    cx.background_executor()
+                                                        .timer(Duration::from_secs(2))
+                                                        .await;
+
+                                                    cx.update(|cx| {
+                                                        this.update(cx, |this, cx| {
+                                                            this.copied_code_blocks.remove(&id);
+                                                            cx.notify();
+                                                        })
+                                                    })
+                                                    .ok();
+                                                })
+                                                .detach();
                                             });
                                         }
                                     }),
@@ -789,11 +818,8 @@ impl Element for MarkdownElement {
                             });
                         }
 
+                        // Pop the parent container.
                         builder.pop_div();
-                        builder.pop_code_block();
-                        if self.style.code_block.text.is_some() {
-                            builder.pop_text_style();
-                        }
                     }
                     MarkdownTagEnd::HtmlBlock => builder.pop_div(),
                     MarkdownTagEnd::List(_) => {

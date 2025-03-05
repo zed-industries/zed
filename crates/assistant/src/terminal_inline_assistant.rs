@@ -19,7 +19,7 @@ use language_model::{
     report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, Role,
 };
-use language_model_selector::{InlineLanguageModelSelector, LanguageModelSelector};
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
@@ -506,7 +506,7 @@ struct PromptEditor {
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = &self.codegen.read(cx).status;
         let buttons = match status {
             CodegenStatus::Idle => {
@@ -641,10 +641,29 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(
-                        InlineLanguageModelSelector::new(self.language_model_selector.clone())
-                            .render(window, cx),
-                    )
+                    .child(LanguageModelSelectorPopoverMenu::new(
+                        self.language_model_selector.clone(),
+                        IconButton::new("change-model", IconName::SettingsAlt)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted),
+                        move |window, cx| {
+                            Tooltip::with_meta(
+                                format!(
+                                    "Using {}",
+                                    LanguageModelRegistry::read_global(cx)
+                                        .active_model()
+                                        .map(|model| model.name().0)
+                                        .unwrap_or_else(|| "No model selected".into()),
+                                ),
+                                None,
+                                "Change Model",
+                                window,
+                                cx,
+                            )
+                        },
+                        gpui::Corner::TopRight,
+                    ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());

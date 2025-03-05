@@ -1,13 +1,13 @@
-use crate::branch_picker::{self, BranchList};
+use crate::branch_picker::{self};
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
-use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use crate::{picker_prompt, project_diff, ProjectDiff};
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
+
 use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
@@ -40,8 +40,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, PopoverButton, PopoverMenu,
-    Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar,
+    ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 
@@ -190,7 +190,7 @@ pub struct GitPanel {
     remote_operation_id: u32,
     pending_remote_operations: RemoteOperations,
     pub(crate) active_repository: Option<Entity<Repository>>,
-    commit_editor: Entity<Editor>,
+    pub(crate) commit_editor: Entity<Editor>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     current_modifiers: Modifiers,
@@ -205,7 +205,6 @@ pub struct GitPanel {
     pending_commit: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
     pub(crate) project: Entity<Project>,
-    repository_selector: Entity<RepositorySelector>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
@@ -310,9 +309,6 @@ impl GitPanel {
             let scrollbar_state =
                 ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
 
-            let repository_selector =
-                cx.new(|cx| RepositorySelector::new(project.clone(), window, cx));
-
             let mut git_panel = Self {
                 pending_remote_operations: Default::default(),
                 remote_operation_id: 0,
@@ -332,7 +328,6 @@ impl GitPanel {
                 pending_commit: None,
                 pending_serialization: Task::ready(None),
                 project,
-                repository_selector,
                 scroll_handle,
                 scrollbar_state,
                 selected_entry: None,
@@ -1364,7 +1359,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn fetch(&mut self, _: &git::Fetch, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn fetch(&mut self, _: &git::Fetch, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1391,7 +1386,7 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1399,7 +1394,6 @@ impl GitPanel {
             return;
         };
         let branch = branch.clone();
-        let guard = self.start_remote_operation();
         let remote = self.get_current_remote(window, cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = match remote.await {
@@ -1414,6 +1408,10 @@ impl GitPanel {
                     return Ok(());
                 }
             };
+
+            let guard = this
+                .update(&mut cx, |this, _| this.start_remote_operation())
+                .ok();
 
             let pull = repo.update(&mut cx, |repo, _cx| {
                 repo.pull(branch.name.clone(), remote.name.clone())
@@ -1435,7 +1433,7 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1443,7 +1441,6 @@ impl GitPanel {
             return;
         };
         let branch = branch.clone();
-        let guard = self.start_remote_operation();
         let options = action.options;
         let remote = self.get_current_remote(window, cx);
 
@@ -1460,6 +1457,10 @@ impl GitPanel {
                     return Ok(());
                 }
             };
+
+            let guard = this
+                .update(&mut cx, |this, _| this.start_remote_operation())
+                .ok();
 
             let push = repo.update(&mut cx, |repo, _cx| {
                 repo.push(branch.name.clone(), remote.name.clone(), options)
@@ -1928,7 +1929,7 @@ impl GitPanel {
         })
     }
 
-    pub fn can_open_commit_editor(&self) -> bool {
+    pub fn can_commit(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
     }
 
@@ -2007,7 +2008,6 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
-        let can_open_commit_editor = self.can_open_commit_editor();
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let project = self.project.clone().read(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
@@ -2033,14 +2033,13 @@ impl GitPanel {
                 .display_name(project, cx)
                 .trim_end_matches("/"),
         ));
-        let branches = branch_picker::popover(self.project.clone(), window, cx);
+
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 "footer-button",
                 display_name,
                 branch,
                 Some(git_panel),
-                Some(branches),
             ))
             .child(
                 panel_editor_container(window, cx)
@@ -2102,7 +2101,6 @@ impl GitPanel {
                                     .icon_size(IconSize::Small)
                                     .style(ButtonStyle::Transparent)
                                     .width(expand_button_size.into())
-                                    .disabled(!can_open_commit_editor)
                                     .on_click(cx.listener({
                                         move |_, _, window, cx| {
                                             window.dispatch_action(
@@ -2716,9 +2714,6 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::unstage_all))
             .on_action(cx.listener(Self::restore_tracked_files))
             .on_action(cx.listener(Self::clean_all))
-            .on_action(cx.listener(Self::fetch))
-            .on_action(cx.listener(Self::pull))
-            .on_action(cx.listener(Self::push))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
@@ -3070,7 +3065,6 @@ pub struct PanelRepoFooter {
     //
     // For now just take an option here, and we won't bind handlers to buttons in previews.
     git_panel: Option<Entity<GitPanel>>,
-    branches: Option<Entity<BranchList>>,
 }
 
 impl PanelRepoFooter {
@@ -3079,14 +3073,12 @@ impl PanelRepoFooter {
         active_repository: SharedString,
         branch: Option<Branch>,
         git_panel: Option<Entity<GitPanel>>,
-        branches: Option<Entity<BranchList>>,
     ) -> Self {
         Self {
             id: id.into(),
             active_repository,
             branch,
             git_panel,
-            branches,
         }
     }
 
@@ -3100,7 +3092,6 @@ impl PanelRepoFooter {
             active_repository,
             branch,
             git_panel: None,
-            branches: None,
         }
     }
 
@@ -3322,7 +3313,7 @@ impl PanelRepoFooter {
 }
 
 impl RenderOnce for PanelRepoFooter {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_repo = self.active_repository.clone();
         let overflow_menu_id: SharedString = format!("overflow-menu-{}", active_repo).into();
         let repo_selector_trigger = Button::new("repo-selector", active_repo)
@@ -3331,28 +3322,35 @@ impl RenderOnce for PanelRepoFooter {
             .label_size(LabelSize::Small)
             .color(Color::Muted);
 
-        let repo_selector = if let Some(panel) = self.git_panel.clone() {
-            let repo_selector = panel.read(cx).repository_selector.clone();
-            let repo_count = repo_selector.read(cx).repositories_len(cx);
-            let single_repo = repo_count == 1;
+        let project = self
+            .git_panel
+            .as_ref()
+            .map(|panel| panel.read(cx).project.clone());
 
-            RepositorySelectorPopoverMenu::new(
-                panel.read(cx).repository_selector.clone(),
+        let single_repo = project
+            .as_ref()
+            .map(|project| project.read(cx).all_repositories(cx).len() == 1)
+            .unwrap_or(true);
+
+        let repo_selector = PopoverMenu::new("repository-switcher")
+            .menu({
+                let project = project.clone();
+                move |window, cx| {
+                    let project = project.clone()?;
+                    Some(cx.new(|cx| RepositorySelector::new(project, window, cx)))
+                }
+            })
+            .trigger_with_tooltip(
                 repo_selector_trigger.disabled(single_repo).truncate(true),
                 Tooltip::text("Switch active repository"),
             )
-            .into_any_element()
-        } else {
-            // for rendering preview, we don't have git_panel there
-            repo_selector_trigger.into_any_element()
-        };
+            .attach(gpui::Corner::BottomLeft)
+            .into_any_element();
 
         let branch = self.branch.clone();
         let branch_name = branch
             .as_ref()
             .map_or(" (no branch)".into(), |branch| branch.name.clone());
-
-        let branches = self.branches.clone();
 
         let branch_selector_button = Button::new("branch-selector", branch_name)
             .style(ButtonStyle::Transparent)
@@ -3367,18 +3365,17 @@ impl RenderOnce for PanelRepoFooter {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             });
 
-        let branch_selector = if let Some(branches) = branches {
-            PopoverButton::new(
-                branches,
-                Corner::BottomLeft,
+        let branch_selector = PopoverMenu::new("popover-button")
+            .menu(move |window, cx| Some(branch_picker::popover(project.clone()?, window, cx)))
+            .trigger_with_tooltip(
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
             )
-            .render(window, cx)
-            .into_any_element()
-        } else {
-            branch_selector_button.into_any_element()
-        };
+            .anchor(Corner::TopLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            });
 
         let spinner = self
             .git_panel
