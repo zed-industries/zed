@@ -405,6 +405,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleBreakpoint>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)

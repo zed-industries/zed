@@ -1521,6 +1521,12 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
         };
+        if let Some(breakpoints) = this.breakpoint_store.as_ref() {
+            this._subscriptions
+                .push(cx.observe(breakpoints, |_, _, cx| {
+                    cx.notify();
+                }));
+        }
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
 

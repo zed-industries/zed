@@ -3,7 +3,7 @@
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use anyhow::{anyhow, Result};
 use collections::BTreeMap;
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{
     proto::{self},
@@ -91,25 +91,56 @@ impl BreakpointStore {
     }
 
     async fn handle_breakpoints_for_file(
-        _this: Entity<Self>,
-        _: TypedEnvelope<proto::BreakpointsForFile>,
-        mut _cx: AsyncApp,
+        this: Entity<Project>,
+        message: TypedEnvelope<proto::BreakpointsForFile>,
+        mut cx: AsyncApp,
     ) -> Result<()> {
-        //let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
-        // breakpoints.update(&mut cx, |_, _| {})?;
+        let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
+        let buffer = this
+            .update(&mut cx, |this, cx| {
+                let path =
+                    this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)?;
+                Some(this.open_buffer(path, cx))
+            })
+            .ok()
+            .flatten()
+            .ok_or_else(|| anyhow!("Invalid project path"))?
+            .await?;
+
+        breakpoints.update(&mut cx, move |this, cx| {
+            let bps = this
+                .breakpoints
+                .entry(Arc::<Path>::from(message.payload.path.as_ref()))
+                .or_insert_with(move || BreakpointsInFile {
+                    buffer,
+                    breakpoints: vec![],
+                });
+
+            bps.breakpoints = message
+                .payload
+                .breakpoints
+                .into_iter()
+                .filter_map(|breakpoint| {
+                    let anchor = language::proto::deserialize_anchor(breakpoint.position.clone()?)?;
+                    let breakpoint = Breakpoint::from_proto(breakpoint)?;
+                    Some((anchor, breakpoint))
+                })
+                .collect();
+            cx.notify();
+        })?;
 
         Ok(())
     }
 
     async fn handle_toggle_breakpoint(
         this: Entity<Project>,
-        payload: TypedEnvelope<proto::ToggleBreakpoint>,
+        message: TypedEnvelope<proto::ToggleBreakpoint>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let breakpoints = this.update(&mut cx, |this, _| this.breakpoint_store())?;
         let path = this
             .update(&mut cx, |this, cx| {
-                this.project_path_for_absolute_path(payload.payload.path.as_ref(), cx)
+                this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)
             })?
             .ok_or_else(|| anyhow!("Could not resolve provided abs path"))?;
         let buffer = this
@@ -117,7 +148,7 @@ impl BreakpointStore {
                 this.buffer_store().read(cx).get_by_path(&path, cx)
             })?
             .ok_or_else(|| anyhow!("Could not find buffer for a given path"))?;
-        let breakpoint = payload
+        let breakpoint = message
             .payload
             .breakpoint
             .ok_or_else(|| anyhow!("Breakpoint not present in RPC payload"))?;
@@ -195,22 +226,30 @@ impl BreakpointStore {
                 }
             }
         }
-
+        if let BreakpointStoreMode::Remote(remote) = &self.mode {
+            if let Some(breakpoint) = breakpoint.1._to_proto(&abs_path, &breakpoint.0) {
+                cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
+                    project_id: remote._upstream_project_id,
+                    path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
+                    breakpoint: Some(breakpoint),
+                }))
+                .detach();
+            }
+        } else if let Some((client, project_id)) = &self.downstream_client {
+            let _ = client.send(proto::BreakpointsForFile {
+                project_id: *project_id,
+                path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
+                breakpoints: breakpoint_set
+                    .breakpoints
+                    .iter()
+                    .filter_map(|(anchor, bp)| bp._to_proto(&abs_path, anchor))
+                    .collect(),
+            });
+        }
         if breakpoint_set.breakpoints.is_empty() {
             self.breakpoints.remove(&abs_path);
         }
 
-        if let BreakpointStoreMode::Remote(remote) = &self.mode {
-            if let Some(breakpoint) = breakpoint.1._to_proto(&abs_path, &breakpoint.0) {
-                let _ = cx
-                    .background_executor()
-                    .spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
-                        project_id: remote._upstream_project_id,
-                        path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
-                        breakpoint: Some(breakpoint),
-                    }));
-            }
-        }
         cx.emit(BreakpointStoreEvent::BreakpointsUpdated(abs_path));
         cx.notify();
     }
