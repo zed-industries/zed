@@ -304,6 +304,7 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(window, cx);
+        let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity().clone();
 
         let searched = pane.update(cx, |pane, cx| {
@@ -325,10 +326,14 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar.query_suggestion(window, cx) else {
+                let Some(query) = search_bar
+                    .query_suggestion(window, cx)
+                    .or_else(|| cursor_word)
+                else {
                     drop(search_bar.search("", None, window, cx));
                     return None;
                 };
+
                 let query = regex::escape(&query);
                 Some(search_bar.search(&query, Some(options), window, cx))
             });
