@@ -261,12 +261,15 @@ struct InstallerDir(PathBuf);
 #[cfg(target_os = "windows")]
 impl InstallerDir {
     fn new() -> Result<Self> {
-        Ok(Self(
-            std::env::current_exe()?
-                .parent()
-                .context("No parent dir for Zed.exe")?
-                .join("updates"),
-        ))
+        let installer_dir = std::env::current_exe()?
+            .parent()
+            .context("No parent dir for Zed.exe")?
+            .join("updates");
+        if installer_dir.exists() {
+            std::fs::remove_dir_all(&installer_dir)?;
+        }
+        std::fs::create_dir(&installer_dir)?;
+        Ok(Self(installer_dir))
     }
 
     fn path(&self) -> &Path {
@@ -482,6 +485,7 @@ impl AutoUpdater {
             )
         })?;
 
+        let mut log = get_log_file();
         // let release =
         //     Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
@@ -498,6 +502,7 @@ impl AutoUpdater {
             let installer = dir_path.join("Installer.exe");
             installer.exists()
         };
+        write_to_log_file(&format!("Should download: {}", should_download), &mut log);
 
         if !should_download {
             this.update(&mut cx, |this, cx| {
@@ -507,12 +512,17 @@ impl AutoUpdater {
             return Ok(());
         }
 
+        write_to_log_file("Downloading", &mut log);
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading;
             cx.notify();
         })?;
 
         let installer_dir = InstallerDir::new()?;
+        write_to_log_file(
+            &format!("installer_dir: {}", installer_dir.0.display()),
+            &mut log,
+        );
 
         let filename = match OS {
             "macos" => Ok("Zed.dmg"),
@@ -529,7 +539,15 @@ impl AutoUpdater {
 
         let downloaded_asset = installer_dir.path().join(filename);
         // download_release(&downloaded_asset, release, client, &cx).await?;
+        write_to_log_file(
+            &format!("downloaded_asset: {:?}", downloaded_asset),
+            &mut log,
+        );
         download_release(&downloaded_asset, &cx).await?;
+        write_to_log_file(
+            &format!("downloaded_asset: {:?}", downloaded_asset),
+            &mut log,
+        );
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
@@ -911,8 +929,8 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
 }
 
 fn get_log_file() -> std::fs::File {
-    // let log_file = "C:\\zjk\\apps\\Zed Editor\\logs-out.txt";
-    let log_file = "C:\\zjk\\apps\\Zed Editor\\logs.txt";
+    let log_file = "C:\\zjk\\apps\\Zed Editor\\logs-out.txt";
+    // let log_file = "C:\\zjk\\apps\\Zed Editor\\logs.txt";
 
     std::fs::OpenOptions::new()
         .create(true)
