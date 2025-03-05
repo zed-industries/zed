@@ -247,7 +247,8 @@
     "context": "VimControl && VimCount",
     "bindings": {
       "0": ["vim::Number", 0],
-      ":": "vim::CountCommand"
+      ":": "vim::CountCommand",
+      "%": "vim::GoToPercentage"
     }
   },
   {

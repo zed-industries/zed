@@ -3,12 +3,10 @@
 {"Key":"0"}
 {"Key":"%"}
 {"Get":{"state":"The quick brown\nfox ˇjumps over\nthe lazy dog\nThe quick brown\nfox jumps over\nthe lazy dog\nThe quick brown\nfox jumps over\nthe lazy dog","mode":"Normal"}}
-{"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog\nThe quick brown\nfox jumps over\nthe lazy dog\nThe quick brown\nfox jumps over\nthe lazy dog"}}
 {"Key":"2"}
 {"Key":"5"}
 {"Key":"%"}
 {"Get":{"state":"The quick brown\nfox jumps over\nthe ˇlazy dog\nThe quick brown\nfox jumps over\nthe lazy dog\nThe quick brown\nfox jumps over\nthe lazy dog","mode":"Normal"}}
-{"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog\nThe quick brown\nfox jumps over\nthe lazy dog\nThe quick brown\nfox jumps over\nthe lazy dog"}}
 {"Key":"7"}
 {"Key":"5"}
 {"Key":"%"}
