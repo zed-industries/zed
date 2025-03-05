@@ -1,6 +1,6 @@
-<svg width="440" height="128" xmlns="http://www.w3.org/2000/svg">
+<svg width="550" height="128" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <pattern id="tilePattern" width="22" height="22" patternUnits="userSpaceOnUse">
+    <pattern id="tilePattern" width="23" height="23" patternUnits="userSpaceOnUse">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 5L14 8L12 11" stroke="black" stroke-width="1.5"/>
         <path d="M10 6.5L11 8L10 9.5" stroke="black" stroke-width="1.5"/>

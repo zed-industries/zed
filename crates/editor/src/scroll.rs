@@ -495,6 +495,9 @@ impl Editor {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
+        self.edit_prediction_preview
+            .set_previous_scroll_position(None);
+
         self.scroll_manager.set_scroll_position(
             scroll_position,
             &display_map,

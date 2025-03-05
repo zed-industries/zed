@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use crate::{
     h_flex, prelude::*, utils::WithRemSize, v_flex, Icon, IconName, IconSize, KeyBinding, Label,
     List, ListItem, ListSeparator, ListSubHeader,
@@ -7,7 +6,7 @@ use gpui::{
     px, Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Subscription,
 };
-use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use settings::Settings;
 use std::{rc::Rc, time::Duration};
 use theme::ThemeSettings;
@@ -96,8 +95,8 @@ impl ContextMenuEntry {
         self
     }
 
-    pub fn action(mut self, action: Option<Box<dyn Action>>) -> Self {
-        self.action = action;
+    pub fn action(mut self, action: Box<dyn Action>) -> Self {
+        self.action = Some(action);
         self
     }
 
@@ -411,7 +410,12 @@ impl ContextMenu {
         }
     }
 
-    pub fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_previous(
+        &mut self,
+        _: &SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(ix) = self.selected_index {
             if ix == 0 {
                 self.handle_select_last(&SelectLast, window, cx);
@@ -507,7 +511,10 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let window_size = window.viewport_size();
+        let rem_size = window.rem_size();
+        let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
 
         let aside = self
             .documentation_aside
@@ -515,19 +522,23 @@ impl Render for ContextMenu {
             .map(|(_, callback)| callback.clone());
 
         h_flex()
+            .when(is_wide_window, |this| {this.flex_row()})
+            .when(!is_wide_window, |this| {this.flex_col()})
             .w_full()
             .items_start()
             .gap_1()
-            .when_some(aside, |this, aside| {
-                this.child(
+            .child(
+                div().children(aside.map(|aside|
                     WithRemSize::new(ui_font_size)
                         .occlude()
                         .elevation_2(cx)
                         .p_2()
-                        .max_w_80()
-                        .child(aside(cx)),
-                )
-            })
+                        .overflow_hidden()
+                        .when(is_wide_window, |this| {this.max_w_96()})
+                        .when(!is_wide_window, |this| {this.max_w_48()})
+                        .child(aside(cx))
+                ))
+            )
             .child(
                 WithRemSize::new(ui_font_size)
                     .occlude()
@@ -549,7 +560,7 @@ impl Render for ContextMenu {
                             .on_action(cx.listener(ContextMenu::select_first))
                             .on_action(cx.listener(ContextMenu::handle_select_last))
                             .on_action(cx.listener(ContextMenu::select_next))
-                            .on_action(cx.listener(ContextMenu::select_prev))
+                            .on_action(cx.listener(ContextMenu::select_previous))
                             .on_action(cx.listener(ContextMenu::confirm))
                             .on_action(cx.listener(ContextMenu::cancel))
                             .when(!self.delayed, |mut el| {
@@ -598,21 +609,26 @@ impl Render for ContextMenu {
                                         }) => {
                                             let handler = handler.clone();
                                             let menu = cx.entity().downgrade();
+
                                             let icon_color = if *disabled {
                                                 Color::Muted
+                                            } else if toggle.is_some() {
+                                                icon_color.unwrap_or(Color::Accent)
                                             } else {
                                                 icon_color.unwrap_or(Color::Default)
                                             };
+
                                             let label_color = if *disabled {
-                                                Color::Muted
+                                                Color::Disabled
                                             } else {
                                                 Color::Default
                                             };
+
                                             let label_element = if let Some(icon_name) = icon {
                                                 h_flex()
                                                     .gap_1p5()
                                                     .when(
-                                                        *icon_position == IconPosition::Start,
+                                                        *icon_position == IconPosition::Start && toggle.is_none(),
                                                         |flex| {
                                                             flex.child(
                                                                 Icon::new(*icon_name)
@@ -641,12 +657,14 @@ impl Render for ContextMenu {
                                                     .color(label_color)
                                                     .into_any_element()
                                             };
+
                                             let documentation_aside_callback =
                                                 documentation_aside.clone();
+
                                             div()
                                                 .id(("context-menu-child", ix))
                                                 .when_some(
-                                                    documentation_aside_callback,
+                                                    documentation_aside_callback.clone(),
                                                     |this, documentation_aside_callback| {
                                                         this.occlude().on_hover(cx.listener(
                                                             move |menu, hovered, _, cx| {
@@ -671,17 +689,16 @@ impl Render for ContextMenu {
                                                         .when_some(
                                                             *toggle,
                                                             |list_item, (position, toggled)| {
-                                                                let contents = if toggled {
-                                                                    v_flex().flex_none().child(
-                                                                        Icon::new(IconName::Check)
-                                                                            .color(Color::Accent)
+                                                                let contents =
+                                                                    div().flex_none().child(
+                                                                        Icon::new(icon.unwrap_or(IconName::Check))
+                                                                            .color(icon_color)
                                                                             .size(*icon_size)
                                                                     )
-                                                                } else {
-                                                                    v_flex().flex_none().size(
-                                                                        IconSize::default().rems(),
-                                                                    )
-                                                                };
+                                                                    .when(!toggled, |contents|
+                                                                        contents.invisible()
+                                                                    );
+
                                                                 match position {
                                                                     IconPosition::Start => {
                                                                         list_item
@@ -710,19 +727,26 @@ impl Render for ContextMenu {
                                                                         KeyBinding::for_action_in(
                                                                             &**action, focus,
                                                                             window,
+                                                                            cx
                                                                         )
                                                                     })
                                                                     .unwrap_or_else(|| {
                                                                         KeyBinding::for_action(
-                                                                            &**action, window,
+                                                                            &**action, window, cx
                                                                         )
                                                                     })
                                                                     .map(|binding| {
                                                                         div().ml_4().child(binding)
+                                                                            .when(*disabled && documentation_aside_callback.is_some(), |parent| {
+                                                                                parent.invisible()
+                                                                            })
                                                                     })
                                                                         },
                                                                     ),
-                                                                ),
+                                                                )
+                                                                .when(*disabled && documentation_aside_callback.is_some(), |parent| {
+                                                                    parent.child(Icon::new(IconName::Info).size(IconSize::XSmall).color(Color::Muted))
+                                                                }),
                                                         )
                                                         .on_click({
                                                             let context =
@@ -777,7 +801,7 @@ impl Render for ContextMenu {
                                         }
                                     }
                                 },
-                            ))),
+                            )))
                     ),
             )
     }

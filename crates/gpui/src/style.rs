@@ -159,6 +159,28 @@ pub struct Style {
     pub scrollbar_width: f32,
     /// Whether both x and y axis should be scrollable at the same time.
     pub allow_concurrent_scroll: bool,
+    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
+    ///
+    /// This means that:
+    /// - The mouse wheel alone will only ever scroll the Y axis.
+    /// - Holding `Shift` and using the mouse wheel will scroll the X axis.
+    ///
+    /// ## Motivation
+    ///
+    /// On the web when scrolling with the mouse wheel, scrolling up and down will always scroll the Y axis, even when
+    /// the mouse is over a horizontally-scrollable element.
+    ///
+    /// The only way to scroll horizontally is to hold down `Shift` while scrolling, which then changes the scroll axis
+    /// to the X axis.
+    ///
+    /// Currently, GPUI operates differently from the web in that it will scroll an element in either the X or Y axis
+    /// when scrolling with just the mouse wheel. This causes problems when scrolling in a vertical list that contains
+    /// horizontally-scrollable elements, as when you get to the horizontally-scrollable elements the scroll will be
+    /// hijacked.
+    ///
+    /// Ideally we would match the web's behavior and not have a need for this, but right now we're adding this opt-in
+    /// style property to limit the potential blast radius.
+    pub restrict_scroll_to_axis: bool,
 
     // Position properties
     /// What should the `position` value of this struct use as a base offset?
@@ -702,6 +724,7 @@ impl Default for Style {
                 y: Overflow::Visible,
             },
             allow_concurrent_scroll: false,
+            restrict_scroll_to_axis: false,
             scrollbar_width: 0.0,
             position: Position::Relative,
             inset: Edges::auto(),

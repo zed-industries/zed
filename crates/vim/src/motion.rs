@@ -1329,12 +1329,25 @@ pub(crate) fn start_of_relative_buffer_row(
 
 fn up_down_buffer_rows(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
+    mut point: DisplayPoint,
     mut goal: SelectionGoal,
-    times: isize,
+    mut times: isize,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
+
+    while map.is_folded_buffer_header(point.row()) {
+        if times < 0 {
+            (point, _) = movement::up(map, point, goal, true, text_layout_details);
+            times += 1;
+        } else if times > 0 {
+            (point, _) = movement::down(map, point, goal, true, text_layout_details);
+            times -= 1;
+        } else {
+            break;
+        }
+    }
+
     let start = map.display_point_to_fold_point(point, Bias::Left);
     let begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
@@ -2699,49 +2712,10 @@ fn section_motion(
     };
 
     for _ in 0..times {
-        let point = map.display_point_to_point(display_point, Bias::Left);
-        let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
-            return display_point;
-        };
-        let next_point = match (direction, is_start) {
-            (Direction::Prev, true) => {
-                let mut start = excerpt.start_anchor().to_display_point(&map);
-                if start >= display_point && start.row() > DisplayRow(0) {
-                    let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
-                        return display_point;
-                    };
-                    start = excerpt.start_anchor().to_display_point(&map);
-                }
-                start
-            }
-            (Direction::Prev, false) => {
-                let mut start = excerpt.start_anchor().to_display_point(&map);
-                if start.row() > DisplayRow(0) {
-                    *start.row_mut() -= 1;
-                }
-                map.clip_point(start, Bias::Left)
-            }
-            (Direction::Next, true) => {
-                let mut end = excerpt.end_anchor().to_display_point(&map);
-                *end.row_mut() += 1;
-                map.clip_point(end, Bias::Right)
-            }
-            (Direction::Next, false) => {
-                let mut end = excerpt.end_anchor().to_display_point(&map);
-                *end.column_mut() = 0;
-                if end <= display_point {
-                    *end.row_mut() += 1;
-                    let point_end = map.display_point_to_point(end, Bias::Right);
-                    let Some(excerpt) =
-                        map.buffer_snapshot.excerpt_containing(point_end..point_end)
-                    else {
-                        return display_point;
-                    };
-                    end = excerpt.end_anchor().to_display_point(&map);
-                    *end.column_mut() = 0;
-                }
-                end
-            }
+        let next_point = if is_start {
+            movement::start_of_excerpt(map, display_point, direction)
+        } else {
+            movement::end_of_excerpt(map, display_point, direction)
         };
         if next_point == display_point {
             break;

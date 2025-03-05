@@ -30,17 +30,16 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, FontWeight, Global, HighlightStyle, Subscription, Task,
     TextStyle, UpdateGlobal, WeakEntity, Window,
 };
-use language::{Buffer, IndentKind, Point, Selection, TransactionId};
+use language::{line_diff, Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role,
+    report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
+use language_model_selector::inline_language_model_selector;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use rope::Rope;
 use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;
@@ -1255,7 +1254,7 @@ impl InlineAssistant {
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
-                    editor.set_show_inline_completions(Some(false), window, cx);
+                    editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
@@ -1426,7 +1425,6 @@ enum PromptEditorEvent {
 struct PromptEditor {
     id: InlineAssistId,
     editor: Entity<Editor>,
-    language_model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
@@ -1440,6 +1438,7 @@ struct PromptEditor {
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakEntity<Workspace>>,
     show_rate_limit_notice: bool,
+    fs: Arc<dyn Fs>,
 }
 
 #[derive(Copy, Clone)]
@@ -1568,6 +1567,7 @@ impl Render for PromptEditor {
                 ]
             }
         });
+        let fs_clone = self.fs.clone();
 
         h_flex()
             .key_context("PromptEditor")
@@ -1590,28 +1590,13 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(LanguageModelSelectorPopoverMenu::new(
-                        self.language_model_selector.clone(),
-                        IconButton::new("context", IconName::SettingsAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted),
-                        move |window, cx| {
-                            Tooltip::with_meta(
-                                format!(
-                                    "Using {}",
-                                    LanguageModelRegistry::read_global(cx)
-                                        .active_model()
-                                        .map(|model| model.name().0)
-                                        .unwrap_or_else(|| "No model selected".into()),
-                                ),
-                                None,
-                                "Change Model",
-                                window,
-                                cx,
-                            )
-                        },
-                    ))
+                    .child(inline_language_model_selector(move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs_clone.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    }))
                     .map(|el| {
                         let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
                             return el;
@@ -1704,7 +1689,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), window), cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), window, cx), cx);
             editor
         });
 
@@ -1724,21 +1709,8 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
+            fs,
             editor: prompt_editor,
-            language_model_selector: cx.new(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    window,
-                    cx,
-                )
-            }),
             edited_since_done: false,
             gutter_dimensions,
             prompt_history,
@@ -1783,7 +1755,10 @@ impl PromptEditor {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), window), cx);
+            editor.set_placeholder_text(
+                Self::placeholder_text(self.codegen.read(cx), window, cx),
+                cx,
+            );
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
@@ -1794,8 +1769,8 @@ impl PromptEditor {
         self.subscribe_to_editor(window, cx);
     }
 
-    fn placeholder_text(codegen: &Codegen, window: &Window) -> String {
-        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window)
+    fn placeholder_text(codegen: &Codegen, window: &Window, cx: &App) -> String {
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 
@@ -2084,12 +2059,13 @@ impl PromptEditor {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != 0 {
@@ -2126,12 +2102,13 @@ impl PromptEditor {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != total_models - 1 {
@@ -2221,7 +2198,7 @@ impl PromptEditor {
             },
             font_family: settings.buffer_font.family.clone(),
             font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size.into(),
+            font_size: settings.buffer_font_size(cx).into(),
             font_weight: settings.buffer_font.weight,
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
@@ -3010,7 +2987,7 @@ impl CodegenAlternative {
                     let executor = cx.background_executor().clone();
                     let message_id = message_id.clone();
                     let line_based_stream_diff: Task<anyhow::Result<()>> =
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
@@ -3324,8 +3301,7 @@ impl CodegenAlternative {
 
         cx.spawn(|codegen, mut cx| async move {
             let (deleted_row_ranges, inserted_row_ranges) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let old_text = old_snapshot
                         .text_for_range(
                             Point::new(old_range.start.row, 0)
@@ -3345,52 +3321,29 @@ impl CodegenAlternative {
                         )
                         .collect::<String>();
 
-                    let mut old_row = old_range.start.row;
-                    let mut new_row = new_range.start.row;
-                    let batch_diff =
-                        similar::TextDiff::from_lines(old_text.as_str(), new_text.as_str());
-
+                    let old_start_row = old_range.start.row;
+                    let new_start_row = new_range.start.row;
                     let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
                     let mut inserted_row_ranges = Vec::new();
-                    for change in batch_diff.iter_all_changes() {
-                        let line_count = change.value().lines().count() as u32;
-                        match change.tag() {
-                            similar::ChangeTag::Equal => {
-                                old_row += line_count;
-                                new_row += line_count;
-                            }
-                            similar::ChangeTag::Delete => {
-                                let old_end_row = old_row + line_count - 1;
-                                let new_row = new_snapshot.anchor_before(Point::new(new_row, 0));
-
-                                if let Some((_, last_deleted_row_range)) =
-                                    deleted_row_ranges.last_mut()
-                                {
-                                    if *last_deleted_row_range.end() + 1 == old_row {
-                                        *last_deleted_row_range =
-                                            *last_deleted_row_range.start()..=old_end_row;
-                                    } else {
-                                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
-                                    }
-                                } else {
-                                    deleted_row_ranges.push((new_row, old_row..=old_end_row));
-                                }
-
-                                old_row += line_count;
-                            }
-                            similar::ChangeTag::Insert => {
-                                let new_end_row = new_row + line_count - 1;
-                                let start = new_snapshot.anchor_before(Point::new(new_row, 0));
-                                let end = new_snapshot.anchor_before(Point::new(
-                                    new_end_row,
-                                    new_snapshot.line_len(MultiBufferRow(new_end_row)),
-                                ));
-                                inserted_row_ranges.push(start..end);
-                                new_row += line_count;
-                            }
+                    for (old_rows, new_rows) in line_diff(&old_text, &new_text) {
+                        let old_rows = old_start_row + old_rows.start..old_start_row + old_rows.end;
+                        let new_rows = new_start_row + new_rows.start..new_start_row + new_rows.end;
+                        if !old_rows.is_empty() {
+                            deleted_row_ranges.push((
+                                new_snapshot.anchor_before(Point::new(new_rows.start, 0)),
+                                old_rows.start..=old_rows.end - 1,
+                            ));
+                        }
+                        if !new_rows.is_empty() {
+                            let start = new_snapshot.anchor_before(Point::new(new_rows.start, 0));
+                            let new_end_row = new_rows.end - 1;
+                            let end = new_snapshot.anchor_before(Point::new(
+                                new_end_row,
+                                new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                            ));
+                            inserted_row_ranges.push(start..end);
                         }
                     }
-
                     (deleted_row_ranges, inserted_row_ranges)
                 })
                 .await;

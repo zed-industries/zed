@@ -10,9 +10,9 @@ use settings::update_settings_file;
 use ui::App;
 use workspace::Workspace;
 
-use crate::{onboarding_modal::ZedPredictModal, RateCompletionModal, RateCompletions};
+use crate::{onboarding_modal::ZedPredictModal, RateCompletionModal};
 
-actions!(edit_predictions, [ResetOnboarding]);
+actions!(edit_prediction, [ResetOnboarding, RateCompletions]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {

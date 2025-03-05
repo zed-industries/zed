@@ -321,12 +321,17 @@ fn schema_file_match(path: &Path) -> String {
         .replace('\\', "/")
 }
 
-pub(super) struct NodeVersionAdapter;
+pub struct NodeVersionAdapter;
+
+impl NodeVersionAdapter {
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static("package-version-server");
+}
 
 #[async_trait(?Send)]
 impl LspAdapter for NodeVersionAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("package-version-server".into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -351,7 +356,7 @@ impl LspAdapter for NodeVersionAdapter {
         } else {
             ".tar.gz"
         };
-        let asset_name = format!("package-version-server-{}-{os}{suffix}", consts::ARCH);
+        let asset_name = format!("{}-{}-{os}{suffix}", Self::SERVER_NAME, consts::ARCH);
         let asset = release
             .assets
             .iter()
@@ -363,6 +368,20 @@ impl LspAdapter for NodeVersionAdapter {
         }))
     }
 
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            env: None,
+            arguments: Default::default(),
+        })
+    }
+
     async fn fetch_server_binary(
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
@@ -371,12 +390,13 @@ impl LspAdapter for NodeVersionAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!(
-            "package-version-server-{}{}",
+            "{}-{}{}",
+            Self::SERVER_NAME,
             version.name,
             std::env::consts::EXE_SUFFIX
         ));
         let destination_container_path =
-            container_dir.join(format!("package-version-server-{}-tmp", version.name));
+            container_dir.join(format!("{}-{}-tmp", Self::SERVER_NAME, version.name));
         if fs::metadata(&destination_path).await.is_err() {
             let mut response = delegate
                 .http_client()
@@ -397,7 +417,8 @@ impl LspAdapter for NodeVersionAdapter {
 
             fs::copy(
                 destination_container_path.join(format!(
-                    "package-version-server{}",
+                    "{}{}",
+                    Self::SERVER_NAME,
                     std::env::consts::EXE_SUFFIX
                 )),
                 &destination_path,

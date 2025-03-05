@@ -1,13 +1,13 @@
 use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::{
-    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewContext,
+    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewChat,
 };
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
     make_lsp_adapter_delegate, AssistantContext, AssistantPanelDelegate, ContextEditor,
     ContextEditorToolbarItem, ContextEditorToolbarItemEvent, ContextHistory, ContextId,
     ContextStore, ContextStoreEvent, InsertDraggedFiles, SlashCommandCompletionProvider,
-    ToggleModelSelector, DEFAULT_TAB_TITLE,
+    DEFAULT_TAB_TITLE,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -20,16 +20,18 @@ use gpui::{
     Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
-use language_model_selector::LanguageModelSelector;
+use language_model::{
+    AuthenticateError, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+};
 use project::Project;
-use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
+use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_store::PromptBuilder;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 use util::{maybe, ResultExt};
 use workspace::DraggedTab;
 use workspace::{
@@ -77,7 +79,6 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     model_summary_editor: Entity<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -119,17 +120,9 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let model_selector_menu_handle = PopoverMenuHandle::default();
         let model_summary_editor = cx.new(|cx| Editor::single_line(window, cx));
-        let context_editor_toolbar = cx.new(|cx| {
-            ContextEditorToolbarItem::new(
-                workspace,
-                model_selector_menu_handle.clone(),
-                model_summary_editor.clone(),
-                window,
-                cx,
-            )
-        });
+        let context_editor_toolbar =
+            cx.new(|_| ContextEditorToolbarItem::new(model_summary_editor.clone()));
 
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(
@@ -137,7 +130,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewContext.boxed_clone(),
+                NewChat.boxed_clone(),
                 window,
                 cx,
             );
@@ -236,12 +229,12 @@ impl AssistantPanel {
                         IconButton::new("new-chat", IconName::Plus)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(|_, _, window, cx| {
-                                window.dispatch_action(NewContext.boxed_clone(), cx)
+                                window.dispatch_action(NewChat.boxed_clone(), cx)
                             }))
                             .tooltip(move |window, cx| {
                                 Tooltip::for_action_in(
                                     "New Chat",
-                                    &NewContext,
+                                    &NewChat,
                                     &focus_handle,
                                     window,
                                     cx,
@@ -264,7 +257,7 @@ impl AssistantPanel {
                                 let focus_handle = _pane.focus_handle(cx);
                                 Some(ContextMenu::build(window, cx, move |menu, _, _| {
                                     menu.context(focus_handle.clone())
-                                        .action("New Chat", Box::new(NewContext))
+                                        .action("New Chat", Box::new(NewChat))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
@@ -279,7 +272,17 @@ impl AssistantPanel {
             });
             pane.toolbar().update(cx, |toolbar, cx| {
                 toolbar.add_item(context_editor_toolbar.clone(), window, cx);
-                toolbar.add_item(cx.new(|cx| BufferSearchBar::new(window, cx)), window, cx)
+                toolbar.add_item(
+                    cx.new(|cx| {
+                        BufferSearchBar::new(
+                            Some(workspace.project().read(cx).languages().clone()),
+                            window,
+                            cx,
+                        )
+                    }),
+                    window,
+                    cx,
+                )
             });
             pane
         });
@@ -321,7 +324,6 @@ impl AssistantPanel {
             languages: workspace.app_state().languages.clone(),
             fs: workspace.app_state().fs.clone(),
             subscriptions,
-            model_selector_menu_handle,
             model_summary_editor,
             authenticate_provider_task: None,
             configuration_subscription: None,
@@ -759,7 +761,7 @@ impl AssistantPanel {
 
     pub fn create_new_context(
         workspace: &mut Workspace,
-        _: &NewContext,
+        _: &NewChat,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -977,7 +979,7 @@ impl AssistantPanel {
                             .active_provider()
                             .map_or(true, |p| p.id() != provider.id())
                         {
-                            if let Some(model) = provider.provided_models(cx).first().cloned() {
+                            if let Some(model) = provider.default_model(cx) {
                                 update_settings_file::<AssistantSettings>(
                                     this.fs.clone(),
                                     cx,
@@ -1042,15 +1044,6 @@ impl AssistantPanel {
             cx,
         )
         .detach_and_log_err(cx);
-    }
-
-    fn toggle_model_selector(
-        &mut self,
-        _: &ToggleModelSelector,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.model_selector_menu_handle.toggle(window, cx);
     }
 
     pub(crate) fn active_context_editor(&self, cx: &App) -> Option<Entity<ContextEditor>> {
@@ -1166,7 +1159,10 @@ impl AssistantPanel {
             .map_or(false, |provider| provider.is_authenticated(cx))
     }
 
-    fn authenticate(&mut self, cx: &mut Context<Self>) -> Option<Task<Result<()>>> {
+    fn authenticate(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<(), AuthenticateError>>> {
         LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map_or(None, |provider| Some(provider.authenticate(cx)))
@@ -1211,7 +1207,7 @@ impl Render for AssistantPanel {
         v_flex()
             .key_context("AssistantPanel")
             .size_full()
-            .on_action(cx.listener(|this, _: &NewContext, window, cx| {
+            .on_action(cx.listener(|this, _: &NewChat, window, cx| {
                 this.new_context(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ShowConfiguration, window, cx| {
@@ -1219,7 +1215,6 @@ impl Render for AssistantPanel {
             }))
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
-            .on_action(cx.listener(AssistantPanel::toggle_model_selector))
             .child(registrar.size_full().child(self.pane.clone()))
             .into_any_element()
     }

@@ -2975,6 +2975,22 @@ impl AbsoluteLength {
             AbsoluteLength::Rems(rems) => rems.to_pixels(rem_size),
         }
     }
+
+    /// Converts an `AbsoluteLength` to `Rems` based on a given `rem_size`.
+    ///
+    /// # Arguments
+    ///
+    /// * `rem_size` - The size of one rem in pixels.
+    ///
+    /// # Returns
+    ///
+    /// Returns the `AbsoluteLength` as `Pixels`.
+    pub fn to_rems(&self, rem_size: Pixels) -> Rems {
+        match self {
+            AbsoluteLength::Pixels(pixels) => Rems(pixels.0 / rem_size.0),
+            AbsoluteLength::Rems(rems) => *rems,
+        }
+    }
 }
 
 impl Default for AbsoluteLength {

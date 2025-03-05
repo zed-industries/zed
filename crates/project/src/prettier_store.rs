@@ -12,7 +12,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt,
 };
-use gpui::{AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     language_settings::{Formatter, LanguageSettings, SelectedFormatter},
     Buffer, LanguageRegistry, LocalFile,
@@ -40,7 +40,7 @@ pub struct PrettierStore {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
-pub enum PrettierStoreEvent {
+pub(crate) enum PrettierStoreEvent {
     LanguageServerRemoved(LanguageServerId),
     LanguageServerAdded {
         new_server_id: LanguageServerId,
@@ -121,8 +121,7 @@ impl PrettierStore {
                 let installed_prettiers = self.prettier_instances.keys().cloned().collect();
                 cx.spawn(|lsp_store, mut cx| async move {
                     match cx
-                        .background_executor()
-                        .spawn(async move {
+                        .background_spawn(async move {
                             Prettier::locate_prettier_installation(
                                 fs.as_ref(),
                                 &installed_prettiers,
@@ -234,8 +233,7 @@ impl PrettierStore {
                     .unwrap_or_default();
                 cx.spawn(|lsp_store, mut cx| async move {
                     match cx
-                        .background_executor()
-                        .spawn(async move {
+                        .background_spawn(async move {
                             Prettier::locate_prettier_ignore(
                                 fs.as_ref(),
                                 &prettier_ignores,
@@ -483,31 +481,30 @@ impl PrettierStore {
                     }))
                     .collect::<Vec<_>>();
 
-            cx.background_executor()
-                .spawn(async move {
-                    let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_instance)| {
-                        async move {
-                            if let Some(instance) = prettier_instance.prettier {
-                                match instance.await {
-                                    Ok(prettier) => {
-                                        prettier.clear_cache().log_err().await;
-                                    },
-                                    Err(e) => {
-                                        match prettier_path {
-                                            Some(prettier_path) => log::error!(
-                                                "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                            ),
-                                            None => log::error!(
-                                                "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                            ),
-                                        }
-                                    },
-                                }
+            cx.background_spawn(async move {
+                let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_instance)| {
+                    async move {
+                        if let Some(instance) = prettier_instance.prettier {
+                            match instance.await {
+                                Ok(prettier) => {
+                                    prettier.clear_cache().log_err().await;
+                                },
+                                Err(e) => {
+                                    match prettier_path {
+                                        Some(prettier_path) => log::error!(
+                                            "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                        ),
+                                        None => log::error!(
+                                            "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                        ),
+                                    }
+                                },
                             }
                         }
-                    }))
-                    .await;
-                })
+                    }
+                }))
+                .await;
+            })
                 .detach();
         }
     }
@@ -539,7 +536,7 @@ impl PrettierStore {
         }) {
             Some(locate_from) => {
                 let installed_prettiers = self.prettier_instances.keys().cloned().collect();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     Prettier::locate_prettier_installation(
                         fs.as_ref(),
                         &installed_prettiers,
@@ -631,13 +628,12 @@ impl PrettierStore {
                         })?;
                         if needs_install {
                             let installed_plugins = new_plugins.clone();
-                            cx.background_executor()
-                                .spawn(async move {
-                                    install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
-                                    // Save the server file last, so the reinstall need could be determined by the absence of the file.
-                                    save_prettier_server_file(fs.as_ref()).await?;
-                                    anyhow::Ok(())
-                                })
+                            cx.background_spawn(async move {
+                                install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
+                                // Save the server file last, so the reinstall need could be determined by the absence of the file.
+                                save_prettier_server_file(fs.as_ref()).await?;
+                                anyhow::Ok(())
+                            })
                                 .await
                                 .context("prettier & plugins install")
                                 .map_err(Arc::new)?;

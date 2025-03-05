@@ -1,11 +1,11 @@
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod logger;
 mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
-use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
@@ -13,8 +13,8 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
-use env_logger::Builder;
 use extension::ExtensionHostProxy;
+use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
@@ -23,37 +23,38 @@ use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
-use log::LevelFilter;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
+use logger::{init_logger, init_stdout_logger};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
-use simplelog::ConfigBuilder;
+use settings::{watch_config_file, Settings, SettingsStore};
 use std::{
     env,
-    fs::OpenOptions,
-    io::{self, IsTerminal, Write},
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
     sync::Arc,
 };
-use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use time::UtcOffset;
+use theme::{
+    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
+    ThemeSettings,
+};
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, initialize_workspace,
-    inline_completion_registry, open_paths_with_positions, OpenListener, OpenRequest,
+    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
+    initialize_workspace, inline_completion_registry, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 #[cfg(unix)]
@@ -168,6 +169,17 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    let args = Args::parse();
+
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
     menu::init();
     zed_actions::init();
 
@@ -177,7 +189,11 @@ fn main() {
         return;
     }
 
-    init_logger();
+    if stdout_is_a_pty() {
+        init_stdout_logger();
+    } else {
+        init_logger();
+    }
 
     log::info!("========== starting zed ==========");
 
@@ -212,7 +228,10 @@ fn main() {
 
             #[cfg(target_os = "windows")]
             {
-                !crate::zed::windows_only_instance::check_single_instance()
+                !crate::zed::windows_only_instance::check_single_instance(
+                    open_listener.clone(),
+                    args.foreground,
+                )
             }
 
             #[cfg(target_os = "macos")]
@@ -431,7 +450,7 @@ fn main() {
             cx,
         );
         supermaven::init(app_state.client.clone(), cx);
-        language_model::init(cx);
+        language_model::init(app_state.client.clone(), cx);
         language_models::init(
             app_state.user_store.clone(),
             app_state.client.clone(),
@@ -458,6 +477,7 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
+        scripting_tool::init(cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,
@@ -487,9 +507,9 @@ fn main() {
         tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(Assets, cx);
+        project_panel::init(cx);
         git_ui::git_panel::init(cx);
-        outline_panel::init(Assets, cx);
+        outline_panel::init(cx);
         component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
@@ -514,10 +534,10 @@ fn main() {
         zeta::init(cx);
 
         cx.observe_global::<SettingsStore>({
+            let fs = fs.clone();
             let languages = app_state.languages.clone();
             let http = app_state.client.http_client();
             let client = app_state.client.clone();
-
             move |cx| {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
@@ -527,6 +547,9 @@ fn main() {
                         })
                         .ok();
                 }
+
+                eager_load_active_theme_and_icon_theme(fs.clone(), cx);
+
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
@@ -554,7 +577,6 @@ fn main() {
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
-        watch_file_types(fs.clone(), cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), prompt_builder, cx);
@@ -567,7 +589,6 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let args = Args::parse();
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
@@ -723,10 +744,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
     if stdout_is_a_pty() {
-        if *client::ZED_DEVELOPMENT_AUTH {
-            client.authenticate_and_connect(true, cx).await?;
-        } else if client::IMPERSONATE_LOGIN.is_some() {
+        if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, cx).await?;
+        } else if client.has_credentials(cx).await {
+            client.authenticate_and_connect(true, cx).await?;
         }
     } else if client.has_credentials(cx).await {
         client.authenticate_and_connect(true, cx).await?;
@@ -911,82 +932,6 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
-fn init_logger() {
-    if stdout_is_a_pty() {
-        init_stdout_logger();
-    } else {
-        let level = LevelFilter::Info;
-
-        // Prevent log file from becoming too large.
-        const KIB: u64 = 1024;
-        const MIB: u64 = 1024 * KIB;
-        const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(paths::log_file())
-            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
-        {
-            let _ = std::fs::rename(paths::log_file(), paths::old_log_file());
-        }
-
-        match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(paths::log_file())
-        {
-            Ok(log_file) => {
-                let mut config_builder = ConfigBuilder::new();
-
-                config_builder.set_time_format_rfc3339();
-                let local_offset = chrono::Local::now().offset().fix().local_minus_utc();
-                if let Ok(offset) = UtcOffset::from_whole_seconds(local_offset) {
-                    config_builder.set_time_offset(offset);
-                }
-
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                {
-                    config_builder.add_filter_ignore_str("zbus");
-                    config_builder.add_filter_ignore_str("blade_graphics::hal::resource");
-                    config_builder.add_filter_ignore_str("naga::back::spv::writer");
-                }
-
-                let config = config_builder.build();
-                simplelog::WriteLogger::init(level, config, log_file)
-                    .expect("could not initialize logger");
-            }
-            Err(err) => {
-                init_stdout_logger();
-                log::error!(
-                    "could not open log file, defaulting to stdout logging: {}",
-                    err
-                );
-            }
-        }
-    }
-}
-
-fn init_stdout_logger() {
-    Builder::new()
-        .parse_default_env()
-        .format(|buf, record| {
-            use env_logger::fmt::style::{AnsiColor, Style};
-
-            let subtle = Style::new().fg_color(Some(AnsiColor::BrightBlack.into()));
-            write!(buf, "{subtle}[{subtle:#}")?;
-            write!(
-                buf,
-                "{} ",
-                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
-            )?;
-            let level_style = buf.default_level_style(record.level());
-            write!(buf, "{level_style}{:<5}{level_style:#}", record.level())?;
-            if let Some(path) = record.module_path() {
-                write!(buf, " {path}")?;
-            }
-            write!(buf, "{subtle}]{subtle:#}")?;
-            writeln!(buf, " {}", record.args())
-        })
-        .init();
-}
-
 fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
@@ -1005,6 +950,11 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
+    #[arg(long)]
+    #[cfg(target_os = "windows")]
+    foreground: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1060,6 +1010,66 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
+}
+
+/// Eagerly loads the active theme and icon theme based on the selections in the
+/// theme settings.
+///
+/// This fast path exists to load these themes as soon as possible so the user
+/// doesn't see the default themes while waiting on extensions to load.
+fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
+    let extension_store = ExtensionStore::global(cx);
+    let theme_registry = ThemeRegistry::global(cx);
+    let theme_settings = ThemeSettings::get_global(cx);
+    let appearance = SystemAppearance::global(cx).0;
+
+    if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
+        let theme_name = theme_selection.theme(appearance);
+        if matches!(theme_registry.get(theme_name), Err(ThemeNotFoundError(_))) {
+            if let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name) {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry.load_user_theme(&theme_path, fs).await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
+
+    if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.as_ref() {
+        let icon_theme_name = icon_theme_selection.icon_theme(appearance);
+        if matches!(
+            theme_registry.get_icon_theme(icon_theme_name),
+            Err(IconThemeNotFoundError(_))
+        ) {
+            if let Some((icon_theme_path, icons_root_path)) = extension_store
+                .read(cx)
+                .path_to_extension_icon_theme(icon_theme_name)
+            {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry
+                            .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
+                            .await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_icon_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 /// Spawns a background task to load the user themes from the themes directory.
@@ -1157,35 +1167,3 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
 
 #[cfg(not(debug_assertions))]
 fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
-
-#[cfg(debug_assertions)]
-fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut App) {
-    use std::time::Duration;
-
-    use file_icons::FileIcons;
-    use gpui::UpdateGlobal;
-
-    let path = {
-        let p = Path::new("assets").join(file_icons::FILE_TYPES_ASSET);
-        let Ok(full_path) = p.canonicalize() else {
-            return;
-        };
-        full_path
-    };
-
-    cx.spawn(|cx| async move {
-        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
-        while (events.next().await).is_some() {
-            cx.update(|cx| {
-                FileIcons::update_global(cx, |file_types, _cx| {
-                    *file_types = file_icons::FileIcons::new(Assets);
-                });
-            })
-            .ok();
-        }
-    })
-    .detach()
-}
-
-#[cfg(not(debug_assertions))]
-fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut App) {}

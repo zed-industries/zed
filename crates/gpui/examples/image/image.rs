@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -9,6 +8,7 @@ use gpui::{
     Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri,
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
+use reqwest_client::ReqwestClient;
 
 struct Assets {
     base: PathBuf,
@@ -74,6 +74,9 @@ struct ImageShowcase {
 impl Render for ImageShowcase {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .id("main")
+            .overflow_y_scroll()
+            .p_5()
             .size_full()
             .flex()
             .flex_col()
@@ -116,8 +119,20 @@ impl Render for ImageShowcase {
                         div()
                             .flex_col()
                             .child("Auto Height")
-                            .child(img("https://picsum.photos/480/640").w(px(180.))),
+                            .child(img("https://picsum.photos/800/400").w(px(180.))),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .items_center()
+                    .w_full()
+                    .border_1()
+                    .border_color(rgb(0xC0C0C0))
+                    .child("image with max width 100%")
+                    .child(img("https://picsum.photos/800/400").max_w_full()),
             )
     }
 }
@@ -127,11 +142,16 @@ actions!(image, [Quit]);
 fn main() {
     env_logger::init();
 
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
     Application::new()
         .with_assets(Assets {
-            base: PathBuf::from("crates/gpui/examples"),
+            base: manifest_dir.join("examples"),
         })
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
+            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
+            cx.set_http_client(Arc::new(http_client));
+
             cx.activate(true);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
@@ -158,12 +178,8 @@ fn main() {
             cx.open_window(window_options, |_, cx| {
                 cx.new(|_| ImageShowcase {
                     // Relative path to your root project path
-                    local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
-                        .unwrap()
-                        .into(),
-
-                    remote_resource: "https://picsum.photos/512/512".into(),
-
+                    local_resource: manifest_dir.join("examples/image/app-icon.png").into(),
+                    remote_resource: "https://picsum.photos/800/400".into(),
                     asset_resource: "image/color.svg".into(),
                 })
             })

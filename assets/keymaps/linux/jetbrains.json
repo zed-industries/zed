@@ -2,15 +2,15 @@
   {
     "bindings": {
       "ctrl-alt-s": "zed::OpenSettings",
-      "ctrl-shift-[": "pane::ActivatePrevItem",
-      "ctrl-shift-]": "pane::ActivateNextItem"
+      "ctrl-{": "pane::ActivatePreviousItem",
+      "ctrl-}": "pane::ActivateNextItem"
     }
   },
   {
     "context": "Editor",
     "bindings": {
-      "ctrl->": "zed::IncreaseBufferFontSize",
-      "ctrl-<": "zed::DecreaseBufferFontSize",
+      "ctrl->": ["zed::IncreaseBufferFontSize", { "persist": true }],
+      "ctrl-<": ["zed::DecreaseBufferFontSize", { "persist": true }],
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-d": "editor::DuplicateSelection",
       "ctrl-y": "editor::DeleteLine",
@@ -41,10 +41,10 @@
       "ctrl-shift-b": "editor::GoToTypeDefinition",
       "ctrl-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
-      "shift-f2": "editor::GoToPrevDiagnostic",
+      "shift-f2": "editor::GoToPreviousDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
-      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
-      "ctrl-alt-z": "editor::RevertSelectedHunks",
+      "ctrl-alt-shift-up": "editor::GoToPreviousHunk",
+      "ctrl-alt-z": "git::Restore",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
       "ctrl-shift-home": "editor::SelectToBeginning",

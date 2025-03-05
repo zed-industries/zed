@@ -51,7 +51,7 @@ struct Background {
     // 1u is Oklab color
     color_space: u32,
     solid: Hsla,
-    angle: f32,
+    gradient_angle_or_pattern_height: f32,
     colors: array<LinearColorStop, 2>,
     pad: u32,
 }
@@ -310,17 +310,18 @@ fn prepare_gradient_color(tag: u32, color_space: u32,
 }
 
 fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
-    sold_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
+    solid_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
     var background_color = vec4<f32>(0.0);
 
     switch (background.tag) {
         default: {
-            return sold_color;
+            return solid_color;
         }
         case 1u: {
             // Linear gradient background.
             // -90 degrees to match the CSS gradient angle.
-            let radians = (background.angle % 360.0 - 90.0) * M_PI_F / 180.0;
+            let angle = background.gradient_angle_or_pattern_height;
+            let radians = (angle % 360.0 - 90.0) * M_PI_F / 180.0;
             var direction = vec2<f32>(cos(radians), sin(radians));
             let stop0_percentage = background.colors[0].percentage;
             let stop1_percentage = background.colors[1].percentage;
@@ -359,19 +360,18 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             }
         }
         case 2u: {
-            let base_pattern_size = bounds.size.y / 5.0;
-            let width = base_pattern_size * 0.5;
-            let slash_spacing = 0.89;
-            let radians = M_PI_F / 4.0;
+            let pattern_height = background.gradient_angle_or_pattern_height;
+            let stripe_angle = M_PI_F / 4.0;
+            let pattern_period = pattern_height * sin(stripe_angle);
             let rotation = mat2x2<f32>(
-                cos(radians), -sin(radians),
-                sin(radians), cos(radians)
+                cos(stripe_angle), -sin(stripe_angle),
+                sin(stripe_angle), cos(stripe_angle)
             );
             let relative_position = position - bounds.origin;
             let rotated_point = rotation * relative_position;
-            let pattern = (rotated_point.x / slash_spacing) % (base_pattern_size * 2.0);
-            let distance = min(pattern, base_pattern_size * 2.0 - pattern) - width;
-            background_color = sold_color;
+            let pattern = rotated_point.x % pattern_period;
+            let distance = min(pattern, pattern_period - pattern) - pattern_period / 4;
+            background_color = solid_color;
             background_color.a *= saturate(0.5 - distance);
         }
     }

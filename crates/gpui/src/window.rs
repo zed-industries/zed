@@ -477,6 +477,7 @@ pub(crate) struct TooltipRequest {
 }
 
 pub(crate) struct DeferredDraw {
+    current_view: EntityId,
     priority: usize,
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
@@ -592,8 +593,7 @@ impl Frame {
     }
 }
 
-// Holds the state for a specific window.
-#[doc(hidden)]
+/// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
@@ -1006,6 +1006,7 @@ impl Window {
         subscription
     }
 
+    /// Replaces the root entity of the window with a new one.
     pub fn replace_root<E>(
         &mut self,
         cx: &mut App,
@@ -1020,6 +1021,7 @@ impl Window {
         view
     }
 
+    /// Returns the root entity of the window, if it has one.
     pub fn root<E>(&self) -> Option<Option<Entity<E>>>
     where
         E: 'static + Render,
@@ -1750,9 +1752,11 @@ impl Window {
 
             let prepaint_start = self.prepaint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
-                    element.prepaint(window, cx)
-                });
+                self.with_rendered_view(deferred_draw.current_view, |window| {
+                    window.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
+                        element.prepaint(window, cx)
+                    });
+                })
             } else {
                 self.reuse_prepaint(deferred_draw.prepaint_range.clone());
             }
@@ -1783,7 +1787,9 @@ impl Window {
 
             let paint_start = self.paint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
-                element.paint(self, cx);
+                self.with_rendered_view(deferred_draw.current_view, |window| {
+                    element.paint(window, cx);
+                })
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
             }
@@ -1841,6 +1847,7 @@ impl Window {
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
                 .iter()
                 .map(|deferred_draw| DeferredDraw {
+                    current_view: deferred_draw.current_view,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
@@ -2247,6 +2254,7 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
+            current_view: self.current_view(),
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
@@ -3669,6 +3677,16 @@ impl Window {
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
         dispatch_tree.bindings_for_action(action, &context_stack)
+    }
+
+    /// Returns the key bindings for the given action in the given context.
+    pub fn bindings_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.bindings_for_action(action, &[context])
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.

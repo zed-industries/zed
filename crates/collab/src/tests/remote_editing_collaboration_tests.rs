@@ -314,7 +314,7 @@ async fn test_ssh_collaboration_git_branches(
         })
     });
 
-    assert_eq!(server_branch.as_ref(), branches[2]);
+    assert_eq!(server_branch.name, branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -337,7 +337,7 @@ async fn test_ssh_collaboration_git_branches(
         })
     });
 
-    assert_eq!(server_branch.as_ref(), "totally-new-branch");
+    assert_eq!(server_branch.name, "totally-new-branch");
 }
 
 #[gpui::test]

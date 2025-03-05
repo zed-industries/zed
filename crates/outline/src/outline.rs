@@ -15,7 +15,7 @@ use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use theme::{color_alpha, ActiveTheme, ThemeSettings};
+use theme::{ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -332,7 +332,7 @@ pub fn render_item<T>(
     cx: &App,
 ) -> StyledText {
     let highlight_style = HighlightStyle {
-        background_color: Some(color_alpha(cx.theme().colors().text_accent, 0.3)),
+        background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
         ..Default::default()
     };
     let custom_highlights = match_ranges
@@ -349,7 +349,7 @@ pub fn render_item<T>(
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
         font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: settings.buffer_font_size().into(),
+        font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
         line_height: relative(1.),
         ..Default::default()
@@ -359,7 +359,7 @@ pub fn render_item<T>(
         outline_item.highlight_ranges.iter().cloned(),
     );
 
-    StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
+    StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
 }
 
 #[cfg(test)]
@@ -370,6 +370,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
+    use util::path;
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -377,7 +378,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a.rs": indoc!{"
                     struct SingleLine; // display line 0
@@ -391,7 +392,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
         let (workspace, cx) =
@@ -402,7 +403,9 @@ mod tests {
             })
         });
         let _buffer = project
-            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
             .await
             .unwrap();
         let editor = workspace
@@ -445,7 +448,7 @@ mod tests {
         );
         assert_single_caret_at_row(&editor, 0, cx);
 
-        cx.dispatch_action(menu::SelectPrev);
+        cx.dispatch_action(menu::SelectPrevious);
         ensure_outline_view_contents(&outline_view, cx);
         assert_eq!(
             highlighted_display_rows(&editor, cx),

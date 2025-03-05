@@ -1,6 +1,3 @@
-mod prompt_store;
-mod prompts;
-
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
@@ -29,8 +26,7 @@ use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
 use zed_actions::assistant::InlineAssist;
 
-pub use crate::prompt_store::*;
-pub use crate::prompts::*;
+use prompt_store::*;
 
 pub fn init(cx: &mut App) {
     prompt_store::init(cx);
@@ -218,8 +214,7 @@ impl PickerDelegate for PromptPickerDelegate {
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn_in(window, |this, mut cx| async move {
             let (matches, selected_index) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let matches = search.await;
 
                     let selected_index = prev_prompt_id
@@ -563,7 +558,7 @@ impl PromptLibrary {
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(Some(false), window, cx);
+                                editor.set_show_edit_predictions(Some(false), window, cx);
                             }
                             editor
                         });
@@ -578,7 +573,7 @@ impl PromptLibrary {
                             let mut editor = Editor::for_buffer(buffer, None, window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(Some(false), window, cx);
+                                editor.set_show_edit_predictions(Some(false), window, cx);
                             }
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
@@ -1268,7 +1263,7 @@ impl Render for PromptLibrary {
                                                 Button::new("create-prompt", "New Prompt")
                                                     .full_width()
                                                     .key_binding(KeyBinding::for_action(
-                                                        &NewPrompt, window,
+                                                        &NewPrompt, window, cx,
                                                     ))
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(

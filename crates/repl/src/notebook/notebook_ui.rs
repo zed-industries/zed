@@ -245,7 +245,7 @@ impl NotebookEditor {
 
     pub fn select_previous(
         &mut self,
-        _: &menu::SelectPrev,
+        _: &menu::SelectPrevious,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -738,7 +738,7 @@ impl Item for NotebookEditor {
         Label::new(title)
             .single_line()
             .color(params.text_color())
-            .italic(params.preview)
+            .when(params.preview, |this| this.italic())
             .into_any_element()
     }
 

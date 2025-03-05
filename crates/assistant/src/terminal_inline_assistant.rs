@@ -16,11 +16,11 @@ use gpui::{
 };
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
-use prompt_library::PromptBuilder;
+use language_model_selector::inline_language_model_selector;
+use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -487,9 +487,9 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: TerminalInlineAssistId,
+    fs: Arc<dyn Fs>,
     height_in_lines: u8,
     editor: Entity<Editor>,
-    language_model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -506,7 +506,7 @@ struct PromptEditor {
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = &self.codegen.read(cx).status;
         let buttons = match status {
             CodegenStatus::Idle => {
@@ -624,6 +624,8 @@ impl Render for PromptEditor {
             }
         };
 
+        let fs_clone = self.fs.clone();
+
         h_flex()
             .bg(cx.theme().colors().editor_background)
             .border_y_1()
@@ -641,28 +643,13 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(LanguageModelSelectorPopoverMenu::new(
-                        self.language_model_selector.clone(),
-                        IconButton::new("context", IconName::SettingsAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted),
-                        move |window, cx| {
-                            Tooltip::with_meta(
-                                format!(
-                                    "Using {}",
-                                    LanguageModelRegistry::read_global(cx)
-                                        .active_model()
-                                        .map(|model| model.name().0)
-                                        .unwrap_or_else(|| "No model selected".into()),
-                                ),
-                                None,
-                                "Change Model",
-                                window,
-                                cx,
-                            )
-                        },
-                    ))
+                    .child(inline_language_model_selector(move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs_clone.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    }))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());
@@ -725,7 +712,7 @@ impl PromptEditor {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(window), cx);
+            editor.set_placeholder_text(Self::placeholder_text(window, cx), cx);
             editor
         });
 
@@ -740,22 +727,9 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
+            fs,
             height_in_lines: 1,
             editor: prompt_editor,
-            language_model_selector: cx.new(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    window,
-                    cx,
-                )
-            }),
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -774,8 +748,8 @@ impl PromptEditor {
         this
     }
 
-    fn placeholder_text(window: &Window) -> String {
-        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window)
+    fn placeholder_text(window: &Window, cx: &App) -> String {
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 
@@ -1048,7 +1022,7 @@ impl PromptEditor {
             },
             font_family: settings.buffer_font.family.clone(),
             font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size.into(),
+            font_size: settings.buffer_font_size(cx).into(),
             font_weight: settings.buffer_font.weight,
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
@@ -1072,7 +1046,10 @@ pub enum CodegenEvent {
 
 impl EventEmitter<CodegenEvent> for Codegen {}
 
+#[cfg(not(target_os = "windows"))]
 const CLEAR_INPUT: &str = "\x15";
+#[cfg(target_os = "windows")]
+const CLEAR_INPUT: &str = "\x03";
 const CARRIAGE_RETURN: &str = "\x0d";
 
 struct TerminalTransaction {
@@ -1150,7 +1127,7 @@ impl Codegen {
 
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let task = cx.background_executor().spawn({
+                let task = cx.background_spawn({
                     let message_id = message_id.clone();
                     let executor = cx.background_executor().clone();
                     async move {

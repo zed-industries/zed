@@ -152,7 +152,7 @@ impl SlashCommand for TabSlashCommand {
             cx,
         );
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut output = SlashCommandOutput::default();
             for (full_path, buffer, _) in tab_items_search.await? {
                 append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
@@ -212,74 +212,73 @@ fn tab_items_for_queries(
                 })??;
 
         let background_executor = cx.background_executor().clone();
-        cx.background_executor()
-            .spawn(async move {
-                open_buffers.sort_by_key(|(_, _, timestamp)| *timestamp);
-                if empty_query
-                    || queries
-                        .iter()
-                        .any(|query| query == ALL_TABS_COMPLETION_ITEM)
-                {
-                    return Ok(open_buffers);
-                }
+        cx.background_spawn(async move {
+            open_buffers.sort_by_key(|(_, _, timestamp)| *timestamp);
+            if empty_query
+                || queries
+                    .iter()
+                    .any(|query| query == ALL_TABS_COMPLETION_ITEM)
+            {
+                return Ok(open_buffers);
+            }
 
-                let matched_items = if strict_match {
-                    let match_candidates = open_buffers
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(id, (full_path, ..))| {
-                            let path_string = full_path.as_deref()?.to_string_lossy().to_string();
-                            Some((id, path_string))
-                        })
-                        .fold(HashMap::default(), |mut candidates, (id, path_string)| {
-                            candidates
-                                .entry(path_string)
-                                .or_insert_with(Vec::new)
-                                .push(id);
-                            candidates
-                        });
-
-                    queries
-                        .iter()
-                        .filter_map(|query| match_candidates.get(query))
-                        .flatten()
-                        .copied()
-                        .filter_map(|id| open_buffers.get(id))
-                        .cloned()
-                        .collect()
-                } else {
-                    let match_candidates = open_buffers
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(id, (full_path, ..))| {
-                            let path_string = full_path.as_deref()?.to_string_lossy().to_string();
-                            Some(fuzzy::StringMatchCandidate::new(id, &path_string))
-                        })
-                        .collect::<Vec<_>>();
-                    let mut processed_matches = HashSet::default();
-                    let file_queries = queries.iter().map(|query| {
-                        fuzzy::match_strings(
-                            &match_candidates,
-                            query,
-                            true,
-                            usize::MAX,
-                            &cancel,
-                            background_executor.clone(),
-                        )
+            let matched_items = if strict_match {
+                let match_candidates = open_buffers
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, (full_path, ..))| {
+                        let path_string = full_path.as_deref()?.to_string_lossy().to_string();
+                        Some((id, path_string))
+                    })
+                    .fold(HashMap::default(), |mut candidates, (id, path_string)| {
+                        candidates
+                            .entry(path_string)
+                            .or_insert_with(Vec::new)
+                            .push(id);
+                        candidates
                     });
 
-                    join_all(file_queries)
-                        .await
-                        .into_iter()
-                        .flatten()
-                        .filter(|string_match| processed_matches.insert(string_match.candidate_id))
-                        .filter_map(|string_match| open_buffers.get(string_match.candidate_id))
-                        .cloned()
-                        .collect()
-                };
-                Ok(matched_items)
-            })
-            .await
+                queries
+                    .iter()
+                    .filter_map(|query| match_candidates.get(query))
+                    .flatten()
+                    .copied()
+                    .filter_map(|id| open_buffers.get(id))
+                    .cloned()
+                    .collect()
+            } else {
+                let match_candidates = open_buffers
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, (full_path, ..))| {
+                        let path_string = full_path.as_deref()?.to_string_lossy().to_string();
+                        Some(fuzzy::StringMatchCandidate::new(id, &path_string))
+                    })
+                    .collect::<Vec<_>>();
+                let mut processed_matches = HashSet::default();
+                let file_queries = queries.iter().map(|query| {
+                    fuzzy::match_strings(
+                        &match_candidates,
+                        query,
+                        true,
+                        usize::MAX,
+                        &cancel,
+                        background_executor.clone(),
+                    )
+                });
+
+                join_all(file_queries)
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .filter(|string_match| processed_matches.insert(string_match.candidate_id))
+                    .filter_map(|string_match| open_buffers.get(string_match.candidate_id))
+                    .cloned()
+                    .collect()
+            };
+            Ok(matched_items)
+        })
+        .await
     })
 }
 

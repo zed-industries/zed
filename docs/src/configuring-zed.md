@@ -472,6 +472,19 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
+## Selection Highlight
+
+- Description: Whether to highlight all occurrences of the selected text in an editor.
+- Setting: `selection_highlight`
+- Default: `true`
+
+## Selection Highlight Debounce
+
+- Description: The debounce delay before querying highlights based on the selected text.
+
+- Setting: `selection_highlight_debounce`
+- Default: `50`
+
 ## LSP Highlight Debounce
 
 - Description: The debounce delay before querying highlights from the language server based on the current cursor location.
@@ -532,6 +545,7 @@ List of `string` values
   "cursors": true,
   "git_diff": true,
   "search_results": true,
+  "selected_text": true,
   "selected_symbol": true,
   "diagnostics": "all",
   "axes": {
@@ -605,6 +619,16 @@ List of `string` values
 
 - Description: Whether to show buffer search results in the scrollbar.
 - Setting: `search_results`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Selected Text Indicators
+
+- Description: Whether to show selected text occurrences in the scrollbar.
+- Setting: `selected_text`
 - Default: `true`
 
 **Options**
@@ -760,7 +784,7 @@ List of `string` values
   "file_icons": false,
   "git_status": false,
   "activate_on_close": "history",
-  "always_show_close_button": false
+  "show_close_button": "hover"
 },
 ```
 
@@ -832,11 +856,37 @@ List of `string` values
 }
 ```
 
-### Always show the close button
+### Show close button
 
-- Description: Whether to always show the close button on tabs.
-- Setting: `always_show_close_button`
-- Default: `false`
+- Description: Controls the appearance behavior of the tab's close button.
+- Setting: `show_close_button`
+- Default: `hover`
+
+**Options**
+
+1.  Show it just upon hovering the tab:
+
+```json
+{
+  "show_close_button": "hover"
+}
+```
+
+2. Show it persistently:
+
+```json
+{
+  "show_close_button": "always"
+}
+```
+
+3. Never show it, even if hovering it:
+
+```json
+{
+  "show_close_button": "hidden"
+}
+```
 
 ## Editor Toolbar
 
@@ -1121,7 +1171,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Scan Exclusions
 
 - Setting: `file_scan_exclusions`
-- Description: Configure how Add filename or directory globs that will be excluded by Zed entirely. They will be skipped during file scans, file searches and hidden from project file tree.
+- Description: Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Overrides `file_scan_inclusions`.
 - Default:
 
 ```json
@@ -1140,6 +1190,16 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 
 Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
 
+## File Scan Inclusions
+
+- Setting: `file_scan_inclusions`
+- Description: Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
+- Default:
+
+```json
+"file_scan_inclusions": [".env*"],
+```
+
 ## File Types
 
 - Setting: `file_types`
@@ -1156,6 +1216,112 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "C++": ["c"],
     "TOML": ["MyLockFile"],
     "Dockerfile": ["Dockerfile*"]
+  }
+}
+```
+
+## Diagnostics
+
+- Description: Configuration for diagnostics-related features.
+- Setting: `diagnostics`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "include_warnings": true,
+    "inline": {
+      "enabled": false
+    }
+    "update_with_cursor": false,
+    "primary_only": false,
+    "use_rendered": false,
+  }
+}
+```
+
+### Inline Diagnostics
+
+- Description: Whether or not to show diagnostics information inline.
+- Setting: `inline`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": false,
+      "update_debounce_ms": 150,
+      "padding": 4,
+      "min_column": 0,
+      "max_severity": null
+    }
+  }
+}
+```
+
+**Options**
+
+1. Enable inline diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true
+    }
+  }
+}
+```
+
+2. Delay diagnostic updates until some time after the last diagnostic update.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "update_debounce_ms": 150
+    }
+  }
+}
+```
+
+3. Set padding between the end of the source line and the start of the diagnostic.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "padding": 4
+    }
+  }
+}
+```
+
+4. Horizontally align inline diagnostics at the given column.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "min_column": 80
+    }
+  }
+}
+```
+
+5. Show only warning and error diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "max_severity": "warning"
+    }
   }
 }
 ```
@@ -1377,7 +1543,8 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "show_other_hints": true,
   "show_background": false,
   "edit_debounce_ms": 700,
-  "scroll_debounce_ms": 50
+  "scroll_debounce_ms": 50,
+  "toggle_on_modifiers_press": null
 }
 ```
 
@@ -1398,6 +1565,22 @@ Use the `lsp` section for the server configuration. Examples are provided in the
 
 Hints are not instantly queried in Zed, two kinds of debounces are used, either may be set to 0 to be disabled.
 Settings-related hint updates are not debounced.
+
+All possible config values for `toggle_on_modifiers_press` are:
+
+```json
+"inlay_hints": {
+  "toggle_on_modifiers_press": {
+    "control": true,
+    "shift": true,
+    "alt": true,
+    "platform": true,
+    "function": true
+  }
+}
+```
+
+Unspecified values have a `false` value, hints won't be toggled if all the modifiers are `false` or not all the modifiers are pressed.
 
 ## Journal
 
@@ -1574,7 +1757,7 @@ Or to set a `socks5` proxy:
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
-- Setting: `max_modal_width`
+- Setting: `modal_max_width`
 - Default: `small`
 
 ## Preferred Line Length
@@ -1621,6 +1804,35 @@ Or to set a `socks5` proxy:
   "regex": false
 },
 ```
+
+## Seed Search Query From Cursor
+
+- Description: When to populate a new search's query based on the text under the cursor.
+- Setting: `seed_search_query_from_cursor`
+- Default: `always`
+
+**Options**
+
+1. `always` always populate the search query with the word under the cursor
+2. `selection` only populate the search query when there is text selected
+3. `never` never populate the search query
+
+## Use Smartcase Search
+
+- Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \
+  This applies to both in-file searches and project-wide searches.
+
+  Examples:
+
+  - Searching for "function" would match "function", "Function", "FUNCTION", etc.
+  - Searching for "Function" would only match "Function", not "function" or "FUNCTION"
+
+- Setting: `use_smartcase_search`
+- Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Show Call Status Icon
 

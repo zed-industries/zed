@@ -7,7 +7,8 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
+use gpui::{actions, impl_internal_actions, Action, App, AppContext as _, Context, Global, Window};
+use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -38,7 +39,7 @@ use crate::{
     object::Object,
     state::Mode,
     visual::VisualDeleteLine,
-    Vim,
+    ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +65,95 @@ pub struct WithCount {
     action: WrappedAction,
 }
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub enum VimOption {
+    Wrap(bool),
+    Number(bool),
+    RelativeNumber(bool),
+}
+
+impl VimOption {
+    fn possible_commands(query: &str) -> Vec<CommandInterceptResult> {
+        let mut prefix_of_options = Vec::new();
+        let mut options = query.split(" ").collect::<Vec<_>>();
+        let prefix = options.pop().unwrap_or_default();
+        for option in options {
+            if let Some(opt) = Self::from(option) {
+                prefix_of_options.push(opt)
+            } else {
+                return vec![];
+            }
+        }
+
+        Self::possibilities(&prefix)
+            .map(|possible| {
+                let mut options = prefix_of_options.clone();
+                options.push(possible);
+
+                CommandInterceptResult {
+                    string: format!(
+                        "set {}",
+                        options.iter().map(|opt| opt.to_string()).join(" ")
+                    ),
+                    action: VimSet { options }.boxed_clone(),
+                    positions: vec![],
+                }
+            })
+            .collect()
+    }
+
+    fn possibilities(query: &str) -> impl Iterator<Item = Self> + '_ {
+        [
+            (None, VimOption::Wrap(true)),
+            (None, VimOption::Wrap(false)),
+            (None, VimOption::Number(true)),
+            (None, VimOption::Number(false)),
+            (None, VimOption::RelativeNumber(true)),
+            (None, VimOption::RelativeNumber(false)),
+            (Some("rnu"), VimOption::RelativeNumber(true)),
+            (Some("nornu"), VimOption::RelativeNumber(false)),
+        ]
+        .into_iter()
+        .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
+        .map(|(_, option)| option)
+    }
+
+    fn from(option: &str) -> Option<Self> {
+        match option {
+            "wrap" => Some(Self::Wrap(true)),
+            "nowrap" => Some(Self::Wrap(false)),
+
+            "number" => Some(Self::Number(true)),
+            "nu" => Some(Self::Number(true)),
+            "nonumber" => Some(Self::Number(false)),
+            "nonu" => Some(Self::Number(false)),
+
+            "relativenumber" => Some(Self::RelativeNumber(true)),
+            "rnu" => Some(Self::RelativeNumber(true)),
+            "norelativenumber" => Some(Self::RelativeNumber(false)),
+            "nornu" => Some(Self::RelativeNumber(false)),
+
+            _ => None,
+        }
+    }
+
+    fn to_string(&self) -> &'static str {
+        match self {
+            VimOption::Wrap(true) => "wrap",
+            VimOption::Wrap(false) => "nowrap",
+            VimOption::Number(true) => "number",
+            VimOption::Number(false) => "nonumber",
+            VimOption::RelativeNumber(true) => "relativenumber",
+            VimOption::RelativeNumber(false) => "norelativenumber",
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub struct VimSet {
+    options: Vec<VimOption>,
+}
+
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
@@ -76,7 +166,8 @@ impl_internal_actions!(
         WithRange,
         WithCount,
         OnMatchingLines,
-        ShellExec
+        ShellExec,
+        VimSet,
     ]
 );
 
@@ -100,6 +191,26 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
+    Vim::action(editor, cx, |vim, action: &VimSet, window, cx| {
+        for option in action.options.iter() {
+            vim.update_editor(window, cx, |_, editor, _, cx| match option {
+                VimOption::Wrap(true) => {
+                    editor
+                        .set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+                }
+                VimOption::Wrap(false) => {
+                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                }
+                VimOption::Number(enabled) => {
+                    editor.set_show_line_numbers(*enabled, cx);
+                }
+                VimOption::RelativeNumber(enabled) => {
+                    editor.set_relative_line_number(Some(*enabled), cx);
+                }
+            });
+        }
+    });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window) else {
             return;
@@ -673,8 +784,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("bp", "revious"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("bp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -683,8 +794,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
         VimCommand::new(("tabnew", ""), workspace::NewFile),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("tabp", "revious"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("tabN", "ext"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(
             ("tabc", "lose"),
             workspace::CloseActiveItem {
@@ -716,10 +827,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
         VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).range(wrap_count),
-        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("cp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("cN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
+        VimCommand::new(("lp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("lN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
@@ -730,7 +843,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             .range(act_on_range),
         VimCommand::new(("dif", "fupdate"), editor::actions::ToggleSelectedDiffHunks)
             .range(act_on_range),
-        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(act_on_range),
+        VimCommand::str(("rev", "ert"), "git::Restore").range(act_on_range),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
         VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {
             Some(
@@ -740,6 +853,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 .boxed_clone(),
             )
         }),
+        VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -808,7 +922,7 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
     })
 }
 
-pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandInterceptResult> {
+pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptResult> {
     // NOTE: We also need to support passing arguments to commands like :w
     // (ideally with filename autocompletion).
     while input.starts_with(':') {
@@ -834,6 +948,8 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             }
             .boxed_clone(),
         )
+    } else if query.starts_with("se ") || query.starts_with("set ") {
+        return VimOption::possible_commands(query.split_once(" ").unwrap().1);
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -886,11 +1002,11 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
     if let Some(action) = action {
         let string = input.to_string();
         let positions = generate_positions(&string, &(range_prefix + query));
-        return Some(CommandInterceptResult {
+        return vec![CommandInterceptResult {
             action,
             string,
             positions,
-        });
+        }];
     }
 
     for command in commands(cx).iter() {
@@ -901,14 +1017,14 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             }
             let positions = generate_positions(&string, &(range_prefix + query));
 
-            return Some(CommandInterceptResult {
+            return vec![CommandInterceptResult {
                 action,
                 string,
                 positions,
-            });
+            }];
         }
     }
-    None
+    return Vec::default();
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -982,7 +1098,12 @@ impl OnMatchingLines {
 
         let command: String = chars.collect();
 
-        let action = WrappedAction(command_interceptor(&command, cx)?.action);
+        let action = WrappedAction(
+            command_interceptor(&command, cx)
+                .first()?
+                .action
+                .boxed_clone(),
+        );
 
         Some(Self {
             range,
@@ -1067,8 +1188,7 @@ impl OnMatchingLines {
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
             cx.spawn_in(window, |editor, mut cx| async move {
                 let new_selections = cx
-                    .background_executor()
-                    .spawn(async move {
+                    .background_spawn(async move {
                         let mut line = String::new();
                         let mut new_selections = Vec::new();
                         let chunks = snapshot
@@ -1395,22 +1515,20 @@ impl ShellExec {
             if let Some(mut stdin) = running.stdin.take() {
                 if let Some(snapshot) = input_snapshot {
                     let range = range.clone();
-                    cx.background_executor()
-                        .spawn(async move {
-                            for chunk in snapshot.text_for_range(range) {
-                                if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
-                                    return;
-                                }
+                    cx.background_spawn(async move {
+                        for chunk in snapshot.text_for_range(range) {
+                            if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                                return;
                             }
-                            stdin.flush().log_err();
-                        })
-                        .detach();
+                        }
+                        stdin.flush().log_err();
+                    })
+                    .detach();
                 }
             };
 
             let output = cx
-                .background_executor()
-                .spawn(async move { running.wait_with_output() })
+                .background_spawn(async move { running.wait_with_output() })
                 .await;
 
             let Some(output) = output.log_err() else {
@@ -1577,12 +1695,10 @@ mod test {
         // conflict!
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
-        assert!(cx.has_pending_prompt());
-        // "Cancel"
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
+
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
-        // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");

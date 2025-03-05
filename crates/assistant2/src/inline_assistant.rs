@@ -24,12 +24,11 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::LanguageModelRegistry;
-use language_models::report_assistant_event;
+use language_model::{report_assistant_event, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -228,8 +227,12 @@ impl InlineAssistant {
             return;
         }
 
-        let Some(inline_assist_target) = Self::resolve_inline_assist_target(workspace, window, cx)
-        else {
+        let Some(inline_assist_target) = Self::resolve_inline_assist_target(
+            workspace,
+            workspace.panel::<AssistantPanel>(cx),
+            window,
+            cx,
+        ) else {
             return;
         };
 
@@ -1345,7 +1348,7 @@ impl InlineAssistant {
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
-                    editor.set_show_inline_completions(Some(false), window, cx);
+                    editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
@@ -1384,6 +1387,7 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
+        assistant_panel: Option<Entity<AssistantPanel>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
@@ -1403,7 +1407,20 @@ impl InlineAssistant {
             }
         }
 
-        if let Some(workspace_editor) = workspace
+        let context_editor = assistant_panel
+            .and_then(|panel| panel.read(cx).active_context_editor())
+            .and_then(|editor| {
+                let editor = &editor.read(cx).editor().clone();
+                if editor.read(cx).is_focused(window) {
+                    Some(editor.clone())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(context_editor) = context_editor {
+            Some(InlineAssistTarget::Editor(context_editor))
+        } else if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
