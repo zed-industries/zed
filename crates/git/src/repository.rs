@@ -14,7 +14,6 @@ use serde::Deserialize;
 use std::borrow::Borrow;
 use std::io::Write as _;
 #[cfg(not(windows))]
-use std::os::unix::fs::PermissionsExt;
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::{
@@ -637,6 +636,8 @@ impl GitRepository for RealGitRepository {
         let mut command = new_smol_command("git");
         command
             .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
             .args(["push"])
             .args(options.map(|option| match option {
@@ -661,6 +662,8 @@ impl GitRepository for RealGitRepository {
         let mut command = new_smol_command("git");
         command
             .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
             .args(["pull"])
             .arg(remote_name)
@@ -672,10 +675,13 @@ impl GitRepository for RealGitRepository {
 
     fn fetch(&self, ask_pass: AskPassSession) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
+        dbg!(&ask_pass.script_path());
 
         let mut command = new_smol_command("git");
         command
             .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
             .args(["fetch", "--all"]);
         let git_process = command.spawn()?;

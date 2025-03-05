@@ -1464,7 +1464,7 @@ impl SshRemoteConnection {
             .prefix("zed-ssh-session")
             .tempdir()?;
 
-        let mut askpass = askpass::AskPassSession::new(&temp_dir, cx, {
+        let mut askpass = askpass::AskPassSession::new(cx, {
             let delegate = delegate.clone();
             move |prompt, cx| delegate.ask_password(prompt, cx)
         })

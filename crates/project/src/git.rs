@@ -2,6 +2,7 @@ use crate::buffer_store::BufferStore;
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use crate::{Project, ProjectPath};
 use anyhow::{Context as _, Result};
+use askpass::AskPassSession;
 use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
@@ -22,7 +23,6 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tempfile::{tempdir, TempDir};
 use text::BufferId;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
@@ -272,14 +272,15 @@ impl GitStore {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
-        let remote_output = repository_handle
-            .update(&mut cx, |repository_handle, _cx| repository_handle.fetch())?
-            .await??;
+        todo!()
+        // let remote_output = repository_handle
+        //     .update(&mut cx, |repository_handle, _cx| repository_handle.fetch(askpass))?
+        //     .await??;
 
-        Ok(proto::RemoteMessageResponse {
-            stdout: remote_output.stdout,
-            stderr: remote_output.stderr,
-        })
+        // Ok(proto::RemoteMessageResponse {
+        //     stdout: remote_output.stdout,
+        //     stderr: remote_output.stderr,
+        // })
     }
 
     async fn handle_push(
@@ -301,18 +302,20 @@ impl GitStore {
                 proto::push::PushOptions::Force => git::repository::PushOptions::Force,
             });
 
-        let branch_name = envelope.payload.branch_name.into();
-        let remote_name = envelope.payload.remote_name.into();
+        todo!()
 
-        let remote_output = repository_handle
-            .update(&mut cx, |repository_handle, _cx| {
-                repository_handle.push(branch_name, remote_name, options)
-            })?
-            .await??;
-        Ok(proto::RemoteMessageResponse {
-            stdout: remote_output.stdout,
-            stderr: remote_output.stderr,
-        })
+        // let branch_name = envelope.payload.branch_name.into();
+        // let remote_name = envelope.payload.remote_name.into();
+
+        // let remote_output = repository_handle
+        //     .update(&mut cx, |repository_handle, _cx| {
+        //         repository_handle.push(branch_name, remote_name, options)
+        //     })?
+        //     .await??;
+        // Ok(proto::RemoteMessageResponse {
+        //     stdout: remote_output.stdout,
+        //     stderr: remote_output.stderr,
+        // })
     }
 
     async fn handle_pull(
@@ -325,18 +328,20 @@ impl GitStore {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
-        let branch_name = envelope.payload.branch_name.into();
-        let remote_name = envelope.payload.remote_name.into();
+        // let branch_name = envelope.payload.branch_name.into();
+        // let remote_name = envelope.payload.remote_name.into();
 
-        let remote_message = repository_handle
-            .update(&mut cx, |repository_handle, _cx| {
-                repository_handle.pull(branch_name, remote_name)
-            })?
-            .await??;
-        Ok(proto::RemoteMessageResponse {
-            stdout: remote_message.stdout,
-            stderr: remote_message.stderr,
-        })
+        todo!()
+
+        // let remote_message = repository_handle
+        //     .update(&mut cx, |repository_handle, _cx| {
+        //         repository_handle.pull(branch_name, remote_name)
+        //     })?
+        //     .await??;
+        // Ok(proto::RemoteMessageResponse {
+        //     stdout: remote_message.stdout,
+        //     stderr: remote_message.stderr,
+        // })
     }
 
     async fn handle_stage(
@@ -1097,10 +1102,10 @@ impl Repository {
         })
     }
 
-    pub fn fetch(&self) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+    pub fn fetch(&self, askpass: AskPassSession) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         self.send_job(|git_repo| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => git_repository.fetch(),
+                GitRepo::Local(git_repository) => git_repository.fetch(askpass),
                 GitRepo::Remote {
                     project_id,
                     client,
@@ -1130,10 +1135,13 @@ impl Repository {
         branch: SharedString,
         remote: SharedString,
         options: Option<PushOptions>,
+        askpass: AskPassSession,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         self.send_job(move |git_repo| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => git_repository.push(&branch, &remote, options),
+                GitRepo::Local(git_repository) => {
+                    git_repository.push(&branch, &remote, options, askpass)
+                }
                 GitRepo::Remote {
                     project_id,
                     client,
@@ -1168,10 +1176,11 @@ impl Repository {
         &self,
         branch: SharedString,
         remote: SharedString,
+        askpass: AskPassSession,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         self.send_job(|git_repo| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => git_repository.pull(&branch, &remote),
+                GitRepo::Local(git_repository) => git_repository.pull(&branch, &remote, askpass),
                 GitRepo::Remote {
                     project_id,
                     client,

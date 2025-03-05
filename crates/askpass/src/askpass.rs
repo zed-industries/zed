@@ -8,7 +8,6 @@ use futures::{select_biased, AsyncWriteExt as _, FutureExt as _};
 use gpui::{AsyncApp, Task};
 use smol::fs;
 use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
-use tempfile::TempDir;
 use util::ResultExt as _;
 
 pub struct AskPassSession {
@@ -24,19 +23,25 @@ pub enum AskPassResult {
     Timedout,
 }
 
+pub trait AskPassDelegate {
+    fn ask_password(&self, prompt: String) -> oneshot::Receiver<anyhow::Result<String>>;
+}
+
 impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
     #[must_use]
     pub async fn new(
-        temp_dir: &TempDir,
         cx: &mut AsyncApp,
         password_prompt: impl Fn(String, &mut AsyncApp) -> oneshot::Receiver<anyhow::Result<String>>
             + Send
             + Sync
             + 'static,
     ) -> anyhow::Result<Self> {
+        let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
+        dbg!(&temp_dir);
         let askpass_socket = temp_dir.path().join("askpass.sock");
+        let askpass_script_path = temp_dir.path().join("askpass.sh");
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
@@ -75,6 +80,8 @@ impl AskPassSession {
                     drop(stream);
                 }
             }
+            dbg!("dropped", &temp_dir);
+            drop(temp_dir)
         });
 
         anyhow::ensure!(
@@ -96,8 +103,9 @@ impl AskPassSession {
             print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",
         );
-        let askpass_script_path = temp_dir.path().join("askpass.sh");
         fs::write(&askpass_script_path, askpass_script).await?;
+        dbg!(&askpass_script_path);
+
         fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
 
         Ok(Self {

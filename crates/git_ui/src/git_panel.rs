@@ -6,12 +6,15 @@ use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use crate::{picker_prompt, project_diff, ProjectDiff};
+use anyhow::Result;
+use askpass::AskPassSession;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
 use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
 };
+use futures::channel::oneshot;
 use git::repository::{
     Branch, CommitDetails, CommitSummary, PushOptions, Remote, RemoteCommandOutput, ResetMode,
     Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -72,12 +75,7 @@ actions!(
     ]
 );
 
-fn prompt<T>(
-    msg: &str,
-    detail: Option<&str>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Task<anyhow::Result<T>>
+fn prompt<T>(msg: &str, detail: Option<&str>, window: &mut Window, cx: &mut App) -> Task<Result<T>>
 where
     T: IntoEnumIterator + VariantNames + 'static,
 {
@@ -1352,8 +1350,13 @@ impl GitPanel {
             return;
         };
         let guard = self.start_remote_operation();
-        let fetch = repo.read(cx).fetch();
         cx.spawn(|this, mut cx| async move {
+            let askpass = this
+                .update(&mut cx, |this, cx| this.setup_askpass(cx))?
+                .await?;
+
+            let fetch = repo.update(&mut cx, |repo, cx| repo.fetch(askpass))?;
+
             let remote_message = fetch.await?;
             drop(guard);
             this.update(&mut cx, |this, cx| {
@@ -1398,8 +1401,12 @@ impl GitPanel {
                 }
             };
 
+            let askpass = this
+                .update(&mut cx, |this, cx| this.setup_askpass(cx))?
+                .await?;
+
             let pull = repo.update(&mut cx, |repo, _cx| {
-                repo.pull(branch.name.clone(), remote.name.clone())
+                repo.pull(branch.name.clone(), remote.name.clone(), askpass)
             })?;
 
             let remote_message = pull.await?;
@@ -1443,9 +1450,12 @@ impl GitPanel {
                     return Ok(());
                 }
             };
+            let askpass = this
+                .update(&mut cx, |this, cx| this.setup_askpass(cx))?
+                .await?;
 
             let push = repo.update(&mut cx, |repo, _cx| {
-                repo.push(branch.name.clone(), remote.name.clone(), options)
+                repo.push(branch.name.clone(), remote.name.clone(), options, askpass)
             })?;
 
             let remote_output = push.await?;
@@ -1466,11 +1476,33 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    fn setup_askpass(&self, cx: &mut Context<Self>) -> Task<Result<AskPassSession>> {
+        cx.spawn(|this, mut cx| async move {
+            AskPassSession::new(&mut cx, move |prompt, cx| {
+                let (tx, rx) = oneshot::channel();
+                this.update(cx, |this, cx| this.askpass_prompt(prompt, tx, cx))
+                    .ok();
+                rx
+            })
+            .await
+        })
+    }
+
+    fn askpass_prompt(
+        &self,
+        prompt: String,
+        tx: oneshot::Sender<Result<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        dbg!("ohai!", &prompt);
+        tx.send(Ok("not my password".to_string()));
+    }
+
     fn get_current_remote(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = anyhow::Result<Option<Remote>>> {
+    ) -> impl Future<Output = Result<Option<Remote>>> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
@@ -2378,7 +2410,7 @@ impl GitPanel {
         &self,
         sha: &str,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<CommitDetails>> {
+    ) -> Task<Result<CommitDetails>> {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
