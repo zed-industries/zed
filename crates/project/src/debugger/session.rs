@@ -138,6 +138,7 @@ enum Mode {
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
     config: DebugAdapterConfig,
+    breakpoint_store: Entity<BreakpointStore>,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -159,7 +160,7 @@ impl LocalMode {
     fn new(
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
-        breakpoints: Entity<BreakpointStore>,
+        breakpoint_store: Entity<BreakpointStore>,
         config: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
@@ -216,9 +217,13 @@ impl LocalMode {
                 client.fake_event(Events::Initialized(None)).await;
             }
 
-            let session = Self { client, config };
+            let session = Self {
+                client,
+                config,
+                breakpoint_store: breakpoint_store.clone(),
+            };
 
-            Self::initialize(session, adapter, breakpoints, initialized_rx, &mut cx).await
+            Self::initialize(session, adapter, breakpoint_store, initialized_rx, &mut cx).await
         })
     }
 
@@ -268,7 +273,7 @@ impl LocalMode {
     async fn initialize(
         this: Self,
         adapter: Arc<dyn DebugAdapter>,
-        breakpoints: Entity<BreakpointStore>,
+        breakpoint_store: Entity<BreakpointStore>,
         initialized_rx: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     ) -> Result<(Self, Capabilities)> {
@@ -290,7 +295,7 @@ impl LocalMode {
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = this.request(Launch { raw }, cx.background_executor().clone());
         let that = this.clone();
-        let breakpoints = breakpoints.update(cx, |this, cx| this.all_breakpoints(cx))?;
+        let breakpoints = breakpoint_store.update(cx, |this, cx| this.all_breakpoints(cx))?;
 
         let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
         let configuration_sequence = async move {
@@ -1021,6 +1026,13 @@ impl Session {
 
     fn empty_response(&mut self, _: &(), _cx: &mut Context<Self>) {}
 
+    fn clear_active_debug_line(&mut self, _: &(), cx: &mut Context<'_, Session>) {
+        self.as_local()
+            .expect("Message handler will only run in local mode")
+            .breakpoint_store
+            .update(cx, |store, cx| store.set_active_position(None, cx))
+    }
+
     pub fn pause_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
         self.request(
             PauseCommand {
@@ -1065,7 +1077,7 @@ impl Session {
         }
     }
 
-    pub(super) fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let task = if self
             .capabilities
             .supports_terminate_request
@@ -1075,7 +1087,7 @@ impl Session {
                 TerminateCommand {
                     restart: Some(false),
                 },
-                Self::empty_response,
+                Self::clear_active_debug_line,
                 cx,
             )
         } else {
@@ -1085,7 +1097,7 @@ impl Session {
                     terminate_debuggee: Some(true),
                     suspend_debuggee: Some(false),
                 },
-                Self::empty_response,
+                Self::clear_active_debug_line,
                 cx,
             )
         };
@@ -1440,10 +1452,12 @@ impl Session {
                 TerminateThreadsCommand {
                     thread_ids: thread_ids.map(|ids| ids.into_iter().map(|id| id.0).collect()),
                 },
-                Self::empty_response,
+                Self::clear_active_debug_line,
                 cx,
             )
             .detach();
+        } else {
+            self.shutdown(cx).detach();
         }
     }
 }

@@ -20,6 +20,7 @@ use ui::{
     Indicator, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Tooltip, Window,
 };
+use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{item::ItemEvent, Item, Workspace};
 
@@ -32,7 +33,7 @@ pub struct RunningState {
     show_console_indicator: bool,
     module_list: Entity<module_list::ModuleList>,
     active_thread_item: ThreadItem,
-    _workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<Workspace>,
     session_id: SessionId,
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
@@ -192,8 +193,16 @@ impl Render for RunningState {
                                                 thread_status != ThreadStatus::Stopped
                                                     && thread_status != ThreadStatus::Running,
                                             )
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Stop")(window, cx)
+                                            .tooltip({
+                                                let label = if capabilities
+                                                    .supports_terminate_threads_request
+                                                    .unwrap_or_default()
+                                                {
+                                                    "Terminate Thread"
+                                                } else {
+                                                    "Terminate all Threads"
+                                                };
+                                                move |window, cx| Tooltip::text(label)(window, cx)
                                             }),
                                     )
                                     .child(
@@ -390,7 +399,7 @@ impl RunningState {
         Self {
             session,
             console,
-            _workspace: workspace,
+            workspace,
             module_list,
             focus_handle,
             variable_list,
@@ -641,10 +650,37 @@ impl RunningState {
         });
     }
 
+    pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
+        // todo(debugger): We should check that this debug line is associated with this item
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .breakpoint_store()
+                    .update(cx, |store, cx| store.set_active_position(None, cx))
+            })
+            .log_err();
+
+        self.session.update(cx, |session, cx| {
+            session.shutdown(cx).detach();
+        })
+    }
+
     pub fn stop_thread(&self, cx: &mut Context<Self>) {
         let Some((thread_id, _)) = self.thread else {
             return;
         };
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .breakpoint_store()
+                    .update(cx, |store, cx| store.set_active_position(None, cx))
+            })
+            .log_err();
 
         self.session().update(cx, |state, cx| {
             state.terminate_threads(Some(vec![thread_id; 1]), cx);

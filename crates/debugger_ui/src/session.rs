@@ -112,6 +112,14 @@ impl DebugSession {
         }
     }
 
+    pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
+        match &self.mode {
+            DebugSessionState::Inert(_) => {}
+            DebugSessionState::Starting(_entity) => {} // todo(debugger): we need to shutdown the starting process in this case (or recreate it on a breakpoint being hit)
+            DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
+        }
+    }
+
     #[cfg(any(test, feature = "test-feature"))]
     pub(crate) fn mode(&self) -> &DebugSessionState {
         &self.mode

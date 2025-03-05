@@ -279,6 +279,14 @@ impl DebugPanel {
                     })
                     .ok();
             }
+            pane::Event::RemovedItem { item } => {
+                if let Some(debug_session) = item.downcast::<DebugSession>() {
+                    debug_session.update(cx, |session, cx| {
+                        session.shutdown(cx);
+                    })
+                }
+            }
+
             _ => {}
         }
     }
