@@ -626,8 +626,27 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => div()
+            Role::Assistant => v_flex()
                 .id(("message-container", ix))
+                .child(Button::new("apply-changes", "Apply changes").on_click({
+                    let thread = self.thread.clone();
+
+                    move |_, _window, cx| {
+                        thread.update(cx, |thread, cx| {
+                            let model_registry = LanguageModelRegistry::read_global(cx);
+                            let Some(model) = model_registry.editor_model() else {
+                                return;
+                            };
+
+                            thread.send_to_model(
+                                model,
+                                RequestKind::Edits { message_index: ix },
+                                false,
+                                cx,
+                            );
+                        });
+                    }
+                }))
                 .child(message_content)
                 .map(|parent| {
                     if tool_uses.is_empty() {
