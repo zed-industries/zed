@@ -487,7 +487,6 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: TerminalInlineAssistId,
-    fs: Arc<dyn Fs>,
     height_in_lines: u8,
     editor: Entity<Editor>,
     language_model_selector: Entity<LanguageModelSelector>,
@@ -625,8 +624,6 @@ impl Render for PromptEditor {
             }
         };
 
-        let fs_clone = self.fs.clone();
-
         h_flex()
             .bg(cx.theme().colors().editor_background)
             .border_y_1()
@@ -744,9 +741,22 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
-            fs,
             height_in_lines: 1,
             editor: prompt_editor,
+            language_model_selector: cx.new(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }),
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,

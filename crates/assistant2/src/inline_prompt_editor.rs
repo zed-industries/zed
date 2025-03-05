@@ -20,7 +20,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
-use language_model_selector::{LanguageModelSelector, ToggleModelSelector};
+use language_model_selector::ToggleModelSelector;
 use parking_lot::Mutex;
 use settings::Settings;
 use std::cmp;
@@ -40,7 +40,6 @@ pub struct PromptEditor<T> {
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -884,13 +883,12 @@ impl PromptEditor<BufferCodegen> {
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs,
-                    model_selector_menu_handle.clone(),
+                    model_selector_menu_handle,
                     prompt_editor.focus_handle(cx),
                     window,
                     cx,
                 )
             }),
-            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -1046,7 +1044,6 @@ impl PromptEditor<TerminalCodegen> {
                     cx,
                 )
             }),
-            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,

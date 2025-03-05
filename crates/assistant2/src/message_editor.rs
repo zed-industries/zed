@@ -8,7 +8,7 @@ use gpui::{
     TextStyle, WeakEntity,
 };
 use language_model::LanguageModelRegistry;
-use language_model_selector::{LanguageModelSelector, ToggleModelSelector};
+use language_model_selector::ToggleModelSelector;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
@@ -38,7 +38,6 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     use_tools: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -111,13 +110,12 @@ impl MessageEditor {
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs,
-                    model_selector_menu_handle.clone(),
+                    model_selector_menu_handle,
                     editor.focus_handle(cx),
                     window,
                     cx,
                 )
             }),
-            model_selector_menu_handle,
             use_tools: false,
             _subscriptions: subscriptions,
         }
