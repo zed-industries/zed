@@ -1,8 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-    fs::File,
-    path::Path,
-};
+use std::{fmt::Debug, fs::File, path::Path};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -53,8 +49,75 @@ fn write_to_log_file(log: &mut File, message: impl Debug) {
 //     Ok(())
 // }
 
-fn update(app_dir: &Path) -> Result<()> {
+#[derive(Debug, PartialEq, Eq)]
+enum UpdateStatus {
+    RemoveOld,
+    CopyNew,
+    DeleteInstall,
+    DeleteUpdates,
+    Done,
+}
+
+fn update(log: &mut File, app_dir: &Path) -> Result<()> {
     let install_dir = app_dir.join("install");
+    let update_dir = app_dir.join("updates");
+    let zed_exe = app_dir.join("Zed.exe");
+
+    let start = std::time::Instant::now();
+    let mut status = UpdateStatus::RemoveOld;
+    while start.elapsed().as_secs() < 10 {
+        match status {
+            UpdateStatus::RemoveOld => {
+                if zed_exe.exists() {
+                    let result = std::fs::remove_file(&zed_exe);
+                    if let Err(error) = result {
+                        write_to_log_file(log, format!("Failed to remove Zed.exe: {:?}", error));
+                        continue;
+                    }
+                }
+                status = UpdateStatus::CopyNew;
+            }
+            UpdateStatus::CopyNew => {
+                let new_exe = install_dir.join("Zed.exe");
+                if !new_exe.exists() {
+                    return Err(anyhow::anyhow!("New Zed.exe does not exist"));
+                }
+                let result = std::fs::copy(new_exe, &zed_exe);
+                if let Err(error) = result {
+                    write_to_log_file(log, format!("Failed to copy new Zed.exe: {:?}", error));
+                    continue;
+                }
+                status = UpdateStatus::DeleteInstall;
+            }
+            UpdateStatus::DeleteInstall => {
+                let result = std::fs::remove_dir_all(&install_dir);
+                if let Err(error) = result {
+                    write_to_log_file(
+                        log,
+                        format!("Failed to remove install directory: {:?}", error),
+                    );
+                    continue;
+                }
+                status = UpdateStatus::DeleteUpdates;
+            }
+            UpdateStatus::DeleteUpdates => {
+                let result = std::fs::remove_dir_all(&update_dir);
+                if let Err(error) = result {
+                    write_to_log_file(
+                        log,
+                        format!("Failed to remove updates directory: {:?}", error),
+                    );
+                    continue;
+                }
+                status = UpdateStatus::Done;
+            }
+            UpdateStatus::Done => break,
+        }
+    }
+    if status != UpdateStatus::Done {
+        return Err(anyhow::anyhow!("Failed to update Zed"));
+    }
+    write_to_log_file(log, format!("Update takes: {:?}", start.elapsed()));
 
     Ok(())
 }
@@ -68,7 +131,7 @@ fn run(log: &mut File) -> Result<()> {
         .context("No parent directory")?
         .to_path_buf();
     // wait_for_app_to_exit(app_dir.as_path())?;
-    update(app_dir.as_path())?;
+    update(log, app_dir.as_path())?;
     Ok(())
 }
 
