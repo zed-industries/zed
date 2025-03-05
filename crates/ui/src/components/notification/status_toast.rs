@@ -4,7 +4,7 @@ use crate::{prelude::*, AnyIcon};
 use gpui::{percentage, Animation, AnimationExt, IntoElement, Transformation};
 
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "notification")]
+#[component(scope = "Notification")]
 pub struct StatusToast {
     id: ElementId,
     // children: SmallVec<[AnyElement; 2]>,

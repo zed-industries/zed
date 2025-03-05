@@ -7,7 +7,9 @@ pub use gpui::{
     Styled, Window,
 };
 
-pub use component::{example_group, example_group_with_title, single_example, ComponentPreview};
+pub use component::{
+    example_group, example_group_with_title, single_example, ComponentPreview, ComponentScope,
+};
 pub use ui_macros::IntoComponent;
 
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};

@@ -3,7 +3,7 @@ use gpui::IntoElement;
 use smallvec::{smallvec, SmallVec};
 
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "notification")]
+#[component(scope = "Notification")]
 pub struct AlertModal {
     id: ElementId,
     children: SmallVec<[AnyElement; 2]>,

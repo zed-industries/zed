@@ -68,15 +68,16 @@ impl ComponentPreview {
         let initial_length = components.len();
         let selected_index = selected_index.into().unwrap_or(0);
 
-        let component_list = ListState::new(initial_length, gpui::ListAlignment::Top, px(500.0), {
-            let this = cx.entity().downgrade();
-            move |ix, window: &mut Window, cx: &mut App| {
-                this.update(cx, |this, cx| {
-                    this.render_preview(ix, window, cx).into_any_element()
-                })
-                .unwrap()
-            }
-        });
+        let component_list =
+            ListState::new(initial_length, gpui::ListAlignment::Top, px(1500.0), {
+                let this = cx.entity().downgrade();
+                move |ix, window: &mut Window, cx: &mut App| {
+                    this.update(cx, |this, cx| {
+                        this.render_preview(ix, window, cx).into_any_element()
+                    })
+                    .unwrap()
+                }
+            });
 
         let mut component_preview = Self {
             focus_handle: cx.focus_handle(),
@@ -312,18 +313,6 @@ impl SerializableItem for ComponentPreview {
         _cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         // TODO: Serialize the active index so we can re-open to the same place
-
-        // let workspace_id = workspace.database_id()?;
-        // let selected_index = self.selected_index;
-
-        // Some(cx.background_spawn({
-        //     async move {
-        //         IMAGE_VIEWER
-        //             .save_image_path(item_id, workspace_id, image_path)
-        //             .await
-        //     }
-        // }))
-
         None
     }
 
