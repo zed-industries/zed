@@ -54,7 +54,7 @@ use ui::{
     Tooltip,
 };
 use util::{maybe, ResultExt};
-use workspace::searchable::SearchableItemHandle;
+use workspace::searchable::{Direction, SearchableItemHandle};
 use workspace::{
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
@@ -3060,12 +3060,13 @@ impl SearchableItem for ContextEditor {
 
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |editor, cx| {
-            editor.active_match_index(matches, window, cx)
+            editor.active_match_index(direction, matches, window, cx)
         })
     }
 }

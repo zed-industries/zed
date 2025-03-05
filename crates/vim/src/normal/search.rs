@@ -154,6 +154,9 @@ impl Vim {
                     if action.regex {
                         options |= SearchOptions::REGEX;
                     }
+                    if action.backwards {
+                        options |= SearchOptions::BACKWARDS;
+                    }
                     search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {
                         Mode::Insert
@@ -198,7 +201,7 @@ impl Vim {
                     .last()
                     .map_or(true, |range| range.start != new_head);
 
-                if is_different_head && self.search.direction == Direction::Next {
+                if is_different_head {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
@@ -742,6 +745,12 @@ mod test {
         cx.assert_editor_state("«oneˇ» two one");
         cx.simulate_keystrokes("*");
         cx.assert_state("one two ˇone", Mode::Normal);
+
+        // check that a backward search after last match works correctly
+        cx.set_state("aa\naa\nbbˇ", Mode::Normal);
+        cx.simulate_keystrokes("? a a");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("aa\nˇaa\nbb", Mode::Normal);
 
         // check that searching with unable search wrap
         cx.update_global(|store: &mut SettingsStore, cx| {
