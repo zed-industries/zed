@@ -271,6 +271,7 @@ impl AutoUpdater {
             let result = Self::update(this.upgrade()?, cx.clone()).await;
             this.update(&mut cx, |this, cx| {
                 this.pending_poll = None;
+                println!("Polling for updates: {:?}", result);
                 if let Err(error) = result {
                     log::error!("auto-update failed: error:{:?}", error);
                     this.status = AutoUpdateStatus::Errored;
@@ -433,6 +434,7 @@ impl AutoUpdater {
         Self::get_release(this, asset, os, arch, None, release_channel, cx).await
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
         let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
@@ -506,6 +508,77 @@ impl AutoUpdater {
         })?;
 
         Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
+        // If updated, show a notification.
+        // For example, ```if updated...```
+        this.update(&mut cx, |this, cx| {
+            this.set_should_show_update_notification(true, cx)
+                .detach_and_log_err(cx);
+            // this.status = AutoUpdateStatus::Updated { binary_path };
+            cx.notify();
+        })?;
+
+        // let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
+        //     this.status = AutoUpdateStatus::Checking;
+        //     cx.notify();
+        //     (
+        //         this.http_client.clone(),
+        //         this.current_version,
+        //         ReleaseChannel::try_global(cx),
+        //     )
+        // })?;
+
+        // let release =
+        //     Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
+
+        // let should_download = match *RELEASE_CHANNEL {
+        //     ReleaseChannel::Nightly => cx
+        //         .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
+        //         .ok()
+        //         .flatten()
+        //         .unwrap_or(true),
+        //     _ => release.version.parse::<SemanticVersion>()? > current_version,
+        // };
+
+        // if !should_download {
+        //     this.update(&mut cx, |this, cx| {
+        //         this.status = AutoUpdateStatus::Idle;
+        //         cx.notify();
+        //     })?;
+        //     return Ok(());
+        // }
+
+        this.update(&mut cx, |this, cx| {
+            this.status = AutoUpdateStatus::Downloading;
+            cx.notify();
+        })?;
+
+        let installer_dir = std::env::current_exe()?
+            .parent()
+            .context("No parent dir")?
+            .join("updates");
+        std::fs::create_dir(&installer_dir).ok();
+
+        let downloaded_asset = installer_dir.join("Installer.exe");
+        // download_release(&downloaded_asset, release, client, &cx).await?;
+
+        this.update(&mut cx, |this, cx| {
+            this.status = AutoUpdateStatus::Installing; // Ready to install
+            cx.notify();
+        })?;
+
+        // Notify the user that the update is ready to install, and provide a button to restart then install it.
+        // Installer.exe
+
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    async fn update(_: Entity<Self>, _: AsyncApp) -> Result<()> {
+        Err(anyhow!("auto-update not supported."))
     }
 
     pub fn set_should_show_update_notification(
@@ -742,4 +815,31 @@ async fn install_release_macos(
     );
 
     Ok(running_app_path)
+}
+
+pub fn check_pending_installation() -> bool {
+    let Some(installer_path) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("updates")))
+    else {
+        return false;
+    };
+    let installer_exe = installer_path.join("Installer.exe");
+    if !installer_exe.exists() {
+        return false;
+    }
+    let flag_file = installer_path.join("versions.txt");
+    if flag_file.exists() {
+        if let Some(_last_line) = std::fs::read_to_string(&flag_file)
+            .ok()
+            .and_then(|s| s.lines().last().map(|s| s.to_string()))
+        {
+            // todo(windows)
+            // Check version here
+            std::fs::remove_dir_all(installer_path).ok();
+            return false;
+        }
+    }
+    let _ = Command::new(installer_exe).arg("/SILENT").spawn();
+    true
 }
