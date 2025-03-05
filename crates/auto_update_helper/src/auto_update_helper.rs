@@ -5,13 +5,6 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use clap::Parser;
-
-#[derive(Parser, Debug)]
-struct Args {
-    #[arg(long)]
-    running_app_pid: u32,
-}
 
 fn generate_log_file() -> Result<File> {
     let file_path = std::env::current_exe()?
@@ -37,21 +30,6 @@ fn write_to_log_file(log: &mut File, message: impl Debug) {
     use std::io::Write;
     let _ = writeln!(log, "{:?}", message);
 }
-
-// fn wait_for_app_to_exit(app_dir: &Path) -> Result<()> {
-//     let start = std::time::Instant::now();
-//     while start.elapsed().as_secs() < 10 {
-//         if !nix::unistd::Pid::from_raw(pid as i32)
-//             .is_alive()
-//             .context("Failed to check if process is alive")?
-//         {
-//             return Ok(());
-//         }
-//         std::thread::sleep(std::time::Duration::from_secs(1));
-//     }
-
-//     Ok(())
-// }
 
 #[derive(Debug, PartialEq, Eq)]
 enum UpdateStatus {
@@ -165,7 +143,11 @@ fn update(log: &mut File, app_dir: &Path) -> Result<()> {
                 }
                 status = UpdateStatus::Done;
             }
-            UpdateStatus::Done => break,
+            UpdateStatus::Done => {
+                let ret = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
+                write_to_log_file(log, format!("Starting Zed: {:?}", ret));
+                break;
+            }
         }
     }
     if status != UpdateStatus::Done {
@@ -177,14 +159,12 @@ fn update(log: &mut File, app_dir: &Path) -> Result<()> {
 }
 
 fn run(log: &mut File) -> Result<()> {
-    let args = Args::parse();
     let app_dir = std::env::current_exe()?
         .parent()
         .context("No parent directory")?
         .parent()
         .context("No parent directory")?
         .to_path_buf();
-    // wait_for_app_to_exit(app_dir.as_path())?;
     update(log, app_dir.as_path())?;
     Ok(())
 }
