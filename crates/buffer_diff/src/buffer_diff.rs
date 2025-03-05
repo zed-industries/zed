@@ -797,15 +797,15 @@ impl BufferDiff {
                 }
             });
         }
+        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
+            new_index_text.clone(),
+        ));
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
             let changed_range = first.buffer_range.start..last.buffer_range.end;
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(changed_range),
             });
         }
-        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
-            new_index_text.clone(),
-        ));
         new_index_text
     }
 
