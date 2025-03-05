@@ -94,9 +94,6 @@ id_type!(RoomParticipantId);
 id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
-id_type!(DebugClientId);
-id_type!(SessionId);
-id_type!(ThreadId);
 
 /// ChannelRole gives you permissions for both channels and calls.
 #[derive(
