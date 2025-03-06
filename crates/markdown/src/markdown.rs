@@ -1,11 +1,12 @@
 pub mod parser;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     actions, point, quad, AnyElement, App, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
@@ -72,6 +73,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<String>,
     open_url: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     options: Options,
+    copied_code_blocks: HashSet<ElementId>,
 }
 
 #[derive(Debug)]
@@ -108,6 +110,7 @@ impl Markdown {
                 copy_code_block_buttons: true,
             },
             open_url: None,
+            copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
         this
@@ -142,6 +145,7 @@ impl Markdown {
                 copy_code_block_buttons: true,
             },
             open_url: None,
+            copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
         this
@@ -608,13 +612,19 @@ impl Element for MarkdownElement {
                                 None
                             };
 
+                            // This is a parent container that we can position the copy button inside.
+                            builder.push_div(div().relative().w_full(), range, markdown_end);
+
                             let mut code_block = div()
                                 .id(("code-block", range.start))
-                                .flex()
                                 .rounded_lg()
-                                .when(self.style.code_block_overflow_x_scroll, |mut code_block| {
-                                    code_block.style().restrict_scroll_to_axis = Some(true);
-                                    code_block.overflow_x_scroll()
+                                .map(|mut code_block| {
+                                    if self.style.code_block_overflow_x_scroll {
+                                        code_block.style().restrict_scroll_to_axis = Some(true);
+                                        code_block.flex().overflow_x_scroll()
+                                    } else {
+                                        code_block.w_full()
+                                    }
                                 });
                             code_block.style().refine(&self.style.code_block);
                             if let Some(code_block_text_style) = &self.style.code_block.text {
@@ -744,39 +754,72 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
 
+                        builder.pop_div();
+                        builder.pop_code_block();
+                        if self.style.code_block.text.is_some() {
+                            builder.pop_text_style();
+                        }
+
                         if self.markdown.read(cx).options.copy_code_block_buttons {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
                                 let id =
                                     ElementId::NamedInteger("copy-markdown-code".into(), range.end);
+                                let was_copied =
+                                    self.markdown.read(cx).copied_code_blocks.contains(&id);
                                 let copy_button = div().absolute().top_1().right_1().w_5().child(
-                                    IconButton::new(id, IconName::Copy)
-                                        .icon_color(Color::Muted)
-                                        .shape(ui::IconButtonShape::Square)
-                                        .tooltip(Tooltip::text("Copy Code Block"))
-                                        .on_click({
-                                            let code = without_fences(
-                                                parsed_markdown.source()[range.clone()].trim(),
-                                            )
-                                            .to_string();
+                                    IconButton::new(
+                                        id.clone(),
+                                        if was_copied {
+                                            IconName::Check
+                                        } else {
+                                            IconName::Copy
+                                        },
+                                    )
+                                    .icon_color(Color::Muted)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(Tooltip::text("Copy Code"))
+                                    .on_click({
+                                        let id = id.clone();
+                                        let markdown = self.markdown.clone();
+                                        let code = without_fences(
+                                            parsed_markdown.source()[range.clone()].trim(),
+                                        )
+                                        .to_string();
+                                        move |_event, _window, cx| {
+                                            let id = id.clone();
+                                            markdown.update(cx, |this, cx| {
+                                                this.copied_code_blocks.insert(id.clone());
 
-                                            move |_, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     code.clone(),
-                                                ))
-                                            }
-                                        }),
+                                                ));
+
+                                                cx.spawn(|this, cx| async move {
+                                                    cx.background_executor()
+                                                        .timer(Duration::from_secs(2))
+                                                        .await;
+
+                                                    cx.update(|cx| {
+                                                        this.update(cx, |this, cx| {
+                                                            this.copied_code_blocks.remove(&id);
+                                                            cx.notify();
+                                                        })
+                                                    })
+                                                    .ok();
+                                                })
+                                                .detach();
+                                            });
+                                        }
+                                    }),
                                 );
 
                                 el.child(copy_button)
                             });
                         }
 
+                        // Pop the parent container.
                         builder.pop_div();
-                        builder.pop_code_block();
-                        if self.style.code_block.text.is_some() {
-                            builder.pop_text_style();
-                        }
                     }
                     MarkdownTagEnd::HtmlBlock => builder.pop_div(),
                     MarkdownTagEnd::List(_) => {

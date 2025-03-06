@@ -554,15 +554,29 @@ impl HeadlessProject {
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
         let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let check_info = envelope
+            .payload
+            .config
+            .as_ref()
+            .is_some_and(|config| config.is_dir);
 
         let mut entries = Vec::new();
+        let mut entry_info = Vec::new();
         let mut response = fs.read_dir(&expanded).await?;
         while let Some(path) = response.next().await {
-            if let Some(file_name) = path?.file_name() {
+            let path = path?;
+            if let Some(file_name) = path.file_name() {
                 entries.push(file_name.to_string_lossy().to_string());
+                if check_info {
+                    let is_dir = fs.is_dir(&path).await;
+                    entry_info.push(proto::EntryInfo { is_dir });
+                }
             }
         }
-        Ok(proto::ListRemoteDirectoryResponse { entries })
+        Ok(proto::ListRemoteDirectoryResponse {
+            entries,
+            entry_info,
+        })
     }
 
     pub async fn handle_get_path_metadata(

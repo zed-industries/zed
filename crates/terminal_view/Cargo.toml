@@ -27,6 +27,7 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
+log.workspace = true
 project.workspace = true
 task.workspace = true
 schemars.workspace = true
@@ -50,3 +51,6 @@ gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["log"]

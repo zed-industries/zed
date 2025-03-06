@@ -39,7 +39,7 @@ use crate::{
     object::Object,
     state::Mode,
     visual::VisualDeleteLine,
-    Vim,
+    ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -853,6 +853,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 .boxed_clone(),
             )
         }),
+        VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -1419,11 +1420,11 @@ impl ShellExec {
                 cx.emit(workspace::Event::SpawnTask {
                     action: Box::new(SpawnInTerminal {
                         id: TaskId("vim".to_string()),
-                        full_label: self.command.clone(),
-                        label: self.command.clone(),
+                        full_label: command.clone(),
+                        label: command.clone(),
                         command: command.clone(),
                         args: Vec::new(),
-                        command_label: self.command.clone(),
+                        command_label: command.clone(),
                         cwd,
                         env: HashMap::default(),
                         use_new_terminal: true,
@@ -1434,6 +1435,7 @@ impl ShellExec {
                         shell,
                         show_summary: false,
                         show_command: false,
+                        show_rerun: false,
                     }),
                 });
             });
