@@ -917,7 +917,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ## Ensure Final Newline On Save
 
-- Description: Whether or not to ensure there's a single newline at the end of a buffer when saving it.
+- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
 
