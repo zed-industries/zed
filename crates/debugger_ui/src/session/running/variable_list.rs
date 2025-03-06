@@ -355,7 +355,7 @@ impl VariableList {
         } else {
             colors.default
         };
-
+        let path = variable.path.clone();
         div()
             .id(SharedString::from(format!(
                 "variable-{}-{}",
@@ -369,17 +369,9 @@ impl VariableList {
             .size_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
-                // let scope = scope.clone();
-                // let variable = variable.clone();
-                move |_this, _, _window, _cx| {
-                    // this.selection = Some(VariableListEntry::Variable {
-                    //     depth,
-                    //     has_children,
-                    //     container_reference,
-                    //     scope: scope.clone(),
-                    //     variable: variable.clone(),
-                    // });
-                    // cx.notify();
+                move |this, _, _window, cx| {
+                    this.selection = Some(path.clone());
+                    cx.notify();
                 }
             }))
             .child(
