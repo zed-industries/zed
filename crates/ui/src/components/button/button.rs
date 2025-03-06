@@ -80,7 +80,7 @@ use super::button_icon::ButtonIcon;
 /// ```
 ///
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct Button {
     base: ButtonLike,
     label: SharedString,

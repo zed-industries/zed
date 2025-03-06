@@ -24,7 +24,7 @@ pub fn h_container() -> ContentGroup {
 
 /// A flexible container component that can hold other elements.
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "layout")]
+#[component(scope = "Layout")]
 pub struct ContentGroup {
     base: Div,
     border: bool,

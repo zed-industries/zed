@@ -10,8 +10,11 @@ pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
 mod theme_preview;
+mod toast_layer;
 mod toolbar;
 mod workspace_settings;
+
+pub use toast_layer::{ToastLayer, ToastView};
 
 use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
@@ -816,6 +819,7 @@ pub struct Workspace {
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
+    toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
     project: Entity<Project>,
@@ -1032,6 +1036,7 @@ impl Workspace {
         });
 
         let modal_layer = cx.new(|_| ModalLayer::new());
+        let toast_layer = cx.new(|_| ToastLayer::new());
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
@@ -1112,6 +1117,7 @@ impl Workspace {
             last_active_view_id: None,
             status_bar,
             modal_layer,
+            toast_layer,
             titlebar_item: None,
             notifications: Default::default(),
             left_dock,
@@ -4971,6 +4977,17 @@ impl Workspace {
         })
     }
 
+    pub fn toggle_status_toast<V: ToastView>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+        entity: Entity<V>,
+    ) {
+        self.toast_layer.update(cx, |toast_layer, cx| {
+            toast_layer.toggle_toast(window, cx, entity)
+        })
+    }
+
     pub fn toggle_centered_layout(
         &mut self,
         _: &ToggleCenteredLayout,
@@ -5485,7 +5502,8 @@ impl Render for Workspace {
                                 .children(self.render_notifications(window, cx)),
                         )
                         .child(self.status_bar.clone())
-                        .child(self.modal_layer.clone()),
+                        .child(self.modal_layer.clone())
+                        .child(self.toast_layer.clone()),
                 ),
             window,
             cx,

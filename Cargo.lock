@@ -3046,8 +3046,12 @@ dependencies = [
 name = "component_preview"
 version = "0.1.0"
 dependencies = [
+ "client",
  "component",
  "gpui",
+ "languages",
+ "notifications",
+ "project",
  "ui",
  "workspace",
 ]
@@ -8378,13 +8382,17 @@ dependencies = [
  "channel",
  "client",
  "collections",
+ "component",
  "db",
  "gpui",
+ "linkme",
  "rpc",
  "settings",
  "sum_tree",
  "time",
+ "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]

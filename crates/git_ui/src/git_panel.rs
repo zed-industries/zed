@@ -3301,7 +3301,7 @@ fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
 }
 
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "git_panel")]
+#[component(scope = "Version Control")]
 pub struct PanelRepoFooter {
     id: SharedString,
     active_repository: SharedString,
