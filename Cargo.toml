@@ -170,7 +170,6 @@ members = [
     #
 
     "extensions/emmet",
-    "extensions/erlang",
     "extensions/glsl",
     "extensions/haskell",
     "extensions/html",
