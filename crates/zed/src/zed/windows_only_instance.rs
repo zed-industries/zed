@@ -97,23 +97,9 @@ fn retrieve_message_from_pipe_inner(pipe: HANDLE) -> anyhow::Result<String> {
 fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     if let Some(dock_menu_action_idx) = args.dock_action {
         let url = format!("zed-dock-action://{}", dock_menu_action_idx);
-        unsafe {
-            let pipe = CreateFileW(
-                &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
-                GENERIC_WRITE.0,
-                FILE_SHARE_MODE::default(),
-                None,
-                OPEN_EXISTING,
-                FILE_FLAGS_AND_ATTRIBUTES::default(),
-                None,
-            )?;
-            let message = url.as_bytes();
-            let mut bytes_written = 0;
-            WriteFile(pipe, Some(message), Some(&mut bytes_written), None)?;
-            CloseHandle(pipe)?;
-        }
-        return Ok(());
+        return write_message_to_instance_pipe(url.as_bytes());
     }
+
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
@@ -171,6 +157,15 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
         }
     });
 
+    write_message_to_instance_pipe(url.as_bytes())?;
+    sender.join().unwrap()?;
+    if let Some(exit_status) = exit_status.lock().take() {
+        std::process::exit(exit_status);
+    }
+    Ok(())
+}
+
+fn write_message_to_instance_pipe(message: &[u8]) -> anyhow::Result<()> {
     unsafe {
         let pipe = CreateFileW(
             &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
@@ -181,14 +176,8 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             FILE_FLAGS_AND_ATTRIBUTES::default(),
             None,
         )?;
-        let message = url.as_bytes();
-        let mut bytes_written = 0;
-        WriteFile(pipe, Some(message), Some(&mut bytes_written), None)?;
+        WriteFile(pipe, Some(message), None, None)?;
         CloseHandle(pipe)?;
-    }
-    sender.join().unwrap()?;
-    if let Some(exit_status) = exit_status.lock().take() {
-        std::process::exit(exit_status);
     }
     Ok(())
 }
