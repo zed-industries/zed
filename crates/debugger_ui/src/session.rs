@@ -65,7 +65,14 @@ impl DebugSession {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let inert = cx.new(|cx| InertState::new(window, cx));
+        let default_cwd = project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .and_then(|tree| tree.read(cx).abs_path().to_str().map(|str| str.to_string()))
+            .unwrap_or_default();
+
+        let inert = cx.new(|cx| InertState::new(&default_cwd, window, cx));
 
         let project = project.read(cx);
         let dap_store = project.dap_store().downgrade();

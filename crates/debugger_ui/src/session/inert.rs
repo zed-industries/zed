@@ -20,12 +20,16 @@ pub(crate) struct InertState {
 }
 
 impl InertState {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(default_cwd: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             selected_debugger: None,
             program_editor: cx.new(|cx| Editor::single_line(window, cx)),
-            cwd_editor: cx.new(|cx| Editor::single_line(window, cx)),
+            cwd_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.insert(default_cwd, window, cx);
+                editor
+            }),
         }
     }
 }
