@@ -48,6 +48,7 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 strum.workspace = true
+telemetry.workspace = true
 theme.workspace = true
 time.workspace = true
 ui.workspace = true
