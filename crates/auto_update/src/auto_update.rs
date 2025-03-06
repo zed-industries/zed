@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
-use std::str::FromStr;
 use std::{
     env::{
         self,
