@@ -1,74 +1,23 @@
 ;; Keywords
 
-"return" @keyword
-
-[
- "goto"
- "in"
- "local"
-] @keyword
-
-(break_statement) @keyword
-
-(do_statement
 [
   "do"
-  "end"
-] @keyword)
-
-(while_statement
-[
-  "while"
-  "do"
-  "end"
-] @keyword)
-
-(repeat_statement
-[
-  "repeat"
-  "until"
-] @keyword)
-
-(if_statement
-[
-  "if"
-  "elseif"
   "else"
-  "then"
-  "end"
-] @keyword)
-
-(elseif_statement
-[
   "elseif"
-  "then"
   "end"
-] @keyword)
-
-(else_statement
-[
-  "else"
-  "end"
-] @keyword)
-
-(for_statement
-[
   "for"
-  "do"
-  "end"
-] @keyword)
-
-(function_declaration
-[
   "function"
-  "end"
-] @keyword)
-
-(function_definition
-[
-  "function"
-  "end"
-] @keyword)
+  "goto"
+  "if"
+  "in"
+  "local"
+  "repeat"
+  "return"
+  "then"
+  "until"
+  "while"
+  (break_statement)
+] @keyword
 
 ;; Operators
 
@@ -76,7 +25,7 @@
  "and"
  "not"
  "or"
-] @operator
+] @keyword.operator
 
 [
   "+"
