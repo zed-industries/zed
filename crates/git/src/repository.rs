@@ -13,7 +13,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::Borrow;
 use std::io::Write as _;
-#[cfg(not(windows))]
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::{
