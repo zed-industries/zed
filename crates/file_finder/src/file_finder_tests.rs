@@ -7,7 +7,7 @@ use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
 use util::path;
-use workspace::{AppState, ToggleFileFinder, Workspace};
+use workspace::{AppState, OpenOptions, ToggleFileFinder, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -951,7 +951,10 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         .update_in(cx, |workspace, window, cx| {
             workspace.open_abs_path(
                 PathBuf::from(path!("/external-src/test/third.rs")),
-                false,
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
                 window,
                 cx,
             )
