@@ -2,10 +2,10 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
-    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
-    ProjectTransaction, ResolveState,
+    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
+    LocationLink, LspAction, MarkupContent, PrepareRenameResponse, ProjectTransaction,
+    ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
