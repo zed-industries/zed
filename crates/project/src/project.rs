@@ -411,7 +411,45 @@ pub struct CodeAction {
     /// The range of the buffer where this code action is applicable.
     pub range: Range<Anchor>,
     /// The raw code action provided by the language server.
-    pub lsp_action: lsp::CodeAction,
+    /// Can be either an action or a command.
+    pub lsp_action: ActionVariant,
+}
+
+/// TODO kb docs
+#[derive(Clone, Debug)]
+pub enum ActionVariant {
+    Action(lsp::CodeAction),
+    Command(lsp::Command),
+}
+
+impl ActionVariant {
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Action(action) => &action.title,
+            Self::Command(command) => &command.title,
+        }
+    }
+
+    fn action_kind(&self) -> Option<lsp::CodeActionKind> {
+        match self {
+            Self::Action(action) => action.kind.clone(),
+            Self::Command(_) => Some(lsp::CodeActionKind::new("command")),
+        }
+    }
+
+    fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
+        match self {
+            Self::Action(action) => action.edit.as_ref(),
+            Self::Command(_) => None,
+        }
+    }
+
+    fn command(&self) -> Option<&lsp::Command> {
+        match self {
+            Self::Action(action) => action.command.as_ref(),
+            Self::Command(command) => Some(command),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

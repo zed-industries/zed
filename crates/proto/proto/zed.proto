@@ -1286,6 +1286,11 @@ message CodeAction {
     Anchor start = 2;
     Anchor end = 3;
     bytes lsp_action = 4;
+    Kind kind = 5;
+    enum Kind {
+        Action = 0;
+        Command = 1;
+    }
 }
 
 message ProjectTransaction {

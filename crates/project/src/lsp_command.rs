@@ -2,9 +2,10 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
-    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
+    ActionVariant, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
+    InlayHintTooltip, Location, LocationLink, MarkupContent, PrepareRenameResponse,
+    ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -2233,10 +2234,11 @@ impl LspCommand for GetCodeActions {
             lsp_store
                 .read(cx)
                 .language_server_for_id(server_id)
-                .expect("TODO lb")
-        })?;
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
 
-        // TODO kb rewrite later
         let no_commands = Vec::new();
         let server_capabilities = language_server.capabilities();
         let available_commands = server_capabilities
@@ -2245,8 +2247,6 @@ impl LspCommand for GetCodeActions {
             .map(|options| &options.commands)
             .unwrap_or(&no_commands)
             .as_slice();
-        // let can_run =
-        //     available_commands.map_or(false, |commands| commands.contains(&command.command));
 
         Ok(actions
             .unwrap_or_default()
@@ -2259,22 +2259,21 @@ impl LspCommand for GetCodeActions {
                                 return None;
                             }
                         }
-                        lsp_action
+                        ActionVariant::Action(lsp_action)
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
-                        if !available_commands.contains(&command.command) {
-                            return None;
+                        if available_commands.contains(&command.command) {
+                            ActionVariant::Command(command)
                         } else {
-                            // TODO kb have an enum for commands, use them onwards
                             return None;
                         }
                     }
                 };
 
                 if let Some((requested_kinds, kind)) =
-                    requested_kinds_set.as_ref().zip(lsp_action.kind.as_ref())
+                    requested_kinds_set.as_ref().zip(lsp_action.action_kind())
                 {
-                    if !requested_kinds.contains(kind) {
+                    if !requested_kinds.contains(&kind) {
                         return None;
                     }
                 }

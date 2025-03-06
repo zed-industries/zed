@@ -11,8 +11,8 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _, ProjectPath,
-    ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    ActionVariant, CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _,
+    ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -1667,15 +1667,19 @@ impl LocalLspStore {
         lang_server: &LanguageServer,
         action: &mut CodeAction,
     ) -> anyhow::Result<()> {
-        if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
-            && action.lsp_action.data.is_some()
-            && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
-        {
-            action.lsp_action = lang_server
-                .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
-                .await?;
+        match &mut action.lsp_action {
+            ActionVariant::Action(lsp_action) => {
+                if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+                    && lsp_action.data.is_some()
+                    && (lsp_action.command.is_none() || lsp_action.edit.is_none())
+                {
+                    *lsp_action = lang_server
+                        .request::<lsp::request::CodeActionResolveRequest>(lsp_action.clone())
+                        .await?;
+                }
+            }
+            ActionVariant::Command(_) => {}
         }
-
         anyhow::Ok(())
     }
 
@@ -2130,14 +2134,14 @@ impl LocalLspStore {
                     .await
                     .context("resolving a formatting code action")?;
 
-                if let Some(edit) = action.lsp_action.edit {
+                if let Some(edit) = action.lsp_action.edit() {
                     if edit.changes.is_none() && edit.document_changes.is_none() {
                         continue;
                     }
 
                     let new = Self::deserialize_workspace_edit(
-                        this.upgrade().ok_or_else(|| anyhow!("project dropped"))?,
-                        edit,
+                        this.upgrade().context("project dropped")?,
+                        edit.clone(),
                         push_to_history,
                         lsp_adapter.clone(),
                         language_server.clone(),
@@ -2147,7 +2151,7 @@ impl LocalLspStore {
                     project_transaction.0.extend(new.0);
                 }
 
-                if let Some(command) = action.lsp_action.command {
+                if let Some(command) = action.lsp_action.command() {
                     this.update(cx, |this, _| {
                         if let LspStoreMode::Local(mode) = &mut this.mode {
                             mode.last_workspace_edits_by_language_server
@@ -2157,8 +2161,8 @@ impl LocalLspStore {
 
                     language_server
                         .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                            command: command.command,
-                            arguments: command.arguments.unwrap_or_default(),
+                            command: command.command.clone(),
+                            arguments: command.arguments.clone().unwrap_or_default(),
                             ..Default::default()
                         })
                         .await?;
@@ -3903,11 +3907,11 @@ impl LspStore {
                 LocalLspStore::try_resolve_code_action(&lang_server, &mut action)
                     .await
                     .context("resolving a code action")?;
-                if let Some(edit) = action.lsp_action.edit {
+                if let Some(edit) = action.lsp_action.edit() {
                     if edit.changes.is_some() || edit.document_changes.is_some() {
                         return LocalLspStore::deserialize_workspace_edit(
                             this.upgrade().ok_or_else(|| anyhow!("no app present"))?,
-                            edit,
+                            edit.clone(),
                             push_to_history,
                             lsp_adapter.clone(),
                             lang_server.clone(),
@@ -3917,7 +3921,7 @@ impl LspStore {
                     }
                 }
 
-                if let Some(command) = action.lsp_action.command {
+                if let Some(command) = action.lsp_action.command() {
                     this.update(&mut cx, |this, _| {
                         this.as_local_mut()
                             .unwrap()
@@ -3927,8 +3931,8 @@ impl LspStore {
 
                     let result = lang_server
                         .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                            command: command.command,
-                            arguments: command.arguments.unwrap_or_default(),
+                            command: command.command.clone(),
+                            arguments: command.arguments.clone().unwrap_or_default(),
                             ..Default::default()
                         })
                         .await;
@@ -8159,11 +8163,23 @@ impl LspStore {
     }
 
     pub(crate) fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
+        let (kind, lsp_action) = match &action.lsp_action {
+            ActionVariant::Action(code_action) => (
+                proto::code_action::Kind::Action as i32,
+                serde_json::to_vec(code_action).unwrap(),
+            ),
+            ActionVariant::Command(command) => (
+                proto::code_action::Kind::Command as i32,
+                serde_json::to_vec(command).unwrap(),
+            ),
+        };
+
         proto::CodeAction {
             server_id: action.server_id.0 as u64,
             start: Some(serialize_anchor(&action.range.start)),
             end: Some(serialize_anchor(&action.range.end)),
-            lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
+            lsp_action,
+            kind,
         }
     }
 
@@ -8176,7 +8192,15 @@ impl LspStore {
             .end
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid end"))?;
-        let lsp_action = serde_json::from_slice(&action.lsp_action)?;
+        let lsp_action = match proto::code_action::Kind::from_i32(action.kind) {
+            Some(proto::code_action::Kind::Action) => {
+                ActionVariant::Action(serde_json::from_slice(&action.lsp_action)?)
+            }
+            Some(proto::code_action::Kind::Command) => {
+                ActionVariant::Command(serde_json::from_slice(&action.lsp_action)?)
+            }
+            None => anyhow::bail!("Unknown action kind {}", action.kind),
+        };
         Ok(CodeAction {
             server_id: LanguageServerId(action.server_id as usize),
             range: start..end,
