@@ -531,7 +531,7 @@ impl Render for MessageEditor {
             .px_2()
             .py_1()
             .bg(cx.theme().colors().editor_background)
-            .rounded_md()
+            .rounded_sm()
             .child(EditorElement::new(
                 &self.editor,
                 EditorStyle {

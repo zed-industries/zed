@@ -2720,7 +2720,7 @@ impl EditorElement {
                     .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                     .pl_0p5()
                     .pr_5()
-                    .rounded_md()
+                    .rounded_sm()
                     .shadow_md()
                     .border_1()
                     .map(|div| {
