@@ -241,8 +241,10 @@ impl Editor {
                         }
                     })
                     .collect();
-
-                return self.navigate_to_hover_links(None, links, modifiers.alt, window, cx);
+                let navigate_task =
+                    self.navigate_to_hover_links(None, links, modifiers.alt, window, cx);
+                self.select(SelectPhase::End, window, cx);
+                return navigate_task;
             }
         }
 
@@ -258,7 +260,7 @@ impl Editor {
             cx,
         );
 
-        if point.as_valid().is_some() {
+        let navigate_task = if point.as_valid().is_some() {
             if modifiers.shift {
                 self.go_to_type_definition(&GoToTypeDefinition, window, cx)
             } else {
@@ -266,7 +268,9 @@ impl Editor {
             }
         } else {
             Task::ready(Ok(Navigated::No))
-        }
+        };
+        self.select(SelectPhase::End, window, cx);
+        return navigate_task;
     }
 }
 

@@ -72,10 +72,15 @@ The following commands use the language server to help you navigate and refactor
 
 ### Git
 
-| Command                   | Default Shortcut |
-| ------------------------- | ---------------- |
-| Go to next git change     | `] c`            |
-| Go to previous git change | `[ c`            |
+| Command                         | Default Shortcut |
+| ------------------------------- | ---------------- |
+| Go to next git change           | `] c`            |
+| Go to previous git change       | `[ c`            |
+| Expand diff hunk                | `d o`            |
+| Toggle staged                   | `d O`            |
+| Stage and next (in diff view)   | `d u`            |
+| Unstage and next (in diff view) | `d U`            |
+| Restore change                  | `d p`            |
 
 ### Treesitter
 
@@ -399,6 +404,22 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
   "context": "vim_mode == visual",
   "bindings": {
     "shift-s": ["vim::PushAddSurrounds", {}]
+  }
+}
+```
+
+In non-modal text editors, cursor navigation typically wraps when moving past line ends. Zed, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
+
+```json
+// In VimScript, this would look like this:
+// set whichwrap+=<,>,[,],h,l
+{
+  "context": "VimControl && !menu",
+  "bindings": {
+    "left": "vim::WrappingLeft",
+    "right": "vim::WrappingRight",
+    "h": "vim::WrappingLeft",
+    "l": "vim::WrappingRight"
   }
 }
 ```

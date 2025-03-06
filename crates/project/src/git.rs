@@ -8,10 +8,7 @@ use collections::HashMap;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
 use git::repository::{Branch, CommitDetails, PushOptions, Remote, RemoteCommandOutput, ResetMode};
-use git::{
-    repository::{GitRepository, RepoPath},
-    status::{GitSummary, TrackedSummary},
-};
+use git::repository::{GitRepository, RepoPath};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
@@ -27,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt};
-use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
+use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
 
 pub struct GitStore {
     buffer_store: Entity<BufferStore>,
@@ -104,6 +101,9 @@ impl GitStore {
 
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
+        client.add_entity_request_handler(Self::handle_get_branches);
+        client.add_entity_request_handler(Self::handle_change_branch);
+        client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
         client.add_entity_request_handler(Self::handle_fetch);
@@ -116,6 +116,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
         client.add_entity_request_handler(Self::handle_askpass);
+        client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
@@ -502,6 +503,67 @@ impl GitStore {
         })
     }
 
+    async fn handle_get_branches(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitGetBranches>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitBranchesResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let branches = repository_handle
+            .update(&mut cx, |repository_handle, _| repository_handle.branches())?
+            .await??;
+
+        Ok(proto::GitBranchesResponse {
+            branches: branches
+                .into_iter()
+                .map(|branch| worktree::branch_to_proto(&branch))
+                .collect::<Vec<_>>(),
+        })
+    }
+    async fn handle_create_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let branch_name = envelope.payload.branch_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_change_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitChangeBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let branch_name = envelope.payload.branch_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.change_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_show(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitShow>,
@@ -629,6 +691,29 @@ impl GitStore {
             .insert(envelope.payload.askpass_id, askpass);
 
         Ok(proto::AskPassResponse { response })
+    }
+
+    async fn handle_check_for_pushed_commits(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CheckForPushedCommits>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::CheckForPushedCommitsResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let branches = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.check_for_pushed_commits()
+            })?
+            .await??;
+        Ok(proto::CheckForPushedCommitsResponse {
+            pushed_to: branches
+                .into_iter()
+                .map(|commit| commit.to_string())
+                .collect(),
+        })
     }
 
     fn repository_for_request(
@@ -784,6 +869,33 @@ impl Repository {
 
     pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
         self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
+    }
+
+    // note: callers must verify these come from the same worktree
+    pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
+        let other_work_dir = &other.read(cx).repository_entry.work_directory;
+        match (&self.repository_entry.work_directory, other_work_dir) {
+            (WorkDirectory::InProject { .. }, WorkDirectory::AboveProject { .. }) => false,
+            (WorkDirectory::AboveProject { .. }, WorkDirectory::InProject { .. }) => true,
+            (
+                WorkDirectory::InProject {
+                    relative_path: this_path,
+                },
+                WorkDirectory::InProject {
+                    relative_path: other_path,
+                },
+            ) => other_path.starts_with(this_path),
+            (
+                WorkDirectory::AboveProject {
+                    absolute_path: this_path,
+                    ..
+                },
+                WorkDirectory::AboveProject {
+                    absolute_path: other_path,
+                    ..
+                },
+            ) => other_path.starts_with(this_path),
+        }
     }
 
     pub fn worktree_id_path_to_repo_path(
@@ -1141,18 +1253,6 @@ impl Repository {
         self.repository_entry.status_len()
     }
 
-    fn have_changes(&self) -> bool {
-        self.repository_entry.status_summary() != GitSummary::UNCHANGED
-    }
-
-    fn have_staged_changes(&self) -> bool {
-        self.repository_entry.status_summary().index != TrackedSummary::UNCHANGED
-    }
-
-    pub fn can_commit(&self, commit_all: bool) -> bool {
-        return self.have_changes() && (commit_all || self.have_staged_changes());
-    }
-
     pub fn commit(
         &self,
         message: SharedString,
@@ -1405,6 +1505,112 @@ impl Repository {
                         .collect();
 
                     Ok(remotes)
+                }
+            }
+        })
+    }
+
+    pub fn branches(&self) -> oneshot::Receiver<Result<Vec<Branch>>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.branches(),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    let response = client
+                        .request(proto::GitGetBranches {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                        })
+                        .await?;
+
+                    let branches = response
+                        .branches
+                        .into_iter()
+                        .map(|branch| worktree::proto_to_branch(&branch))
+                        .collect();
+
+                    Ok(branches)
+                }
+            }
+        })
+    }
+
+    pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.create_branch(&branch_name),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    client
+                        .request(proto::GitCreateBranch {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            branch_name,
+                        })
+                        .await?;
+
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.change_branch(&branch_name),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    client
+                        .request(proto::GitChangeBranch {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            branch_name,
+                        })
+                        .await?;
+
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.check_for_pushed_commit(),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    let response = client
+                        .request(proto::CheckForPushedCommits {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                        })
+                        .await?;
+
+                    let branches = response.pushed_to.into_iter().map(Into::into).collect();
+
+                    Ok(branches)
                 }
             }
         })

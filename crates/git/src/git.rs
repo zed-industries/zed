@@ -8,8 +8,6 @@ pub mod status;
 use anyhow::{anyhow, Context as _, Result};
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;
-use gpui::impl_actions;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
@@ -30,23 +28,13 @@ pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
 pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
 
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct StageAndNext {
-    pub whole_excerpt: bool,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct UnstageAndNext {
-    pub whole_excerpt: bool,
-}
-
-impl_actions!(git, [StageAndNext, UnstageAndNext]);
-
 actions!(
     git,
     [
         // per-hunk
         ToggleStaged,
+        StageAndNext,
+        UnstageAndNext,
         // per-file
         StageFile,
         UnstageFile,
