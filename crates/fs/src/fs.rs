@@ -1448,6 +1448,12 @@ impl FakeFs {
         });
     }
 
+    pub fn set_error_message_for_index_write(&self, dot_git: &Path, message: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_index_write_error_message = message;
+        });
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();

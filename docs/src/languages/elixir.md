@@ -1,6 +1,6 @@
 # Elixir
 
-Elixir support is available through the [Elixir extension](https://github.com/zed-industries/zed/tree/main/extensions/elixir).
+Elixir support is available through the [Elixir extension](https://github.com/zed-extensions/elixir).
 
 - Tree-sitter:
   - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)

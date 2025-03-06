@@ -408,6 +408,22 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 }
 ```
 
+In non-modal text editors, cursor navigation typically wraps when moving past line ends. Zed, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
+
+```json
+// In VimScript, this would look like this:
+// set whichwrap+=<,>,[,],h,l
+{
+  "context": "VimControl && !menu",
+  "bindings": {
+    "left": "vim::WrappingLeft",
+    "right": "vim::WrappingRight",
+    "h": "vim::WrappingLeft",
+    "l": "vim::WrappingRight"
+  }
+}
+```
+
 The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for quick navigation to any two-character sequence in your text. You can enable it by adding the following keybindings to your keymap. By default, the `s` key is mapped to `vim::Substitute`. Adding these bindings will override that behavior, so ensure this change aligns with your workflow preferences.
 
 ```json

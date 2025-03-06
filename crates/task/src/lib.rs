@@ -58,6 +58,8 @@ pub struct SpawnInTerminal {
     pub show_summary: bool,
     /// Whether to show the command line in the task output.
     pub show_command: bool,
+    /// Whether to show the rerun button in the terminal tab.
+    pub show_rerun: bool,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particular [`TaskContext`] and now is ready to spawn the actual task.

@@ -663,11 +663,13 @@ impl std::fmt::Debug for BufferDiff {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum BufferDiffEvent {
     DiffChanged {
         changed_range: Option<Range<text::Anchor>>,
     },
     LanguageChanged,
+    HunksStagedOrUnstaged(Option<Rope>),
 }
 
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
@@ -762,6 +764,17 @@ impl BufferDiff {
         self.secondary_diff.clone()
     }
 
+    pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
+        if let Some(secondary_diff) = &self.secondary_diff {
+            secondary_diff.update(cx, |diff, _| {
+                diff.inner.pending_hunks.clear();
+            });
+            cx.emit(BufferDiffEvent::DiffChanged {
+                changed_range: Some(Anchor::MIN..Anchor::MAX),
+            });
+        }
+    }
+
     pub fn stage_or_unstage_hunks(
         &mut self,
         stage: bool,
@@ -784,6 +797,9 @@ impl BufferDiff {
                 }
             });
         }
+        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
+            new_index_text.clone(),
+        ));
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
             let changed_range = first.buffer_range.start..last.buffer_range.end;
             cx.emit(BufferDiffEvent::DiffChanged {
@@ -898,6 +914,14 @@ impl BufferDiff {
                 .as_ref()
                 .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
         }
+    }
+
+    pub fn hunks<'a>(
+        &'a self,
+        buffer_snapshot: &'a text::BufferSnapshot,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        self.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer_snapshot, cx)
     }
 
     pub fn hunks_intersecting_range<'a>(

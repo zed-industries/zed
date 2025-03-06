@@ -917,7 +917,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ## Ensure Final Newline On Save
 
-- Description: Whether or not to ensure there's a single newline at the end of a buffer when saving it.
+- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
 
@@ -969,6 +969,16 @@ While other options may be changed at a runtime and should be placed under `sett
   }
 }
 ```
+
+## LSP Highlight Debounce
+
+- Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
+**Options**
+
+`integer` values representing milliseconds
 
 ## Format On Save
 

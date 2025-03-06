@@ -10,8 +10,7 @@ use editor::{
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use git::{
-    status::FileStatus, ShowCommitEditor, StageAll, StageAndNext, ToggleStaged, UnstageAll,
-    UnstageAndNext,
+    status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
 };
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
@@ -19,7 +18,10 @@ use gpui::{
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
-use project::{git::GitStore, Project, ProjectPath};
+use project::{
+    git::{GitEvent, GitStore},
+    Project, ProjectPath,
+};
 use std::any::{Any, TypeId};
 use theme::ActiveTheme;
 use ui::{prelude::*, vertical_divider, Tooltip};
@@ -141,8 +143,13 @@ impl ProjectDiff {
         let git_store_subscription = cx.subscribe_in(
             &git_store,
             window,
-            move |this, _git_store, _event, _window, _cx| {
-                *this.update_needed.borrow_mut() = ();
+            move |this, _git_store, event, _window, _cx| match event {
+                GitEvent::ActiveRepositoryChanged
+                | GitEvent::FileSystemUpdated
+                | GitEvent::GitStateUpdated => {
+                    *this.update_needed.borrow_mut() = ();
+                }
+                _ => {}
             },
         );
 
@@ -151,7 +158,7 @@ impl ProjectDiff {
             let this = cx.weak_entity();
             |cx| Self::handle_status_updates(this, recv, cx)
         });
-        // Kick of a refresh immediately
+        // Kick off a refresh immediately
         *send.borrow_mut() = ();
 
         Self {
@@ -915,11 +922,11 @@ impl Render for ProjectDiffToolbar {
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(
                                 "Commit",
-                                &ShowCommitEditor,
+                                &Commit,
                                 &focus_handle,
                             ))
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&ShowCommitEditor, window, cx);
+                                this.dispatch_action(&Commit, window, cx);
                             })),
                     ),
             )
@@ -1016,9 +1023,6 @@ mod tests {
 
         editor.update_in(cx, |editor, window, cx| {
             editor.git_restore(&Default::default(), window, cx);
-        });
-        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.statuses = HashMap::default();
         });
         cx.run_until_parked();
 

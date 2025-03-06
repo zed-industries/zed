@@ -208,12 +208,18 @@ impl ContextStore {
             let mut text_tasks = Vec::new();
             this.update(&mut cx, |_, cx| {
                 for (path, buffer_entity) in files.into_iter().zip(buffers) {
-                    let buffer_entity = buffer_entity?;
-                    let buffer = buffer_entity.read(cx);
-                    let (buffer_info, text_task) =
-                        collect_buffer_info_and_text(path, buffer_entity, buffer, cx.to_async());
-                    buffer_infos.push(buffer_info);
-                    text_tasks.push(text_task);
+                    // Skip all binary files and other non-UTF8 files
+                    if let Ok(buffer_entity) = buffer_entity {
+                        let buffer = buffer_entity.read(cx);
+                        let (buffer_info, text_task) = collect_buffer_info_and_text(
+                            path,
+                            buffer_entity,
+                            buffer,
+                            cx.to_async(),
+                        );
+                        buffer_infos.push(buffer_info);
+                        text_tasks.push(text_task);
+                    }
                 }
                 anyhow::Ok(())
             })??;
