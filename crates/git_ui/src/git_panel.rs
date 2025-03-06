@@ -2381,9 +2381,13 @@ impl GitPanel {
                                 ),
                             ),
                     )
-                    .child(EditorElement::new(&self.commit_editor, panel_editor_style))
                     .child(
                         div()
+                            .pr_2p5()
+                            .child(EditorElement::new(&self.commit_editor, panel_editor_style)),
+                    )
+                    .child(
+                        h_flex()
                             .absolute()
                             .top_2()
                             .right_2()
