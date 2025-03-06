@@ -8,6 +8,24 @@ use patterns::SETTINGS_NESTED_KEY_VALUE_PATTERN;
 mod migrations;
 mod patterns;
 
+/*
+ * ## When to create a migration and why?
+ * A migration is necessary when keymap actions or settings are renamed or transformed (e.g., from an array to a string, a string to an array, a boolean to an enum, etc.).
+ *
+ * This ensures that users with outdated settings are automatically updated to use the corresponding new settings internally.
+ * It also provides a quick way to migrate their existing settings to the latest state using button in UI.
+ *
+ * ## How to create a migration?
+ * Migrations use Tree-sitter to query commonly used patterns, such as actions with a string or actions with an array where the second argument is an object, etc.
+ * Once queried, *you can filter out the modified items* and write the replacement logic.
+ *
+ * You *must not* modify previous migrations; always create new ones instead.
+ * This is important because if a user is in an intermediate state, they can smoothly transition to the latest state.
+ * Modifying existing migrations means they will only work for users upgrading from version x-1 to x, but not from x-2 to x, and so on, where x is the latest version.
+ *
+ * You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
+*/
+
 fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Option<String>> {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
