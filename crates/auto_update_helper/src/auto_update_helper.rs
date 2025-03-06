@@ -66,7 +66,7 @@ enum UpdateStatus {
     Done,
 }
 
-fn update(log: &mut File, app_dir: &Path, sender: Sender<()>, hwnd: isize) -> Result<()> {
+fn update(log: &mut File, app_dir: &Path, hwnd: isize) -> Result<()> {
     let install_dir = app_dir.join("install");
     let update_dir = app_dir.join("updates");
     let hwnd = HWND(hwnd as _);
@@ -92,16 +92,14 @@ fn update(log: &mut File, app_dir: &Path, sender: Sender<()>, hwnd: isize) -> Re
                             );
                         } else {
                             sccess.push(old_file);
-                            sender.send(())?;
                             unsafe {
-                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                             }
                         }
                     } else {
                         sccess.push(old_file);
-                        sender.send(())?;
                         unsafe {
-                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                         }
                     }
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -140,16 +138,14 @@ fn update(log: &mut File, app_dir: &Path, sender: Sender<()>, hwnd: isize) -> Re
                             );
                         } else {
                             sccess.push((new_file, old_file));
-                            sender.send(())?;
                             unsafe {
-                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                             }
                         }
                     } else {
                         sccess.push((new_file, old_file));
-                        sender.send(())?;
                         unsafe {
-                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                         }
                     }
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -176,9 +172,8 @@ fn update(log: &mut File, app_dir: &Path, sender: Sender<()>, hwnd: isize) -> Re
                     continue;
                 }
                 status = UpdateStatus::DeleteUpdates;
-                sender.send(())?;
                 unsafe {
-                    PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                    PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                 }
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
@@ -192,9 +187,8 @@ fn update(log: &mut File, app_dir: &Path, sender: Sender<()>, hwnd: isize) -> Re
                     continue;
                 }
                 status = UpdateStatus::Done;
-                sender.send(())?;
                 unsafe {
-                    PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                    PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                 }
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
@@ -224,20 +218,14 @@ fn run(log: &mut File) -> Result<()> {
     let (hwnd_tx, hwnd_rx) = std::sync::mpsc::sync_channel(1);
     write_to_log_file(log, "Running dialog window");
     std::thread::spawn(|| {
-        let _ = run_dialog_window(rx, hwnd_tx);
+        let _ = run_dialog_window(hwnd_tx);
     });
     let hwnd = hwnd_rx.recv()?;
-    update(log, app_dir.as_path(), tx, hwnd)?;
+    update(log, app_dir.as_path(), hwnd)?;
     Ok(())
 }
 
-#[repr(C)]
-struct WindowData {
-    receiver: Receiver<()>,
-    progress_bar: isize,
-}
-
-fn run_dialog_window(receiver: Receiver<()>, hwnd_sender: SyncSender<isize>) -> Result<()> {
+fn run_dialog_window(hwnd_sender: SyncSender<isize>) -> Result<()> {
     unsafe {
         let class_name = windows::core::w!("ProgressBarJunkui");
         let wc = WNDCLASSW {
@@ -248,14 +236,10 @@ fn run_dialog_window(receiver: Receiver<()>, hwnd_sender: SyncSender<isize>) -> 
         };
         RegisterClassW(&wc);
         let mut rect = RECT::default();
-        let _ = GetWindowRect(GetDesktopWindow(), &mut rect);
-        let width = 500;
-        let height = 180;
+        GetWindowRect(GetDesktopWindow(), &mut rect)?;
+        let width = 400;
+        let height = 150;
 
-        let lparam = Box::into_raw(Box::new(WindowData {
-            receiver,
-            progress_bar: 0,
-        })) as *const _ as _;
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             class_name,
@@ -268,7 +252,7 @@ fn run_dialog_window(receiver: Receiver<()>, hwnd_sender: SyncSender<isize>) -> 
             None,
             None,
             None,
-            Some(lparam),
+            None,
         )?;
         hwnd_sender.send(hwnd.0 as isize)?;
 
@@ -298,9 +282,6 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        // WM_NCCREATE => {
-
-        // }
         WM_CREATE => {
             // Create progress bar
             let mut rect = RECT::default();
@@ -311,10 +292,10 @@ unsafe extern "system" fn wnd_proc(
                 PROGRESS_CLASS,
                 None,
                 WS_CHILD | WS_VISIBLE,
-                30,
-                57,
-                420,
-                40,
+                20,
+                50,
+                340,
+                35,
                 hwnd,
                 None,
                 None,
@@ -355,16 +336,7 @@ unsafe extern "system" fn wnd_proc(
             );
             let temp = SelectObject(hdc, font);
             let string = HSTRING::from("Zed Editor is updating...");
-            TextOutW(hdc, 30, 20, string.as_wide());
-            // let mut rec = RECT::default();
-            // SetRect(&mut rec, 10, 10, 650, 200);
-            // let mut x = "Zed is updating...".encode_utf16().collect::<Vec<u16>>();
-            // DrawTextW(
-            //     hdc,
-            //     &mut x,
-            //     &mut rec,
-            //     DT_SINGLELINE | DT_CENTER | DT_VCENTER,
-            // );
+            TextOutW(hdc, 20, 15, string.as_wide());
             DeleteObject(temp);
 
             EndPaint(hwnd, &ps);
