@@ -499,12 +499,6 @@ impl SystemNodeRuntime {
         let scratch_dir = paths::support_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
-        fs::write(scratch_dir.join("blank_user_npmrc"), [])
-            .await
-            .ok();
-        fs::write(scratch_dir.join("blank_global_npmrc"), [])
-            .await
-            .ok();
 
         let mut this = Self {
             node,
