@@ -1177,7 +1177,7 @@ impl GitPanel {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            telemetry::event!("Git Commmitted", source = "Git Panel");
+            telemetry::event!("Git Committed", source = "Git Panel");
             self.commit_changes(window, cx)
         } else {
             cx.propagate();
@@ -2282,7 +2282,7 @@ index 1234567..abcdef0 100644
                                     .on_click({
                                         cx.listener(move |this, _: &ClickEvent, window, cx| {
                                             telemetry::event!(
-                                                "Git Commmitted",
+                                                "Git Committed",
                                                 source = "Git Panel"
                                             );
                                             this.commit_changes(window, cx)
