@@ -14,57 +14,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Setup
 
-### Option 1: Setup from copied directory
-
-```sh
-# Create the extension directory in your Zed config
-mkdir -p ~/.config/zed/extensions/slash-commands-example
-cp -R /path/to/zed/extensions/slash-commands-example/* ~/.config/zed/extensions/slash-commands-example/
-
-# Edit the Cargo.toml file to make it standalone (removing workspace references)
-cd ~/.config/zed/extensions/slash-commands-example/
-```
-
-Update the Cargo.toml file to make it standalone by replacing:
-
-```toml
-[package]
-name = "slash_commands_example"
-version = "0.1.0"
-edition.workspace = true
-publish.workspace = true
-license = "Apache-2.0"
-
-[lints]
-workspace = true
-
-[lib]
-path = "src/slash_commands_example.rs"
-crate-type = ["cdylib"]
-
-[dependencies]
-zed_extension_api = "0.1.0"
-```
-
-with:
-
-```toml
-[package]
-name = "slash_commands_example"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
-
-[lib]
-path = "src/slash_commands_example.rs"
-crate-type = ["cdylib"]
-
-[dependencies]
-zed_extension_api = "0.1.0"
-```
-
-### Option 2: Setup as a new standalone project
-
 ```sh
 git clone https://github.com/zed-industries/zed.git
 cp -RL zed/extensions/slash-commands-example .
