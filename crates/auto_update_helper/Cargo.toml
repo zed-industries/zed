@@ -23,3 +23,6 @@ windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]
