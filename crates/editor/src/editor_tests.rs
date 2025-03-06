@@ -16630,7 +16630,7 @@ fn add_log_breakpoint_at_cursor(
                 .anchor_before(Point::new(cursor_position.row, 0))
                 .text_anchor;
 
-            let kind = BreakpointKind::Standard;
+            let kind = BreakpointKind::Log(Arc::from(log_message));
 
             (breakpoint_position, Breakpoint { kind })
         });

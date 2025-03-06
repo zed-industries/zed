@@ -227,18 +227,32 @@ impl BreakpointStore {
             BreakpointEditAction::EditLogMessage(log_message) => {
                 if !log_message.is_empty() {
                     breakpoint.1.kind = BreakpointKind::Log(log_message.clone());
-                    let len_before = breakpoint_set.breakpoints.len();
-                    breakpoint_set
-                        .breakpoints
-                        .retain(|value| &breakpoint != value);
-                    if len_before == breakpoint_set.breakpoints.len() {
+
+                    let found_bp =
+                        breakpoint_set
+                            .breakpoints
+                            .iter_mut()
+                            .find_map(|(other_pos, other_bp)| {
+                                if breakpoint.0 == *other_pos {
+                                    Some(other_bp)
+                                } else {
+                                    None
+                                }
+                            });
+
+                    if let Some(found_bp) = found_bp {
+                        found_bp.kind = BreakpointKind::Log(log_message.clone());
+                    } else {
                         // We did not remove any breakpoint, hence let's toggle one.
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if matches!(&breakpoint.1.kind, BreakpointKind::Log(_)) {
                     breakpoint_set
                         .breakpoints
-                        .retain(|value| &breakpoint != value);
+                        .retain(|(other_pos, other_kind)| {
+                            &breakpoint.0 != other_pos
+                                && matches!(other_kind.kind, BreakpointKind::Standard)
+                        });
                 }
             }
         }
