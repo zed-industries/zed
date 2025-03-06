@@ -332,7 +332,7 @@ impl RenderOnce for Section {
                 .child(
                     v_flex()
                         .w_full()
-                        .rounded_md()
+                        .rounded_sm()
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .bg(section_bg)

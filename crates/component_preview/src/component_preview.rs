@@ -108,7 +108,7 @@ impl ComponentPreview {
                 v_flex()
                     .border_1()
                     .border_color(cx.theme().colors().border)
-                    .rounded_md()
+                    .rounded_sm()
                     .w_full()
                     .gap_4()
                     .py_4()

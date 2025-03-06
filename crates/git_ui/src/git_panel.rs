@@ -3216,7 +3216,7 @@ impl SplitButton {
 impl RenderOnce for SplitButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
-            .rounded_md()
+            .rounded_sm()
             .border_1()
             .border_color(cx.theme().colors().text_muted.alpha(0.12))
             .child(self.left)
