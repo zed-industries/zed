@@ -1526,7 +1526,6 @@ impl LocalWorktree {
                             this.update_abs_path_and_refresh(new_path, cx);
                         }
                     }
-                    cx.notify();
                 })
                 .ok();
             }
