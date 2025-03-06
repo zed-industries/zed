@@ -1,13 +1,10 @@
 mod tool_registry;
 mod tool_working_set;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use collections::HashMap;
 use gpui::{App, Task, WeakEntity, Window};
-use parking_lot::Mutex;
 use workspace::Workspace;
 
 pub use crate::tool_registry::*;
@@ -34,7 +31,7 @@ pub trait Tool: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        file_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
+        thread_id: Arc<str>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,

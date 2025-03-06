@@ -295,7 +295,7 @@ impl ActiveThread {
             }
             ThreadEvent::UsePendingTools => {
                 let thread = self.thread.read(cx);
-                let fs_changes = thread.fs_changes();
+                let thread_id = thread.id().0.clone();
                 let pending_tool_uses = thread
                     .pending_tool_uses()
                     .into_iter()
@@ -307,7 +307,7 @@ impl ActiveThread {
                     if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
                         let task = tool.run(
                             tool_use.input,
-                            fs_changes.clone(),
+                            thread_id.clone(),
                             self.workspace.clone(),
                             window,
                             cx,

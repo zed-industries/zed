@@ -1,12 +1,10 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use chrono::{Local, Utc};
-use collections::HashMap;
 use gpui::{App, Task, WeakEntity, Window};
-use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -42,7 +40,7 @@ impl Tool for NowTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _fs_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
+        _thread_id: Arc<str>,
         _workspace: WeakEntity<workspace::Workspace>,
         _window: &mut Window,
         _cx: &mut App,

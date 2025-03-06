@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -10,7 +9,6 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
 };
-use parking_lot::Mutex;
 
 use crate::thread::MessageId;
 use crate::thread_store::SavedMessage;
@@ -36,7 +34,6 @@ pub struct ToolUseState {
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
-    fs_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
 }
 
 impl ToolUseState {
@@ -46,7 +43,6 @@ impl ToolUseState {
             tool_uses_by_user_message: HashMap::default(),
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
-            fs_changes: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
@@ -264,10 +260,6 @@ impl ToolUseState {
                 }
             }
         }
-    }
-
-    pub fn fs_changes(&self) -> Arc<Mutex<HashMap<PathBuf, Vec<u8>>>> {
-        self.fs_changes.clone()
     }
 }
 

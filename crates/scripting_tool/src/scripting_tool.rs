@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use assistant_tool::{Tool, ToolRegistry};
 use collections::HashMap;
-use gpui::{App, AppContext as _, Task, WeakEntity, Window};
+use gpui::{App, AppContext as _, Global, Task, WeakEntity, Window};
 use mlua::{Function, Lua, MultiValue, Result, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
@@ -56,7 +56,7 @@ string being a match that was found within the file)."#.into()
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        fs_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
+        thread_id: Arc<str>,
         workspace: WeakEntity<Workspace>,
         _window: &mut Window,
         cx: &mut App,
@@ -78,12 +78,12 @@ string being a match that was found within the file)."#.into()
             Ok(root_dir) => root_dir,
             Err(err) => return Task::ready(Err(err)),
         };
-
         let input = match serde_json::from_value::<ScriptingToolInput>(input) {
             Err(err) => return Task::ready(Err(err.into())),
             Ok(input) => input,
         };
         let lua_script = input.lua_script;
+        let fs_changes = ScriptingToolFileChanges::get(thread_id, cx);
         cx.background_spawn(async move {
             let output = run_sandboxed_lua(&lua_script, fs_changes, root_dir)
                 .map_err(|err| anyhow!(format!("{err}")))?
@@ -92,6 +92,34 @@ string being a match that was found within the file)."#.into()
 
             Ok(format!("The script output the following:\n{output}"))
         })
+    }
+}
+
+// Accumulates file changes made during script execution.
+struct ScriptingToolFileChanges {
+    // Assistant thread ID that these files changes are associated with. Only file changes for one
+    // thread are supported to avoid the need for dropping these when the associated `Thread` is
+    // dropped.
+    thread_id: Arc<str>,
+    // Map from path to file contents for files changed by script execution.
+    file_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
+}
+
+impl Global for ScriptingToolFileChanges {}
+
+impl ScriptingToolFileChanges {
+    fn get(thread_id: Arc<str>, cx: &mut App) -> Arc<Mutex<HashMap<PathBuf, Vec<u8>>>> {
+        match cx.try_global::<ScriptingToolFileChanges>() {
+            Some(global) if global.thread_id == thread_id => global.file_changes.clone(),
+            _ => {
+                let file_changes = Arc::new(Mutex::new(HashMap::default()));
+                cx.set_global(ScriptingToolFileChanges {
+                    thread_id,
+                    file_changes: file_changes.clone(),
+                });
+                file_changes
+            }
+        }
     }
 }
 
