@@ -398,7 +398,7 @@ fn render_markdown_code_block(
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
-        .rounded_md()
+        .rounded_sm()
         .child(body)
         .child(
             div()
