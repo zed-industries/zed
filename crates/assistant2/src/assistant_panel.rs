@@ -1023,12 +1023,7 @@ impl Render for AssistantPanel {
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .child(
-                        h_flex()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(self.message_editor.clone()),
-                    )
+                    .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
