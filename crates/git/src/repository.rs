@@ -862,6 +862,7 @@ pub struct FakeGitRepositoryState {
     pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    pub simulated_index_write_error_message: Option<String>,
 }
 
 impl FakeGitRepository {
@@ -881,6 +882,7 @@ impl FakeGitRepositoryState {
             statuses: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
+            simulated_index_write_error_message: None,
         }
     }
 }
@@ -900,6 +902,9 @@ impl GitRepository for FakeGitRepository {
 
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()> {
         let mut state = self.state.lock();
+        if let Some(message) = state.simulated_index_write_error_message.clone() {
+            return Err(anyhow::anyhow!(message));
+        }
         if let Some(content) = content {
             state.index_contents.insert(path.clone(), content);
         } else {

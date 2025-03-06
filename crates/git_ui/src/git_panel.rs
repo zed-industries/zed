@@ -307,6 +307,13 @@ impl GitPanel {
                         this.active_repository = git_store.read(cx).active_repository();
                         this.schedule_update(true, window, cx);
                     }
+                    GitEvent::IndexWriteError(error) => {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_error(error, cx);
+                            })
+                            .ok();
+                    }
                 },
             )
             .detach();
