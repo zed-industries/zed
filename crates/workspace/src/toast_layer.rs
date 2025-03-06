@@ -3,7 +3,7 @@ use std::time::Duration;
 use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::prelude::*;
 
-const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(1000);
+const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(3000);
 
 pub trait ToastView: ManagedView {}
 
@@ -154,8 +154,9 @@ impl Render for ToastLayer {
 
         div().absolute().size_full().bottom_0().left_0().child(
             v_flex()
+                .absolute()
                 .w_full()
-                .top_12()
+                .bottom_10()
                 .flex()
                 .flex_col()
                 .items_center()

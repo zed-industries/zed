@@ -61,7 +61,7 @@ impl Render for StatusToast {
             .gap_2()
             .py_1p5()
             .px_2p5()
-            // .when(*has_icon, |this| this.pl_2())
+            .flex_none()
             .bg(cx.theme().colors().surface_background)
             .shadow_lg()
             .items_center()
