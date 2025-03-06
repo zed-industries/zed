@@ -826,6 +826,7 @@ pub struct Workspace {
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, PeerId>,
     window_edited: bool,
+    dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
@@ -1128,6 +1129,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             dispatching_keystrokes: Default::default(),
             window_edited: false,
+            dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
             app_state,
@@ -3395,13 +3397,11 @@ impl Workspace {
                 if *pane == self.active_pane {
                     self.active_item_path_changed(window, cx);
                 }
-                self.update_window_edited(window, cx);
                 serialize_workspace = false;
             }
             pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item_id } => {
                 cx.emit(Event::ActiveItemChanged);
-                self.update_window_edited(window, cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
                     if entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
@@ -3858,13 +3858,44 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
-        let is_edited = !self.project.read(cx).is_disconnected(cx)
-            && self
-                .items(cx)
-                .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
+        let is_edited = !self.project.read(cx).is_disconnected(cx) && !self.dirty_items.is_empty();
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
             window.set_window_edited(self.window_edited)
+        }
+    }
+
+    fn update_item_dirty_state(
+        &mut self,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let is_dirty = item.is_dirty(cx);
+        let item_id = item.item_id();
+        let was_dirty = self.dirty_items.contains_key(&item_id);
+        if is_dirty == was_dirty {
+            return;
+        }
+        if was_dirty {
+            self.dirty_items.remove(&item_id);
+            self.update_window_edited(window, cx);
+            return;
+        }
+        if let Some(window_handle) = window.window_handle().downcast::<Self>() {
+            let s = item.on_release(
+                cx,
+                Box::new(move |cx| {
+                    window_handle
+                        .update(cx, |this, window, cx| {
+                            this.dirty_items.remove(&item_id);
+                            this.update_window_edited(window, cx)
+                        })
+                        .ok();
+                }),
+            );
+            self.dirty_items.insert(item_id, s);
+            self.update_window_edited(window, cx);
         }
     }
 
