@@ -949,10 +949,6 @@ struct Args {
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
 
-    /// The dock action to perform. This is used on Windows only.
-    #[arg(long)]
-    dock_action: Option<usize>,
-
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
@@ -960,7 +956,14 @@ struct Args {
     /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]
     #[cfg(target_os = "windows")]
+    #[arg(hide = true)]
     foreground: bool,
+
+    /// The dock action to perform. This is used on Windows only.
+    #[arg(long)]
+    #[cfg(target_os = "windows")]
+    #[arg(hide = true)]
+    dock_action: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
