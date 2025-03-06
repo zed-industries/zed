@@ -2222,6 +2222,7 @@ impl GitPanel {
         // } else {
         Some(
             IconButton::new("co-authors", IconName::Person)
+                .shape(ui::IconButtonShape::Square)
                 .icon_color(Color::Disabled)
                 .selected_icon_color(Color::Selected)
                 .toggle_state(self.add_coauthors)
@@ -2313,10 +2314,7 @@ impl GitPanel {
 
         let footer_size = px(32.);
         let gap = px(8.0);
-
         let max_height = window.line_height() * 5. + gap + footer_size;
-
-        let expand_button_size = px(16.);
 
         let git_panel = cx.entity().clone();
         let display_name = SharedString::from(Arc::from(
@@ -2338,9 +2336,9 @@ impl GitPanel {
                     .id("commit-editor-container")
                     .relative()
                     .h(max_height)
-                    // .w_full()
-                    // .border_t_1()
-                    // .border_color(cx.theme().colors().border)
+                    .w_full()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .bg(cx.theme().colors().editor_background)
                     .cursor_text()
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -2353,8 +2351,7 @@ impl GitPanel {
                             .bottom_0()
                             .left_0()
                             .w_full()
-                            .pl_1()
-                            .pr_2()
+                            .px_2()
                             .h(footer_size)
                             .flex_none()
                             .justify_between()
@@ -2388,11 +2385,10 @@ impl GitPanel {
                     .child(
                         div()
                             .absolute()
-                            .top_1()
+                            .top_2()
                             .right_2()
                             .opacity(0.5)
                             .hover(|this| this.opacity(1.0))
-                            .w(expand_button_size)
                             .child(
                                 panel_icon_button("expand-commit-editor", IconName::Maximize)
                                     .icon_size(IconSize::Small)
