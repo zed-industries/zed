@@ -1,7 +1,13 @@
 use std::{
+    cell::RefCell,
     fmt::Debug,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, mpsc::SyncSender, Arc},
+    rc::Rc,
+    sync::{
+        atomic::AtomicBool,
+        mpsc::{Receiver, Sender, SyncSender},
+        Arc,
+    },
 };
 
 use anyhow::{Context, Result};
@@ -18,11 +24,12 @@ use windows::{
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, GetDesktopWindow, GetMessageW,
                 GetWindowLongPtrW, GetWindowRect, MessageBoxW, PostMessageW, PostQuitMessage,
-                RegisterClassW, SendMessageW, SetWindowLongPtrW, SystemParametersInfoW, CS_HREDRAW,
-                CS_VREDRAW, GWLP_USERDATA, MB_ICONERROR, MB_SYSTEMMODAL, MSG,
-                SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
-                WM_CREATE, WM_DESTROY, WM_PAINT, WM_USER, WNDCLASSW, WS_CAPTION, WS_CHILD,
-                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+                RegisterClassW, SendMessageW, SetWindowLongPtrW, SetWindowTextW,
+                SystemParametersInfoW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+                MB_ICONERROR, MB_SYSTEMMODAL, MSG, SPI_GETICONTITLELOGFONT,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WM_CREATE, WM_DESTROY,
+                WM_NCCREATE, WM_PAINT, WM_USER, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOPMOST,
+                WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -58,7 +65,7 @@ macro_rules! return_if_other_failed {
     };
 }
 
-fn update(app_dir: &Path, hwnd: isize, stop_flag: Arc<AtomicBool>) -> Result<JobResult> {
+fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
     let install_dir = app_dir.join("install");
     let update_dir = app_dir.join("updates");
     let hwnd = HWND(hwnd as _);
@@ -67,9 +74,6 @@ fn update(app_dir: &Path, hwnd: isize, stop_flag: Arc<AtomicBool>) -> Result<Job
     let mut status =
         UpdateStatus::RemoveOld(vec![app_dir.join("Zed.exe"), app_dir.join("bin\\zed.exe")]);
     while start.elapsed().as_secs() < 10 {
-        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            return Ok(JobResult::OtherJobFailed);
-        }
         match status {
             UpdateStatus::RemoveOld(old_files) => {
                 for _ in 0..2 {
@@ -206,7 +210,13 @@ fn update(app_dir: &Path, hwnd: isize, stop_flag: Arc<AtomicBool>) -> Result<Job
     }
 
     println!("update finished");
-    Ok(JobResult::Finished)
+    // Ok(())
+    Err(anyhow::anyhow!("Failed to update Zed, timeout"))
+}
+
+enum WorkResult {
+    Finished,
+    Failed(String),
 }
 
 fn run() -> Result<()> {
@@ -219,38 +229,53 @@ fn run() -> Result<()> {
         .parent()
         .context("No parent directory")?
         .to_path_buf();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let (hwnd_tx, hwnd_rx) = std::sync::mpsc::sync_channel(1);
+
     log::info!("======= Starting Zed update =======");
-    std::thread::spawn({
-        let result_sender = tx.clone();
-        move || {
-            result_sender.send(run_dialog_window(hwnd_tx)).ok();
-        }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let hwnd = create_dialog_window(rx)?.0 as isize;
+    std::thread::spawn(move || {
+        tx.send(update(app_dir.as_path(), hwnd));
+        unsafe { PostMessageW(HWND(hwnd as _), WM_TERMINATE, WPARAM(0), LPARAM(0)) };
     });
-    println!("1");
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    let hwnd = hwnd_rx.recv().unwrap()?;
-    println!("2");
-    std::thread::spawn({
-        let flag = stop_flag.clone();
-        move || tx.send(update(app_dir.as_path(), hwnd, flag)).ok()
-    });
-    println!("3");
-    for result in rx.iter() {
-        println!("result: {:?}", result);
-        if let Err(ref e) = result {
-            log::error!("Error: Zed update failed, {:?}", e);
-            stop_all_threads(hwnd, &stop_flag);
-            show_result(
-                format!("Error: {:?}", e),
-                "Error: Zed update failed".to_owned(),
-            );
-            break;
+    unsafe {
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).as_bool() {
+            DispatchMessageW(&message);
         }
     }
-
     Ok(())
+    // let (tx, rx) = std::sync::mpsc::channel();
+    // let (hwnd_tx, hwnd_rx) = std::sync::mpsc::sync_channel(1);
+
+    // std::thread::spawn({
+    //     let result_sender = tx.clone();
+    //     move || {
+    //         result_sender.send(run_dialog_window(hwnd_tx)).ok();
+    //     }
+    // });
+    // println!("1");
+    // let stop_flag = Arc::new(AtomicBool::new(false));
+    // let hwnd = hwnd_rx.recv().unwrap()?;
+    // println!("2");
+    // std::thread::spawn({
+    //     let flag = stop_flag.clone();
+    //     move || tx.send(update(app_dir.as_path(), hwnd, flag)).ok()
+    // });
+    // println!("3");
+    // for result in rx.iter() {
+    //     println!("result: {:?}", result);
+    //     if let Err(ref e) = result {
+    //         log::error!("Error: Zed update failed, {:?}", e);
+    //         stop_all_threads(hwnd, &stop_flag);
+    //         show_result(
+    //             format!("Error: {:?}", e),
+    //             "Error: Zed update failed".to_owned(),
+    //         );
+    //         break;
+    //     }
+    // }
+
+    // Ok(())
 }
 
 fn stop_all_threads(hwnd: isize, stop_flag: &Arc<AtomicBool>) {
@@ -260,7 +285,14 @@ fn stop_all_threads(hwnd: isize, stop_flag: &Arc<AtomicBool>) {
     stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn create_dialog_window() -> Result<HWND> {
+#[repr(C)]
+#[derive(Debug)]
+struct DialogInfo {
+    rx: Receiver<Result<()>>,
+    progress_bar: isize,
+}
+
+fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWND> {
     unsafe {
         let class_name = windows::core::w!("ProgressBarJunkui");
         let wc = WNDCLASSW {
@@ -274,6 +306,10 @@ fn create_dialog_window() -> Result<HWND> {
         GetWindowRect(GetDesktopWindow(), &mut rect)?;
         let width = 400;
         let height = 150;
+        let info = Box::new(RefCell::new(DialogInfo {
+            rx: receiver,
+            progress_bar: 0,
+        }));
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
@@ -287,29 +323,29 @@ fn create_dialog_window() -> Result<HWND> {
             None,
             None,
             None,
-            None,
+            Some(Box::into_raw(info) as _),
         )?;
         Ok(hwnd)
     }
 }
 
-fn run_dialog_window(hwnd_sender: SyncSender<Result<isize>>) -> Result<JobResult> {
-    let hwnd = create_dialog_window();
-    match hwnd {
-        Ok(hwnd) => hwnd_sender.send(Ok(hwnd.0 as isize))?,
-        Err(e) => {
-            hwnd_sender.send(Err(e))?;
-            return Ok(JobResult::OtherJobFailed);
-        }
-    }
-    unsafe {
-        let mut message = MSG::default();
-        while GetMessageW(&mut message, None, 0, 0).as_bool() {
-            DispatchMessageW(&message);
-        }
-    }
-    Ok(JobResult::Finished)
-}
+// fn run_dialog_window(hwnd_sender: SyncSender<Result<isize>>) -> Result<JobResult> {
+//     let hwnd = create_dialog_window();
+//     match hwnd {
+//         Ok(hwnd) => hwnd_sender.send(Ok(hwnd.0 as isize))?,
+//         Err(e) => {
+//             hwnd_sender.send(Err(e))?;
+//             return Ok(JobResult::OtherJobFailed);
+//         }
+//     }
+//     unsafe {
+//         let mut message = MSG::default();
+//         while GetMessageW(&mut message, None, 0, 0).as_bool() {
+//             DispatchMessageW(&message);
+//         }
+//     }
+//     Ok(JobResult::Finished)
+// }
 
 fn init_log(helper_dir: &Path) -> Result<()> {
     simplelog::WriteLogger::init(
@@ -357,6 +393,15 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_NCCREATE => {
+            println!("WM_NCCREATE");
+            log::info!("WM_NCCREATE");
+            let create_struct = lparam.0 as *const CREATESTRUCTW;
+            let info = (*create_struct).lpCreateParams as *mut RefCell<DialogInfo>;
+            let info = Box::from_raw(info);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(info) as _);
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
         WM_CREATE => {
             println!("WM_CREATE");
             log::info!("WM_CREATE");
@@ -384,7 +429,9 @@ unsafe extern "system" fn wnd_proc(
                 make_lparam!(0, TOTAL_JOBS * 10),
             );
             SendMessageW(progress_bar, PBM_SETSTEP, WPARAM(10), LPARAM(0));
-            let data = Box::new(progress_bar.0 as isize);
+            let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
+            let data = Box::from_raw(raw);
+            data.borrow_mut().progress_bar = progress_bar.0 as isize;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _);
             LRESULT(0)
         }
@@ -423,12 +470,26 @@ unsafe extern "system" fn wnd_proc(
         WM_JOB_UPDATED => {
             log::info!("WM_JOB_UPDATED");
             println!("WM_JOB_UPDATED");
-            let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut isize };
-            let progress_bar = HWND(*raw as _);
-            SendMessageW(progress_bar, PBM_STEPIT, WPARAM(0), LPARAM(0))
+            // let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut isize };
+            // let progress_bar = HWND(*raw as _);
+            let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
+            let data = Box::from_raw(raw);
+            let progress_bar = data.borrow().progress_bar;
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _);
+            SendMessageW(HWND(progress_bar as _), PBM_STEPIT, WPARAM(0), LPARAM(0))
         }
-        WM_DESTROY | WM_TERMINATE => {
-            PostQuitMessage(-1);
+        WM_TERMINATE => {
+            let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
+            let data = Box::from_raw(raw);
+            if let Ok(x) = data.borrow_mut().rx.recv() {
+                println!("recv: {:?}<-------", x);
+            }
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _);
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            PostQuitMessage(0);
 
             LRESULT(0)
         }
