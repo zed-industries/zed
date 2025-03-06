@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/anthropic",
+    "crates/askpass",
     "crates/assets",
     "crates/assistant",
     "crates/assistant2",
@@ -207,6 +208,7 @@ edition = "2021"
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
+askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }

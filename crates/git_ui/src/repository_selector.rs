@@ -1,6 +1,5 @@
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
@@ -13,10 +12,6 @@ use ui::{prelude::*, ListItem, ListItemSpacing};
 
 pub struct RepositorySelector {
     picker: Entity<Picker<RepositorySelectorDelegate>>,
-    /// The task used to update the picker's matches when there is a change to
-    /// the repository list.
-    update_matches_task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl RepositorySelector {
@@ -53,32 +48,7 @@ impl RepositorySelector {
                 .max_height(Some(rems(20.).into()))
         });
 
-        let _subscriptions =
-            vec![cx.subscribe_in(&git_store, window, Self::handle_project_git_event)];
-
-        RepositorySelector {
-            picker,
-            update_matches_task: None,
-            _subscriptions,
-        }
-    }
-
-    fn handle_project_git_event(
-        &mut self,
-        git_store: &Entity<GitStore>,
-        _event: &project::git::GitEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // TODO handle events individually
-        let task = self.picker.update(cx, |this, cx| {
-            let query = this.query(cx);
-            this.delegate.repository_entries = git_store.update(cx, |git_store, cx| {
-                deduplicated_repository_entries(git_store, cx)
-            });
-            this.delegate.update_matches(query, window, cx)
-        });
-        self.update_matches_task = Some(task);
+        RepositorySelector { picker }
     }
 }
 
