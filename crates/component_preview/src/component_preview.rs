@@ -373,36 +373,44 @@ impl Render for ComponentPreview {
             .px_2()
             .bg(cx.theme().colors().editor_background)
             .child(
-                Button::new("toast-test", "Click me!").on_click(cx.listener({
-                    move |this, _, window, cx| {
-                        this.test_status_toast(window, cx);
-                        cx.notify();
-                    }
-                })),
-            )
-            .child(
-                uniform_list(
-                    cx.entity().clone(),
-                    "component-nav",
-                    sidebar_entries.len(),
-                    move |this, range, _window, cx| {
-                        range
-                            .map(|ix| {
-                                this.render_sidebar_entry(
-                                    ix,
-                                    &sidebar_entries[ix],
-                                    ix == this.selected_index,
-                                    cx,
-                                )
-                            })
-                            .collect()
-                    },
-                )
-                .track_scroll(self.nav_scroll_handle.clone())
-                .pt_4()
-                .w(px(240.))
-                .h_full()
-                .flex_grow(),
+                v_flex()
+                    .h_full()
+                    .child(
+                        uniform_list(
+                            cx.entity().clone(),
+                            "component-nav",
+                            sidebar_entries.len(),
+                            move |this, range, _window, cx| {
+                                range
+                                    .map(|ix| {
+                                        this.render_sidebar_entry(
+                                            ix,
+                                            &sidebar_entries[ix],
+                                            ix == this.selected_index,
+                                            cx,
+                                        )
+                                    })
+                                    .collect()
+                            },
+                        )
+                        .track_scroll(self.nav_scroll_handle.clone())
+                        .pt_4()
+                        .w(px(240.))
+                        .h_full()
+                        .flex_1(),
+                    )
+                    .child(
+                        div().w_full().pb_4().child(
+                            Button::new("toast-test", "Launch Toast")
+                                .on_click(cx.listener({
+                                    move |this, _, window, cx| {
+                                        this.test_status_toast(window, cx);
+                                        cx.notify();
+                                    }
+                                }))
+                                .full_width(),
+                        ),
+                    ),
             )
             .child(
                 v_flex()
