@@ -4,8 +4,8 @@ use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    pulsating_between, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription,
-    TextStyle, WeakEntity,
+    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
+    WeakEntity,
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
@@ -16,7 +16,7 @@ use text::Bias;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Switch,
-    TintColor, Tooltip,
+    Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
@@ -298,7 +298,7 @@ impl Render for MessageEditor {
         let linux = platform == PlatformStyle::Linux;
         let windows = platform == PlatformStyle::Windows;
         let button_width = if linux || windows || vim_mode_enabled {
-            px(92.)
+            px(82.)
         } else {
             px(64.)
         };
@@ -448,93 +448,50 @@ impl Render for MessageEditor {
                                     )
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
-                                            if is_streaming_completion {
-                                                ButtonLike::new("cancel-generation")
-                                                    .width(button_width.into())
-                                                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                                                    .child(
-                                                        h_flex()
-                                                            .w_full()
-                                                            .justify_between()
-                                                            .child(
-                                                                Label::new("Cancel")
-                                                                    .size(LabelSize::Small)
-                                                                    .with_animation(
-                                                                        "pulsating-label",
-                                                                        Animation::new(
-                                                                            Duration::from_secs(2),
-                                                                        )
-                                                                        .repeat()
-                                                                        .with_easing(
-                                                                            pulsating_between(
-                                                                                0.4, 0.8,
-                                                                            ),
-                                                                        ),
-                                                                        |label, delta| {
-                                                                            label.alpha(delta)
-                                                                        },
-                                                                    ),
+                                            ButtonLike::new("submit-message")
+                                                .width(button_width.into())
+                                                .style(ButtonStyle::Filled)
+                                                .disabled(
+                                                    is_editor_empty
+                                                        || !is_model_selected
+                                                        || is_streaming_completion,
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .w_full()
+                                                        .justify_between()
+                                                        .child(
+                                                            Label::new("Submit")
+                                                                .size(LabelSize::Small)
+                                                                .color(submit_label_color),
+                                                        )
+                                                        .children(
+                                                            KeyBinding::for_action_in(
+                                                                &Chat,
+                                                                &focus_handle,
+                                                                window,
+                                                                cx,
                                                             )
-                                                            .children(
-                                                                KeyBinding::for_action_in(
-                                                                    &editor::actions::Cancel,
-                                                                    &focus_handle,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .map(|binding| {
-                                                                    binding.into_any_element()
-                                                                }),
-                                                            ),
-                                                    )
-                                                    .on_click(move |_event, window, cx| {
-                                                        focus_handle.dispatch_action(
-                                                            &editor::actions::Cancel,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                            } else {
-                                                ButtonLike::new("submit-message")
-                                                    .width(button_width.into())
-                                                    .style(ButtonStyle::Filled)
-                                                    .disabled(is_editor_empty || !is_model_selected)
-                                                    .child(
-                                                        h_flex()
-                                                            .w_full()
-                                                            .justify_between()
-                                                            .child(
-                                                                Label::new("Submit")
-                                                                    .size(LabelSize::Small)
-                                                                    .color(submit_label_color),
-                                                            )
-                                                            .children(
-                                                                KeyBinding::for_action_in(
-                                                                    &Chat,
-                                                                    &focus_handle,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .map(|binding| {
-                                                                    binding.into_any_element()
-                                                                }),
-                                                            ),
-                                                    )
-                                                    .on_click(move |_event, window, cx| {
-                                                        focus_handle
-                                                            .dispatch_action(&Chat, window, cx);
-                                                    })
-                                                    .when(is_editor_empty, |button| {
-                                                        button.tooltip(Tooltip::text(
-                                                            "Type a message to submit",
-                                                        ))
-                                                    })
-                                                    .when(!is_model_selected, |button| {
-                                                        button.tooltip(Tooltip::text(
-                                                            "Select a model to continue",
-                                                        ))
-                                                    })
-                                            },
+                                                        ),
+                                                )
+                                                .on_click(move |_event, window, cx| {
+                                                    focus_handle.dispatch_action(&Chat, window, cx);
+                                                })
+                                                .when(is_editor_empty, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Type a message to submit",
+                                                    ))
+                                                })
+                                                .when(is_streaming_completion, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Cancel to submit a new message",
+                                                    ))
+                                                })
+                                                .when(!is_model_selected, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Select a model to continue",
+                                                    ))
+                                                }),
                                         ),
                                     ),
                             ),
