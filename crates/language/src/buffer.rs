@@ -401,17 +401,16 @@ pub enum AutoindentMode {
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
-        /// The original start column of each insertion, if it was
-        /// copied from elsewhere.
+        /// The original indentation column of the first line of each
+        /// insertion, if it has been copied.
         ///
-        /// Knowing this start column makes it possible to preserve the
-        /// relative indentation of every line in the insertion from
-        /// when it was copied.
+        /// Knowing this makes it possible to preserve the relative indentation
+        /// of every line in the insertion from when it was copied.
         ///
-        /// If the start column is `a`, and the first line of insertion
+        /// If the original indent column is `a`, and the first line of insertion
         /// is then auto-indented to column `b`, then every other line of
         /// the insertion will be auto-indented to column `b - a`
-        original_start_columns: Vec<u32>,
+        original_indent_columns: Vec<Option<u32>>,
     },
 }
 
@@ -2206,15 +2205,20 @@ impl Buffer {
 
                     let mut original_indent_column = None;
                     if let AutoindentMode::Block {
-                        original_start_columns,
+                        original_indent_columns,
                     } = &mode
                     {
                         original_indent_column = Some(
-                            original_start_columns.get(ix).copied().unwrap_or(0)
-                                + indent_size_for_text(
-                                    new_text[range_of_insertion_to_indent.clone()].chars(),
-                                )
-                                .len,
+                            original_indent_columns
+                                .get(ix)
+                                .copied()
+                                .flatten()
+                                .unwrap_or_else(|| {
+                                    indent_size_for_text(
+                                        new_text[range_of_insertion_to_indent.clone()].chars(),
+                                    )
+                                    .len
+                                }),
                         );
 
                         // Avoid auto-indenting the line after the edit.

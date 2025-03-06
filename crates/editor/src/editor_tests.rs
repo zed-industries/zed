@@ -4931,6 +4931,34 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
             )
         );
     "});
+
+    // Copy an indented block, starting mid-line
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(),
+            somethin«g(
+                e,
+                f
+            )ˇ»
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    // Paste it on a line with a lower indent level
+    cx.update_editor(|e, window, cx| e.move_to_end(&Default::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+            something(
+                e,
+                f
+            )
+        );
+        g(
+            e,
+            f
+        )ˇ"});
 }
 
 #[gpui::test]
