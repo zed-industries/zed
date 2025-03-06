@@ -8,7 +8,7 @@ use util::ResultExt as _;
 
 use crate::LspStore;
 
-const CLANGD_SERVER_NAME: &str = "clangd";
+pub const CLANGD_SERVER_NAME: &str = "clangd";
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

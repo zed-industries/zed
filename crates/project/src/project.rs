@@ -1,5 +1,5 @@
 pub mod buffer_store;
-mod clangd_ext;
+pub mod clangd_ext;
 mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
