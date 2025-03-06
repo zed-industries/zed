@@ -2951,6 +2951,10 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                         ..lsp::CodeActionOptions::default()
                     },
                 )),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["_the/command".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
                 ..lsp::ServerCapabilities::default()
             },
             ..FakeLspAdapter::default()
