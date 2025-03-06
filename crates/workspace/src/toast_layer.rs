@@ -1,9 +1,10 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::prelude::*;
 
 const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(3000);
+const MINIMUM_RESUME_DURATION: Duration = Duration::from_millis(800);
 
 pub trait ToastView: ManagedView {}
 
@@ -23,9 +24,15 @@ pub struct ActiveToast {
     focus_handle: FocusHandle,
 }
 
+struct DismissTimer {
+    instant_started: Instant,
+    _task: Task<()>,
+}
+
 pub struct ToastLayer {
     active_toast: Option<ActiveToast>,
-    dismiss_timer: Option<Task<()>>,
+    duration_remaining: Option<Duration>,
+    dismiss_timer: Option<DismissTimer>,
 }
 
 impl Default for ToastLayer {
@@ -38,6 +45,7 @@ impl ToastLayer {
     pub fn new() -> Self {
         Self {
             active_toast: None,
+            duration_remaining: None,
             dismiss_timer: None,
         }
     }
@@ -103,6 +111,20 @@ impl ToastLayer {
         self.active_toast.is_some()
     }
 
+    fn pause_dismiss_timer(&mut self) {
+        let Some(dismiss_timer) = self.dismiss_timer.take() else {
+            return;
+        };
+        let Some(duration_remaining) = self.duration_remaining.as_mut() else {
+            return;
+        };
+        *duration_remaining =
+            duration_remaining.saturating_sub(dismiss_timer.instant_started.elapsed());
+        if *duration_remaining < MINIMUM_RESUME_DURATION {
+            *duration_remaining = MINIMUM_RESUME_DURATION;
+        }
+    }
+
     /// Starts a timer to automatically dismiss the toast after the specified duration
     pub fn start_dismiss_timer(
         &mut self,
@@ -112,6 +134,7 @@ impl ToastLayer {
     ) {
         self.clear_dismiss_timer(cx);
 
+        let instant_started = std::time::Instant::now();
         let task = cx.spawn(|this, mut cx| async move {
             cx.background_executor().timer(duration).await;
 
@@ -124,17 +147,19 @@ impl ToastLayer {
             }
         });
 
-        self.dismiss_timer = Some(task);
+        self.duration_remaining = Some(duration);
+        self.dismiss_timer = Some(DismissTimer {
+            instant_started,
+            _task: task,
+        });
         cx.notify();
     }
 
     /// Restarts the dismiss timer with a new duration
-    pub fn restart_dismiss_timer(
-        &mut self,
-        duration: Duration,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn restart_dismiss_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(duration) = self.duration_remaining else {
+            return;
+        };
         self.start_dismiss_timer(duration, window, cx);
         cx.notify();
     }
@@ -147,13 +172,19 @@ impl ToastLayer {
 }
 
 impl Render for ToastLayer {
-    fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(active_toast) = &self.active_toast else {
             return div();
         };
+        let handle = cx.weak_entity();
+        let duration_remaining = self
+            .duration_remaining
+            .as_ref()
+            .map(|duration| duration.as_millis());
 
         div().absolute().size_full().bottom_0().left_0().child(
             v_flex()
+                .id("toast-layer-container")
                 .absolute()
                 .w_full()
                 .bottom_10()
@@ -161,7 +192,35 @@ impl Render for ToastLayer {
                 .flex_col()
                 .items_center()
                 .track_focus(&active_toast.focus_handle)
-                .child(h_flex().occlude().child(active_toast.toast.view())),
+                .child(
+                    div()
+                        .absolute()
+                        .top_8()
+                        .left_8()
+                        .text_3xl()
+                        .child(format!("{:?}", duration_remaining)),
+                )
+                .child(
+                    h_flex()
+                        .id("active-toast-container")
+                        .occlude()
+                        .on_hover(move |hover_start, window, cx| {
+                            let Some(this) = handle.upgrade() else {
+                                return;
+                            };
+                            if *hover_start {
+                                this.update(cx, |this, _| this.pause_dismiss_timer());
+                            } else {
+                                this.update(cx, |this, cx| this.restart_dismiss_timer(window, cx));
+                            }
+                            cx.stop_propagation();
+                        })
+                        .on_click(|_, _, cx| {
+                            // todo!("if clicking on the toast does nothing, look no further")
+                            cx.stop_propagation();
+                        })
+                        .child(active_toast.toast.view()),
+                ),
         )
     }
 }

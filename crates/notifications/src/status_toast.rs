@@ -6,7 +6,6 @@ use workspace::ToastView;
 #[component(scope = "Notification")]
 pub struct StatusToast {
     id: ElementId,
-    // children: SmallVec<[AnyElement; 2]>,
     icon: Option<IconName>,
     label: SharedString,
     action: Option<SharedString>,
@@ -25,6 +24,7 @@ impl StatusToast {
             focus_handle,
         }
     }
+
     pub fn with_icon(
         id: impl Into<ElementId>,
         icon: IconName,
@@ -48,8 +48,6 @@ impl StatusToast {
 
 impl Render for StatusToast {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // let has_icon = &self.icon.is_some();
-
         h_flex()
             .id(self.id.clone())
             .elevation_3(cx)
