@@ -2181,13 +2181,22 @@ impl GitPanel {
 
     pub(crate) fn render_generate_commit_message_button(&self, cx: &Context<Self>) -> AnyElement {
         if self.generate_commit_message_task.is_some() {
-            return Icon::new(IconName::ArrowCircle)
-                .size(IconSize::XSmall)
-                .color(Color::Info)
-                .with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+            return h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Info)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+                .child(
+                    Label::new("Generating Commit...")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                 )
                 .into_any_element();
         }
