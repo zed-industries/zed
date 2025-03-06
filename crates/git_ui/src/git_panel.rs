@@ -1391,6 +1391,15 @@ impl GitPanel {
         Some(format!("{} {}", action_text, file_name))
     }
 
+    fn generate_commit_message_action(
+        &mut self,
+        _: &git::GenerateCommitMessage,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.generate_commit_message(cx);
+    }
+
     /// Generates a commit message using an LLM.
     fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
@@ -2135,7 +2144,11 @@ impl GitPanel {
 
         IconButton::new("generate-commit-message", IconName::ZedAssistant)
             .shape(ui::IconButtonShape::Square)
-            .tooltip(move |_, cx| Tooltip::simple("Generate commit message", cx))
+            .tooltip(Tooltip::for_action_title_in(
+                "Generate commit message",
+                &git::GenerateCommitMessage,
+                &self.commit_editor.focus_handle(cx),
+            ))
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 this.generate_commit_message(cx);
             }))
@@ -2942,6 +2955,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::restore_tracked_files))
             .on_action(cx.listener(Self::clean_all))
             .on_action(cx.listener(Self::expand_commit_editor))
+            .on_action(cx.listener(Self::generate_commit_message_action))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
