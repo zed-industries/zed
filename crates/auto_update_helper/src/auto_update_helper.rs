@@ -2,14 +2,14 @@ use std::{
     fmt::Debug,
     fs::File,
     path::{Path, PathBuf},
-    sync::mpsc::{Receiver, Sender, SyncSender},
+    sync::mpsc::SyncSender,
 };
 
 use anyhow::{Context, Result};
 use windows::{
     core::HSTRING,
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Foundation::{SetLastError, HWND, LPARAM, LRESULT, RECT, WIN32_ERROR, WPARAM},
         Graphics::Gdi::{
             BeginPaint, CreateFontW, DeleteObject, EndPaint, ReleaseDC, SelectObject, TextOutW,
             FW_NORMAL, LOGFONTW, PAINTSTRUCT,
@@ -22,8 +22,8 @@ use windows::{
                 RegisterClassW, SendMessageW, SetWindowLongPtrW, SystemParametersInfoW, CS_HREDRAW,
                 CS_VREDRAW, GWLP_USERDATA, MB_ICONERROR, MB_SYSTEMMODAL, MSG,
                 SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
-                WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_PAINT, WM_USER, WNDCLASSW, WS_CAPTION,
-                WS_CHILD, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+                WM_CREATE, WM_DESTROY, WM_PAINT, WM_USER, WNDCLASSW, WS_CAPTION, WS_CHILD,
+                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -66,7 +66,7 @@ enum UpdateStatus {
     Done,
 }
 
-fn update(log: &mut File, app_dir: &Path, hwnd: isize) -> Result<()> {
+fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
     let install_dir = app_dir.join("install");
     let update_dir = app_dir.join("updates");
     let hwnd = HWND(hwnd as _);
@@ -82,14 +82,14 @@ fn update(log: &mut File, app_dir: &Path, hwnd: isize) -> Result<()> {
                     if old_file.exists() {
                         let result = std::fs::remove_file(&old_file);
                         if let Err(error) = result {
-                            write_to_log_file(
-                                log,
-                                format!(
-                                    "Failed to remove old file {}: {:?}",
-                                    old_file.display(),
-                                    error
-                                ),
-                            );
+                            // write_to_log_file(
+                            //     log,
+                            //     format!(
+                            //         "Failed to remove old file {}: {:?}",
+                            //         old_file.display(),
+                            //         error
+                            //     ),
+                            // );
                         } else {
                             sccess.push(old_file);
                             unsafe {
@@ -127,15 +127,15 @@ fn update(log: &mut File, app_dir: &Path, hwnd: isize) -> Result<()> {
                     if new_file.exists() {
                         let result = std::fs::copy(&new_file, &old_file);
                         if let Err(error) = result {
-                            write_to_log_file(
-                                log,
-                                format!(
-                                    "Failed to copy new file {} to {}: {:?}",
-                                    new_file.display(),
-                                    old_file.display(),
-                                    error
-                                ),
-                            );
+                            // write_to_log_file(
+                            //     log,
+                            //     format!(
+                            //         "Failed to copy new file {} to {}: {:?}",
+                            //         new_file.display(),
+                            //         old_file.display(),
+                            //         error
+                            //     ),
+                            // );
                         } else {
                             sccess.push((new_file, old_file));
                             unsafe {
@@ -165,10 +165,10 @@ fn update(log: &mut File, app_dir: &Path, hwnd: isize) -> Result<()> {
             UpdateStatus::DeleteInstall => {
                 let result = std::fs::remove_dir_all(&install_dir);
                 if let Err(error) = result {
-                    write_to_log_file(
-                        log,
-                        format!("Failed to remove install directory: {:?}", error),
-                    );
+                    // write_to_log_file(
+                    //     log,
+                    //     format!("Failed to remove install directory: {:?}", error),
+                    // );
                     continue;
                 }
                 status = UpdateStatus::DeleteUpdates;
@@ -180,10 +180,10 @@ fn update(log: &mut File, app_dir: &Path, hwnd: isize) -> Result<()> {
             UpdateStatus::DeleteUpdates => {
                 let result = std::fs::remove_dir_all(&update_dir);
                 if let Err(error) = result {
-                    write_to_log_file(
-                        log,
-                        format!("Failed to remove updates directory: {:?}", error),
-                    );
+                    // write_to_log_file(
+                    //     log,
+                    //     format!("Failed to remove updates directory: {:?}", error),
+                    // );
                     continue;
                 }
                 status = UpdateStatus::Done;
@@ -193,16 +193,14 @@ fn update(log: &mut File, app_dir: &Path, hwnd: isize) -> Result<()> {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
             UpdateStatus::Done => {
-                let ret = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
-                write_to_log_file(log, format!("Starting Zed: {:?}", ret));
+                let _ = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
                 break;
             }
         }
     }
     if status != UpdateStatus::Done {
-        return Err(anyhow::anyhow!("Failed to update Zed"));
+        return Err(anyhow::anyhow!("Failed to update Zed, timeout"));
     }
-    write_to_log_file(log, format!("Update takes: {:?}", start.elapsed()));
 
     Ok(())
 }
@@ -217,11 +215,26 @@ fn run(log: &mut File) -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     let (hwnd_tx, hwnd_rx) = std::sync::mpsc::sync_channel(1);
     write_to_log_file(log, "Running dialog window");
-    std::thread::spawn(|| {
-        let _ = run_dialog_window(hwnd_tx);
+    std::thread::spawn({
+        let result_sender = tx.clone();
+        move || {
+            result_sender.send(run_dialog_window(hwnd_tx)).ok();
+        }
     });
-    let hwnd = hwnd_rx.recv()?;
-    update(log, app_dir.as_path(), hwnd)?;
+    if let Ok(hwnd) = hwnd_rx.recv() {
+        std::thread::spawn(move || tx.send(update(app_dir.as_path(), hwnd)).ok());
+    }
+    for result in rx.iter() {
+        if let Err(ref e) = result {
+            write_to_log_file(log, e);
+            show_result(
+                format!("Error: {:?}", e),
+                "Error: Zed update failed".to_owned(),
+            );
+            break;
+        }
+    }
+
     Ok(())
 }
 
@@ -275,6 +288,23 @@ fn main() {
     }
 }
 
+macro_rules! return_if_failed {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => {
+                return LRESULT(e.code().0 as _);
+            }
+        }
+    };
+}
+
+macro_rules! make_lparam {
+    ($l:expr, $h:expr) => {
+        LPARAM(($l as u32 | ($h as u32) << 16) as isize)
+    };
+}
+
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -285,9 +315,8 @@ unsafe extern "system" fn wnd_proc(
         WM_CREATE => {
             // Create progress bar
             let mut rect = RECT::default();
-            let _ = GetWindowRect(hwnd, &mut rect);
-            println!("{:#?}", rect);
-            let progress_bar = CreateWindowExW(
+            return_if_failed!(GetWindowRect(hwnd, &mut rect));
+            let progress_bar = return_if_failed!(CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 PROGRESS_CLASS,
                 None,
@@ -300,13 +329,12 @@ unsafe extern "system" fn wnd_proc(
                 None,
                 None,
                 None,
-            )
-            .unwrap();
+            ));
             SendMessageW(
                 progress_bar,
                 PBM_SETRANGE,
                 WPARAM(0),
-                make_lparam(0, TOTAL_JOBS * 10),
+                make_lparam!(0, TOTAL_JOBS * 10),
             );
             SendMessageW(progress_bar, PBM_SETSTEP, WPARAM(10), LPARAM(0));
             let data = Box::new(progress_bar.0 as isize);
@@ -336,10 +364,10 @@ unsafe extern "system" fn wnd_proc(
             );
             let temp = SelectObject(hdc, font);
             let string = HSTRING::from("Zed Editor is updating...");
-            TextOutW(hdc, 20, 15, string.as_wide());
-            DeleteObject(temp);
+            return_if_failed!(TextOutW(hdc, 20, 15, string.as_wide()).ok());
+            return_if_failed!(DeleteObject(temp).ok());
 
-            EndPaint(hwnd, &ps);
+            return_if_failed!(EndPaint(hwnd, &ps).ok());
             ReleaseDC(hwnd, hdc);
 
             LRESULT(0)
@@ -347,8 +375,7 @@ unsafe extern "system" fn wnd_proc(
         WM_JOB_UPDATED => {
             let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut isize };
             let progress_bar = HWND(*raw as _);
-            SendMessageW(progress_bar, PBM_STEPIT, WPARAM(0), LPARAM(0));
-            LRESULT(0)
+            SendMessageW(progress_bar, PBM_STEPIT, WPARAM(0), LPARAM(0))
         }
         WM_DESTROY => {
             PostQuitMessage(-1);
@@ -357,10 +384,6 @@ unsafe extern "system" fn wnd_proc(
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
-}
-
-fn make_lparam(l: usize, h: usize) -> LPARAM {
-    LPARAM((l as u32 | (h as u32) << 16) as isize)
 }
 
 fn get_system_ui_font_name() -> String {
