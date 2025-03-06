@@ -8822,7 +8822,7 @@ fn diff_hunk_controls(
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 true,
-                                &[hunk_range.start..hunk_range.start],
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
                             );
                         });
@@ -8849,7 +8849,7 @@ fn diff_hunk_controls(
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 false,
-                                &[hunk_range.start..hunk_range.start],
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
                             );
                         });

@@ -68,6 +68,7 @@ pub enum GitRepo {
     },
 }
 
+#[derive(Debug)]
 pub enum GitEvent {
     ActiveRepositoryChanged,
     FileSystemUpdated,
