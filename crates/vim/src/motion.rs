@@ -2430,7 +2430,11 @@ fn sneak_backward(
     }
 }
 
-fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
+pub(crate) fn next_line_start(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    times: usize,
+) -> DisplayPoint {
     let correct_line = start_of_relative_buffer_row(map, point, times as isize);
     first_non_whitespace(map, false, correct_line)
 }

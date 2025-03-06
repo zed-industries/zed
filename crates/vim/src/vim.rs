@@ -871,9 +871,7 @@ impl Vim {
         self.last_mode = last_mode;
         self.mode = mode;
         self.operator_stack.clear();
-        if !leave_selections {
-            self.selected_register.take();
-        }
+        self.selected_register.take();
         self.cancel_running_command(window, cx);
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();

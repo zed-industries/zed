@@ -77,7 +77,7 @@ impl Vim {
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, false);
                         original_positions.insert(
                             selection.id,
                             map.display_point_to_anchor(selection.start, Bias::Left),

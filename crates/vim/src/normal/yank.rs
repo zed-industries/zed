@@ -55,18 +55,13 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current_mode = self.mode;
-        let target_mode = object.target_visual_mode(current_mode, around);
-        if object != Object::Paragraph {
-            self.switch_mode(target_mode, true, window, cx);
-        }
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut start_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, true);
                         let start_position = (selection.start, selection.goal);
                         start_positions.insert(selection.id, start_position);
                     });
@@ -80,7 +75,6 @@ impl Vim {
                 });
             });
         });
-        self.switch_mode(current_mode, false, window, cx);
         self.exit_temporary_normal(window, cx);
     }
 
