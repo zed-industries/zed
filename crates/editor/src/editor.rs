@@ -67,6 +67,7 @@ use element::{layout_line, AcceptEditPredictionBinding, LineWithInvisibles, Posi
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
+use feature_flags::{Debugger, FeatureFlagAppExt};
 use futures::{
     future::{self, Shared},
     FutureExt,
@@ -8054,6 +8055,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<Debugger>() {
+            return;
+        }
         let source = self
             .buffer
             .read(cx)

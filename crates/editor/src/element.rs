@@ -29,6 +29,7 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
+use feature_flags::{Debugger, FeatureFlagAppExt};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
@@ -514,8 +515,10 @@ impl EditorElement {
         register_action(editor, window, Editor::insert_uuid_v4);
         register_action(editor, window, Editor::insert_uuid_v7);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
-        register_action(editor, window, Editor::toggle_breakpoint);
-        register_action(editor, window, Editor::edit_log_breakpoint);
+        if cx.has_flag::<Debugger>() {
+            register_action(editor, window, Editor::toggle_breakpoint);
+            register_action(editor, window, Editor::edit_log_breakpoint);
+        }
     }
 
     fn register_key_listeners(&self, window: &mut Window, _: &mut App, layout: &EditorLayout) {
@@ -6898,9 +6901,12 @@ impl Element for EditorElement {
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
-                    for display_row in breakpoint_rows.keys() {
-                        active_rows.entry(*display_row).or_default().breakpoint = true;
+                    if cx.has_flag::<Debugger>() {
+                        for display_row in breakpoint_rows.keys() {
+                            active_rows.entry(*display_row).or_default().breakpoint = true;
+                        }
                     }
+
                     let line_numbers = self.layout_line_numbers(
                         Some(&gutter_hitbox),
                         gutter_dimensions,
@@ -6918,20 +6924,23 @@ impl Element for EditorElement {
                     // We add the gutter breakpoint indicator to breakpoint_rows after painting
                     // line numbers so we don't paint a line number debug accent color if a user
                     // has their mouse over that line when a breakpoint isn't there
-                    let gutter_breakpoint_indicator =
-                        self.editor.read(cx).gutter_breakpoint_indicator;
-                    if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
-                        breakpoint_rows
-                            .entry(gutter_breakpoint_point.row())
-                            .or_insert_with(|| {
-                                let position = snapshot
-                                    .display_point_to_breakpoint_anchor(gutter_breakpoint_point);
-                                let breakpoint = Breakpoint {
-                                    kind: BreakpointKind::Standard,
-                                };
+                    if cx.has_flag::<Debugger>() {
+                        let gutter_breakpoint_indicator =
+                            self.editor.read(cx).gutter_breakpoint_indicator;
+                        if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
+                            breakpoint_rows
+                                .entry(gutter_breakpoint_point.row())
+                                .or_insert_with(|| {
+                                    let position = snapshot.display_point_to_breakpoint_anchor(
+                                        gutter_breakpoint_point,
+                                    );
+                                    let breakpoint = Breakpoint {
+                                        kind: BreakpointKind::Standard,
+                                    };
 
-                                (position.text_anchor, breakpoint)
-                            });
+                                    (position.text_anchor, breakpoint)
+                                });
+                        }
                     }
 
                     let mut crease_toggles =
@@ -7416,18 +7425,22 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let breakpoints = self.layout_breakpoints(
-                        line_height,
-                        start_row..end_row,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &rows_with_hunk_bounds,
-                        &snapshot,
-                        breakpoint_rows,
-                        window,
-                        cx,
-                    );
+                    let breakpoints = if cx.has_flag::<Debugger>() {
+                        self.layout_breakpoints(
+                            line_height,
+                            start_row..end_row,
+                            scroll_pixel_position,
+                            &gutter_dimensions,
+                            &gutter_hitbox,
+                            &rows_with_hunk_bounds,
+                            &snapshot,
+                            breakpoint_rows,
+                            window,
+                            cx,
+                        )
+                    } else {
+                        vec![]
+                    };
 
                     self.layout_signature_help(
                         &hitbox,
