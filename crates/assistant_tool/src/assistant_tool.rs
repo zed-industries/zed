@@ -1,3 +1,4 @@
+mod tool_file_changes;
 mod tool_registry;
 mod tool_working_set;
 
@@ -16,6 +17,7 @@ use ui::ParentElement;
 use ui::SharedString;
 use workspace::Workspace;
 
+pub use crate::tool_file_changes::*;
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
 

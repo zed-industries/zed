@@ -1,4 +1,4 @@
-use assistant_tool::{ToolRegistry, ToolWorkingSet};
+use assistant_tool::{ToolFileChanges, ToolRegistry, ToolWorkingSet};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -344,6 +344,16 @@ impl ActiveThread {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         self.thread.update(cx, |thread, cx| {
+                            if let Some(global) = cx.try_global::<ToolFileChanges>() {
+                                let thread_id = thread.id().0.clone();
+
+                                if global.thread_id == thread_id
+                                    && !global.file_changes.lock().is_empty()
+                                {
+                                    println!("Changes:\n{}", self.handle_fs_changes(cx));
+                                }
+                            }
+
                             // Insert a user message to contain the tool results.
                             thread.insert_user_message(
                                 // TODO: Sending up a user message without any content results in the model sending back
@@ -378,6 +388,46 @@ impl ActiveThread {
                 task.await.log_err();
             }
         }));
+    }
+
+    fn handle_fs_changes(&self, cx: &mut Context<Thread>) -> String {
+        if let Some(global) = cx.try_global::<ToolFileChanges>() {
+            let fs_changes = global.file_changes.lock().clone();
+            if !fs_changes.is_empty() {
+                let mut diff_output = String::new();
+
+                for (path, content) in fs_changes {
+                    let path_str = path.to_string_lossy();
+                    diff_output.push_str(&format!("--- {}\n+++ {}\n", path_str, path_str));
+
+                    let old_content = match std::fs::read(&path) {
+                        Ok(content) => String::from_utf8_lossy(&content).to_string(),
+                        Err(_) => String::new(), 
+                    };
+
+                    let new_content = String::from_utf8_lossy(&content).to_string();
+
+                    let diff = diff::lines(&old_content, &new_content);
+
+                    for change in diff {
+                        match change {
+                            diff::Result::Left(l) => diff_output.push_str(&format!("-{}\n", l)),
+                            diff::Result::Right(r) => diff_output.push_str(&format!("+{}\n", r)),
+                            diff::Result::Both(b, _) => diff_output.push_str(&format!(" {}\n", b)),
+                        }
+                    }
+
+                    diff_output.push_str("\n");
+                }
+
+                // Reset fs_changes
+                global.file_changes.lock().clear();
+
+                return diff_output;
+            }
+        }
+
+        String::new()
     }
 
     fn start_editing_message(

@@ -1,11 +1,11 @@
 use anyhow::anyhow;
-use assistant_tool::{Tool, ToolRegistry};
+use assistant_tool::{Tool, ToolFileChanges, ToolRegistry};
 use collections::HashMap;
 use gpui::{
-    AnyElement, App, AppContext as _, Global, HighlightStyle, StyledText, Task, WeakEntity, Window,
+    AnyElement, App, AppContext as _, HighlightStyle, StyledText, Task, WeakEntity, Window,
 };
 use language::Language;
-use mlua::{Function, Lua, MultiValue, Result, UserData, UserDataMethods};
+use mlua::{Function, HookTriggers, Lua, MultiValue, Result, UserData, UserDataMethods, VmState};
 use parking_lot::Mutex;
 use rich_text::{self, Highlight};
 use schemars::JsonSchema;
@@ -47,13 +47,18 @@ The lua script will have access to `io` and it will run with the current working
 the root of the code base, so you can use it to explore, search, make changes, etc. You can also have
 the script print things, and I'll tell you what the output was. Note that `io` only has `open`, and
 then the file it returns only has the methods read, write, and close - it doesn't have popen or
-anything else. Also, I'm going to be putting this Lua script into JSON, so please don't use Lua's
-double quote syntax for string literals - use one of Lua's other syntaxes for string literals, so I
-don't have to escape the double quotes. There will be a global called `search` which accepts a regex
-(it's implemented using Rust's regex crate, so use that regex syntax) and runs that regex on the contents
-of every file in the code base (aside from gitignored files), then returns an array of tables with two
-fields: "path" (the path to the file that had the matches) and "matches" (an array of strings, with each
-string being a match that was found within the file)."#.into()
+anything else. `os` is not available, so don't try to use it.  There will be a global called
+`search` which accepts a regex (it's implemented using Rust's regex crate,
+so use that regex syntax) and runs that regex on the contents of every file in the code base
+(aside from gitignored files), then returns an array of tables with two fields: "path"
+(the path to the file that had the matches) and "matches" (an array of strings, with each
+string being a match that was found within the file).
+
+If I reference something in the code base that you aren't familiar with, I suggest writing
+multiple `search` calls to find what you're looking for in one script invocation, as opposed
+to trying multiple times. When you're done, if you have any proposed changes to files,
+you should write them directly to disk in the script. I'll review them later.
+"#.into()
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -91,7 +96,7 @@ string being a match that was found within the file)."#.into()
             Ok(input) => input,
         };
         let lua_script = input.lua_script;
-        let fs_changes = ScriptingToolFileChanges::get(thread_id, cx);
+        let fs_changes = ToolFileChanges::get(thread_id, cx);
         cx.background_spawn(async move {
             let output = run_sandboxed_lua(&lua_script, fs_changes, root_dir)
                 .map_err(|err| anyhow!(format!("{err}")))?
@@ -166,34 +171,6 @@ string being a match that was found within the file)."#.into()
             .font_family(theme_settings.buffer_font.family.clone())
             .child(output)
             .into_any_element()
-    }
-}
-
-// Accumulates file changes made during script execution.
-struct ScriptingToolFileChanges {
-    // Assistant thread ID that these files changes are associated with. Only file changes for one
-    // thread are supported to avoid the need for dropping these when the associated `Thread` is
-    // dropped.
-    thread_id: Arc<str>,
-    // Map from path to file contents for files changed by script execution.
-    file_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
-}
-
-impl Global for ScriptingToolFileChanges {}
-
-impl ScriptingToolFileChanges {
-    fn get(thread_id: Arc<str>, cx: &mut App) -> Arc<Mutex<HashMap<PathBuf, Vec<u8>>>> {
-        match cx.try_global::<ScriptingToolFileChanges>() {
-            Some(global) if global.thread_id == thread_id => global.file_changes.clone(),
-            _ => {
-                let file_changes = Arc::new(Mutex::new(HashMap::default()));
-                cx.set_global(ScriptingToolFileChanges {
-                    thread_id,
-                    file_changes: file_changes.clone(),
-                });
-                file_changes
-            }
-        }
     }
 }
 
@@ -715,6 +692,35 @@ pub fn run_sandboxed_lua(
 ) -> Result<ScriptOutput> {
     let lua = Lua::new();
     lua.set_memory_limit(2 * 1024 * 1024 * 1024)?; // 2 GB
+    lua.set_hook(
+        HookTriggers::new().every_nth_instruction(2048),
+        |_lua, _| {
+            // Check if we need to yield to prevent long-running scripts
+            static EXECUTION_START: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            // Initialize start time on first call
+            let start = EXECUTION_START.load(std::sync::atomic::Ordering::Relaxed);
+            if start == 0 {
+                EXECUTION_START.store(now, std::sync::atomic::Ordering::Relaxed);
+                return Ok(VmState::Continue);
+            }
+
+            // Check if execution time exceeds 5 seconds
+            if now - start > 5000 {
+                EXECUTION_START.store(0, std::sync::atomic::Ordering::Relaxed);
+                return Err(mlua::Error::runtime(
+                    "Script execution timed out after 5 seconds",
+                ));
+            }
+
+            Ok(VmState::Continue)
+        },
+    ); // 2 GB
     let globals = lua.globals();
 
     // Track the lines the Lua script prints out.
