@@ -485,7 +485,6 @@ impl AutoUpdater {
             )
         })?;
 
-        let mut log = get_log_file();
         // let release =
         //     Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
@@ -502,7 +501,6 @@ impl AutoUpdater {
             let installer = dir_path.join("Installer.exe");
             installer.exists()
         };
-        write_to_log_file(&format!("Should download: {}", should_download), &mut log);
 
         if !should_download {
             this.update(&mut cx, |this, cx| {
@@ -512,18 +510,12 @@ impl AutoUpdater {
             return Ok(());
         }
 
-        write_to_log_file("Downloading", &mut log);
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading;
             cx.notify();
         })?;
 
         let installer_dir = InstallerDir::new()?;
-        write_to_log_file(
-            &format!("installer_dir: {}", installer_dir.0.display()),
-            &mut log,
-        );
-
         let filename = match OS {
             "macos" => Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
@@ -539,15 +531,7 @@ impl AutoUpdater {
 
         let downloaded_asset = installer_dir.path().join(filename);
         // download_release(&downloaded_asset, release, client, &cx).await?;
-        write_to_log_file(
-            &format!("downloaded_asset: {:?}", downloaded_asset),
-            &mut log,
-        );
         download_release(&downloaded_asset, &cx).await?;
-        write_to_log_file(
-            &format!("downloaded_asset: {:?}", downloaded_asset),
-            &mut log,
-        );
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
@@ -569,93 +553,6 @@ impl AutoUpdater {
         })?;
 
         Ok(())
-    }
-
-    // #[cfg(target_os = "windows")]
-    // async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
-    //     // let ret = std::fs::remove_dir_all("C:\\zjk\\apps\\Zed Editor\\updates");
-    //     // let mut log = get_log_file();
-    //     // write_to_log_file(&format!("==> update::remove_dir_all: {:?}", ret), &mut log);
-    //     let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
-    //         this.status = AutoUpdateStatus::Checking;
-    //         cx.notify();
-    //         (
-    //             this.http_client.clone(),
-    //             this.current_version,
-    //             ReleaseChannel::try_global(cx),
-    //         )
-    //     })?;
-
-    //     // let release =
-    //     //     Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
-
-    //     // let should_download = match *RELEASE_CHANNEL {
-    //     //     ReleaseChannel::Nightly => cx
-    //     //         .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
-    //     //         .ok()
-    //     //         .flatten()
-    //     //         .unwrap_or(true),
-    //     //     _ => release.version.parse::<SemanticVersion>()? > current_version,
-    //     // };
-
-    //     let should_download = {
-    //         let dir_path = Path::new("C:\\zjk\\projects\\installer1\\zed");
-    //         let installer = dir_path.join("Installer.exe");
-    //         installer.exists()
-    //     };
-
-    //     println!("=> should_download: {}", should_download);
-    //     if !should_download {
-    //         this.update(&mut cx, |this, cx| {
-    //             this.status = AutoUpdateStatus::Idle;
-    //             cx.notify();
-    //         })?;
-    //         return Ok(());
-    //     }
-
-    //     this.update(&mut cx, |this, cx| {
-    //         this.status = AutoUpdateStatus::Downloading;
-    //         cx.notify();
-    //     })?;
-
-    //     let installer_dir = std::env::current_exe()?
-    //         .parent()
-    //         .context("No parent dir")?
-    //         .join("updates");
-    //     std::fs::create_dir(&installer_dir).ok();
-
-    //     let downloaded_asset = installer_dir.join("Installer.exe");
-    //     // download_release(&downloaded_asset, release, client, &cx).await?;
-    //     download_release(&downloaded_asset, &cx).await?;
-
-    //     this.update(&mut cx, |this, cx| {
-    //         this.status = AutoUpdateStatus::Installing; // Ready to install
-    //         cx.notify();
-    //     })?;
-    //     let ret = install_release_windows().await;
-    //     let mut log = get_log_file();
-    //     write_to_log_file(
-    //         &format!("==> update::install_release_windows: {:?}", ret),
-    //         &mut log,
-    //     );
-    //     ret?;
-
-    //     // Notify the user that the update is ready to install, and provide a button to restart then install it.
-    //     // Installer.exe
-    //     let binary_path = std::env::current_exe()?;
-    //     this.update(&mut cx, |this, cx| {
-    //         this.set_should_show_update_notification(true, cx)
-    //             .detach_and_log_err(cx);
-    //         this.status = AutoUpdateStatus::Updated { binary_path };
-    //         cx.notify();
-    //     })?;
-
-    //     Ok(())
-    // }
-
-    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    async fn update(_: Entity<Self>, _: AsyncApp) -> Result<()> {
-        Err(anyhow!("auto-update not supported."))
     }
 
     pub fn set_should_show_update_notification(
@@ -917,7 +814,10 @@ async fn install_release_macos(
 
 async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBuf> {
     let output = Command::new(downloaded_installer)
-        .arg("/SILENT")
+        .arg("/verysilent")
+        .arg("/update=true")
+        .arg("!desktopicon")
+        .arg("!quicklaunchicon")
         .output()
         .await?;
     anyhow::ensure!(
@@ -928,23 +828,6 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
     Ok(std::env::current_exe()?)
 }
 
-fn get_log_file() -> std::fs::File {
-    let log_file = "C:\\zjk\\apps\\Zed Editor\\logs-out.txt";
-    // let log_file = "C:\\zjk\\apps\\Zed Editor\\logs.txt";
-
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-        .unwrap()
-}
-
-fn write_to_log_file(message: &str, file: &mut std::fs::File) {
-    use std::io::Write;
-
-    writeln!(file, "{}", message).unwrap();
-}
-
 pub fn check_pending_installation(app_version: &SemanticVersion) -> bool {
     let Some(installer_path) = std::env::current_exe()
         .ok()
@@ -952,63 +835,16 @@ pub fn check_pending_installation(app_version: &SemanticVersion) -> bool {
     else {
         return false;
     };
-    let mut log = get_log_file();
-    write_to_log_file("\n\n", &mut log);
-    write_to_log_file(
-        &format!("==> installer_path: {:?}", installer_path),
-        &mut log,
-    );
-    write_to_log_file(&format!("Checking installed version..."), &mut log);
+
+    // The installer will create a flag file after it finishes updating
     let flag_file = installer_path.join("versions.txt");
     if flag_file.exists() {
-        write_to_log_file(&format!("==> flag_file: {:?}", flag_file), &mut log);
-        if let Some(last_line) = std::fs::read_to_string(&flag_file)
-            .ok()
-            .and_then(|s| s.lines().last().map(|s| s.to_string()))
+        if let Some(helper) = installer_path
+            .parent()
+            .map(|p| p.join("tools\\auto_update_helper.exe"))
         {
-            let v = SemanticVersion::from_str(&last_line);
-            println!("==> last_line: {:?}, {:?}", last_line, v);
-            write_to_log_file(
-                &format!("==> last_line: {:?}, {:?}", last_line, v),
-                &mut log,
-            );
-            match SemanticVersion::from_str(&last_line) {
-                Ok(pending_installer_version) => {
-                    write_to_log_file(
-                        &format!(
-                            "==> check_pending_install_version: {}, {}, {}",
-                            pending_installer_version,
-                            *app_version,
-                            pending_installer_version <= *app_version
-                        ),
-                        &mut log,
-                    );
-                    if pending_installer_version > *app_version {
-                        let helper = installer_path
-                            .parent()
-                            .unwrap()
-                            .join("tools\\auto_update_helper.exe");
-                        write_to_log_file(&format!("==> running helper: {:?}", helper), &mut log);
-                        let _ = std::process::Command::new(helper).spawn();
-                        return true;
-                    }
-                }
-                Err(e) => {
-                    log::error!(
-                        "Invalid version info from updates\\versions.txt: {}, {:?}",
-                        last_line,
-                        e
-                    );
-                    write_to_log_file(
-                        &format!(
-                            "Invalid version info from updates\\versions.txt: {}, {:?}",
-                            last_line, e
-                        ),
-                        &mut log,
-                    );
-                    std::fs::remove_dir_all(installer_path).ok();
-                }
-            }
+            let _ = std::process::Command::new(helper).spawn();
+            return true;
         }
     }
     false
