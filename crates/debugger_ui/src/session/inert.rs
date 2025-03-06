@@ -8,8 +8,8 @@ use task::TCPHost;
 use theme::ThemeSettings;
 use ui::{
     h_flex, relative, v_flex, ActiveTheme as _, Button, ButtonCommon, ButtonStyle, Clickable,
-    Context, ContextMenu, DropdownMenu, InteractiveElement, IntoElement, Label, ParentElement,
-    Render, SharedString, Styled, Window,
+    Context, ContextMenu, Disableable, DropdownMenu, InteractiveElement, IntoElement, Label,
+    ParentElement, Render, SharedString, Styled, Window,
 };
 
 pub(crate) struct InertState {
@@ -50,6 +50,7 @@ impl Render for InertState {
         cx: &mut ui::Context<'_, Self>,
     ) -> impl ui::IntoElement {
         let weak = cx.weak_entity();
+        let disable_buttons = self.selected_debugger.is_none();
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -105,6 +106,7 @@ impl Render for InertState {
                     .child(
                         Button::new("launch-dap", "Launch")
                             .style(ButtonStyle::Filled)
+                            .disabled(disable_buttons)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let program = this.program_editor.read(cx).text(cx);
                                 let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
@@ -122,7 +124,7 @@ impl Render for InertState {
                                 });
                             })),
                     )
-                    .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled)),
+                    .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled).disabled(disable_buttons)),
             )
     }
 }

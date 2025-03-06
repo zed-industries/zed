@@ -38,6 +38,18 @@ impl VariablePath {
             indices: self.indices.clone(),
         }
     }
+    /// Create a new child of this variable path
+    fn with_child(&self, variable_reference: VariableReference) -> Self {
+        Self {
+            leaf_name: None,
+            indices: self
+                .indices
+                .iter()
+                .cloned()
+                .chain(std::iter::once(variable_reference))
+                .collect(),
+        }
+    }
     fn parent_reference_id(&self) -> VariableReference {
         self.indices
             .last()
@@ -189,12 +201,13 @@ impl VariableList {
                 let children = self
                     .session
                     .update(cx, |session, cx| session.variables(variable_reference, cx));
-                stack.extend(
-                    children
-                        .into_iter()
-                        .rev()
-                        .map(|child| (child.variables_reference, Some(child), path.clone())),
-                );
+                stack.extend(children.into_iter().rev().map(|child| {
+                    (
+                        child.variables_reference,
+                        Some(child),
+                        path.with_child(variable_reference),
+                    )
+                }));
             }
         }
         if self.entries.len() != entries.len() {

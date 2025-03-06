@@ -329,7 +329,6 @@ impl LocalMode {
                 cx.background_executor().clone(),
             )
             .await?;
-        dbg!(&capabilities);
         let mut raw = adapter.request_args(&this.config);
         merge_json_value_into(
             this.config.initialize_args.clone().unwrap_or(json!({})),
@@ -799,9 +798,12 @@ impl Session {
                 }
                 self.invalidate_generic();
             }
-            Events::Exited(_event) => {}
+            Events::Exited(_event) => {
+                self.clear_active_debug_line(&(), cx);
+            }
             Events::Terminated(_) => {
                 self.is_session_terminated = true;
+                self.clear_active_debug_line(&(), cx);
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);
@@ -1313,7 +1315,9 @@ impl Session {
                             .map(|frame| (frame.id, StackFrame::from(frame))),
                     );
 
-                    this.invalidate_generic();
+                    this.invalidate_command_type::<ScopesCommand>();
+                    this.invalidate_command_type::<VariablesCommand>();
+
                     cx.emit(SessionEvent::StackTrace);
                     cx.notify();
                 },
