@@ -1589,11 +1589,13 @@ impl SearchableItem for Editor {
 
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Range<Anchor>],
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         active_match_index(
+            direction,
             matches,
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
@@ -1606,6 +1608,7 @@ impl SearchableItem for Editor {
 }
 
 pub fn active_match_index(
+    direction: Direction,
     ranges: &[Range<Anchor>],
     cursor: &Anchor,
     buffer: &MultiBufferSnapshot,
@@ -1613,7 +1616,7 @@ pub fn active_match_index(
     if ranges.is_empty() {
         None
     } else {
-        match ranges.binary_search_by(|probe| {
+        let r = ranges.binary_search_by(|probe| {
             if probe.end.cmp(cursor, buffer).is_lt() {
                 Ordering::Less
             } else if probe.start.cmp(cursor, buffer).is_gt() {
@@ -1621,8 +1624,15 @@ pub fn active_match_index(
             } else {
                 Ordering::Equal
             }
-        }) {
-            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+        });
+        match direction {
+            Direction::Prev => match r {
+                Ok(i) => Some(i),
+                Err(i) => Some(i.saturating_sub(1)),
+            },
+            Direction::Next => match r {
+                Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+            },
         }
     }
 }

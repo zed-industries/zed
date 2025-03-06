@@ -534,7 +534,7 @@ impl CompletionsMenu {
                         };
                         let color_swatch = completion
                             .color()
-                            .map(|color| div().size_4().bg(color).rounded_sm());
+                            .map(|color| div().size_4().bg(color).rounded_xs());
 
                         div().min_w(px(280.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)

@@ -1,19 +1,24 @@
 use assistant_settings::AssistantSettings;
 use fs::Fs;
-use gpui::{Entity, FocusHandle};
-use language_model_selector::{AssistantLanguageModelSelector, LanguageModelSelector};
+use gpui::{Entity, FocusHandle, SharedString};
+use language_model::LanguageModelRegistry;
+use language_model_selector::{
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+};
 use settings::update_settings_file;
 use std::sync::Arc;
-use ui::prelude::*;
+use ui::{prelude::*, ButtonLike, PopoverMenuHandle, Tooltip};
 
 pub struct AssistantModelSelector {
-    pub selector: Entity<LanguageModelSelector>,
+    selector: Entity<LanguageModelSelector>,
+    menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     focus_handle: FocusHandle,
 }
 
 impl AssistantModelSelector {
     pub(crate) fn new(
         fs: Arc<dyn Fs>,
+        menu_handle: PopoverMenuHandle<LanguageModelSelector>,
         focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut App,
@@ -33,14 +38,54 @@ impl AssistantModelSelector {
                     cx,
                 )
             }),
+            menu_handle,
             focus_handle,
         }
+    }
+
+    pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_handle.toggle(window, cx);
     }
 }
 
 impl Render for AssistantModelSelector {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        AssistantLanguageModelSelector::new(self.focus_handle.clone(), self.selector.clone())
-            .render(window, cx)
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.focus_handle.clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            _ => SharedString::from("No model selected"),
+        };
+
+        LanguageModelSelectorPopoverMenu::new(
+            self.selector.clone(),
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+            gpui::Corner::BottomRight,
+        )
+        .with_handle(self.menu_handle.clone())
     }
 }

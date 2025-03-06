@@ -197,7 +197,7 @@ impl RenderOnce for Checkbox {
                     .items_center()
                     .m(DynamicSpacing::Base04.px(cx))
                     .size(DynamicSpacing::Base16.rems(cx))
-                    .rounded_sm()
+                    .rounded_xs()
                     .bg(bg_color)
                     .border_1()
                     .border_color(border_color)

@@ -316,7 +316,7 @@ impl SshPlatform {
 }
 
 pub trait SshClientDelegate: Send + Sync {
-    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>>;
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp);
     fn get_download_params(
         &self,
         platform: SshPlatform,
@@ -1454,83 +1454,22 @@ impl SshRemoteConnection {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        use futures::AsyncWriteExt as _;
-        use futures::{io::BufReader, AsyncBufReadExt as _};
-        use smol::net::unix::UnixStream;
-        use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
-        use util::ResultExt as _;
+        use askpass::AskPassResult;
 
         delegate.set_status(Some("Connecting"), cx);
 
         let url = connection_options.ssh_url();
+
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
             .tempdir()?;
-
-        // Create a domain socket listener to handle requests from the askpass program.
-        let askpass_socket = temp_dir.path().join("askpass.sock");
-        let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
-        let listener =
-            UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
-
-        let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
-        let mut kill_tx = Some(askpass_kill_master_tx);
-
-        let askpass_task = cx.spawn({
+        let askpass_delegate = askpass::AskPassDelegate::new(cx, {
             let delegate = delegate.clone();
-            |mut cx| async move {
-                let mut askpass_opened_tx = Some(askpass_opened_tx);
-
-                while let Ok((mut stream, _)) = listener.accept().await {
-                    if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
-                        askpass_opened_tx.send(()).ok();
-                    }
-                    let mut buffer = Vec::new();
-                    let mut reader = BufReader::new(&mut stream);
-                    if reader.read_until(b'\0', &mut buffer).await.is_err() {
-                        buffer.clear();
-                    }
-                    let password_prompt = String::from_utf8_lossy(&buffer);
-                    if let Some(password) = delegate
-                        .ask_password(password_prompt.to_string(), &mut cx)
-                        .await
-                        .context("failed to get ssh password")
-                        .and_then(|p| p)
-                        .log_err()
-                    {
-                        stream.write_all(password.as_bytes()).await.log_err();
-                    } else {
-                        if let Some(kill_tx) = kill_tx.take() {
-                            kill_tx.send(stream).log_err();
-                            break;
-                        }
-                    }
-                }
-            }
+            move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
         });
 
-        anyhow::ensure!(
-            which::which("nc").is_ok(),
-            "Cannot find `nc` command (netcat), which is required to connect over SSH."
-        );
-
-        // Create an askpass script that communicates back to this process.
-        let askpass_script = format!(
-            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
-            // on macOS `brew install netcat` provides the GNU netcat implementation
-            // which does not support -U.
-            nc = if cfg!(target_os = "macos") {
-                "/usr/bin/nc"
-            } else {
-                "nc"
-            },
-            askpass_socket = askpass_socket.display(),
-            print_args = "printf '%s\\0' \"$@\"",
-            shebang = "#!/bin/sh",
-        );
-        let askpass_script_path = temp_dir.path().join("askpass.sh");
-        fs::write(&askpass_script_path, askpass_script).await?;
-        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
+        let mut askpass =
+            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
@@ -1542,7 +1481,7 @@ impl SshRemoteConnection {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("SSH_ASKPASS", &askpass_script_path)
+            .env("SSH_ASKPASS", &askpass.script_path())
             .args(connection_options.additional_args())
             .args([
                 "-N",
@@ -1556,43 +1495,31 @@ impl SshRemoteConnection {
             .arg(&url)
             .kill_on_drop(true)
             .spawn()?;
-
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = Duration::from_secs(10);
 
         let result = select_biased! {
-            _ = askpass_opened_rx.fuse() => {
-                select_biased! {
-                    stream = askpass_kill_master_rx.fuse() => {
+            result = askpass.run().fuse() => {
+                match result {
+                    AskPassResult::CancelledByUser => {
                         master_process.kill().ok();
-                        drop(stream);
-                        Err(anyhow!("SSH connection canceled"))
+                        Err(anyhow!("SSH connection canceled"))?
                     }
-                    // If the askpass script has opened, that means the user is typing
-                    // their password, in which case we don't want to timeout anymore,
-                    // since we know a connection has been established.
-                    result = stdout.read_to_end(&mut output).fuse() => {
-                        result?;
-                        Ok(())
+                    AskPassResult::Timedout => {
+                        Err(anyhow!("connecting to host timed out"))?
                     }
                 }
             }
             _ = stdout.read_to_end(&mut output).fuse() => {
-                Ok(())
-            }
-            _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
-                Err(anyhow!("Exceeded {:?} timeout trying to connect to host", connection_timeout))
+                anyhow::Ok(())
             }
         };
 
         if let Err(e) = result {
             return Err(e.context("Failed to connect to host"));
         }
-
-        drop(askpass_task);
 
         if master_process.try_status()?.is_some() {
             output.clear();
@@ -1605,6 +1532,8 @@ impl SshRemoteConnection {
             );
             Err(anyhow!(error_message))?;
         }
+
+        drop(askpass);
 
         let socket = SshSocket {
             connection_options,
@@ -1634,7 +1563,7 @@ impl SshRemoteConnection {
     }
 
     async fn platform(&self) -> Result<SshPlatform> {
-        let uname = self.socket.run_command("uname", &["-sm"]).await?;
+        let uname = self.socket.run_command("sh", &["-c", "uname -sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             Err(anyhow!("unknown uname: {uname:?}"))?
         };
@@ -2558,7 +2487,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl SshClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
+        fn ask_password(&self, _: String, _: oneshot::Sender<String>, _: &mut AsyncApp) {
             unreachable!()
         }
 

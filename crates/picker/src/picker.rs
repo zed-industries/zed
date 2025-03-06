@@ -48,6 +48,7 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     width: Option<Length>,
+    widest_item: Option<usize>,
     max_height: Option<Length>,
     focus_handle: FocusHandle,
     /// An external control to display a scrollbar in the `Picker`.
@@ -283,6 +284,7 @@ impl<D: PickerDelegate> Picker<D> {
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
+            widest_item: None,
             max_height: Some(rems(18.).into()),
             focus_handle,
             show_scrollbar: false,
@@ -329,6 +331,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
         self.width = Some(width.into());
+        self
+    }
+
+    pub fn widest_item(mut self, ix: Option<usize>) -> Self {
+        self.widest_item = ix;
         self
     }
 
@@ -690,6 +697,9 @@ impl<D: PickerDelegate> Picker<D> {
                 },
             )
             .with_sizing_behavior(sizing_behavior)
+            .when_some(self.widest_item, |el, widest_item| {
+                el.with_width_from_item(Some(widest_item))
+            })
             .flex_grow()
             .py_1()
             .track_scroll(scroll_handle.clone())
