@@ -4977,16 +4977,14 @@ impl Workspace {
         })
     }
 
-    pub fn toggle_status_toast<V: ToastView, B>(
+    pub fn toggle_status_toast<V: ToastView>(
         &mut self,
         window: &mut Window,
         cx: &mut App,
-        build: B,
-    ) where
-        B: FnOnce(&mut Window, &mut Context<V>) -> V,
-    {
+        entity: Entity<V>,
+    ) {
         self.toast_layer.update(cx, |toast_layer, cx| {
-            toast_layer.toggle_toast(window, cx, build)
+            toast_layer.toggle_toast(window, cx, entity)
         })
     }
 

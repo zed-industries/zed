@@ -50,10 +50,13 @@ impl ToastLayer {
         }
     }
 
-    pub fn toggle_toast<V, B>(&mut self, window: &mut Window, cx: &mut Context<Self>, build_view: B)
-    where
+    pub fn toggle_toast<V>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        new_toast: Entity<V>,
+    ) where
         V: ToastView,
-        B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
         if let Some(active_toast) = &self.active_toast {
             let is_close = active_toast.toast.view().downcast::<V>().is_ok();
@@ -62,7 +65,6 @@ impl ToastLayer {
                 return;
             }
         }
-        let new_toast = cx.new(|cx| build_view(window, cx));
         self.show_toast(new_toast, window, cx);
     }
 

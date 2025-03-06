@@ -344,31 +344,23 @@ impl ComponentPreview {
     fn test_status_toast(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                workspace.toggle_status_toast(window, cx, |_, cx| {
-                    StatusToast::new(
-                        "`zed/new-notification-system` created!",
-                        window,
-                        cx,
-                        |mut this, window, cx| {
-                            this.icon(
-                                ToastIcon::new(IconName::GitBranchSmall)
-                                    .color(Color::Muted)
-                                    .into(),
-                            )
-                            .action(
-                                "Open Pull Request",
-                                cx.listener(|_, _, _, cx| cx.open_url("https://github.com/")),
-                            )
-                        },
-                    )
-                    //StatusToast::with_icon(
-                    //    "success-toast-pr",
-                    //    IconName::GitBranchSmall,
-                    //    "`zed/new-notification-system` created!",
-                    //    cx,
-                    //)
-                    // .action("Open Pull Request")
-                });
+                let status_toast = StatusToast::new(
+                    "`zed/new-notification-system` created!",
+                    window,
+                    cx,
+                    |this, _, cx| {
+                        this.icon(
+                            ToastIcon::new(IconName::GitBranchSmall)
+                                .color(Color::Muted)
+                                .into(),
+                        )
+                        .action(
+                            "Open Pull Request",
+                            cx.listener(|_, _, _, cx| cx.open_url("https://github.com/")),
+                        )
+                    },
+                );
+                workspace.toggle_status_toast(window, cx, status_toast)
             });
         }
     }
@@ -377,7 +369,6 @@ impl ComponentPreview {
 impl Render for ComponentPreview {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let sidebar_entries = self.scope_ordered_entries();
-        // let weak_workspace = self.workspace.clone();
 
         h_flex()
             .id("component-preview")
