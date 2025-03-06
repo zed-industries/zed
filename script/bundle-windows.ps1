@@ -25,7 +25,7 @@ $channel = Get-Content "RELEASE_CHANNEL"
 $env:ZED_RELEASE_CHANNEL = $channel
 Pop-Location
 
-function CheckEnviromentVariables {
+function CheckEnvironmentVariables {
     $requiredVars = @(
         'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL', 
         'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
@@ -195,7 +195,7 @@ function BuildInstaller {
     }
 }
 
-CheckEnviromentVariables
+CheckEnvironmentVariables
 BuildZedAndItsFriends
 MakeAppx
 SignZedAndItsFriends
