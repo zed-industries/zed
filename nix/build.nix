@@ -81,10 +81,7 @@ let
 
       nativeBuildInputs =
         [
-          # TODO: use pkgs.clangStdenv or ignore cargo config?
-          # also make it linux only since darwin stdenv has clang by default
-          # see https://crane.dev/examples/cross-musl.html
-          clang
+          clang # TODO: use pkgs.clangStdenv or ignore cargo config?
           cmake
           copyDesktopItems
           curl
@@ -115,6 +112,7 @@ let
           freetype
           # TODO: need staticlib of this for linking the musl remote server.
           # should make it a separate derivation/flake output
+          # see https://crane.dev/examples/cross-musl.html
           libgit2
           openssl
           sqlite
@@ -166,9 +164,8 @@ let
             # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
             # TODO: send livekit sdk a PR to make this configurable
             postPatch = ''
-              substituteInPlace webrtc-sys/build.rs \
-                --replace-fail "cargo:rustc-link-lib=static=webrtc" \
-                               "cargo:rustc-link-lib=dylib=webrtc"
+              substituteInPlace webrtc-sys/build.rs --replace-fail \
+                "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
             '';
           in
           crates: drv:
@@ -255,9 +252,9 @@ craneLib.buildPackage (
           cp target/release/zed $out/libexec/zed-editor
           cp target/release/cli $out/bin/zed
 
-          install -D ${../crates/zed/resources/${"app-icon-nightly@2x.png"}} \
-            $out/share/icons/hicolor/1024x1024@2x/apps/zed.png
-          install -D ${../crates/zed/resources/app-icon-nightly.png} \
+          install -D "crates/zed/resources/app-icon-nightly@2x.png" \
+            "$out/share/icons/hicolor/1024x1024@2x/apps/zed.png"
+          install -D crates/zed/resources/app-icon-nightly.png \
             $out/share/icons/hicolor/512x512/apps/zed.png
 
           # extracted from ../script/bundle-linux (envsubst) and
@@ -275,7 +272,7 @@ craneLib.buildPackage (
           runHook postInstall
         '';
 
-    # todo: why isn't this also done on macOS?
+    # TODO: why isn't this also done on macOS?
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
       wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';

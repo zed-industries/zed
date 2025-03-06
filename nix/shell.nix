@@ -3,11 +3,12 @@
   mkShell,
   stdenv,
   stdenvAdapters,
+  makeFontsConf,
 
   zed-editor,
 
-  makeFontsConf,
   rust-analyzer,
+  cargo-nextest,
   nixfmt-rfc-style,
   protobuf,
   nodejs_22,
@@ -21,18 +22,18 @@ mkShell' {
   inputsFrom = [ zed-editor ];
   packages = [
     rust-analyzer
+    cargo-nextest
     nixfmt-rfc-style
-    # TODO: package protobuf-language-server
+    # TODO: package protobuf-language-server for editing zed.proto
+    # TODO: add other tools used in our scripts
 
-    # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`); we'll just put it
-    # on `$PATH`:
+    # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
+    # we'll just put it on `$PATH`:
     nodejs_22
   ];
 
-  # todo(julia): try removing, this is maybe handled by stdenv wrapped linker?
-  # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones,
-  # because we need Swift 6.0 and nixpkgs doesn't have it.
-  # Xcode is required for development anyways
+  # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones, because
+  # we need Swift 6.0 and nixpkgs doesn't have it
   shellHook = lib.optionalString stdenv.hostPlatform.isDarwin ''
     export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
     export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer";
@@ -40,13 +41,13 @@ mkShell' {
 
   env =
     let
-      # exfil `env`; it's not in drvAttrs
       baseEnvs =
         (zed-editor.overrideAttrs (attrs: {
           passthru = { inherit (attrs) env; };
-        })).env;
+        })).env; # exfil `env`; it's not in drvAttrs
     in
-    baseEnvs
+     # unsetting this var so we download the staticlib during the build
+    (removeAttrs baseEnvs [ "LK_CUSTOM_WEBRTC" ])
     // {
       # note: different than `$FONTCONFIG_FILE` in `build.nix` – this refers to relative paths
       # outside the nix store instead of to `$src`
@@ -56,9 +57,6 @@ mkShell' {
           "./assets/fonts/plex-sans"
         ];
       };
-      PROTOC = "${protobuf}/bin/protoc"; # needed for crates/proto
-      # LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs; # TODO: try this?
+      PROTOC = "${protobuf}/bin/protoc";
     };
 }
-
-# todo: maybe unset LK_CUSTOM_WEBRTC...

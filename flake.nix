@@ -50,7 +50,6 @@
     in
     {
       packages = forAllSystems (pkgs: {
-        zed-editor = pkgs.zed-editor;
         default = pkgs.zed-editor;
       });
 
