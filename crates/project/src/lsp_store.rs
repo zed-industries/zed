@@ -1503,7 +1503,6 @@ impl LocalLspStore {
             let mut edits = None;
             for range in lsp_ranges {
                 if let Some(mut edit) = language_server
-                    // TODO kb check if any of these `.request::<lsp` needs capabilities before
                     .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                         text_document: text_document.clone(),
                         range,
@@ -2107,7 +2106,7 @@ impl LocalLspStore {
     }
 
     async fn execute_code_actions_on_servers(
-        this: &WeakEntity<LspStore>,
+        lsp_store: &WeakEntity<LspStore>,
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         code_actions: Vec<lsp::CodeActionKind>,
         buffer: &Entity<Buffer>,
@@ -2118,7 +2117,7 @@ impl LocalLspStore {
         for (lsp_adapter, language_server) in adapters_and_servers.iter() {
             let code_actions = code_actions.clone();
 
-            let actions = this
+            let actions = lsp_store
                 .update(cx, move |this, cx| {
                     let request = GetCodeActions {
                         range: text::Anchor::MIN..text::Anchor::MAX,
@@ -2140,7 +2139,7 @@ impl LocalLspStore {
                     }
 
                     let new = Self::deserialize_workspace_edit(
-                        this.upgrade().context("project dropped")?,
+                        lsp_store.upgrade().context("project dropped")?,
                         edit.clone(),
                         push_to_history,
                         lsp_adapter.clone(),
@@ -2152,31 +2151,41 @@ impl LocalLspStore {
                 }
 
                 if let Some(command) = action.lsp_action.command() {
-                    this.update(cx, |this, _| {
-                        if let LspStoreMode::Local(mode) = &mut this.mode {
-                            mode.last_workspace_edits_by_language_server
-                                .remove(&language_server.server_id());
-                        }
-                    })?;
-
-                    language_server
-                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                            command: command.command.clone(),
-                            arguments: command.arguments.clone().unwrap_or_default(),
-                            ..Default::default()
-                        })
-                        .await?;
-
-                    this.update(cx, |this, _| {
-                        if let LspStoreMode::Local(mode) = &mut this.mode {
-                            project_transaction.0.extend(
+                    let server_capabilities = language_server.capabilities();
+                    let available_commands = server_capabilities
+                        .execute_command_provider
+                        .as_ref()
+                        .map(|options| options.commands.as_slice())
+                        .unwrap_or_default();
+                    if available_commands.contains(&command.command) {
+                        lsp_store.update(cx, |lsp_store, _| {
+                            if let LspStoreMode::Local(mode) = &mut lsp_store.mode {
                                 mode.last_workspace_edits_by_language_server
-                                    .remove(&language_server.server_id())
-                                    .unwrap_or_default()
-                                    .0,
-                            )
-                        }
-                    })?;
+                                    .remove(&language_server.server_id());
+                            }
+                        })?;
+
+                        language_server
+                            .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                                command: command.command.clone(),
+                                arguments: command.arguments.clone().unwrap_or_default(),
+                                ..Default::default()
+                            })
+                            .await?;
+
+                        lsp_store.update(cx, |this, _| {
+                            if let LspStoreMode::Local(mode) = &mut this.mode {
+                                project_transaction.0.extend(
+                                    mode.last_workspace_edits_by_language_server
+                                        .remove(&language_server.server_id())
+                                        .unwrap_or_default()
+                                        .0,
+                                )
+                            }
+                        })?;
+                    } else {
+                        log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command)
+                    }
                 }
             }
         }
@@ -3901,7 +3910,7 @@ impl LspStore {
                 self.language_server_for_local_buffer(buffer, action.server_id, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
             }) else {
-                return Task::ready(Ok(Default::default()));
+                return Task::ready(Ok(ProjectTransaction::default()));
             };
             cx.spawn(move |this, mut cx| async move {
                 LocalLspStore::try_resolve_code_action(&lang_server, &mut action)
@@ -3922,30 +3931,40 @@ impl LspStore {
                 }
 
                 if let Some(command) = action.lsp_action.command() {
-                    this.update(&mut cx, |this, _| {
-                        this.as_local_mut()
-                            .unwrap()
-                            .last_workspace_edits_by_language_server
-                            .remove(&lang_server.server_id());
-                    })?;
+                    let server_capabilities = lang_server.capabilities();
+                    let available_commands = server_capabilities
+                        .execute_command_provider
+                        .as_ref()
+                        .map(|options| options.commands.as_slice())
+                        .unwrap_or_default();
+                    if available_commands.contains(&command.command) {
+                        this.update(&mut cx, |this, _| {
+                            this.as_local_mut()
+                                .unwrap()
+                                .last_workspace_edits_by_language_server
+                                .remove(&lang_server.server_id());
+                        })?;
 
-                    let result = lang_server
-                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                            command: command.command.clone(),
-                            arguments: command.arguments.clone().unwrap_or_default(),
-                            ..Default::default()
-                        })
-                        .await;
+                        let result = lang_server
+                            .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                                command: command.command.clone(),
+                                arguments: command.arguments.clone().unwrap_or_default(),
+                                ..Default::default()
+                            })
+                            .await;
 
-                    result?;
+                        result?;
 
-                    return this.update(&mut cx, |this, _| {
-                        this.as_local_mut()
-                            .unwrap()
-                            .last_workspace_edits_by_language_server
-                            .remove(&lang_server.server_id())
-                            .unwrap_or_default()
-                    });
+                        return this.update(&mut cx, |this, _| {
+                            this.as_local_mut()
+                                .unwrap()
+                                .last_workspace_edits_by_language_server
+                                .remove(&lang_server.server_id())
+                                .unwrap_or_default()
+                        });
+                    } else {
+                        log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
+                    }
                 }
 
                 Ok(ProjectTransaction::default())

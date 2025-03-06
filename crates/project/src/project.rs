@@ -415,10 +415,13 @@ pub struct CodeAction {
     pub lsp_action: ActionVariant,
 }
 
-/// TODO kb docs
+/// An action sent back by a language server.
 #[derive(Clone, Debug)]
 pub enum ActionVariant {
+    /// An action with the full data, may have a command or may not.
+    /// May require resolving.
     Action(lsp::CodeAction),
+    /// A command data to run as an action.
     Command(lsp::Command),
 }
 

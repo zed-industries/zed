@@ -2239,15 +2239,12 @@ impl LspCommand for GetCodeActions {
                 })
         })??;
 
-        let no_commands = Vec::new();
         let server_capabilities = language_server.capabilities();
         let available_commands = server_capabilities
             .execute_command_provider
             .as_ref()
-            .map(|options| &options.commands)
-            .unwrap_or(&no_commands)
-            .as_slice();
-
+            .map(|options| options.commands.as_slice())
+            .unwrap_or_default();
         Ok(actions
             .unwrap_or_default()
             .into_iter()
