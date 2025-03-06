@@ -5,7 +5,6 @@ pub mod debounced_delay;
 pub mod git;
 pub mod image_store;
 pub mod lsp_command;
-pub mod lsp_ext_command;
 pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
