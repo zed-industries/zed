@@ -3948,6 +3948,7 @@ impl EditorElement {
                 display_row_range,
                 multi_buffer_range,
                 status,
+                is_created_file,
                 ..
             } = &hunk
             {
@@ -3979,6 +3980,7 @@ impl EditorElement {
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
+                        *is_created_file,
                         line_height,
                         &editor,
                         cx,
@@ -8786,6 +8788,7 @@ fn diff_hunk_controls(
     row: u32,
     status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
+    is_created_file: bool,
     line_height: Pixels,
     editor: &Entity<Editor>,
     cx: &mut App,
@@ -8801,6 +8804,7 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
+        .occlude()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
@@ -8879,7 +8883,8 @@ fn diff_hunk_controls(
                             editor.restore_hunks_in_ranges(vec![point..point], window, cx);
                         });
                     }
-                }),
+                })
+                .disabled(is_created_file),
         )
         .when(
             !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),

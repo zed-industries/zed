@@ -154,6 +154,11 @@ impl MultiBufferDiffHunk {
             secondary: self.secondary_status,
         }
     }
+
+    pub fn is_created_file(&self) -> bool {
+        self.diff_base_byte_range == (0..0)
+            && self.buffer_range == (text::Anchor::MIN..text::Anchor::MAX)
+    }
 }
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
