@@ -1,5 +1,7 @@
 use crate::{task_inventory::TaskContexts, Event, *};
-use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::{
+    assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
+};
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};
@@ -233,7 +235,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    let task_contexts = TaskContexts::default();
 
     cx.executor().run_until_parked();
     let worktree_id = cx.update(|cx| {
@@ -241,6 +242,10 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             project.worktrees(cx).next().unwrap().read(cx).id()
         })
     });
+
+    let mut task_contexts = TaskContexts::default();
+    task_contexts.active_worktree_context = Some((worktree_id, TaskContext::default()));
+
     let topmost_local_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
         directory_in_worktree: PathBuf::from(".zed"),
@@ -265,7 +270,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);
 
-            get_all_tasks(&project, Some(worktree_id), &task_contexts, cx)
+            get_all_tasks(&project, &task_contexts, cx)
         })
         .into_iter()
         .map(|(source_kind, task)| {
@@ -305,7 +310,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     );
 
     let (_, resolved_task) = cx
-        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_contexts, cx))
+        .update(|cx| get_all_tasks(&project, &task_contexts, cx))
         .into_iter()
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
@@ -343,7 +348,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     cx.run_until_parked();
 
     let all_tasks = cx
-        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_contexts, cx))
+        .update(|cx| get_all_tasks(&project, &task_contexts, cx))
         .into_iter()
         .map(|(source_kind, task)| {
             let resolved = task.resolved.unwrap();
@@ -433,9 +438,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
     let active_non_worktree_item_tasks = cx.update(|cx| {
         get_all_tasks(
             &project,
-            Some(worktree_id),
             &TaskContexts {
-                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: None,
                 other_worktree_contexts: Vec::new(),
             },
@@ -450,9 +454,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
     let active_worktree_tasks = cx.update(|cx| {
         get_all_tasks(
             &project,
-            Some(worktree_id),
             &TaskContexts {
-                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: Some((worktree_id, {
                     let mut worktree_context = TaskContext::default();
                     worktree_context
@@ -5785,7 +5788,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            unstaged_diff.hunks(&snapshot, cx),
             &snapshot,
             &unstaged_diff.base_text_string().unwrap(),
             &[
@@ -5818,7 +5821,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &unstaged_diff.base_text().unwrap().text(),
+            &unstaged_diff.base_text().text(),
             &[(
                 2..3,
                 "",
@@ -5859,19 +5862,25 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         json!({
             ".git": {},
            "src": {
-               "main.rs": file_contents,
+               "modification.rs": file_contents,
            }
         }),
     )
     .await;
 
-    fs.set_index_for_repo(
-        Path::new("/dir/.git"),
-        &[("src/main.rs".into(), staged_contents)],
-    );
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents)],
+        &[
+            ("src/modification.rs".into(), committed_contents),
+            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+        ],
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[
+            ("src/modification.rs".into(), staged_contents),
+            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+        ],
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -5879,33 +5888,28 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     let language = rust_lang();
     language_registry.add(language.clone());
 
-    let buffer = project
+    let buffer_1 = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/src/main.rs", cx)
+            project.open_local_buffer("/dir/src/modification.rs", cx)
         })
         .await
         .unwrap();
-    let uncommitted_diff = project
+    let diff_1 = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_diff(buffer.clone(), cx)
+            project.open_uncommitted_diff(buffer_1.clone(), cx)
         })
         .await
         .unwrap();
-
-    uncommitted_diff.read_with(cx, |diff, _| {
-        assert_eq!(
-            diff.base_text().and_then(|base| base.language().cloned()),
-            Some(language)
-        )
+    diff_1.read_with(cx, |diff, _| {
+        assert_eq!(diff.base_text().language().cloned(), Some(language))
     });
-
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-        let snapshot = buffer.read(cx).snapshot();
+    diff_1.update(cx, |diff, cx| {
+        let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_diff.base_text_string().unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..1,
@@ -5923,25 +5927,29 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    // Reset HEAD to a version that differs from both the buffer and the index.
     let committed_contents = r#"
         // print goodbye
         fn main() {
         }
     "#
     .unindent();
-
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents)],
+        &[
+            ("src/modification.rs".into(), committed_contents.clone()),
+            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+        ],
     );
 
+    // Buffer now has an unstaged hunk.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-        let snapshot = buffer.read(cx).snapshot();
+    diff_1.update(cx, |diff, cx| {
+        let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_diff.base_text().unwrap().text(),
+            &diff.base_text().text(),
             &[(
                 2..3,
                 "",
@@ -5950,6 +5958,321 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             )],
         );
     });
+
+    // Open a buffer for a file that's been deleted.
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/deletion.rs", cx)
+        })
+        .await
+        .unwrap();
+    let diff_2 = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer_2.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    diff_2.update(cx, |diff, cx| {
+        let snapshot = buffer_2.read(cx).snapshot();
+        assert_hunks(
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[(
+                0..0,
+                "// the-deleted-contents\n",
+                "",
+                DiffHunkStatus::deleted(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            )],
+        );
+    });
+
+    // Stage the deletion of this file
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/modification.rs".into(), committed_contents.clone())],
+    );
+    cx.run_until_parked();
+    diff_2.update(cx, |diff, cx| {
+        let snapshot = buffer_2.read(cx).snapshot();
+        assert_hunks(
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[(
+                0..0,
+                "// the-deleted-contents\n",
+                "",
+                DiffHunkStatus::deleted(DiffHunkSecondaryStatus::None),
+            )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = r#"
+        zero
+        one
+        two
+        three
+        four
+        five
+    "#
+    .unindent();
+    let file_contents = r#"
+        one
+        TWO
+        three
+        FOUR
+        five
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents.clone()
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+    fs.set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let mut diff_events = cx.events(&uncommitted_diff);
+
+    // The hunks are initially unstaged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // Stage a hunk. It appears as optimistically staged.
+    uncommitted_diff.update(cx, |diff, cx| {
+        let range =
+            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
+        let hunks = diff
+            .hunks_intersecting_range(range, &snapshot, cx)
+            .collect::<Vec<_>>();
+        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // The diff emits a change event for the range of the staged hunk.
+    assert!(matches!(
+        diff_events.next().await.unwrap(),
+        BufferDiffEvent::HunksStagedOrUnstaged(_)
+    ));
+    let event = diff_events.next().await.unwrap();
+    if let BufferDiffEvent::DiffChanged {
+        changed_range: Some(changed_range),
+    } = event
+    {
+        let changed_range = changed_range.to_point(&snapshot);
+        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
+    } else {
+        panic!("Unexpected event {event:?}");
+    }
+
+    // When the write to the index completes, it appears as staged.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (1..2, "two\n", "TWO\n", DiffHunkStatus::modified(None)),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // The diff emits a change event for the changed index text.
+    let event = diff_events.next().await.unwrap();
+    if let BufferDiffEvent::DiffChanged {
+        changed_range: Some(changed_range),
+    } = event
+    {
+        let changed_range = changed_range.to_point(&snapshot);
+        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
+    } else {
+        panic!("Unexpected event {event:?}");
+    }
+
+    // Simulate a problem writing to the git index.
+    fs.set_error_message_for_index_write(
+        "/dir/.git".as_ref(),
+        Some("failed to write git index".into()),
+    );
+
+    // Stage another hunk.
+    uncommitted_diff.update(cx, |diff, cx| {
+        let range =
+            snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
+        let hunks = diff
+            .hunks_intersecting_range(range, &snapshot, cx)
+            .collect::<Vec<_>>();
+        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (1..2, "two\n", "TWO\n", DiffHunkStatus::modified(None)),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+                ),
+            ],
+        );
+    });
+    assert!(matches!(
+        diff_events.next().await.unwrap(),
+        BufferDiffEvent::HunksStagedOrUnstaged(_)
+    ));
+    let event = diff_events.next().await.unwrap();
+    if let BufferDiffEvent::DiffChanged {
+        changed_range: Some(changed_range),
+    } = event
+    {
+        let changed_range = changed_range.to_point(&snapshot);
+        assert_eq!(changed_range, Point::new(3, 0)..Point::new(4, 0));
+    } else {
+        panic!("Unexpected event {event:?}");
+    }
+
+    // When the write fails, the hunk returns to being unstaged.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (1..2, "two\n", "TWO\n", DiffHunkStatus::modified(None)),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    let event = diff_events.next().await.unwrap();
+    if let BufferDiffEvent::DiffChanged {
+        changed_range: Some(changed_range),
+    } = event
+    {
+        let changed_range = changed_range.to_point(&snapshot);
+        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
+    } else {
+        panic!("Unexpected event {event:?}");
+    }
 }
 
 #[gpui::test]
@@ -5957,16 +6280,16 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let committed_contents = r#"
-            fn main() {
-                println!("hello from HEAD");
-            }
-        "#
+        fn main() {
+            println!("hello from HEAD");
+        }
+    "#
     .unindent();
     let file_contents = r#"
-            fn main() {
-                println!("hello from the working copy");
-            }
-        "#
+        fn main() {
+            println!("hello from the working copy");
+        }
+    "#
     .unindent();
 
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -5983,7 +6306,11 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
 
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents)],
+        &[("src/main.rs".into(), committed_contents.clone())],
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs".into(), committed_contents.clone())],
     );
 
     let project = Project::test(fs.clone(), ["/dir/src/main.rs".as_ref()], cx).await;
@@ -6005,14 +6332,17 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            uncommitted_diff.hunks(&snapshot, cx),
             &snapshot,
             &uncommitted_diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
                 "    println!(\"hello from the working copy\");\n",
-                DiffHunkStatus::modified_none(),
+                DiffHunkStatus {
+                    kind: DiffHunkStatusKind::Modified,
+                    secondary: DiffHunkSecondaryStatus::HasSecondaryHunk,
+                },
             )],
         );
     });
@@ -6139,7 +6469,6 @@ fn tsx_lang() -> Arc<Language> {
 
 fn get_all_tasks(
     project: &Entity<Project>,
-    worktree_id: Option<WorktreeId>,
     task_contexts: &TaskContexts,
     cx: &mut App,
 ) -> Vec<(TaskSourceKind, ResolvedTask)> {
@@ -6150,7 +6479,7 @@ fn get_all_tasks(
             .task_inventory()
             .unwrap()
             .read(cx)
-            .used_and_current_resolved_tasks(worktree_id, None, task_contexts, cx)
+            .used_and_current_resolved_tasks(task_contexts, cx)
     });
     old.extend(new);
     old

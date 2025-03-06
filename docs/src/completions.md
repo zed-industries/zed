@@ -32,7 +32,7 @@ On Linux, `alt-tab` is often used by the window manager for switching windows, s
 
 See the [Configuring GitHub Copilot](#github-copilot) and [Configuring Supermaven](#supermaven) sections below for configuration of other providers. Only text insertions at the current cursor are supported for these providers, whereas the Zeta model provides multiple predictions including deletions.
 
-## Configuring Edit Prediction Keybindings
+## Configuring Edit Prediction Keybindings {#edit-predictions-keybinding}
 
 By default, `tab` is used to accept edit predictions. You can use another keybinding by inserting this in your keymap:
 
@@ -136,6 +136,40 @@ While `tab` and `alt-tab` are supported on Linux, `alt-l` is displayed instead. 
     }
   },
 ```
+
+### Missing keybind {#edit-predictions-missing-keybinding}
+
+Zed requires at least one keybinding for the {#action editor::AcceptEditPrediction} action in both the `Editor && edit_prediction` and `Editor && edit_prediction_conflict` contexts ([learn more above](#edit-predictions-keybinding)).
+
+If you have previously bound the default keybindings to different actions in the global context, you will not be able to preview or accept edit predictions. For example:
+
+```json
+[
+  // Your keymap
+  {
+    "bindings": {
+      // Binds `alt-tab` to a different action globally
+      "alt-tab": "menu::SelectNext"
+    }
+  }
+]
+```
+
+To fix this, you can specify your own keybinding for accepting edit predictions:
+
+```json
+[
+  // ...
+  {
+    "context": "Editor && edit_prediction_conflict",
+    "bindings": {
+      "alt-l": "editor::AcceptEditPrediction"
+    }
+  }
+]
+```
+
+If you would like to use the default keybinding, you can free it up by either moving yours to a more specific context or changing it to something else.
 
 ## Disabling Automatic Edit Prediction
 

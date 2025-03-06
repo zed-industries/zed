@@ -82,7 +82,7 @@ impl From<Rgba> for u32 {
 
 struct RgbaVisitor;
 
-impl<'de> Visitor<'de> for RgbaVisitor {
+impl Visitor<'_> for RgbaVisitor {
     type Value = Rgba;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -180,7 +180,7 @@ impl TryFrom<&'_ str> for Rgba {
                 /// Duplicates a given hex digit.
                 /// E.g., `0xf` -> `0xff`.
                 const fn duplicate(value: u8) -> u8 {
-                    value << 4 | value
+                    (value << 4) | value
                 }
 
                 (duplicate(r), duplicate(g), duplicate(b), duplicate(a))
@@ -666,6 +666,14 @@ pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
         gradient_angle_or_pattern_height: thickness,
+        ..Default::default()
+    }
+}
+
+/// Creates a solid background color.
+pub fn solid_background(color: impl Into<Hsla>) -> Background {
+    Background {
+        solid: color.into(),
         ..Default::default()
     }
 }

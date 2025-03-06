@@ -614,12 +614,19 @@ mod windows {
             let path = if let Some(path) = path {
                 path.to_path_buf().canonicalize()?
             } else {
-                std::env::current_exe()?
-                    .parent()
-                    .context("no parent path for cli")?
-                    .parent()
-                    .context("no parent path for cli folder")?
-                    .join("Zed.exe")
+                let cli = std::env::current_exe()?;
+                let dir = cli.parent().context("no parent path for cli")?;
+
+                // ../Zed.exe is the standard, lib/zed is for MSYS2, ./zed.exe is for the target
+                // directory in development builds.
+                let possible_locations = ["../Zed.exe", "../lib/zed/zed-editor.exe", "./zed.exe"];
+                possible_locations
+                    .iter()
+                    .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
+                    .context(format!(
+                        "could not find any of: {}",
+                        possible_locations.join(", ")
+                    ))?
             };
 
             Ok(App(path))

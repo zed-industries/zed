@@ -3,7 +3,7 @@ use std::{assert_eq, future::IntoFuture, path::Path, time::Duration};
 use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use menu::{Confirm, SelectNext, SelectPrev};
+use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
 use util::path;
@@ -2059,7 +2059,7 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
     // Switch to navigating with other shortcuts
     // Don't open file on modifiers release
     cx.simulate_modifiers_change(Modifiers::control());
-    cx.dispatch_action(menu::SelectPrev);
+    cx.dispatch_action(menu::SelectPrevious);
     cx.simulate_modifiers_change(Modifiers::none());
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
@@ -2071,7 +2071,7 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
     // Back to navigation with initial shortcut
     // Open file on modifiers release
     cx.simulate_modifiers_change(Modifiers::secondary_key());
-    cx.dispatch_action(SelectPrev); // <-- File Finder's SelectPrev, not menu's
+    cx.dispatch_action(SelectPrevious); // <-- File Finder's SelectPrevious, not menu's
     cx.simulate_modifiers_change(Modifiers::none());
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();

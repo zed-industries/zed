@@ -122,7 +122,7 @@
     "context": "BufferSearchBar > Editor",
     "bindings": {
       "ctrl-s": "search::SelectNextMatch",
-      "ctrl-r": "search::SelectPrevMatch",
+      "ctrl-r": "search::SelectPreviousMatch",
       "ctrl-g": "buffer_search::Dismiss"
     }
   },

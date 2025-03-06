@@ -215,7 +215,7 @@ pub struct InlayChunks<'a> {
     snapshot: &'a InlaySnapshot,
 }
 
-impl<'a> InlayChunks<'a> {
+impl InlayChunks<'_> {
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right, &());
 
@@ -341,7 +341,7 @@ impl<'a> Iterator for InlayChunks<'a> {
     }
 }
 
-impl<'a> InlayBufferRows<'a> {
+impl InlayBufferRows<'_> {
     pub fn seek(&mut self, row: u32) {
         let inlay_point = InlayPoint::new(row, 0);
         self.transforms.seek(&inlay_point, Bias::Left, &());
@@ -363,7 +363,7 @@ impl<'a> InlayBufferRows<'a> {
     }
 }
 
-impl<'a> Iterator for InlayBufferRows<'a> {
+impl Iterator for InlayBufferRows<'_> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{active_item_selection_properties, TaskContexts};
+use crate::TaskContexts;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
@@ -209,13 +209,6 @@ impl PickerDelegate for TasksModalDelegate {
                     match &mut picker.delegate.candidates {
                         Some(candidates) => string_match_candidates(candidates.iter()),
                         None => {
-                            let Ok((worktree, location)) =
-                                picker.delegate.workspace.update(cx, |workspace, cx| {
-                                    active_item_selection_properties(workspace, cx)
-                                })
-                            else {
-                                return Vec::new();
-                            };
                             let Some(task_inventory) = picker
                                 .delegate
                                 .task_store
@@ -228,8 +221,6 @@ impl PickerDelegate for TasksModalDelegate {
 
                             let (used, current) =
                                 task_inventory.read(cx).used_and_current_resolved_tasks(
-                                    worktree,
-                                    location,
                                     &picker.delegate.task_contexts,
                                     cx,
                                 );
@@ -655,8 +646,8 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "With no global tasks and no open item, no tasks should be listed"
+            vec!["another one", "example task"],
+            "With no global tasks and no open item, a single worktree should be used and its tasks listed"
         );
         drop(tasks_picker);
 
@@ -815,8 +806,8 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "Should list no file or worktree context-dependent when no file is open"
+            vec![concat!("opened now: ", path!("/dir")).to_string()],
+            "When no file is open for a single worktree, should autodetect all worktree-related tasks"
         );
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);
