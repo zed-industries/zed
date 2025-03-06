@@ -8,11 +8,15 @@ pub mod status;
 use anyhow::{anyhow, Context as _, Result};
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;
+use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
+use std::path::Path;
+use std::process::Output;
 use std::str::FromStr;
 use std::sync::LazyLock;
+use std::time::Instant;
 
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
@@ -55,6 +59,37 @@ actions!(
 );
 action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
 action_with_deprecated_aliases!(git, Restore, ["editor::RevertSelectedHunks"]);
+
+/// helper which logs git commands with their output, returncode, and duration
+pub fn git_command<I, S>(
+    bin: impl AsRef<OsStr>,
+    working_dir: impl AsRef<Path>,
+    args: I,
+) -> Result<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut cmd = util::command::new_std_command(&bin);
+    cmd.current_dir(working_dir).args(args);
+    let before = Instant::now();
+    let output = cmd.output();
+    let duration = Instant::now() - before;
+    let c = "";
+    println!("{c:-20}\nGit command: `{cmd:?}`\n took {duration:?}");
+    println!("env vars: {:?}", cmd.get_envs());
+    match &output {
+        Ok(out) => {
+            println!("status: {:?}", out.status);
+            println!("stdout:\n{}\n", String::from_utf8_lossy(&out.stdout));
+            println!("stderr:\n{}\n{c:-20}", String::from_utf8_lossy(&out.stderr));
+        }
+        Err(e) => {
+            println!("failed: {e:?}")
+        }
+    }
+    Ok(output?)
+}
 
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;
