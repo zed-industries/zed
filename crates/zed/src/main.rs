@@ -1,5 +1,5 @@
 // Disable command line from opening on release mode
-// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod logger;
 mod reliability;
@@ -174,10 +174,8 @@ fn main() {
     // If there is, run the installer and exit
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
     #[cfg(target_os = "windows")]
-    {
-        if auto_update::check_pending_installation(&app_version) {
-            return;
-        }
+    if auto_update::check_pending_installation(&app_version) {
+        return;
     }
 
     let args = Args::parse();
