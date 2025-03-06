@@ -58,7 +58,8 @@ impl EditActionParser {
         const SEARCH_MARKER: &[u8] = b"<<<<<<< SEARCH\n";
         const DIVIDER: &[u8] = b"=======\n";
         const NL_DIVIDER: &[u8] = b"\n=======\n";
-        const REPLACE_MARKER: &[u8] = b"\n>>>>>>> REPLACE";
+        const REPLACE_MARKER: &[u8] = b">>>>>>> REPLACE";
+        const NL_REPLACE_MARKER: &[u8] = b"\n>>>>>>> REPLACE";
 
         for byte in input.bytes() {
             match self.state {
@@ -90,15 +91,13 @@ impl EditActionParser {
                     }
                 }
                 SearchBlock => {
-                    let divider = if self.old_bytes.is_empty() {
-                        // do not require another newline if search block is empty
-                        DIVIDER
-                    } else {
-                        NL_DIVIDER
-                    };
-
-                    if collect_until_marker(byte, divider, &mut self.marker_ix, &mut self.old_bytes)
-                    {
+                    if collect_until_marker(
+                        byte,
+                        DIVIDER,
+                        NL_DIVIDER,
+                        &mut self.marker_ix,
+                        &mut self.old_bytes,
+                    ) {
                         self.to_state(ReplaceBlock);
                     }
                 }
@@ -106,6 +105,7 @@ impl EditActionParser {
                     if collect_until_marker(
                         byte,
                         REPLACE_MARKER,
+                        NL_REPLACE_MARKER,
                         &mut self.marker_ix,
                         &mut self.new_bytes,
                     ) {
@@ -194,7 +194,20 @@ fn match_marker(byte: u8, marker: &[u8], marker_ix: &mut usize) -> MarkerMatch {
     }
 }
 
-fn collect_until_marker(byte: u8, marker: &[u8], marker_ix: &mut usize, buf: &mut Vec<u8>) -> bool {
+fn collect_until_marker(
+    byte: u8,
+    marker: &[u8],
+    nl_marker: &[u8],
+    marker_ix: &mut usize,
+    buf: &mut Vec<u8>,
+) -> bool {
+    let marker = if buf.is_empty() {
+        // do not require another newline if block is empty
+        marker
+    } else {
+        nl_marker
+    };
+
     // this can't be a method because we'd need to have two mutable references on self
     match match_marker(byte, marker, marker_ix) {
         MarkerMatch::Complete => true,
@@ -409,6 +422,51 @@ fn new_function() {
                     .to_string(),
             }
         );
+    }
+
+    #[test]
+    fn test_empty_replace() {
+        let input = r#"src/main.rs
+```rust
+<<<<<<< SEARCH
+fn this_will_be_deleted() {
+    println!("Deleting this function");
+}
+=======
+>>>>>>> REPLACE
+```
+"#;
+
+        let mut parser = EditActionParser::new();
+        let actions = parser.parse_chunk(input);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0],
+            EditAction::Replace {
+                file_path: "src/main.rs".to_string(),
+                old: "fn this_will_be_deleted() {\n    println!(\"Deleting this function\");\n}"
+                    .to_string(),
+                new: "".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_empty_both() {
+        let input = r#"src/main.rs
+```rust
+<<<<<<< SEARCH
+=======
+>>>>>>> REPLACE
+```
+"#;
+
+        let mut parser = EditActionParser::new();
+        let actions = parser.parse_chunk(input);
+
+        // Should not create an action when both sections are empty
+        assert_eq!(actions.len(), 0);
     }
 
     #[test]
