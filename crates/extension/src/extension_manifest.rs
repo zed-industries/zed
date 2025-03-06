@@ -90,7 +90,11 @@ pub struct ExtensionManifest {
 }
 
 impl ExtensionManifest {
-    pub fn allow_exec(&self, desired_command: &str, desired_args: &[&str]) -> Result<()> {
+    pub fn allow_exec(
+        &self,
+        desired_command: &str,
+        desired_args: &[impl AsRef<str> + std::fmt::Debug],
+    ) -> Result<()> {
         let is_allowed = self.capabilities.iter().any(|capability| match capability {
             ExtensionCapability::ProcessExec { command, args } if command == desired_command => {
                 for (ix, arg) in args.iter().enumerate() {
@@ -102,7 +106,7 @@ impl ExtensionManifest {
                         return false;
                     }
 
-                    if arg != "*" && arg != desired_args[ix] {
+                    if arg != "*" && arg != desired_args[ix].as_ref() {
                         return false;
                     }
                 }
@@ -312,7 +316,7 @@ mod tests {
 
         assert!(manifest.allow_exec("ls", &["-la"]).is_ok());
         assert!(manifest.allow_exec("ls", &["-l"]).is_err());
-        assert!(manifest.allow_exec("pwd", &[]).is_err());
+        assert!(manifest.allow_exec("pwd", &[] as &[&str]).is_err());
     }
 
     #[test]
