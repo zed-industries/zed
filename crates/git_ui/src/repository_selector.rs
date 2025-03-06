@@ -25,14 +25,14 @@ impl RepositorySelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let project = project_handle.read(cx);
-        let git_store = project.git_store().clone();
+        let git_store = project_handle.read(cx).git_store().clone();
         let repository_entries = git_store.update(cx, |git_store, cx| {
             deduplicated_repository_entries(git_store, cx)
         });
+        let project = project_handle.read(cx);
         let filtered_repositories = repository_entries.clone();
 
-        let widest_item_ix = all_repositories.iter().position_max_by(|a, b| {
+        let widest_item_ix = repository_entries.iter().position_max_by(|a, b| {
             a.read(cx)
                 .display_name(project, cx)
                 .len()
