@@ -5395,7 +5395,6 @@ dependencies = [
  "serde_json",
  "smol",
  "sum_tree",
- "tempfile",
  "text",
  "time",
  "unindent",
@@ -11117,7 +11116,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "util",
- "which 6.0.3",
 ]
 
 [[package]]
