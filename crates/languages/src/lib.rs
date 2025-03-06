@@ -74,7 +74,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
     ]);
 
-    // Following are a series of helper macros for registering langauges.
+    // Following are a series of helper macros for registering languages.
     // Macros are used instead of a function or for loop in order to avoid
     // code duplication and improve readability as the types get quite verbose
     // to type out in some cases.
