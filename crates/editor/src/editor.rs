@@ -7843,7 +7843,7 @@ impl Editor {
             for hunk in &hunks {
                 self.prepare_restore_change(&mut revert_changes, hunk, cx);
             }
-            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), window, cx);
+            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), cx);
         }
         drop(chunk_by);
         if !revert_changes.is_empty() {
@@ -13657,13 +13657,13 @@ impl Editor {
     pub fn toggle_staged_selected_diff_hunks(
         &mut self,
         _: &::git::ToggleStaged,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
-        self.stage_or_unstage_diff_hunks(stage, &ranges, window, cx);
+        self.stage_or_unstage_diff_hunks(stage, ranges, cx);
     }
 
     pub fn stage_and_next(
@@ -13687,16 +13687,53 @@ impl Editor {
     pub fn stage_or_unstage_diff_hunks(
         &mut self,
         stage: bool,
-        ranges: &[Range<Anchor>],
-        window: &mut Window,
+        ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let chunk_by = self
-            .diff_hunks_in_ranges(&ranges, &snapshot)
-            .chunk_by(|hunk| hunk.buffer_id);
-        for (buffer_id, hunks) in &chunk_by {
-            self.do_stage_or_unstage(stage, buffer_id, hunks, window, cx);
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        cx.spawn(|this, mut cx| async move {
+            task.await?;
+            this.update(&mut cx, |this, cx| {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                let chunk_by = this
+                    .diff_hunks_in_ranges(&ranges, &snapshot)
+                    .chunk_by(|hunk| hunk.buffer_id);
+                for (buffer_id, hunks) in &chunk_by {
+                    this.do_stage_or_unstage(stage, buffer_id, hunks, cx);
+                }
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn save_buffers_for_ranges_if_needed(
+        &mut self,
+        ranges: &[Range<Anchor>],
+        cx: &mut Context<'_, Editor>,
+    ) -> Task<Result<()>> {
+        let multibuffer = self.buffer.read(cx);
+        let snapshot = multibuffer.read(cx);
+        let buffer_ids: HashSet<_> = ranges
+            .iter()
+            .flat_map(|range| snapshot.buffer_ids_for_range(range.clone()))
+            .collect();
+        drop(snapshot);
+
+        let mut buffers = HashSet::default();
+        for buffer_id in buffer_ids {
+            if let Some(buffer_entity) = multibuffer.buffer(buffer_id) {
+                let buffer = buffer_entity.read(cx);
+                if buffer.file().is_some_and(|file| file.disk_state().exists()) && buffer.is_dirty()
+                {
+                    buffers.insert(buffer_entity);
+                }
+            }
+        }
+
+        if let Some(project) = &self.project {
+            project.update(cx, |project, cx| project.save_buffers(buffers, cx))
+        } else {
+            Task::ready(Ok(()))
         }
     }
 
@@ -13709,7 +13746,7 @@ impl Editor {
         let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
 
         if ranges.iter().any(|range| range.start != range.end) {
-            self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
+            self.stage_or_unstage_diff_hunks(stage, ranges, cx);
             return;
         }
 
@@ -13728,7 +13765,7 @@ impl Editor {
         if run_twice {
             self.go_to_next_hunk(&GoToHunk, window, cx);
         }
-        self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
+        self.stage_or_unstage_diff_hunks(stage, ranges, cx);
         self.go_to_next_hunk(&GoToHunk, window, cx);
     }
 
@@ -13737,31 +13774,16 @@ impl Editor {
         stage: bool,
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
-        window: &mut Window,
         cx: &mut App,
-    ) {
-        let Some(project) = self.project.as_ref() else {
-            return;
-        };
-        let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
-            return;
-        };
-        let Some(diff) = self.buffer.read(cx).diff_for(buffer_id) else {
-            return;
-        };
+    ) -> Option<()> {
+        let project = self.project.as_ref()?;
+        let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
+        let diff = self.buffer.read(cx).diff_for(buffer_id)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
         let file_exists = buffer_snapshot
             .file()
             .is_some_and(|file| file.disk_state().exists());
-        let Some((repo, path)) = project
-            .read(cx)
-            .repository_and_path_for_buffer_id(buffer_id, cx)
-        else {
-            log::debug!("no git repo for buffer id");
-            return;
-        };
-
-        let new_index_text = diff.update(cx, |diff, cx| {
+        diff.update(cx, |diff, cx| {
             diff.stage_or_unstage_hunks(
                 stage,
                 &hunks
@@ -13777,20 +13799,7 @@ impl Editor {
                 cx,
             )
         });
-
-        if file_exists {
-            let buffer_store = project.read(cx).buffer_store().clone();
-            buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
-                .detach_and_log_err(cx);
-        }
-
-        let recv = repo
-            .read(cx)
-            .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));
-
-        cx.background_spawn(async move { recv.await? })
-            .detach_and_notify_err(window, cx);
+        None
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
@@ -16305,7 +16314,7 @@ fn get_uncommitted_diff_for_buffer(
         }
     });
     cx.spawn(|mut cx| async move {
-        let diffs = futures::future::join_all(tasks).await;
+        let diffs = future::join_all(tasks).await;
         buffer
             .update(&mut cx, |buffer, cx| {
                 for diff in diffs.into_iter().flatten() {

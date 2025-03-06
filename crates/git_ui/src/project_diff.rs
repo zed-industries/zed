@@ -18,7 +18,10 @@ use gpui::{
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
-use project::{git::GitStore, Project, ProjectPath};
+use project::{
+    git::{GitEvent, GitStore},
+    Project, ProjectPath,
+};
 use std::any::{Any, TypeId};
 use theme::ActiveTheme;
 use ui::{prelude::*, vertical_divider, Tooltip};
@@ -140,8 +143,13 @@ impl ProjectDiff {
         let git_store_subscription = cx.subscribe_in(
             &git_store,
             window,
-            move |this, _git_store, _event, _window, _cx| {
-                *this.update_needed.borrow_mut() = ();
+            move |this, _git_store, event, _window, _cx| match event {
+                GitEvent::ActiveRepositoryChanged
+                | GitEvent::FileSystemUpdated
+                | GitEvent::GitStateUpdated => {
+                    *this.update_needed.borrow_mut() = ();
+                }
+                _ => {}
             },
         );
 
@@ -1015,9 +1023,6 @@ mod tests {
 
         editor.update_in(cx, |editor, window, cx| {
             editor.git_restore(&Default::default(), window, cx);
-        });
-        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.statuses = HashMap::default();
         });
         cx.run_until_parked();
 
