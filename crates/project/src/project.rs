@@ -3913,6 +3913,7 @@ impl Project {
             this.buffer_store.update(cx, |buffer_store, _| {
                 buffer_store.forget_shared_buffers_for(&collaborator.peer_id);
             });
+            this.breakpoint_store.read(cx).broadcast();
             cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);

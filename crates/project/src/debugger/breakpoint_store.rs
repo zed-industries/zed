@@ -172,6 +172,22 @@ impl BreakpointStore {
         Ok(proto::Ack {})
     }
 
+    pub(crate) fn broadcast(&self) {
+        if let Some((client, project_id)) = &self.downstream_client {
+            for (path, breakpoint_set) in &self.breakpoints {
+                let _ = client.send(proto::BreakpointsForFile {
+                    project_id: *project_id,
+                    path: path.to_str().map(ToOwned::to_owned).unwrap(),
+                    breakpoints: breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .filter_map(|(anchor, bp)| bp.to_proto(&path, anchor))
+                        .collect(),
+                });
+            }
+        }
+    }
+
     fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
         worktree::File::from_dyn(buffer.read(cx).file())
             .and_then(|file| file.worktree.read(cx).absolutize(&file.path).ok())
@@ -227,7 +243,7 @@ impl BreakpointStore {
             }
         }
         if let BreakpointStoreMode::Remote(remote) = &self.mode {
-            if let Some(breakpoint) = breakpoint.1._to_proto(&abs_path, &breakpoint.0) {
+            if let Some(breakpoint) = breakpoint.1.to_proto(&abs_path, &breakpoint.0) {
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
                     project_id: remote._upstream_project_id,
                     path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
@@ -242,7 +258,7 @@ impl BreakpointStore {
                 breakpoints: breakpoint_set
                     .breakpoints
                     .iter()
-                    .filter_map(|(anchor, bp)| bp._to_proto(&abs_path, anchor))
+                    .filter_map(|(anchor, bp)| bp.to_proto(&abs_path, anchor))
                     .collect(),
             });
         }
@@ -447,11 +463,7 @@ pub struct Breakpoint {
 }
 
 impl Breakpoint {
-    fn _to_proto(
-        &self,
-        _path: &Path,
-        position: &text::Anchor,
-    ) -> Option<client::proto::Breakpoint> {
+    fn to_proto(&self, _path: &Path, position: &text::Anchor) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
             position: Some(serialize_text_anchor(position)),
 
