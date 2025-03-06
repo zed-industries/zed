@@ -15,6 +15,8 @@ members = [
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_ui",
+    "crates/aws_http_client",
+    "crates/bedrock",
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/call",
@@ -101,6 +103,7 @@ members = [
     "crates/project_panel",
     "crates/project_symbols",
     "crates/prompt_library",
+    "crates/prompt_store",
     "crates/proto",
     "crates/recent_projects",
     "crates/refineable",
@@ -114,6 +117,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/schema_generator",
+    "crates/scripting_tool",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -164,9 +168,6 @@ members = [
     # Extensions
     #
 
-    "extensions/csharp",
-    "extensions/deno",
-    "extensions/elixir",
     "extensions/emmet",
     "extensions/erlang",
     "extensions/glsl",
@@ -218,6 +219,8 @@ assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
+aws_http_client = { path = "crates/aws_http_client" }
+bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
@@ -304,6 +307,7 @@ project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 prompt_library = { path = "crates/prompt_library" }
+prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
@@ -315,6 +319,7 @@ reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
+scripting_tool = { path = "crates/scripting_tool" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
@@ -366,7 +371,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", rev = "03c2907b44b4189aac5fdeaea331f5aab5c7072e"}
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", rev = "03c2907b44b4189aac5fdeaea331f5aab5c7072e" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -382,6 +387,11 @@ async-trait = "0.1"
 async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
+aws-config = { version = "1.5.16", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.1", features = ["hardcoded-credentials"] }
+aws-sdk-bedrockruntime = { version = "1.73.0", features = ["behavior-version-latest"] }
+aws-smithy-runtime-api = { version = "1.7.3", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.2.13", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
@@ -396,10 +406,10 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
-convert_case = "0.7.0"
+convert_case = "0.8.0"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
-ctor = "0.3.0"
+ctor = "0.4.0"
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -442,11 +452,11 @@ livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "
 ], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 nanoid = "0.4"
 nbformat = { version = "0.10.0" }
 nix = "0.29"
 num-format = "0.4.4"
-once_cell = "1.20"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
@@ -528,14 +538,14 @@ tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.2", features = ["wasm"] }
+tree-sitter = { version = "0.25.3", features = ["wasm"] }
 tree-sitter-bash = "0.23"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.23"
 tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
-tree-sitter-gitcommit = {git  = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9"}
+tree-sitter-gitcommit = { git = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
 tree-sitter-go = "0.23"
 tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
@@ -610,6 +620,7 @@ features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Console",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
@@ -630,7 +641,7 @@ features = [
 # TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1e759a4b5e370f87dc15e40756ac4f8815b61d9d", package = "async-tls"}
+real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1e759a4b5e370f87dc15e40756ac4f8815b61d9d", package = "async-tls" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -700,6 +711,9 @@ debug = "full"
 lto = false
 codegen-units = 16
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow" }
+
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
@@ -737,4 +751,4 @@ should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
 
 [workspace.metadata.cargo-machete]
-ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
+ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme"]

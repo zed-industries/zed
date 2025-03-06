@@ -189,7 +189,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Find All References", editor::actions::FindAllReferences),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic),
-                MenuItem::action("Previous Problem", editor::actions::GoToPrevDiagnostic),
+                MenuItem::action("Previous Problem", editor::actions::GoToPreviousDiagnostic),
             ],
         },
         Menu {

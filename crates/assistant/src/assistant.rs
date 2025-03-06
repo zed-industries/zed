@@ -19,7 +19,7 @@ use gpui::{actions, App, Global, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
@@ -33,7 +33,7 @@ actions!(
     [
         InsertActivePrompt,
         DeployHistory,
-        NewContext,
+        NewChat,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist
     ]

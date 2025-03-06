@@ -8,6 +8,9 @@ pub mod status;
 use anyhow::{anyhow, Context as _, Result};
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;
+use gpui::impl_actions;
+use repository::PushOptions;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
@@ -23,9 +26,17 @@ pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
 pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
+pub static LFS_DIR: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("lfs"));
 pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
 pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
+
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct Push {
+    pub options: Option<PushOptions>,
+}
+
+impl_actions!(git, [Push]);
 
 actions!(
     git,
@@ -43,7 +54,10 @@ actions!(
         RestoreTrackedFiles,
         TrashUntrackedFiles,
         Uncommit,
+        Pull,
+        Fetch,
         Commit,
+        ShowCommitEditor,
     ]
 );
 action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);

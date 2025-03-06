@@ -32,15 +32,14 @@ use gpui::{
 };
 use language::{line_diff, Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role,
+    report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use rope::Rope;
 use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;

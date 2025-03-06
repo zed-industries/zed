@@ -88,15 +88,46 @@ const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let child = if self.path_states.is_empty() {
-            div()
+        let warning_count = if self.include_warnings {
+            self.summary.warning_count
+        } else {
+            0
+        };
+
+        let child = if warning_count + self.summary.error_count == 0 {
+            let label = if self.summary.warning_count == 0 {
+                SharedString::new_static("No problems in workspace")
+            } else {
+                SharedString::new_static("No errors in workspace")
+            };
+            v_flex()
                 .key_context("EmptyPane")
-                .bg(cx.theme().colors().editor_background)
-                .flex()
-                .items_center()
-                .justify_center()
                 .size_full()
-                .child(Label::new("No problems in workspace"))
+                .gap_1()
+                .justify_center()
+                .items_center()
+                .text_center()
+                .bg(cx.theme().colors().editor_background)
+                .child(Label::new(label).color(Color::Muted))
+                .when(self.summary.warning_count > 0, |this| {
+                    let plural_suffix = if self.summary.warning_count > 1 {
+                        "s"
+                    } else {
+                        ""
+                    };
+                    let label = format!(
+                        "Show {} warning{}",
+                        self.summary.warning_count, plural_suffix
+                    );
+                    this.child(
+                        Button::new("diagnostics-show-warning-label", label).on_click(cx.listener(
+                            |this, _, window, cx| {
+                                this.toggle_warnings(&Default::default(), window, cx);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                })
         } else {
             div().size_full().child(self.editor.clone())
         };
@@ -531,9 +562,7 @@ impl ProjectDiagnosticsEditor {
                                         )),
                                         height: diagnostic.message.matches('\n').count() as u32 + 1,
                                         style: BlockStyle::Fixed,
-                                        render: diagnostic_block_renderer(
-                                            diagnostic, None, true, true,
-                                        ),
+                                        render: diagnostic_block_renderer(diagnostic, None, true),
                                         priority: 0,
                                     });
                                 }
@@ -966,7 +995,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                         h_flex()
                             .gap_1()
                             .child(
-                                StyledText::new(message.clone()).with_highlights(
+                                StyledText::new(message.clone()).with_default_highlights(
                                     &cx.window.text_style(),
                                     code_ranges
                                         .iter()

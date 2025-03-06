@@ -638,10 +638,13 @@ impl BlockMap {
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
                     .filter_map(|block| {
-                        Some((
-                            block.placement.to_wrap_row(wrap_snapshot)?,
-                            Block::Custom(block.clone()),
-                        ))
+                        let placement = block.placement.to_wrap_row(wrap_snapshot)?;
+                        if let BlockPlacement::Above(row) = placement {
+                            if row < new_start {
+                                return None;
+                            }
+                        }
+                        Some((placement, Block::Custom(block.clone())))
                     }),
             );
 
@@ -996,7 +999,7 @@ impl std::ops::DerefMut for BlockPoint {
     }
 }
 
-impl<'a> Deref for BlockMapReader<'a> {
+impl Deref for BlockMapReader<'_> {
     type Target = BlockSnapshot;
 
     fn deref(&self) -> &Self::Target {
@@ -1004,13 +1007,13 @@ impl<'a> Deref for BlockMapReader<'a> {
     }
 }
 
-impl<'a> DerefMut for BlockMapReader<'a> {
+impl DerefMut for BlockMapReader<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.snapshot
     }
 }
 
-impl<'a> BlockMapReader<'a> {
+impl BlockMapReader<'_> {
     pub fn row_for_block(&self, block_id: CustomBlockId) -> Option<BlockRow> {
         let block = self.blocks.iter().find(|block| block.id == block_id)?;
         let buffer_row = block
@@ -1050,7 +1053,7 @@ impl<'a> BlockMapReader<'a> {
     }
 }
 
-impl<'a> BlockMapWriter<'a> {
+impl BlockMapWriter<'_> {
     pub fn insert(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
@@ -1236,26 +1239,45 @@ impl<'a> BlockMapWriter<'a> {
         self.remove(blocks_to_remove);
     }
 
-    pub fn fold_buffer(&mut self, buffer_id: BufferId, multi_buffer: &MultiBuffer, cx: &App) {
-        self.0.folded_buffers.insert(buffer_id);
-        self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
-    }
-
-    pub fn unfold_buffer(&mut self, buffer_id: BufferId, multi_buffer: &MultiBuffer, cx: &App) {
-        self.0.folded_buffers.remove(&buffer_id);
-        self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
-    }
-
-    fn recompute_blocks_for_buffer(
+    pub fn fold_buffers(
         &mut self,
-        buffer_id: BufferId,
+        buffer_ids: impl IntoIterator<Item = BufferId>,
         multi_buffer: &MultiBuffer,
         cx: &App,
     ) {
-        let wrap_snapshot = self.0.wrap_snapshot.borrow().clone();
+        self.fold_or_unfold_buffers(true, buffer_ids, multi_buffer, cx);
+    }
+
+    pub fn unfold_buffers(
+        &mut self,
+        buffer_ids: impl IntoIterator<Item = BufferId>,
+        multi_buffer: &MultiBuffer,
+        cx: &App,
+    ) {
+        self.fold_or_unfold_buffers(false, buffer_ids, multi_buffer, cx);
+    }
+
+    fn fold_or_unfold_buffers(
+        &mut self,
+        fold: bool,
+        buffer_ids: impl IntoIterator<Item = BufferId>,
+        multi_buffer: &MultiBuffer,
+        cx: &App,
+    ) {
+        let mut ranges = Vec::new();
+        for buffer_id in buffer_ids {
+            if fold {
+                self.0.folded_buffers.insert(buffer_id);
+            } else {
+                self.0.folded_buffers.remove(&buffer_id);
+            }
+            ranges.extend(multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx));
+        }
+        ranges.sort_unstable_by_key(|range| range.start);
 
         let mut edits = Patch::default();
-        for range in multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx) {
+        let wrap_snapshot = self.0.wrap_snapshot.borrow().clone();
+        for range in ranges {
             let last_edit_row = cmp::min(
                 wrap_snapshot.make_wrap_point(range.end, Bias::Right).row() + 1,
                 wrap_snapshot.max_point().row(),
@@ -1596,6 +1618,15 @@ impl BlockSnapshot {
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
+    pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
+        cursor.seek(&row, Bias::Right, &());
+        let Some(transform) = cursor.item() else {
+            return false;
+        };
+        matches!(transform.block, Some(Block::FoldedBuffer { .. }))
+    }
+
     pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
@@ -1718,7 +1749,7 @@ impl BlockSnapshot {
     }
 }
 
-impl<'a> BlockChunks<'a> {
+impl BlockChunks<'_> {
     /// Go to the next transform
     fn advance(&mut self) {
         self.input_chunk = Chunk::default();
@@ -1834,7 +1865,7 @@ impl<'a> Iterator for BlockChunks<'a> {
     }
 }
 
-impl<'a> Iterator for BlockRows<'a> {
+impl Iterator for BlockRows<'_> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1930,7 +1961,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
     }
 }
 
-impl<'a> Deref for BlockContext<'a, '_> {
+impl Deref for BlockContext<'_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {
@@ -2727,7 +2758,7 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
-            writer.fold_buffer(buffer_id_1, buffer, cx);
+            writer.fold_buffers([buffer_id_1], buffer, cx);
         });
         let excerpt_blocks_1 = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
@@ -2802,7 +2833,7 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
-            writer.fold_buffer(buffer_id_2, buffer, cx);
+            writer.fold_buffers([buffer_id_2], buffer, cx);
         });
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
@@ -2858,7 +2889,7 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
-            writer.unfold_buffer(buffer_id_1, buffer, cx);
+            writer.unfold_buffers([buffer_id_1], buffer, cx);
         });
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
@@ -2919,7 +2950,7 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
-            writer.fold_buffer(buffer_id_3, buffer, cx);
+            writer.fold_buffers([buffer_id_3], buffer, cx);
         });
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
@@ -2997,7 +3028,7 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
-            writer.fold_buffer(buffer_id, buffer, cx);
+            writer.fold_buffers([buffer_id], buffer, cx);
         });
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
@@ -3247,7 +3278,7 @@ mod tests {
                             );
                             folded_count += 1;
                             unfolded_count -= 1;
-                            block_map.fold_buffer(buffer_to_fold, buffer, cx);
+                            block_map.fold_buffers([buffer_to_fold], buffer, cx);
                         }
                         if unfold {
                             let buffer_to_unfold =
@@ -3255,7 +3286,7 @@ mod tests {
                             log::info!("Unfolding {buffer_to_unfold:?}");
                             unfolded_count += 1;
                             folded_count -= 1;
-                            block_map.unfold_buffer(buffer_to_unfold, buffer, cx);
+                            block_map.unfold_buffers([buffer_to_unfold], buffer, cx);
                         }
                         log::info!(
                             "Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}"

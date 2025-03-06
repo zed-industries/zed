@@ -618,11 +618,8 @@ impl Item for Editor {
         ItemSettings::get_global(cx)
             .file_icons
             .then(|| {
-                self.buffer
-                    .read(cx)
-                    .as_singleton()
-                    .and_then(|buffer| buffer.read(cx).project_path(cx))
-                    .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
+                path_for_buffer(&self.buffer, 0, true, cx)
+                    .and_then(|path| FileIcons::get_icon(path.as_ref(), cx))
             })
             .flatten()
             .map(Icon::from_path)
@@ -1592,11 +1589,13 @@ impl SearchableItem for Editor {
 
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Range<Anchor>],
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         active_match_index(
+            direction,
             matches,
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
@@ -1609,6 +1608,7 @@ impl SearchableItem for Editor {
 }
 
 pub fn active_match_index(
+    direction: Direction,
     ranges: &[Range<Anchor>],
     cursor: &Anchor,
     buffer: &MultiBufferSnapshot,
@@ -1616,7 +1616,7 @@ pub fn active_match_index(
     if ranges.is_empty() {
         None
     } else {
-        match ranges.binary_search_by(|probe| {
+        let r = ranges.binary_search_by(|probe| {
             if probe.end.cmp(cursor, buffer).is_lt() {
                 Ordering::Less
             } else if probe.start.cmp(cursor, buffer).is_gt() {
@@ -1624,8 +1624,15 @@ pub fn active_match_index(
             } else {
                 Ordering::Equal
             }
-        }) {
-            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+        });
+        match direction {
+            Direction::Prev => match r {
+                Ok(i) => Some(i),
+                Err(i) => Some(i.saturating_sub(1)),
+            },
+            Direction::Next => match r {
+                Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+            },
         }
     }
 }
@@ -1739,6 +1746,7 @@ mod tests {
         let file = TestFile {
             path: Path::new("").into(),
             root_name: String::new(),
+            local_root: None,
         };
         assert_eq!(path_for_file(&file, 0, false, cx), None);
     }

@@ -20,9 +20,10 @@ use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::ResultExt;
 
+use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
 
 const PROVIDER_ID: &str = "google";
@@ -166,6 +167,17 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         IconName::AiGoogle
     }
 
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = google_ai::Model::default();
+        Some(Arc::new(GoogleLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            rate_limiter: RateLimiter::new(4),
+        }))
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
@@ -261,7 +273,7 @@ impl LanguageModel for GoogleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        let request = request.into_google(self.model.id().to_string());
+        let request = into_google(request, self.model.id().to_string());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -292,7 +304,7 @@ impl LanguageModel for GoogleLanguageModel {
         'static,
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
-        let request = request.into_google(self.model.id().to_string());
+        let request = into_google(request, self.model.id().to_string());
 
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
@@ -327,6 +339,38 @@ impl LanguageModel for GoogleLanguageModel {
         _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
+    }
+}
+
+pub fn into_google(
+    request: LanguageModelRequest,
+    model: String,
+) -> google_ai::GenerateContentRequest {
+    google_ai::GenerateContentRequest {
+        model,
+        contents: request
+            .messages
+            .into_iter()
+            .map(|msg| google_ai::Content {
+                parts: vec![google_ai::Part::TextPart(google_ai::TextPart {
+                    text: msg.string_contents(),
+                })],
+                role: match msg.role {
+                    Role::User => google_ai::Role::User,
+                    Role::Assistant => google_ai::Role::Model,
+                    Role::System => google_ai::Role::User, // Google AI doesn't have a system role
+                },
+            })
+            .collect(),
+        generation_config: Some(google_ai::GenerationConfig {
+            candidate_count: Some(1),
+            stop_sequences: Some(request.stop),
+            max_output_tokens: None,
+            temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
+            top_p: None,
+            top_k: None,
+        }),
+        safety_settings: None,
     }
 }
 
@@ -465,13 +509,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:",
-            "- Create one by visiting:",
-            "- Paste your API key below and hit enter to use the assistant",
-        ];
-
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -480,17 +517,18 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("google_console", GOOGLE_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _, cx| cx.open_url(GOOGLE_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(InstructionListItem::new(
+                            "Create one by visiting",
+                            Some("Google AI's console"),
+                            Some("https://aistudio.google.com/app/apikey"),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste your API key below and hit enter to start using the assistant",
+                        )),
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()
@@ -507,7 +545,7 @@ impl Render for ConfigurationView {
                     Label::new(
                         format!("You can also assign the {GOOGLE_AI_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .into_any()
         } else {

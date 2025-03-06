@@ -40,6 +40,8 @@ pub enum Model {
     O3Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,
+    #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
+    Claude3_7Sonnet,
     #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
     Gemini20Flash,
 }
@@ -47,7 +49,11 @@ pub enum Model {
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
-            Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
+            Self::Gpt4o
+            | Self::Gpt4
+            | Self::Gpt3_5Turbo
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet => true,
             Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
         }
     }
@@ -60,6 +66,7 @@ impl Model {
             "o1" => Ok(Self::O1),
             "o3-mini" => Ok(Self::O3Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
+            "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
             "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
@@ -73,6 +80,7 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
+            Self::Claude3_7Sonnet => "claude-3-7-sonnet",
             Self::Gemini20Flash => "gemini-2.0-flash-001",
         }
     }
@@ -85,6 +93,7 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
+            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
         }
     }
@@ -96,7 +105,8 @@ impl Model {
             Self::Gpt3_5Turbo => 12_288,
             Self::O3Mini => 64_000,
             Self::O1 => 20_000,
-            Self::Claude3_5Sonnet => 128_000,
+            Self::Claude3_5Sonnet => 200_000,
+            Self::Claude3_7Sonnet => 90_000,
             Model::Gemini20Flash => 128_000,
         }
     }
@@ -401,7 +411,7 @@ async fn stream_completion(
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.first().is_none()
+                                if response.choices.is_empty()
                                     || response.choices.first().unwrap().finish_reason.is_some()
                                 {
                                     None
