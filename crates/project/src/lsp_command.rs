@@ -2229,18 +2229,18 @@ impl LspCommand for GetCodeActions {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp_action = match entry {
+                let (lsp_action, resolved) = match entry {
                     lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
                         if let Some(command) = lsp_action.command.as_ref() {
                             if !available_commands.contains(&command.command) {
                                 return None;
                             }
                         }
-                        LspAction::Action(Box::new(lsp_action))
+                        (LspAction::Action(Box::new(lsp_action)), false)
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
                         if available_commands.contains(&command.command) {
-                            LspAction::Command(command)
+                            (LspAction::Command(command), true)
                         } else {
                             return None;
                         }
@@ -2259,6 +2259,7 @@ impl LspCommand for GetCodeActions {
                     server_id,
                     range: self.range.clone(),
                     lsp_action,
+                    resolved,
                 })
             })
             .collect())

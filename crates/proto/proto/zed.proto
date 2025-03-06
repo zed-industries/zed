@@ -1298,6 +1298,7 @@ message CodeAction {
     Anchor end = 3;
     bytes lsp_action = 4;
     Kind kind = 5;
+    bool resolved = 6;
     enum Kind {
         Action = 0;
         Command = 1;

@@ -509,6 +509,8 @@ pub struct CodeAction {
     /// The raw code action provided by the language server.
     /// Can be either an action or a command.
     pub lsp_action: LspAction,
+    /// Whether the action needs to be resolved using the language server.
+    pub resolved: bool,
 }
 
 /// An action sent back by a language server.

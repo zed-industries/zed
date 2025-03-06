@@ -1628,6 +1628,9 @@ impl LocalLspStore {
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
             LspAction::Action(lsp_action) => {
+                if action.resolved {
+                    return Ok(());
+                }
                 if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
@@ -1637,6 +1640,7 @@ impl LocalLspStore {
                             .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
                             .await?,
                     );
+                    action.resolved = true;
                 }
             }
             LspAction::Command(_) => {}
@@ -8442,6 +8446,7 @@ impl LspStore {
             end: Some(serialize_anchor(&action.range.end)),
             lsp_action,
             kind,
+            resolved: action.resolved,
         }
     }
 
@@ -8449,11 +8454,11 @@ impl LspStore {
         let start = action
             .start
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid start"))?;
+            .context("invalid start")?;
         let end = action
             .end
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid end"))?;
+            .context("invalid end")?;
         let lsp_action = match proto::code_action::Kind::from_i32(action.kind) {
             Some(proto::code_action::Kind::Action) => {
                 LspAction::Action(serde_json::from_slice(&action.lsp_action)?)
@@ -8466,6 +8471,7 @@ impl LspStore {
         Ok(CodeAction {
             server_id: LanguageServerId(action.server_id as usize),
             range: start..end,
+            resolved: action.resolved,
             lsp_action,
         })
     }
