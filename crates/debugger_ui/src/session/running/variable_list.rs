@@ -1,9 +1,9 @@
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{StackFrameId, VariableReference};
-use editor::{Editor, EditorEvent};
+use editor::Editor;
 use gpui::{
-    actions, anchored, deferred, list, AnyElement, Context, Entity, FocusHandle, Focusable, Hsla,
-    ListState, MouseDownEvent, Point, Subscription,
+    actions, anchored, deferred, list, AnyElement, ClickEvent, Context, Entity, FocusHandle,
+    Focusable, Hsla, ListState, MouseDownEvent, Point, Subscription,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
@@ -21,13 +21,55 @@ pub(crate) struct VariableState {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) struct VariablePath {
-    pub indices: Arc<[VariableReference]>,
+    pub scope_id: VariableReference,
+    pub indices: Arc<[SharedString]>,
+}
+
+impl VariablePath {
+    fn for_scope(scope_id: VariableReference) -> Self {
+        Self {
+            scope_id,
+            indices: Arc::new([]),
+        }
+    }
+    fn with_child(&self, child_name: SharedString) -> Self {
+        Self {
+            scope_id: self.scope_id,
+            indices: self
+                .indices
+                .iter()
+                .cloned()
+                .chain(std::iter::once(child_name))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug)]
 struct Variable {
     dap: dap::Variable,
     path: VariablePath,
+}
+
+impl Variable {
+    fn item_id(&self) -> ElementId {
+        use std::fmt::Write;
+        let mut id = format!("variable-{}", self.dap.name);
+        for index in self.path.indices.iter() {
+            _ = write!(id, "-{}", index);
+        }
+        SharedString::from(id).into()
+    }
+
+    fn item_value_id(&self) -> ElementId {
+        use std::fmt::Write;
+        let mut id = format!("variable-{}", self.dap.name);
+        for index in self.path.indices.iter() {
+            _ = write!(id, "-{}", index);
+        }
+        _ = write!(id, "-value");
+        SharedString::from(id).into()
+    }
 }
 
 pub struct VariableList {
@@ -39,6 +81,7 @@ pub struct VariableList {
     selection: Option<VariablePath>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
+    edited_path: Option<(VariablePath, Entity<Editor>)>,
     disabled: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -47,7 +90,6 @@ impl VariableList {
     pub fn new(
         session: Entity<Session>,
         stack_frame_list: Entity<StackFrameList>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_variable_list = cx.weak_entity();
@@ -64,18 +106,6 @@ impl VariableList {
                     .unwrap_or(div().into_any())
             },
         );
-
-        let set_variable_editor = cx.new(|cx| Editor::single_line(window, cx));
-
-        cx.subscribe(
-            &set_variable_editor,
-            |_this: &mut Self, _, event: &EditorEvent, _cx| {
-                if *event == EditorEvent::Blurred {
-                    // this.cancel_set_variable_value(cx);
-                }
-            },
-        )
-        .detach();
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
@@ -99,6 +129,7 @@ impl VariableList {
             selection: None,
             open_context_menu: None,
             disabled: false,
+            edited_path: None,
             entries: Default::default(),
             variable_states: Default::default(),
         }
@@ -127,17 +158,16 @@ impl VariableList {
             .map(|scope| {
                 (
                     scope.variables_reference,
-                    None,
-                    vec![scope.variables_reference],
+                    None::<dap::Variable>,
+                    VariablePath::for_scope(scope.variables_reference),
                 )
             })
             .collect::<Vec<_>>();
 
-        while let Some((variable_reference, dap, indices)) = stack.pop() {
-            let path = VariablePath {
-                indices: indices.clone().into(),
-            };
-
+        while let Some((variable_reference, dap, mut path)) = stack.pop() {
+            if let Some(dap) = &dap {
+                path = path.with_child(SharedString::from(&dap.name));
+            }
             let var_state = self
                 .variable_states
                 .entry(path.clone())
@@ -145,20 +175,23 @@ impl VariableList {
                     depth: path.indices.len(),
                     is_expanded: dap.is_none(),
                 });
-
             if let Some(dap) = dap {
-                entries.push(Variable { dap, path });
+                entries.push(Variable {
+                    dap,
+                    path: path.clone(),
+                });
             }
 
             if var_state.is_expanded {
                 let children = self
                     .session
                     .update(cx, |session, cx| session.variables(variable_reference, cx));
-                stack.extend(children.into_iter().rev().map(|child| {
-                    let mut indices = indices.clone();
-                    indices.push(child.variables_reference);
-                    (child.variables_reference, Some(child), indices)
-                }));
+                stack.extend(
+                    children
+                        .into_iter()
+                        .rev()
+                        .map(|child| (child.variables_reference, Some(child), path.clone())),
+                );
             }
         }
         if self.entries.len() != entries.len() {
@@ -357,10 +390,7 @@ impl VariableList {
         };
         let path = variable.path.clone();
         div()
-            .id(SharedString::from(format!(
-                "variable-{}-{}",
-                variable.dap.name, state.depth
-            )))
+            .id(variable.item_id())
             .group("variable_list_entry")
             .border_1()
             .border_r_2()
@@ -417,12 +447,54 @@ impl VariableList {
                         .gap_1()
                         .text_ui_sm(cx)
                         .child(variable.dap.name.clone())
-                        .child(
-                            div()
-                                .text_ui_xs(cx)
-                                .text_color(cx.theme().colors().text_muted)
-                                .child(variable.dap.value.replace("\n", " ").clone()),
-                        ),
+                        .when(!variable.dap.value.is_empty(), |this| {
+                            this.child(
+                                div()
+                                    .id(variable.item_value_id())
+                                    .text_ui_xs(cx)
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .map(|this| {
+                                        if let Some((_, editor)) = self
+                                            .edited_path
+                                            .as_ref()
+                                            .filter(|(path, _)| path == &variable.path)
+                                        {
+                                            this.child(h_flex().w_full().child(editor.clone()))
+                                        } else {
+                                            this.child(
+                                                variable.dap.value.replace("\n", " ").clone(),
+                                            )
+                                            .when(
+                                                self.session
+                                                    .read(cx)
+                                                    .capabilities()
+                                                    .supports_set_variable
+                                                    .unwrap_or_default(),
+                                                    |this| {
+                                                               let path = variable.path.clone();
+                                                        this.on_click(cx.listener(
+                                                            move |this, click: &ClickEvent, window, cx| {
+                                                                if click.down.click_count < 2 {
+                                                                    return;
+                                                                }
+                                                                this.edited_path = Some((
+                                                                    path.clone(),
+                                                                    cx.new(|cx| {
+                                                                        Editor::single_line(
+                                                                            window, cx,
+                                                                        )
+                                                                    }),
+                                                                ));
+                                                                cx.notify();
+                                                            },
+                                                        ))
+                                                    }
+
+                                            )
+                                        }
+                                    }),
+                            )
+                        }),
                 ),
             )
             .into_any()

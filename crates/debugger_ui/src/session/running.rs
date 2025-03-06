@@ -369,7 +369,7 @@ impl RunningState {
         });
 
         let variable_list =
-            cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
+            cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), cx));
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), cx));
 
