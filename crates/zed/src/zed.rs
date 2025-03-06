@@ -2112,6 +2112,7 @@ mod tests {
             })
             .unwrap();
         assert!(window_is_edited(window, cx));
+        let weak = editor.downgrade();
 
         // Closing the item restores the window's edited state.
         let close = window
@@ -2127,11 +2128,12 @@ mod tests {
 
         cx.simulate_prompt_answer("Don't Save");
         close.await.unwrap();
-        assert!(!window_is_edited(window, cx));
 
         // Advance the clock to ensure that the item has been serialized and dropped from the queue
         cx.executor().advance_clock(Duration::from_secs(1));
 
+        weak.assert_released();
+        assert!(!window_is_edited(window, cx));
         // Opening the buffer again doesn't impact the window's edited state.
         cx.update(|cx| {
             open_paths(

@@ -3876,16 +3876,21 @@ impl Workspace {
             self.update_window_edited(window, cx);
             return;
         }
-        let this = self.weak_self.clone();
-        let s = item.on_release(
-            cx,
-            Box::new(move |cx| {
-                this.update(cx, |this, _| this.dirty_items.remove(&item_id))
-                    .ok();
-            }),
-        );
-        self.dirty_items.insert(item_id, s);
-        self.update_window_edited(window, cx);
+        if let Some(window_handle) = window.window_handle().downcast::<Self>() {
+            let s = item.on_release(
+                cx,
+                Box::new(move |cx| {
+                    window_handle
+                        .update(cx, |this, window, cx| {
+                            this.dirty_items.remove(&item_id);
+                            this.update_window_edited(window, cx)
+                        })
+                        .ok();
+                }),
+            );
+            self.dirty_items.insert(item_id, s);
+            self.update_window_edited(window, cx);
+        }
     }
 
     fn render_notifications(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Div> {
