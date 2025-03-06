@@ -1534,7 +1534,7 @@ impl Workspace {
                                 pane.active_item().map(|p| p.item_id())
                             })?;
                             let open_by_abs_path = workspace.update_in(&mut cx, |workspace, window, cx| {
-                                workspace.open_abs_path(abs_path.clone(), false, window, cx)
+                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
                             })?;
                             match open_by_abs_path
                                 .await
@@ -2112,7 +2112,7 @@ impl Workspace {
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
-        visible: OpenVisible,
+        options: OpenOptions,
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2127,7 +2127,7 @@ impl Workspace {
             let mut tasks = Vec::with_capacity(abs_paths.len());
 
             for abs_path in &abs_paths {
-                let visible = match visible {
+                let visible = match options.visible.as_ref().unwrap_or(&OpenVisible::None) {
                     OpenVisible::All => Some(true),
                     OpenVisible::None => Some(false),
                     OpenVisible::OnlyFiles => match fs.metadata(abs_path).await.log_err() {
@@ -2191,7 +2191,13 @@ impl Workspace {
                     } else {
                         Some(
                             this.update_in(&mut cx, |this, window, cx| {
-                                this.open_path(project_path, pane, true, window, cx)
+                                this.open_path(
+                                    project_path,
+                                    pane,
+                                    options.focus.unwrap_or(true),
+                                    window,
+                                    cx,
+                                )
                             })
                             .log_err()?
                             .await,
@@ -2215,7 +2221,15 @@ impl Workspace {
             ResolvedPath::ProjectPath { project_path, .. } => {
                 self.open_path(project_path, None, true, window, cx)
             }
-            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, window, cx),
+            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
+                path,
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            ),
         }
     }
 
@@ -2259,7 +2273,16 @@ impl Workspace {
             if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
                     .update_in(&mut cx, |this, window, cx| {
-                        this.open_paths(paths, OpenVisible::All, None, window, cx)
+                        this.open_paths(
+                            paths,
+                            OpenOptions {
+                                visible: Some(OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
                     })?
                     .await;
                 for result in results.into_iter().flatten() {
@@ -2752,24 +2775,14 @@ impl Workspace {
     pub fn open_abs_path(
         &mut self,
         abs_path: PathBuf,
-        visible: bool,
+        options: OpenOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         cx.spawn_in(window, |workspace, mut cx| async move {
             let open_paths_task_result = workspace
                 .update_in(&mut cx, |workspace, window, cx| {
-                    workspace.open_paths(
-                        vec![abs_path.clone()],
-                        if visible {
-                            OpenVisible::All
-                        } else {
-                            OpenVisible::None
-                        },
-                        None,
-                        window,
-                        cx,
-                    )
+                    workspace.open_paths(vec![abs_path.clone()], options, None, window, cx)
                 })
                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
                 .await;
@@ -6002,10 +6015,13 @@ pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<Workspace>> {
 
 #[derive(Default)]
 pub struct OpenOptions {
+    pub visible: Option<OpenVisible>,
+    pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -6089,7 +6105,16 @@ pub fn open_paths(
             let open_task = existing
                 .update(&mut cx, |workspace, window, cx| {
                     window.activate_window();
-                    workspace.open_paths(abs_paths, open_visible, None, window, cx)
+                    workspace.open_paths(
+                        abs_paths,
+                        OpenOptions {
+                            visible: Some(open_visible),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
                 })?
                 .await;
 
@@ -6154,7 +6179,10 @@ pub fn create_and_open_local_file(
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     workspace.open_paths(
                         vec![path.to_path_buf()],
-                        OpenVisible::None,
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
                         None,
                         window,
                         cx,

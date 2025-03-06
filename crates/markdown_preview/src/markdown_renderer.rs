@@ -23,7 +23,7 @@ use ui::{
     LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
     Tooltip, VisibleOnHover,
 };
-use workspace::Workspace;
+use workspace::{OpenOptions, OpenVisible, Workspace};
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
 
@@ -490,7 +490,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                     if let Some(workspace) = &workspace {
                                         _ = workspace.update(cx, |workspace, cx| {
                                             workspace
-                                                .open_abs_path(path.clone(), false, window, cx)
+                                                .open_abs_path(
+                                                    path.clone(),
+                                                    OpenOptions {
+                                                        visible: Some(OpenVisible::None),
+                                                        ..Default::default()
+                                                    },
+                                                    window,
+                                                    cx,
+                                                )
                                                 .detach();
                                         });
                                     }
@@ -545,7 +553,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                         if let Some(workspace) = &workspace {
                                             _ = workspace.update(cx, |workspace, cx| {
                                                 workspace
-                                                    .open_abs_path(path.clone(), false, window, cx)
+                                                    .open_abs_path(
+                                                        path.clone(),
+                                                        OpenOptions {
+                                                            visible: Some(OpenVisible::None),
+                                                            ..Default::default()
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    )
                                                     .detach();
                                             });
                                         }

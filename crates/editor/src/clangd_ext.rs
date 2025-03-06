@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use gpui::{App, Context, Entity, Window};
 use language::Language;
 use url::Url;
+use workspace::{OpenOptions, OpenVisible};
 
 use crate::lsp_ext::find_specific_language_server_in_selection;
 
@@ -72,7 +73,7 @@ pub fn switch_source_header(
 
         workspace
             .update_in(&mut cx, |workspace, window, cx| {
-                workspace.open_abs_path(path, false, window, cx)
+                workspace.open_abs_path(path, OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
             })
             .with_context(|| {
                 format!(

@@ -22,6 +22,7 @@ use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
 use futures::{channel::mpsc, select_biased, StreamExt};
+use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
@@ -429,7 +430,10 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
-                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, cx);
+                let entity = cx.entity();
+                let project = workspace.project().clone();
+                let app_state = workspace.app_state().clone();
+                let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
                 workspace.add_panel(git_panel, window, cx);
             });
         })?;
@@ -1479,8 +1483,7 @@ pub fn open_new_ssh_project_from_project(
             app_state,
             workspace::OpenOptions {
                 open_new_workspace: Some(true),
-                replace_window: None,
-                env: None,
+                ..Default::default()
             },
             &mut cx,
         )
@@ -1749,7 +1752,7 @@ mod tests {
     use util::{path, separator};
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
+        open_new, open_paths, pane, NewFile, OpenOptions, OpenVisible, SaveIntent, SplitDirection,
         WorkspaceHandle, SERIALIZATION_THROTTLE_TIME,
     };
 
@@ -2552,7 +2555,10 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![path!("/dir1/a.txt").into()],
-                    OpenVisible::All,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     None,
                     window,
                     cx,
@@ -2587,7 +2593,10 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![path!("/dir2/b.txt").into()],
-                    OpenVisible::All,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     None,
                     window,
                     cx,
@@ -2633,7 +2642,10 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![path!("/dir3").into(), path!("/dir3/c.txt").into()],
-                    OpenVisible::All,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     None,
                     window,
                     cx,
@@ -2679,7 +2691,10 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![path!("/d.txt").into()],
-                    OpenVisible::None,
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..Default::default()
+                    },
                     None,
                     window,
                     cx,
@@ -2889,7 +2904,10 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![PathBuf::from(path!("/root/a.txt"))],
-                    OpenVisible::All,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     None,
                     window,
                     cx,

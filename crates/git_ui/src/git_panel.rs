@@ -3,6 +3,7 @@ use crate::branch_picker;
 use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
+use crate::repository_selector::filtered_repository_entries;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -23,7 +24,14 @@ use git::repository::{
 };
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
-use gpui::*;
+use gpui::{
+    actions, anchored, deferred, hsla, percentage, point, uniform_list, Action, Animation,
+    AnimationExt as _, AnyView, BoxShadow, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Point, PromptLevel,
+    ScrollStrategy, Stateful, Subscription, Task, Transformation, UniformListScrollHandle,
+    WeakEntity,
+};
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
@@ -43,6 +51,7 @@ use settings::Settings as _;
 use smallvec::smallvec;
 use std::cell::RefCell;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -52,6 +61,7 @@ use ui::{
     ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
+use workspace::{AppState, OpenOptions, OpenVisible};
 
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -71,7 +81,12 @@ actions!(
     ]
 );
 
-fn prompt<T>(msg: &str, detail: Option<&str>, window: &mut Window, cx: &mut App) -> Task<Result<T>>
+fn prompt<T>(
+    msg: &str,
+    detail: Option<&str>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<anyhow::Result<T>>
 where
     T: IntoEnumIterator + VariantNames + 'static,
 {
@@ -173,6 +188,8 @@ impl GitListEntry {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
+    pub(crate) worktree_path: Arc<Path>,
+    pub(crate) abs_path: PathBuf,
     pub(crate) status: FileStatus,
     pub(crate) is_staged: Option<bool>,
 }
@@ -269,99 +286,98 @@ pub(crate) fn commit_message_editor(
 
 impl GitPanel {
     pub fn new(
-        workspace: &mut Workspace,
+        workspace: Entity<Workspace>,
+        project: Entity<Project>,
+        app_state: Arc<AppState>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Entity<Self> {
-        let fs = workspace.app_state().fs.clone();
-        let project = workspace.project().clone();
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
-        let workspace = cx.entity().downgrade();
+        let workspace = workspace.downgrade();
 
-        cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
-            cx.on_focus(&focus_handle, window, Self::focus_in).detach();
-            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                this.hide_scrollbar(window, cx);
-            })
-            .detach();
-
-            // just to let us render a placeholder editor.
-            // Once the active git repo is set, this buffer will be replaced.
-            let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
-            let commit_editor = cx.new(|cx| {
-                commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
-            });
-
-            commit_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-            });
-
-            let scroll_handle = UniformListScrollHandle::new();
-
-            cx.subscribe_in(
-                &git_store,
-                window,
-                move |this, git_store, event, window, cx| match event {
-                    GitEvent::FileSystemUpdated => {
-                        this.schedule_update(false, window, cx);
-                    }
-                    GitEvent::ActiveRepositoryChanged | GitEvent::GitStateUpdated => {
-                        this.active_repository = git_store.read(cx).active_repository();
-                        this.schedule_update(true, window, cx);
-                    }
-                    GitEvent::IndexWriteError(error) => {
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.show_error(error, cx);
-                            })
-                            .ok();
-                    }
-                },
-            )
-            .detach();
-
-            let scrollbar_state =
-                ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
-
-            let mut git_panel = Self {
-                pending_remote_operations: Default::default(),
-                remote_operation_id: 0,
-                active_repository,
-                commit_editor,
-                conflicted_count: 0,
-                conflicted_staged_count: 0,
-                current_modifiers: window.modifiers(),
-                add_coauthors: true,
-                generate_commit_message_task: None,
-                entries: Vec::new(),
-                focus_handle: cx.focus_handle(),
-                fs,
-                hide_scrollbar_task: None,
-                new_count: 0,
-                new_staged_count: 0,
-                pending: Vec::new(),
-                pending_commit: None,
-                pending_serialization: Task::ready(None),
-                project,
-                scroll_handle,
-                scrollbar_state,
-                selected_entry: None,
-                marked_entries: Vec::new(),
-                show_scrollbar: false,
-                tracked_count: 0,
-                tracked_staged_count: 0,
-                update_visible_entries_task: Task::ready(()),
-                width: Some(px(360.)),
-                context_menu: None,
-                workspace,
-                modal_open: false,
-            };
-            git_panel.schedule_update(false, window, cx);
-            git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
-            git_panel
+        let focus_handle = cx.focus_handle();
+        cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+        cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+            this.hide_scrollbar(window, cx);
         })
+        .detach();
+
+        // just to let us render a placeholder editor.
+        // Once the active git repo is set, this buffer will be replaced.
+        let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
+        let commit_editor = cx.new(|cx| {
+            commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
+        });
+
+        commit_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+        });
+
+        let scroll_handle = UniformListScrollHandle::new();
+
+        cx.subscribe_in(
+            &git_store,
+            window,
+            move |this, git_store, event, window, cx| match event {
+                GitEvent::FileSystemUpdated => {
+                    this.schedule_update(false, window, cx);
+                }
+                GitEvent::ActiveRepositoryChanged | GitEvent::GitStateUpdated => {
+                    this.active_repository = git_store.read(cx).active_repository();
+                    this.schedule_update(true, window, cx);
+                }
+                GitEvent::IndexWriteError(error) => {
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_error(error, cx);
+                        })
+                        .ok();
+                }
+            },
+        )
+        .detach();
+
+        let scrollbar_state =
+            ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
+
+        let mut git_panel = Self {
+            pending_remote_operations: Default::default(),
+            remote_operation_id: 0,
+            active_repository,
+            commit_editor,
+            conflicted_count: 0,
+            conflicted_staged_count: 0,
+            current_modifiers: window.modifiers(),
+            add_coauthors: true,
+            generate_commit_message_task: None,
+            entries: Vec::new(),
+            focus_handle: cx.focus_handle(),
+            fs,
+            hide_scrollbar_task: None,
+            new_count: 0,
+            new_staged_count: 0,
+            pending: Vec::new(),
+            pending_commit: None,
+            pending_serialization: Task::ready(None),
+            project,
+            scroll_handle,
+            scrollbar_state,
+            selected_entry: None,
+            marked_entries: Vec::new(),
+            show_scrollbar: false,
+            tracked_count: 0,
+            tracked_staged_count: 0,
+            update_visible_entries_task: Task::ready(()),
+            width: Some(px(360.)),
+            context_menu: None,
+            workspace,
+            modal_open: false,
+        };
+        git_panel.schedule_update(false, window, cx);
+        git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
+        git_panel
     }
 
     pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
@@ -723,12 +739,31 @@ impl GitPanel {
                 }
             };
 
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
-                })
-                .ok();
-            self.focus_handle.focus(window);
+            if entry.worktree_path.starts_with("..") {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace
+                            .open_abs_path(
+                                entry.abs_path.clone(),
+                                OpenOptions {
+                                    visible: Some(OpenVisible::All),
+                                    focus: Some(false),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                    })
+                    .ok();
+            } else {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    })
+                    .ok();
+                self.focus_handle.focus(window);
+            }
 
             Some(())
         });
@@ -1683,7 +1718,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<Option<Remote>>> {
+    ) -> impl Future<Output = anyhow::Result<Option<Remote>>> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
@@ -1920,10 +1955,8 @@ impl GitPanel {
             return;
         };
 
-        // First pass - collect all paths
         let repo = repo.read(cx);
 
-        // Second pass - create entries with proper depth calculation
         for entry in repo.status() {
             let is_conflict = repo.has_conflict(&entry.repo_path);
             let is_new = entry.status.is_created();
@@ -1937,8 +1970,17 @@ impl GitPanel {
                 continue;
             }
 
+            // dot_git_abs path always has at least one component, namely .git.
+            let abs_path = repo
+                .dot_git_abs_path
+                .parent()
+                .unwrap()
+                .join(&entry.repo_path);
+            let worktree_path = repo.repository_entry.unrelativize(&entry.repo_path);
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
+                worktree_path,
+                abs_path,
                 status: entry.status,
                 is_staged,
             };
@@ -2636,7 +2678,7 @@ impl GitPanel {
         &self,
         sha: &str,
         cx: &mut Context<Self>,
-    ) -> Task<Result<CommitDetails>> {
+    ) -> Task<anyhow::Result<CommitDetails>> {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
@@ -2721,12 +2763,12 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> AnyElement {
         let display_name = entry
-            .repo_path
+            .worktree_path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| entry.repo_path.to_string_lossy().into_owned());
+            .unwrap_or_else(|| entry.worktree_path.to_string_lossy().into_owned());
 
-        let repo_path = entry.repo_path.clone();
+        let worktree_path = entry.worktree_path.clone();
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -2897,7 +2939,7 @@ impl GitPanel {
                 h_flex()
                     .items_center()
                     .overflow_hidden()
-                    .when_some(repo_path.parent(), |this, parent| {
+                    .when_some(worktree_path.parent(), |this, parent| {
                         let parent_str = parent.to_string_lossy();
                         if !parent_str.is_empty() {
                             this.child(
@@ -3570,7 +3612,9 @@ impl RenderOnce for PanelRepoFooter {
 
         let single_repo = project
             .as_ref()
-            .map(|project| project.read(cx).all_repositories(cx).len() == 1)
+            .map(|project| {
+                filtered_repository_entries(project.read(cx).git_store().read(cx), cx).len() == 1
+            })
             .unwrap_or(true);
 
         let repo_selector = PopoverMenu::new("repository-switcher")
@@ -3934,5 +3978,201 @@ impl ComponentPreview for PanelRepoFooter {
             .grow()
             .vertical()])
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use git::status::StatusCode;
+    use gpui::TestAppContext;
+    use project::{FakeFs, WorktreeSettings};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use theme::LoadThemes;
+    use util::path;
+
+    use super::*;
+
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            WorktreeSettings::register(cx);
+            workspace::init_settings(cx);
+            theme::init(LoadThemes::JustBase, cx);
+            language::init(cx);
+            editor::init(cx);
+            Project::init_settings(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_entry_worktree_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "zed": {
+                    ".git": {},
+                    "crates": {
+                        "gpui": {
+                            "gpui.rs": "fn main() {}"
+                        },
+                        "util": {
+                            "util.rs": "fn do_it() {}"
+                        }
+                    }
+                },
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo_via_git_operation(
+            Path::new("/root/zed/.git"),
+            &[
+                (
+                    Path::new("crates/gpui/gpui.rs"),
+                    StatusCode::Modified.worktree(),
+                ),
+                (
+                    Path::new("crates/util/util.rs"),
+                    StatusCode::Modified.worktree(),
+                ),
+            ],
+        );
+
+        let project =
+            Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .nth(0)
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
+        let panel = cx.new_window_entity(|window, cx| {
+            GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
+        });
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        pretty_assertions::assert_eq!(
+            entries,
+            [
+                GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Tracked
+                }),
+                GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/gpui/gpui.rs".into(),
+                    repo_path: "crates/gpui/gpui.rs".into(),
+                    worktree_path: Path::new("gpui.rs").into(),
+                    status: StatusCode::Modified.worktree(),
+                    is_staged: Some(false),
+                }),
+                GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/util/util.rs".into(),
+                    repo_path: "crates/util/util.rs".into(),
+                    worktree_path: Path::new("../util/util.rs").into(),
+                    status: StatusCode::Modified.worktree(),
+                    is_staged: Some(false),
+                },),
+            ],
+        );
+
+        cx.update_window_entity(&panel, |panel, window, cx| {
+            panel.select_last(&Default::default(), window, cx);
+            assert_eq!(panel.selected_entry, Some(2));
+            panel.open_diff(&Default::default(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let worktree_roots = workspace.update(cx, |workspace, cx| {
+            workspace
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path())
+                .collect::<Vec<_>>()
+        });
+        pretty_assertions::assert_eq!(
+            worktree_roots,
+            vec![
+                Path::new("/root/zed/crates/gpui").into(),
+                Path::new("/root/zed/crates/util/util.rs").into(),
+            ]
+        );
+
+        let repo_from_single_file_worktree = project.update(cx, |project, cx| {
+            let git_store = project.git_store().read(cx);
+            // The repo that comes from the single-file worktree can't be selected through the UI.
+            let filtered_entries = filtered_repository_entries(git_store, cx)
+                .iter()
+                .map(|repo| repo.read(cx).worktree_abs_path.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                filtered_entries,
+                [Path::new("/root/zed/crates/gpui").into()]
+            );
+            // But we can select it artificially here.
+            git_store
+                .all_repositories()
+                .into_iter()
+                .find(|repo| {
+                    &*repo.read(cx).worktree_abs_path == Path::new("/root/zed/crates/util/util.rs")
+                })
+                .unwrap()
+        });
+
+        // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
+        repo_from_single_file_worktree.update(cx, |repo, cx| repo.activate(cx));
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        pretty_assertions::assert_eq!(
+            entries,
+            [
+                GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Tracked
+                }),
+                GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/gpui/gpui.rs".into(),
+                    repo_path: "crates/gpui/gpui.rs".into(),
+                    worktree_path: Path::new("../../gpui/gpui.rs").into(),
+                    status: StatusCode::Modified.worktree(),
+                    is_staged: Some(false),
+                }),
+                GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/util/util.rs".into(),
+                    repo_path: "crates/util/util.rs".into(),
+                    worktree_path: Path::new("util.rs").into(),
+                    status: StatusCode::Modified.worktree(),
+                    is_staged: Some(false),
+                },),
+            ],
+        );
     }
 }

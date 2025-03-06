@@ -56,6 +56,9 @@ pub struct Repository {
     git_store: WeakEntity<GitStore>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
+    pub dot_git_abs_path: PathBuf,
+    pub worktree_abs_path: Arc<Path>,
+    pub is_from_single_file_worktree: bool,
     pub git_repo: GitRepo,
     pub merge_message: Option<String>,
     job_sender: mpsc::UnboundedSender<GitJob>,
@@ -227,6 +230,9 @@ impl GitStore {
                                 askpass_delegates: Default::default(),
                                 latest_askpass_id: 0,
                                 repository_entry: repo.clone(),
+                                dot_git_abs_path: worktree.dot_git_abs_path(&repo.work_directory),
+                                worktree_abs_path: worktree.abs_path(),
+                                is_from_single_file_worktree: worktree.is_single_file(),
                                 git_repo,
                                 job_sender: self.update_sender.clone(),
                                 merge_message,
@@ -979,7 +985,7 @@ impl Repository {
     }
 
     pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
-        let path = self.repository_entry.unrelativize(path)?;
+        let path = self.repository_entry.try_unrelativize(path)?;
         Some((self.worktree_id, path).into())
     }
 
@@ -1218,7 +1224,7 @@ impl Repository {
         if let Some(buffer_store) = self.buffer_store(cx) {
             buffer_store.update(cx, |buffer_store, cx| {
                 for path in &entries {
-                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                    let Some(path) = self.repository_entry.try_unrelativize(path) else {
                         continue;
                     };
                     let project_path = (self.worktree_id, path).into();
@@ -1287,7 +1293,7 @@ impl Repository {
         if let Some(buffer_store) = self.buffer_store(cx) {
             buffer_store.update(cx, |buffer_store, cx| {
                 for path in &entries {
-                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                    let Some(path) = self.repository_entry.try_unrelativize(path) else {
                         continue;
                     };
                     let project_path = (self.worktree_id, path).into();
