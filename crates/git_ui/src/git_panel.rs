@@ -738,6 +738,7 @@ impl GitPanel {
                             .detach_and_log_err(cx);
                     })
                     .ok();
+                self.focus_handle.focus(window);
             } else {
                 self.workspace
                     .update(cx, |workspace, cx| {
