@@ -1577,13 +1577,17 @@ impl Editor {
             }
         }
 
-        if let Some(extension) = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
-        {
-            key_context.set("extension", extension.to_string());
+        if let Some(singleton_buffer) = self.buffer.read(cx).as_singleton() {
+            key_context.add("singleton_buffer");
+            if let Some(extension) = singleton_buffer
+                .read(cx)
+                .file()
+                .and_then(|file| file.path().extension()?.to_str())
+            {
+                key_context.set("extension", extension.to_string());
+            }
+        } else {
+            key_context.add("multibuffer");
         }
 
         if has_active_edit_prediction {
