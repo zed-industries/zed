@@ -1673,9 +1673,13 @@ impl Repository {
                             worktree_id: worktree_id.to_proto(),
                             work_directory_id: work_directory_id.to_proto(),
                             diff_type: match diff_type {
-                                DiffType::HeadToIndex => proto::git_diff::DiffType::HeadToIndex.into(),
-                                DiffType::HeadToWorktree => proto::git_diff::DiffType::HeadToWorktree.into(),
-                            }
+                                DiffType::HeadToIndex => {
+                                    proto::git_diff::DiffType::HeadToIndex.into()
+                                }
+                                DiffType::HeadToWorktree => {
+                                    proto::git_diff::DiffType::HeadToWorktree.into()
+                                }
+                            },
                         })
                         .await?;
 

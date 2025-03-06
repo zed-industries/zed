@@ -250,7 +250,14 @@ impl CommitModal {
                 let title = git_panel.commit_button_title();
                 let co_authors = git_panel.render_co_authors(cx);
                 let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
-                (branch, can_commit, tooltip, title, co_authors, generate_commit_message)
+                (
+                    branch,
+                    can_commit,
+                    tooltip,
+                    title,
+                    co_authors,
+                    generate_commit_message,
+                )
             });
 
         let branch_picker_button = panel_button(branch)
@@ -316,7 +323,13 @@ impl CommitModal {
             .w_full()
             .h(px(self.properties.footer_height))
             .gap_1()
-            .child(h_flex().gap_1().child(branch_picker).children(co_authors).child(generate_commit_message))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(branch_picker)
+                    .children(co_authors)
+                    .child(generate_commit_message),
+            )
             .child(div().flex_1())
             .child(
                 h_flex()
