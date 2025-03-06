@@ -2,9 +2,35 @@ use std::{
     fmt::Debug,
     fs::File,
     path::{Path, PathBuf},
+    sync::mpsc::{Receiver, Sender, SyncSender},
 };
 
 use anyhow::{Context, Result};
+use windows::{
+    core::HSTRING,
+    Win32::{
+        Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Graphics::Gdi::{
+            BeginPaint, CreateFontW, DeleteObject, EndPaint, ReleaseDC, SelectObject, TextOutW,
+            FW_NORMAL, LOGFONTW, PAINTSTRUCT,
+        },
+        UI::{
+            Controls::{PBM_SETRANGE, PBM_SETSTEP, PBM_STEPIT, PROGRESS_CLASS},
+            WindowsAndMessaging::{
+                CreateWindowExW, DefWindowProcW, DispatchMessageW, GetDesktopWindow, GetMessageW,
+                GetWindowLongPtrW, GetWindowRect, MessageBoxW, PostMessageW, PostQuitMessage,
+                RegisterClassW, SendMessageW, SetWindowLongPtrW, SystemParametersInfoW, CS_HREDRAW,
+                CS_VREDRAW, GWLP_USERDATA, MB_ICONERROR, MB_SYSTEMMODAL, MSG,
+                SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
+                WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_PAINT, WM_USER, WNDCLASSW, WS_CAPTION,
+                WS_CHILD, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+            },
+        },
+    },
+};
+
+const TOTAL_JOBS: usize = 6;
+const WM_JOB_UPDATED: u32 = WM_USER + 1;
 
 fn generate_log_file() -> Result<File> {
     let file_path = std::env::current_exe()?
@@ -40,9 +66,10 @@ enum UpdateStatus {
     Done,
 }
 
-fn update(log: &mut File, app_dir: &Path) -> Result<()> {
+fn update(log: &mut File, app_dir: &Path, sender: Sender<()>, hwnd: isize) -> Result<()> {
     let install_dir = app_dir.join("install");
     let update_dir = app_dir.join("updates");
+    let hwnd = HWND(hwnd as _);
 
     let start = std::time::Instant::now();
     let mut status =
@@ -65,10 +92,19 @@ fn update(log: &mut File, app_dir: &Path) -> Result<()> {
                             );
                         } else {
                             sccess.push(old_file);
+                            sender.send(())?;
+                            unsafe {
+                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                            }
                         }
                     } else {
                         sccess.push(old_file);
+                        sender.send(())?;
+                        unsafe {
+                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                        }
                     }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
                 }
                 let left_old_files = old_files
                     .iter()
@@ -104,10 +140,19 @@ fn update(log: &mut File, app_dir: &Path) -> Result<()> {
                             );
                         } else {
                             sccess.push((new_file, old_file));
+                            sender.send(())?;
+                            unsafe {
+                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                            }
                         }
                     } else {
                         sccess.push((new_file, old_file));
+                        sender.send(())?;
+                        unsafe {
+                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                        }
                     }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
                 }
                 let left_new_files = new_files
                     .iter()
@@ -131,6 +176,11 @@ fn update(log: &mut File, app_dir: &Path) -> Result<()> {
                     continue;
                 }
                 status = UpdateStatus::DeleteUpdates;
+                sender.send(())?;
+                unsafe {
+                    PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
             UpdateStatus::DeleteUpdates => {
                 let result = std::fs::remove_dir_all(&update_dir);
@@ -142,6 +192,11 @@ fn update(log: &mut File, app_dir: &Path) -> Result<()> {
                     continue;
                 }
                 status = UpdateStatus::Done;
+                sender.send(())?;
+                unsafe {
+                    PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
             UpdateStatus::Done => {
                 let ret = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
@@ -165,12 +220,203 @@ fn run(log: &mut File) -> Result<()> {
         .parent()
         .context("No parent directory")?
         .to_path_buf();
-    update(log, app_dir.as_path())?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (hwnd_tx, hwnd_rx) = std::sync::mpsc::sync_channel(1);
+    write_to_log_file(log, "Running dialog window");
+    std::thread::spawn(|| {
+        let _ = run_dialog_window(rx, hwnd_tx);
+    });
+    let hwnd = hwnd_rx.recv()?;
+    update(log, app_dir.as_path(), tx, hwnd)?;
     Ok(())
+}
+
+#[repr(C)]
+struct WindowData {
+    receiver: Receiver<()>,
+    progress_bar: isize,
+}
+
+fn run_dialog_window(receiver: Receiver<()>, hwnd_sender: SyncSender<isize>) -> Result<()> {
+    unsafe {
+        let class_name = windows::core::w!("ProgressBarJunkui");
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(wnd_proc),
+            lpszClassName: class_name,
+            style: CS_HREDRAW | CS_VREDRAW,
+            ..Default::default()
+        };
+        RegisterClassW(&wc);
+        let mut rect = RECT::default();
+        let _ = GetWindowRect(GetDesktopWindow(), &mut rect);
+        let width = 500;
+        let height = 180;
+
+        let lparam = Box::into_raw(Box::new(WindowData {
+            receiver,
+            progress_bar: 0,
+        })) as *const _ as _;
+        let hwnd = CreateWindowExW(
+            WS_EX_TOPMOST,
+            class_name,
+            windows::core::w!("Progress Bar demo"),
+            WS_VISIBLE | WS_POPUP | WS_CAPTION,
+            rect.right / 2 - width / 2,
+            rect.bottom / 2 - height / 2,
+            width,
+            height,
+            None,
+            None,
+            None,
+            Some(lparam),
+        )?;
+        hwnd_sender.send(hwnd.0 as isize)?;
+
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).as_bool() {
+            DispatchMessageW(&message);
+        }
+        Ok(())
+    }
 }
 
 fn main() {
     let mut log = generate_log_file().unwrap();
-    let ret = run(&mut log);
-    write_to_log_file(&mut log, ret);
+    if let Err(e) = run(&mut log) {
+        show_result(
+            format!("Error: {:?}", e),
+            "Error: Zed update failed".to_owned(),
+        );
+        write_to_log_file(&mut log, e);
+    }
+}
+
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        // WM_NCCREATE => {
+
+        // }
+        WM_CREATE => {
+            // Create progress bar
+            let mut rect = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rect);
+            println!("{:#?}", rect);
+            let progress_bar = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PROGRESS_CLASS,
+                None,
+                WS_CHILD | WS_VISIBLE,
+                30,
+                57,
+                420,
+                40,
+                hwnd,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            SendMessageW(
+                progress_bar,
+                PBM_SETRANGE,
+                WPARAM(0),
+                make_lparam(0, TOTAL_JOBS * 10),
+            );
+            SendMessageW(progress_bar, PBM_SETSTEP, WPARAM(10), LPARAM(0));
+            let data = Box::new(progress_bar.0 as isize);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _);
+            LRESULT(0)
+        }
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+
+            let font_name = get_system_ui_font_name();
+            let font = CreateFontW(
+                24,
+                0,
+                0,
+                0,
+                FW_NORMAL.0 as _,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                2,
+                0,
+                &HSTRING::from(font_name),
+            );
+            let temp = SelectObject(hdc, font);
+            let string = HSTRING::from("Zed Editor is updating...");
+            TextOutW(hdc, 30, 20, string.as_wide());
+            // let mut rec = RECT::default();
+            // SetRect(&mut rec, 10, 10, 650, 200);
+            // let mut x = "Zed is updating...".encode_utf16().collect::<Vec<u16>>();
+            // DrawTextW(
+            //     hdc,
+            //     &mut x,
+            //     &mut rec,
+            //     DT_SINGLELINE | DT_CENTER | DT_VCENTER,
+            // );
+            DeleteObject(temp);
+
+            EndPaint(hwnd, &ps);
+            ReleaseDC(hwnd, hdc);
+
+            LRESULT(0)
+        }
+        WM_JOB_UPDATED => {
+            let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut isize };
+            let progress_bar = HWND(*raw as _);
+            SendMessageW(progress_bar, PBM_STEPIT, WPARAM(0), LPARAM(0));
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            PostQuitMessage(-1);
+
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+fn make_lparam(l: usize, h: usize) -> LPARAM {
+    LPARAM((l as u32 | (h as u32) << 16) as isize)
+}
+
+fn get_system_ui_font_name() -> String {
+    unsafe {
+        let mut info: LOGFONTW = std::mem::zeroed();
+        if SystemParametersInfoW(
+            SPI_GETICONTITLELOGFONT,
+            std::mem::size_of::<LOGFONTW>() as u32,
+            Some(&mut info as *mut _ as _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .is_ok()
+        {
+            let font_name = String::from_utf16_lossy(&info.lfFaceName);
+            font_name.trim_matches(char::from(0)).to_owned()
+        } else {
+            "MS Shell Dlg".to_owned()
+        }
+    }
+}
+
+fn show_result(content: String, caption: String) {
+    let _ = unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(content),
+            &HSTRING::from(caption),
+            MB_ICONERROR | MB_SYSTEMMODAL,
+        )
+    };
 }
