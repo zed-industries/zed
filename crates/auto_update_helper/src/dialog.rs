@@ -13,12 +13,11 @@ use windows::{
             Controls::{PBM_SETRANGE, PBM_SETSTEP, PBM_STEPIT, PROGRESS_CLASS},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, GetDesktopWindow, GetWindowLongPtrW,
-                GetWindowRect, MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW,
-                SetWindowLongPtrW, SystemParametersInfoW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
-                GWLP_USERDATA, MB_ICONERROR, MB_SYSTEMMODAL, SPI_GETICONTITLELOGFONT,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WM_CREATE, WM_DESTROY,
-                WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOPMOST, WS_POPUP,
-                WS_VISIBLE,
+                GetWindowRect, PostQuitMessage, RegisterClassW, SendMessageW, SetWindowLongPtrW,
+                SystemParametersInfoW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+                SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
+                WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD,
+                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -95,7 +94,6 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_NCCREATE => {
-            println!("WM_NCCREATE");
             log::info!("WM_NCCREATE");
             let create_struct = lparam.0 as *const CREATESTRUCTW;
             let info = (*create_struct).lpCreateParams as *mut RefCell<DialogInfo>;
@@ -104,7 +102,6 @@ unsafe extern "system" fn wnd_proc(
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_CREATE => {
-            println!("WM_CREATE");
             log::info!("WM_CREATE");
             // Create progress bar
             let mut rect = RECT::default();
@@ -130,14 +127,12 @@ unsafe extern "system" fn wnd_proc(
                 make_lparam!(0, TOTAL_JOBS * 10),
             );
             SendMessageW(progress_bar, PBM_SETSTEP, WPARAM(10), LPARAM(0));
-            let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
-            let data = Box::from_raw(raw);
-            data.borrow_mut().progress_bar = progress_bar.0 as isize;
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _);
+            with_dialog_data(hwnd, |data| {
+                data.borrow_mut().progress_bar = progress_bar.0 as isize
+            });
             LRESULT(0)
         }
         WM_PAINT => {
-            println!("WM_PAINT");
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);
 
@@ -170,35 +165,40 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_JOB_UPDATED => {
             log::info!("WM_JOB_UPDATED");
-            println!("WM_JOB_UPDATED");
-            // let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut isize };
-            // let progress_bar = HWND(*raw as _);
-            let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
-            let data = Box::from_raw(raw);
-            let progress_bar = data.borrow().progress_bar;
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _);
-            SendMessageW(HWND(progress_bar as _), PBM_STEPIT, WPARAM(0), LPARAM(0))
+            with_dialog_data(hwnd, |data| {
+                let progress_bar = data.borrow().progress_bar;
+                SendMessageW(HWND(progress_bar as _), PBM_STEPIT, WPARAM(0), LPARAM(0))
+            })
         }
         WM_TERMINATE => {
-            let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
-            let data = Box::from_raw(raw);
-            if let Ok(result) = data.borrow_mut().rx.recv() {
-                if let Err(e) = result {
-                    log::error!("Failed to update Zed: {:?}", e);
-                    show_error(format!("Error: {:?}", e));
+            with_dialog_data(hwnd, |data| {
+                if let Ok(result) = data.borrow_mut().rx.recv() {
+                    if let Err(e) = result {
+                        log::error!("Failed to update Zed: {:?}", e);
+                        show_error(format!("Error: {:?}", e));
+                    }
                 }
-            }
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _);
+            });
             PostQuitMessage(0);
             LRESULT(0)
         }
         WM_DESTROY => {
             PostQuitMessage(0);
-
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+fn with_dialog_data<F, T>(hwnd: HWND, f: F) -> T
+where
+    F: FnOnce(&RefCell<DialogInfo>) -> T,
+{
+    let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo> };
+    let data = unsafe { Box::from_raw(raw) };
+    let result = f(data.as_ref());
+    unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _) };
+    result
 }
 
 fn get_system_ui_font_name() -> String {
