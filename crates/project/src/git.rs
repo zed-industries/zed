@@ -749,7 +749,6 @@ fn make_remote_delegate(
     cx: &mut AsyncApp,
 ) -> AskPassDelegate {
     AskPassDelegate::new(cx, move |prompt, tx, cx| {
-        dbg!("here we go...", project_id, worktree_id, work_directory_id);
         this.update(cx, |this, cx| {
             let response = this.client.request(proto::AskPassRequest {
                 project_id,
@@ -759,9 +758,7 @@ fn make_remote_delegate(
                 prompt,
             });
             cx.spawn(|_, _| async move {
-                dbg!("waiting");
                 tx.send(response.await?.response).ok();
-                dbg!("wote");
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);

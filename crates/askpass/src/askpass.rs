@@ -98,7 +98,6 @@ impl AskPassSession {
                     drop(stream);
                 }
             }
-            dbg!("dropped", &temp_dir);
             drop(temp_dir)
         });
 
