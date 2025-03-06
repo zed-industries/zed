@@ -1,6 +1,6 @@
 use std::{cell::RefCell, sync::mpsc::Receiver};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use windows::{
     core::HSTRING,
     Win32::{
@@ -9,12 +9,14 @@ use windows::{
             BeginPaint, CreateFontW, DeleteObject, EndPaint, ReleaseDC, SelectObject, TextOutW,
             FW_NORMAL, LOGFONTW, PAINTSTRUCT,
         },
+        System::LibraryLoader::GetModuleHandleW,
         UI::{
             Controls::{PBM_SETRANGE, PBM_SETSTEP, PBM_STEPIT, PROGRESS_CLASS},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, GetDesktopWindow, GetWindowLongPtrW,
-                GetWindowRect, PostQuitMessage, RegisterClassW, SendMessageW, SetWindowLongPtrW,
-                SystemParametersInfoW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+                GetWindowRect, LoadImageW, PostQuitMessage, RegisterClassW, SendMessageW,
+                SetWindowLongPtrW, SystemParametersInfoW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
+                GWLP_USERDATA, HICON, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
                 SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
                 WM_CLOSE, WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION,
                 WS_CHILD, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
@@ -35,15 +37,27 @@ struct DialogInfo {
 pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWND> {
     unsafe {
         let class_name = windows::core::w!("Zed-Auto-Updater-Dialog-Class");
+        let module = GetModuleHandleW(None).context("unable to get module handle")?;
+        let handle = LoadImageW(
+            module,
+            windows::core::PCWSTR(1 as _),
+            IMAGE_ICON,
+            0,
+            0,
+            LR_DEFAULTSIZE | LR_SHARED,
+        )
+        .context("unable to load icon file")?;
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
             lpszClassName: class_name,
             style: CS_HREDRAW | CS_VREDRAW,
+            hIcon: HICON(handle.0),
             ..Default::default()
         };
         RegisterClassW(&wc);
         let mut rect = RECT::default();
-        GetWindowRect(GetDesktopWindow(), &mut rect)?;
+        GetWindowRect(GetDesktopWindow(), &mut rect)
+            .context("unable to get desktop window rect")?;
         let width = 400;
         let height = 150;
         let info = Box::new(RefCell::new(DialogInfo {
@@ -64,7 +78,8 @@ pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWN
             None,
             None,
             Some(Box::into_raw(info) as _),
-        )?;
+        )
+        .context("unable to create dialog window")?;
         Ok(hwnd)
     }
 }
