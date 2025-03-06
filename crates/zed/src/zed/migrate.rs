@@ -199,7 +199,7 @@ impl Render for MigrationBanner {
                                 div()
                                     .px_1()
                                     .bg(cx.theme().colors().background)
-                                    .rounded_sm()
+                                    .rounded_xs()
                                     .child(
                                         Label::new(backup_file_name)
                                             .buffer_font(cx)

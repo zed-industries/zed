@@ -1201,7 +1201,7 @@ impl Editor {
                     .bg(cx.theme().colors().ghost_element_background)
                     .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                     .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                    .rounded_sm()
+                    .rounded_xs()
                     .size_full()
                     .cursor_pointer()
                     .child("⋯")

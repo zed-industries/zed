@@ -1724,7 +1724,7 @@ impl EditorElement {
                 .h(line_height)
                 .w_full()
                 .px_1()
-                .rounded_sm()
+                .rounded_xs()
                 .opacity(opacity)
                 .bg(severity_to_color(&diagnostic_to_render.severity)
                     .color(cx)
@@ -2741,7 +2741,7 @@ impl EditorElement {
                         header.child(
                             div()
                                 .hover(|style| style.bg(colors.element_selected))
-                                .rounded_sm()
+                                .rounded_xs()
                                 .child(
                                     ButtonLike::new("toggle-buffer-fold")
                                         .style(ui::ButtonStyle::Transparent)
