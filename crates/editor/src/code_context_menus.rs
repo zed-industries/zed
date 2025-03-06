@@ -851,7 +851,7 @@ impl CodeActionsItem {
 
     pub fn label(&self) -> String {
         match self {
-            Self::CodeAction { action, .. } => action.lsp_action.title.clone(),
+            Self::CodeAction { action, .. } => action.lsp_action.title().to_owned(),
             Self::Task(_, task) => task.resolved_label.clone(),
         }
     }
@@ -984,7 +984,7 @@ impl CodeActionsMenu {
                                             .overflow_hidden()
                                             .child(
                                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                                action.lsp_action.title.replace("\n", ""),
+                                                action.lsp_action.title().replace("\n", ""),
                                             )
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1029,7 +1029,7 @@ impl CodeActionsMenu {
                 .max_by_key(|(_, action)| match action {
                     CodeActionsItem::Task(_, task) => task.resolved_label.chars().count(),
                     CodeActionsItem::CodeAction { action, .. } => {
-                        action.lsp_action.title.chars().count()
+                        action.lsp_action.title().chars().count()
                     }
                 })
                 .map(|(ix, _)| ix),
