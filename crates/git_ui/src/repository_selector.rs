@@ -1,14 +1,15 @@
 use gpui::{
-    AnyElement, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
+    Task, WeakEntity,
 };
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{
     git::{GitStore, Repository},
     Project,
 };
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 
 pub struct RepositorySelector {
     picker: Entity<Picker<RepositorySelectorDelegate>>,
@@ -19,15 +20,27 @@ pub struct RepositorySelector {
 }
 
 impl RepositorySelector {
-    pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let git_store = project.read(cx).git_store().clone();
+    pub fn new(
+        project_handle: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let project = project_handle.read(cx);
+        let git_store = project.git_store().clone();
         let repository_entries = git_store.update(cx, |git_store, cx| {
             deduplicated_repository_entries(git_store, cx)
         });
         let filtered_repositories = repository_entries.clone();
 
+        let widest_item_ix = all_repositories.iter().position_max_by(|a, b| {
+            a.read(cx)
+                .display_name(project, cx)
+                .len()
+                .cmp(&b.read(cx).display_name(project, cx).len())
+        });
+
         let delegate = RepositorySelectorDelegate {
-            project: project.downgrade(),
+            project: project_handle.downgrade(),
             repository_selector: cx.entity().downgrade(),
             repository_entries,
             filtered_repositories,
@@ -36,8 +49,8 @@ impl RepositorySelector {
 
         let picker = cx.new(|cx| {
             Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .widest_item(widest_item_ix)
                 .max_height(Some(rems(20.).into()))
-                .width(rems(15.))
         });
 
         let _subscriptions =
@@ -48,10 +61,6 @@ impl RepositorySelector {
             update_matches_task: None,
             _subscriptions,
         }
-    }
-
-    pub(crate) fn repositories_len(&self, cx: &App) -> usize {
-        self.picker.read(cx).delegate.repository_entries.len()
     }
 
     fn handle_project_git_event(
@@ -97,54 +106,6 @@ impl Focusable for RepositorySelector {
 impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
-    }
-}
-
-#[derive(IntoElement)]
-pub struct RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    repository_selector: Entity<RepositorySelector>,
-    trigger: T,
-    tooltip: TT,
-    handle: Option<PopoverMenuHandle<RepositorySelector>>,
-}
-
-impl<T, TT> RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    pub fn new(repository_selector: Entity<RepositorySelector>, trigger: T, tooltip: TT) -> Self {
-        Self {
-            repository_selector,
-            trigger,
-            tooltip,
-            handle: None,
-        }
-    }
-
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<RepositorySelector>) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-}
-
-impl<T, TT> RenderOnce for RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let repository_selector = self.repository_selector.clone();
-
-        PopoverMenu::new("repository-switcher")
-            .menu(move |_window, _cx| Some(repository_selector.clone()))
-            .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
-            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
     }
 }
 
@@ -256,7 +217,6 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let project = self.project.upgrade()?;
         let repo_info = self.filtered_repositories.get(ix)?;
         let display_name = repo_info.read(cx).display_name(project.read(cx), cx);
-        // TODO: Implement repository item rendering
         Some(
             ListItem::new(ix)
                 .inset(true)

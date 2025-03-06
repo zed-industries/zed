@@ -182,18 +182,8 @@ impl Render for QuickActionBar {
                             .action("Next Problem", Box::new(GoToDiagnostic))
                             .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
                             .separator()
-                            .action(
-                                "Next Hunk",
-                                Box::new(GoToHunk {
-                                    center_cursor: true,
-                                }),
-                            )
-                            .action(
-                                "Previous Hunk",
-                                Box::new(GoToPreviousHunk {
-                                    center_cursor: true,
-                                }),
-                            )
+                            .action("Next Hunk", Box::new(GoToHunk))
+                            .action("Previous Hunk", Box::new(GoToPreviousHunk))
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))
