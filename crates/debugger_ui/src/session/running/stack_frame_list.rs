@@ -10,7 +10,7 @@ use gpui::{
 
 use language::Point;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
-use project::ProjectItem;
+use project::{ProjectItem, ProjectPath};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
@@ -199,14 +199,28 @@ impl StackFrameList {
         };
 
         cx.spawn_in(window, move |this, mut cx| async move {
-            let buffer = this
+            let (worktree, relative_path) = this
                 .update(&mut cx, |this, cx| {
                     this.workspace.update(cx, |workspace, cx| {
-                        // todo(debugger): This will cause an error if we hit a breakpoint that is outside the project
-                        // open local buffer can't find a worktree_id because there is none
-                        workspace
-                            .project()
-                            .update(cx, |this, cx| this.open_local_buffer(abs_path.clone(), cx))
+                        workspace.project().update(cx, |this, cx| {
+                            this.find_or_create_worktree(&abs_path, false, cx)
+                        })
+                    })
+                })??
+                .await?;
+            let buffer = this
+                .update(&mut cx, |this, cx| {
+                    this.workspace.update(cx, |this, cx| {
+                        this.project().update(cx, |this, cx| {
+                            let worktree_id = worktree.read(cx).id();
+                            this.open_buffer(
+                                ProjectPath {
+                                    worktree_id,
+                                    path: relative_path.into(),
+                                },
+                                cx,
+                            )
+                        })
                     })
                 })??
                 .await?;
