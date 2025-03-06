@@ -1,15 +1,14 @@
 use std::{
     fmt::Debug,
-    fs::File,
     path::{Path, PathBuf},
-    sync::mpsc::SyncSender,
+    sync::{atomic::AtomicBool, mpsc::SyncSender, Arc},
 };
 
 use anyhow::{Context, Result};
 use windows::{
     core::HSTRING,
     Win32::{
-        Foundation::{SetLastError, HWND, LPARAM, LRESULT, RECT, WIN32_ERROR, WPARAM},
+        Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
             BeginPaint, CreateFontW, DeleteObject, EndPaint, ReleaseDC, SelectObject, TextOutW,
             FW_NORMAL, LOGFONTW, PAINTSTRUCT,
@@ -31,6 +30,7 @@ use windows::{
 
 const TOTAL_JOBS: usize = 6;
 const WM_JOB_UPDATED: u32 = WM_USER + 1;
+const WM_TERMINATE: u32 = WM_USER + 2;
 
 #[derive(Debug, PartialEq, Eq)]
 enum UpdateStatus {
@@ -41,7 +41,24 @@ enum UpdateStatus {
     Done,
 }
 
-fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
+#[derive(Debug)]
+enum JobResult {
+    Finished,
+    OtherJobFailed,
+}
+
+macro_rules! return_if_other_failed {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(_) => {
+                return Ok(JobResult::OtherJobFailed);
+            }
+        }
+    };
+}
+
+fn update(app_dir: &Path, hwnd: isize, stop_flag: Arc<AtomicBool>) -> Result<JobResult> {
     let install_dir = app_dir.join("install");
     let update_dir = app_dir.join("updates");
     let hwnd = HWND(hwnd as _);
@@ -50,113 +67,136 @@ fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
     let mut status =
         UpdateStatus::RemoveOld(vec![app_dir.join("Zed.exe"), app_dir.join("bin\\zed.exe")]);
     while start.elapsed().as_secs() < 10 {
+        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(JobResult::OtherJobFailed);
+        }
         match status {
             UpdateStatus::RemoveOld(old_files) => {
-                let mut sccess = Vec::with_capacity(old_files.len());
-                for old_file in old_files.iter() {
-                    if old_file.exists() {
-                        let result = std::fs::remove_file(&old_file);
-                        if let Err(error) = result {
-                            log::error!(
-                                "Failed to remove old file {}: {:?}",
-                                old_file.display(),
-                                error
-                            );
-                        } else {
-                            sccess.push(old_file);
-                            unsafe {
-                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
-                            }
-                        }
-                    } else {
-                        sccess.push(old_file);
-                        unsafe {
-                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
-                        }
+                for _ in 0..2 {
+                    unsafe {
+                        PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(1));
                 }
-                let left_old_files = old_files
-                    .iter()
-                    .filter(|old_file| !sccess.contains(old_file))
-                    .map(|old_file| old_file.clone())
-                    .collect::<Vec<_>>();
-                if left_old_files.is_empty() {
-                    status = UpdateStatus::CopyNew(vec![
-                        (install_dir.join("Zed.exe"), app_dir.join("Zed.exe")),
-                        (
-                            install_dir.join("bin\\zed.exe"),
-                            app_dir.join("bin\\zed.exe"),
-                        ),
-                    ]);
-                } else {
-                    status = UpdateStatus::RemoveOld(left_old_files);
-                }
+                status = UpdateStatus::CopyNew(vec![]);
+                // let mut sccess = Vec::with_capacity(old_files.len());
+                // for old_file in old_files.iter() {
+                //     if old_file.exists() {
+                //         let result = std::fs::remove_file(&old_file);
+                //         if let Err(error) = result {
+                //             log::error!(
+                //                 "Failed to remove old file {}: {:?}",
+                //                 old_file.display(),
+                //                 error
+                //             );
+                //         } else {
+                //             sccess.push(old_file);
+                //             return_if_other_failed!(unsafe {
+                //                 PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))
+                //             });
+                //         }
+                //     } else {
+                //         sccess.push(old_file);
+                //         unsafe {
+                //             PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
+                //         }
+                //     }
+                //     std::thread::sleep(std::time::Duration::from_secs(1));
+                // }
+                // let left_old_files = old_files
+                //     .iter()
+                //     .filter(|old_file| !sccess.contains(old_file))
+                //     .map(|old_file| old_file.clone())
+                //     .collect::<Vec<_>>();
+                // if left_old_files.is_empty() {
+                //     status = UpdateStatus::CopyNew(vec![
+                //         (install_dir.join("Zed.exe"), app_dir.join("Zed.exe")),
+                //         (
+                //             install_dir.join("bin\\zed.exe"),
+                //             app_dir.join("bin\\zed.exe"),
+                //         ),
+                //     ]);
+                // } else {
+                //     status = UpdateStatus::RemoveOld(left_old_files);
+                // }
             }
             UpdateStatus::CopyNew(new_files) => {
-                let mut sccess = Vec::with_capacity(new_files.len());
-                for (new_file, old_file) in new_files.iter() {
-                    if new_file.exists() {
-                        let result = std::fs::copy(&new_file, &old_file);
-                        if let Err(error) = result {
-                            log::error!(
-                                "Failed to copy new file {} to {}: {:?}",
-                                new_file.display(),
-                                old_file.display(),
-                                error
-                            );
-                        } else {
-                            sccess.push((new_file, old_file));
-                            unsafe {
-                                PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
-                            }
-                        }
-                    } else {
-                        sccess.push((new_file, old_file));
-                        unsafe {
-                            PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
-                        }
+                for _ in 0..2 {
+                    unsafe {
+                        PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(1));
                 }
-                let left_new_files = new_files
-                    .iter()
-                    .filter(|(new_file, _)| !sccess.iter().any(|(n, _)| *n == new_file))
-                    .map(|(new_file, old_file)| (new_file.clone(), old_file.clone()))
-                    .collect::<Vec<_>>();
+                status = UpdateStatus::DeleteInstall;
+                // let mut sccess = Vec::with_capacity(new_files.len());
+                // for (new_file, old_file) in new_files.iter() {
+                //     if new_file.exists() {
+                //         let result = std::fs::copy(&new_file, &old_file);
+                //         if let Err(error) = result {
+                //             log::error!(
+                //                 "Failed to copy new file {} to {}: {:?}",
+                //                 new_file.display(),
+                //                 old_file.display(),
+                //                 error
+                //             );
+                //         } else {
+                //             sccess.push((new_file, old_file));
+                //             unsafe {
+                //                 PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
+                //             }
+                //         }
+                //     } else {
+                //         sccess.push((new_file, old_file));
+                //         unsafe {
+                //             PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
+                //         }
+                //     }
+                //     std::thread::sleep(std::time::Duration::from_secs(1));
+                // }
+                // let left_new_files = new_files
+                //     .iter()
+                //     .filter(|(new_file, _)| !sccess.iter().any(|(n, _)| *n == new_file))
+                //     .map(|(new_file, old_file)| (new_file.clone(), old_file.clone()))
+                //     .collect::<Vec<_>>();
 
-                if left_new_files.is_empty() {
-                    status = UpdateStatus::DeleteInstall;
-                } else {
-                    status = UpdateStatus::CopyNew(left_new_files);
-                }
+                // if left_new_files.is_empty() {
+                //     status = UpdateStatus::DeleteInstall;
+                // } else {
+                //     status = UpdateStatus::CopyNew(left_new_files);
+                // }
             }
             UpdateStatus::DeleteInstall => {
-                let result = std::fs::remove_dir_all(&install_dir);
-                if let Err(error) = result {
-                    log::error!("Failed to remove install directory: {:?}", error);
-                    continue;
-                }
-                status = UpdateStatus::DeleteUpdates;
+                // let result = std::fs::remove_dir_all(&install_dir);
+                // if let Err(error) = result {
+                //     log::error!("Failed to remove install directory: {:?}", error);
+                //     continue;
+                // }
                 unsafe {
                     PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                 }
+                status = UpdateStatus::DeleteUpdates;
+                // unsafe {
+                //     PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
+                // }
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
             UpdateStatus::DeleteUpdates => {
-                let result = std::fs::remove_dir_all(&update_dir);
-                if let Err(error) = result {
-                    log::error!("Failed to remove updates directory: {:?}", error);
-                    continue;
-                }
-                status = UpdateStatus::Done;
+                // let result = std::fs::remove_dir_all(&update_dir);
+                // if let Err(error) = result {
+                //     log::error!("Failed to remove updates directory: {:?}", error);
+                //     continue;
+                // }
                 unsafe {
                     PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
                 }
+                status = UpdateStatus::Done;
+                // unsafe {
+                //     PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))?;
+                // }
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
             UpdateStatus::Done => {
-                let _ = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
+                // let _ = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
                 break;
             }
         }
@@ -165,7 +205,8 @@ fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
         return Err(anyhow::anyhow!("Failed to update Zed, timeout"));
     }
 
-    Ok(())
+    println!("update finished");
+    Ok(JobResult::Finished)
 }
 
 fn run() -> Result<()> {
@@ -187,12 +228,20 @@ fn run() -> Result<()> {
             result_sender.send(run_dialog_window(hwnd_tx)).ok();
         }
     });
-    if let Ok(hwnd) = hwnd_rx.recv() {
-        std::thread::spawn(move || tx.send(update(app_dir.as_path(), hwnd)).ok());
-    }
+    println!("1");
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let hwnd = hwnd_rx.recv().unwrap()?;
+    println!("2");
+    std::thread::spawn({
+        let flag = stop_flag.clone();
+        move || tx.send(update(app_dir.as_path(), hwnd, flag)).ok()
+    });
+    println!("3");
     for result in rx.iter() {
+        println!("result: {:?}", result);
         if let Err(ref e) = result {
             log::error!("Error: Zed update failed, {:?}", e);
+            stop_all_threads(hwnd, &stop_flag);
             show_result(
                 format!("Error: {:?}", e),
                 "Error: Zed update failed".to_owned(),
@@ -204,7 +253,14 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn run_dialog_window(hwnd_sender: SyncSender<isize>) -> Result<()> {
+fn stop_all_threads(hwnd: isize, stop_flag: &Arc<AtomicBool>) {
+    unsafe {
+        PostMessageW(HWND(hwnd as _), WM_TERMINATE, WPARAM(0), LPARAM(0)).ok();
+    }
+    stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn create_dialog_window() -> Result<HWND> {
     unsafe {
         let class_name = windows::core::w!("ProgressBarJunkui");
         let wc = WNDCLASSW {
@@ -233,14 +289,26 @@ fn run_dialog_window(hwnd_sender: SyncSender<isize>) -> Result<()> {
             None,
             None,
         )?;
-        hwnd_sender.send(hwnd.0 as isize)?;
+        Ok(hwnd)
+    }
+}
 
+fn run_dialog_window(hwnd_sender: SyncSender<Result<isize>>) -> Result<JobResult> {
+    let hwnd = create_dialog_window();
+    match hwnd {
+        Ok(hwnd) => hwnd_sender.send(Ok(hwnd.0 as isize))?,
+        Err(e) => {
+            hwnd_sender.send(Err(e))?;
+            return Ok(JobResult::OtherJobFailed);
+        }
+    }
+    unsafe {
         let mut message = MSG::default();
         while GetMessageW(&mut message, None, 0, 0).as_bool() {
             DispatchMessageW(&message);
         }
-        Ok(())
     }
+    Ok(JobResult::Finished)
 }
 
 fn init_log(helper_dir: &Path) -> Result<()> {
@@ -290,6 +358,7 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_CREATE => {
+            println!("WM_CREATE");
             log::info!("WM_CREATE");
             // Create progress bar
             let mut rect = RECT::default();
@@ -320,6 +389,7 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_PAINT => {
+            println!("WM_PAINT");
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);
 
@@ -352,11 +422,12 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_JOB_UPDATED => {
             log::info!("WM_JOB_UPDATED");
+            println!("WM_JOB_UPDATED");
             let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut isize };
             let progress_bar = HWND(*raw as _);
             SendMessageW(progress_bar, PBM_STEPIT, WPARAM(0), LPARAM(0))
         }
-        WM_DESTROY => {
+        WM_DESTROY | WM_TERMINATE => {
             PostQuitMessage(-1);
 
             LRESULT(0)
