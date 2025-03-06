@@ -2256,7 +2256,7 @@ impl LspCommand for GetCodeActions {
                                 return None;
                             }
                         }
-                        ActionVariant::Action(lsp_action)
+                        ActionVariant::Action(Box::new(lsp_action))
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
                         if available_commands.contains(&command.command) {

@@ -1728,10 +1728,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             Task::ready(Ok(vec![CodeAction {
                 server_id: language::LanguageServerId(0),
                 range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
-                lsp_action: ActionVariant::Action(lsp::CodeAction {
+                lsp_action: ActionVariant::Action(Box::new(lsp::CodeAction {
                     title: "Fix with Assistant".into(),
                     ..Default::default()
-                }),
+                })),
             }]))
         } else {
             Task::ready(Ok(Vec::new()))

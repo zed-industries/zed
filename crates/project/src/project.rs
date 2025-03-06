@@ -420,7 +420,7 @@ pub struct CodeAction {
 pub enum ActionVariant {
     /// An action with the full data, may have a command or may not.
     /// May require resolving.
-    Action(lsp::CodeAction),
+    Action(Box<lsp::CodeAction>),
     /// A command data to run as an action.
     Command(lsp::Command),
 }

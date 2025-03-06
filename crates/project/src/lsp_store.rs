@@ -1672,9 +1672,11 @@ impl LocalLspStore {
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
-                    *lsp_action = lang_server
-                        .request::<lsp::request::CodeActionResolveRequest>(lsp_action.clone())
-                        .await?;
+                    *lsp_action = Box::new(
+                        lang_server
+                            .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
+                            .await?,
+                    );
                 }
             }
             ActionVariant::Command(_) => {}
