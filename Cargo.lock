@@ -5462,6 +5462,7 @@ dependencies = [
  "settings",
  "smallvec",
  "strum",
+ "telemetry",
  "theme",
  "time",
  "ui",
