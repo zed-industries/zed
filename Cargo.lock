@@ -1148,6 +1148,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "windows 0.58.0",
+ "winresource",
 ]
 
 [[package]]
