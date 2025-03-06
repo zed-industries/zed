@@ -217,6 +217,14 @@ pub trait GitRepository: Send + Sync {
 
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>>;
+
+    /// Run git diff
+    fn diff(&self, diff: DiffType) -> Result<String>;
+}
+
+pub enum DiffType {
+    HeadToIndex,
+    HeadToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -575,6 +583,28 @@ impl GitRepository for RealGitRepository {
             remote_url,
             self.hosting_provider_registry.clone(),
         )
+    }
+
+    fn diff(&self, diff: DiffType) -> Result<String> {
+        let working_directory = self.working_directory()?;
+        let args = match diff {
+            DiffType::HeadToIndex => Some("--staged"),
+            DiffType::HeadToWorktree => None,
+        };
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["diff"])
+            .args(args)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to run git diff:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
@@ -1046,6 +1076,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>> {
+        unimplemented!()
+    }
+
+    fn diff(&self, _diff: DiffType) -> Result<String> {
         unimplemented!()
     }
 }

@@ -12,6 +12,7 @@ use futures::{
     channel::{mpsc, oneshot},
     StreamExt as _,
 };
+use git::repository::DiffType;
 use git::{
     repository::{
         Branch, CommitDetails, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
@@ -136,6 +137,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_set_index_text);
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
+        client.add_entity_request_handler(Self::handle_git_diff);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
@@ -805,6 +807,33 @@ impl GitStore {
                 .map(|commit| commit.to_string())
                 .collect(),
         })
+    }
+
+    async fn handle_git_diff(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDiff>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitDiffResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let diff_type = match envelope.payload.diff_type() {
+            proto::git_diff::DiffType::HeadToIndex => DiffType::HeadToIndex,
+            proto::git_diff::DiffType::HeadToWorktree => DiffType::HeadToWorktree,
+        };
+
+        let mut diff = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.diff(diff_type, cx)
+            })?
+            .await??;
+        const ONE_MB: usize = 1_000_000;
+        if diff.len() > ONE_MB {
+            diff = diff.chars().take(ONE_MB).collect()
+        }
+
+        Ok(proto::GitDiffResponse { diff })
     }
 
     fn repository_for_request(
@@ -1622,6 +1651,39 @@ impl Repository {
                         .collect();
 
                     Ok(branches)
+                }
+            }
+        })
+    }
+
+    pub fn diff(&self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
+        self.send_job(|repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.diff(diff_type),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                    ..
+                } => {
+                    let response = client
+                        .request(proto::GitDiff {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            diff_type: match diff_type {
+                                DiffType::HeadToIndex => {
+                                    proto::git_diff::DiffType::HeadToIndex.into()
+                                }
+                                DiffType::HeadToWorktree => {
+                                    proto::git_diff::DiffType::HeadToWorktree.into()
+                                }
+                            },
+                        })
+                        .await?;
+
+                    Ok(response.diff)
                 }
             }
         })

@@ -342,7 +342,10 @@ message Envelope {
         CheckForPushedCommitsResponse check_for_pushed_commits_response = 316;
 
         AskPassRequest ask_pass_request = 317;
-        AskPassResponse ask_pass_response = 318; // current max
+        AskPassResponse ask_pass_response = 318;
+
+        GitDiff git_diff = 319;
+        GitDiffResponse git_diff_response = 320; // current max
     }
 
     reserved 87 to 88;
@@ -2906,4 +2909,20 @@ message CheckForPushedCommits {
 
 message CheckForPushedCommitsResponse {
   repeated string pushed_to = 1;
+}
+
+message GitDiff {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    DiffType diff_type = 4;
+
+    enum DiffType {
+        HEAD_TO_WORKTREE = 0;
+        HEAD_TO_INDEX = 1;
+    }
+}
+
+message GitDiffResponse {
+    string diff = 1;
 }
