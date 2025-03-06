@@ -183,7 +183,7 @@ unsafe extern "system" fn wnd_proc(
             PostQuitMessage(0);
             LRESULT(0)
         }
-        WM_CLOSE => LRESULT(1), // Prevent user occassionally closing the window
+        WM_CLOSE => LRESULT(0), // Prevent user occassionally closing the window
         WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT(0)
