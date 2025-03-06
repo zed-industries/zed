@@ -7934,10 +7934,6 @@ mod tests {
             ]
         );
 
-        let dir_1_file = find_project_entry(&panel, "project_root/dir_1/file_1.py", cx)
-            .expect("dir 1 file is not ignored and should have an entry");
-        let dir_2_file = find_project_entry(&panel, "project_root/dir_2/file_1.py", cx)
-            .expect("dir 2 file is not ignored and should have an entry");
         let gitignored_dir_file =
             find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
         let always_included_but_ignored_dir_file = find_project_entry(
