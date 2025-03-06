@@ -424,7 +424,7 @@ messages!(
     (FlushBufferedMessages, Foreground),
     (LanguageServerPromptRequest, Foreground),
     (LanguageServerPromptResponse, Foreground),
-    (GitBranches, Background),
+    (GitGetBranches, Background),
     (GitBranchesResponse, Background),
     (UpdateGitBranch, Background),
     (ListToolchains, Foreground),
@@ -452,6 +452,10 @@ messages!(
     (GetRemotesResponse, Background),
     (Pull, Background),
     (RemoteMessageResponse, Background),
+    (GitCreateBranch, Background),
+    (GitChangeBranch, Background),
+    (CheckForPushedCommits, Background),
+    (CheckForPushedCommitsResponse, Background),
 );
 
 request_messages!(
@@ -575,7 +579,7 @@ request_messages!(
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
-    (GitBranches, GitBranchesResponse),
+    (GitGetBranches, GitBranchesResponse),
     (UpdateGitBranch, Ack),
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
@@ -594,6 +598,9 @@ request_messages!(
     (Fetch, RemoteMessageResponse),
     (GetRemotes, GetRemotesResponse),
     (Pull, RemoteMessageResponse),
+    (GitCreateBranch, Ack),
+    (GitChangeBranch, Ack),
+    (CheckForPushedCommits, CheckForPushedCommitsResponse),
 );
 
 entity_messages!(
@@ -679,7 +686,7 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    GitBranches,
+    GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
     ActivateToolchain,
@@ -695,6 +702,9 @@ entity_messages!(
     Fetch,
     GetRemotes,
     Pull,
+    GitChangeBranch,
+    GitCreateBranch,
+    CheckForPushedCommits,
 );
 
 entity_messages!(

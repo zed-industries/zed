@@ -339,6 +339,7 @@ enum OpenBuffer {
 
 pub enum BufferStoreEvent {
     BufferAdded(Entity<Buffer>),
+    BufferDiffAdded(Entity<BufferDiff>),
     BufferDropped(BufferId),
     BufferChangedFilePath {
         buffer: Entity<Buffer>,
@@ -1522,11 +1523,12 @@ impl BufferStore {
             if let Some(OpenBuffer::Complete { diff_state, .. }) =
                 this.opened_buffers.get_mut(&buffer_id)
             {
+                let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                cx.emit(BufferStoreEvent::BufferDiffAdded(diff.clone()));
                 diff_state.update(cx, |diff_state, cx| {
                     diff_state.language = language;
                     diff_state.language_registry = language_registry;
 
-                    let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                     match kind {
                         DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                         DiffKind::Uncommitted => {

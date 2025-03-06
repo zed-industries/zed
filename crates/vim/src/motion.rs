@@ -74,6 +74,7 @@ pub enum Motion {
     StartOfDocument,
     EndOfDocument,
     Matching,
+    GoToPercentage,
     UnmatchedForward {
         char: char,
     },
@@ -281,6 +282,7 @@ actions!(
         StartOfDocument,
         EndOfDocument,
         Matching,
+        GoToPercentage,
         NextLineStart,
         PreviousLineStart,
         StartOfLineDownward,
@@ -401,6 +403,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &Matching, window, cx| {
         vim.motion(Motion::Matching, window, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &GoToPercentage, window, cx| {
+        vim.motion(Motion::GoToPercentage, window, cx)
     });
     Vim::action(
         editor,
@@ -643,6 +648,7 @@ impl Motion {
             | PreviousMethodEnd
             | NextComment
             | PreviousComment
+            | GoToPercentage
             | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
@@ -701,6 +707,7 @@ impl Motion {
             | StartOfLineDownward
             | EndOfLineDownward
             | GoToColumn
+            | GoToPercentage
             | NextWordStart { .. }
             | NextWordEnd { .. }
             | PreviousWordStart { .. }
@@ -745,6 +752,7 @@ impl Motion {
             | EndOfLine { .. }
             | EndOfLineDownward
             | Matching
+            | GoToPercentage
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | FindForward { .. }
@@ -886,6 +894,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
+            GoToPercentage => (go_to_percentage(map, point, times), SelectionGoal::None),
             UnmatchedForward { char } => (
                 unmatched_forward(map, point, *char, times),
                 SelectionGoal::None,
@@ -2194,6 +2203,22 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     }
 }
 
+// Go to {count} percentage in the file, on the first
+// non-blank in the line linewise.  To compute the new
+// line number this formula is used:
+// ({count} * number-of-lines + 99) / 100
+//
+// https://neovim.io/doc/user/motion.html#N%25
+fn go_to_percentage(map: &DisplaySnapshot, point: DisplayPoint, count: usize) -> DisplayPoint {
+    let total_lines = map.buffer_snapshot.max_point().row + 1;
+    let target_line = (count * total_lines as usize + 99) / 100;
+    let target_point = DisplayPoint::new(
+        DisplayRow(target_line.saturating_sub(1) as u32),
+        point.column(),
+    );
+    map.clip_point(target_point, Bias::Left)
+}
+
 fn unmatched_forward(
     map: &DisplaySnapshot,
     mut display_point: DisplayPoint,
@@ -3469,5 +3494,104 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_go_to_percentage(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // Normal mode
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("2 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox ˇjumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.simulate_shared_keystrokes("2 5 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox jumps over
+            the ˇlazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.simulate_shared_keystrokes("7 5 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The ˇquick brown
+            fox jumps over
+            the lazy dog"});
+
+        // Visual mode
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("v 5 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jˇ»umps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("v 1 0 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lˇ»azy dog"});
     }
 }
