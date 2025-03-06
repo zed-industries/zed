@@ -78,6 +78,7 @@ actions!(
         FocusEditor,
         FocusChanges,
         ToggleFillCoAuthors,
+        GenerateCommitMessage
     ]
 );
 
@@ -1438,7 +1439,7 @@ impl GitPanel {
     }
 
     /// Generates a commit message using an LLM.
-    fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
+    pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
@@ -2191,10 +2192,11 @@ impl GitPanel {
                 .into_any_element();
         }
 
-        IconButton::new("generate-commit-message", IconName::ZedAssistant)
+        IconButton::new("generate-commit-message", IconName::AiEdit)
             .shape(ui::IconButtonShape::Square)
+            .icon_color(Color::Muted)
             .tooltip(Tooltip::for_action_title_in(
-                "Generate commit message",
+                "Generate Commit Message",
                 &git::GenerateCommitMessage,
                 &self.commit_editor.focus_handle(cx),
             ))
@@ -2206,36 +2208,36 @@ impl GitPanel {
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let potential_co_authors = self.potential_co_authors(cx);
-        if potential_co_authors.is_empty() {
-            None
-        } else {
-            Some(
-                IconButton::new("co-authors", IconName::Person)
-                    .icon_color(Color::Disabled)
-                    .selected_icon_color(Color::Selected)
-                    .toggle_state(self.add_coauthors)
-                    .tooltip(move |_, cx| {
-                        let title = format!(
-                            "Add co-authored-by:{}{}",
-                            if potential_co_authors.len() == 1 {
-                                ""
-                            } else {
-                                "\n"
-                            },
-                            potential_co_authors
-                                .iter()
-                                .map(|(name, email)| format!(" {} <{}>", name, email))
-                                .join("\n")
-                        );
-                        Tooltip::simple(title, cx)
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.add_coauthors = !this.add_coauthors;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
-        }
+        // if potential_co_authors.is_empty() {
+        //     None
+        // } else {
+        Some(
+            IconButton::new("co-authors", IconName::Person)
+                .icon_color(Color::Disabled)
+                .selected_icon_color(Color::Selected)
+                .toggle_state(self.add_coauthors)
+                .tooltip(move |_, cx| {
+                    let title = format!(
+                        "Add co-authored-by:{}{}",
+                        if potential_co_authors.len() == 1 {
+                            ""
+                        } else {
+                            "\n"
+                        },
+                        potential_co_authors
+                            .iter()
+                            .map(|(name, email)| format!(" {} <{}>", name, email))
+                            .join("\n")
+                    );
+                    Tooltip::simple(title, cx)
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.add_coauthors = !this.add_coauthors;
+                    cx.notify();
+                }))
+                .into_any_element(),
+        )
+        // }
     }
 
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
@@ -2338,40 +2340,39 @@ impl GitPanel {
                             .id("commit-footer")
                             .absolute()
                             .bottom_0()
-                            .right_2()
-                            .gap_0p5()
+                            .left_0()
+                            .w_full()
+                            .pl_1()
+                            .pr_2()
                             .h(footer_size)
                             .flex_none()
-                            .children(enable_coauthors)
+                            .justify_between()
                             .child(self.render_generate_commit_message_button(cx))
                             .child(
-                                panel_filled_button(title)
-                                    .tooltip(move |window, cx| {
-                                        if can_commit {
-                                            Tooltip::for_action_in(
-                                                tooltip,
-                                                &Commit,
-                                                &editor_focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                        } else {
-                                            Tooltip::simple(tooltip, cx)
-                                        }
-                                    })
-                                    .disabled(!can_commit || self.modal_open)
-                                    .on_click({
-                                        cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                            telemetry::event!(
-                                                "Git Committed",
-                                                source = "Git Panel"
-                                            );
-                                            this.commit_changes(window, cx)
+                                h_flex().gap_0p5().children(enable_coauthors).child(
+                                    panel_filled_button(title)
+                                        .tooltip(move |window, cx| {
+                                            if can_commit {
+                                                Tooltip::for_action_in(
+                                                    tooltip,
+                                                    &Commit,
+                                                    &editor_focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            } else {
+                                                Tooltip::simple(tooltip, cx)
+                                            }
                                         })
-                                    }),
+                                        .disabled(!can_commit || self.modal_open)
+                                        .on_click({
+                                            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                                this.commit_changes(window, cx)
+                                            })
+                                        }),
+                                ),
                             ),
                     )
-                    // .when(!self.modal_open, |el| {
                     .child(EditorElement::new(&self.commit_editor, panel_editor_style))
                     .child(
                         div()
