@@ -9,7 +9,7 @@ use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, sync::Arc};
 use ui::{prelude::*, ContextMenu, ListItem};
-use util::debug_panic;
+use util::{debug_panic, maybe};
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
@@ -21,27 +21,28 @@ pub(crate) struct VariableState {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) struct VariablePath {
-    pub scope_id: VariableReference,
-    pub indices: Arc<[SharedString]>,
+    pub leaf_name: Option<SharedString>,
+    pub indices: Arc<[VariableReference]>,
 }
 
 impl VariablePath {
     fn for_scope(scope_id: VariableReference) -> Self {
         Self {
-            scope_id,
-            indices: Arc::new([]),
+            leaf_name: None,
+            indices: Arc::new([scope_id]),
         }
     }
-    fn with_child(&self, child_name: SharedString) -> Self {
+    fn with_name(&self, name: SharedString) -> Self {
         Self {
-            scope_id: self.scope_id,
-            indices: self
-                .indices
-                .iter()
-                .cloned()
-                .chain(std::iter::once(child_name))
-                .collect(),
+            leaf_name: Some(name),
+            indices: self.indices.clone(),
         }
+    }
+    fn parent_reference_id(&self) -> VariableReference {
+        self.indices
+            .last()
+            .copied()
+            .expect("VariablePath should have at least one variable reference")
     }
 }
 
@@ -99,10 +100,12 @@ impl VariableList {
             0,
             gpui::ListAlignment::Top,
             px(1000.),
-            move |ix, _window, cx| {
+            move |ix, window, cx| {
                 weak_variable_list
                     .upgrade()
-                    .map(|var_list| var_list.update(cx, |this, cx| this.render_entry(ix, cx)))
+                    .map(|var_list| {
+                        var_list.update(cx, |this, cx| this.render_entry(ix, window, cx))
+                    })
                     .unwrap_or(div().into_any())
             },
         );
@@ -166,13 +169,13 @@ impl VariableList {
 
         while let Some((variable_reference, dap, mut path)) = stack.pop() {
             if let Some(dap) = &dap {
-                path = path.with_child(SharedString::from(&dap.name));
+                path = path.with_name(dap.name.clone().into());
             }
             let var_state = self
                 .variable_states
                 .entry(path.clone())
                 .or_insert(VariableState {
-                    depth: path.indices.len(),
+                    depth: path.indices.len() + path.leaf_name.is_some() as usize,
                     is_expanded: dap.is_none(),
                 });
             if let Some(dap) = dap {
@@ -225,7 +228,12 @@ impl VariableList {
             .collect()
     }
 
-    fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some((entry, state)) = self
             .entries
             .get(ix)
@@ -235,9 +243,7 @@ impl VariableList {
             return div().into_any_element();
         };
 
-        // todo(debugger) pass a valid value for is selected
-
-        self.render_variable(entry, *state, cx)
+        self.render_variable(entry, *state, window, cx)
     }
 
     pub(crate) fn toggle_variable(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
@@ -306,6 +312,40 @@ impl VariableList {
         }
     }
 
+    fn cancel_variable_edit(
+        &mut self,
+        _: &menu::Cancel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.edited_path.take();
+        self.focus_handle.focus(window);
+        cx.notify();
+    }
+
+    fn confirm_variable_edit(
+        &mut self,
+        _: &menu::Confirm,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let res = maybe!({
+            let (var_path, editor) = self.edited_path.take()?;
+            let variables_reference = var_path.parent_reference_id();
+            let name = var_path.leaf_name?;
+            let value = editor.read(cx).text(cx);
+
+            self.session.update(cx, |session, cx| {
+                session.set_variable_value(variables_reference, name.into(), value, cx)
+            });
+            Some(())
+        });
+
+        if res.is_none() {
+            log::error!("Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id");
+        }
+    }
+
     fn collapse_selected_entry(
         &mut self,
         _: &CollapseSelectedEntry,
@@ -369,6 +409,7 @@ impl VariableList {
         &self,
         variable: &Variable,
         state: VariableState,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let var_ref = variable.dap.variables_reference;
@@ -383,7 +424,7 @@ impl VariableList {
         } else {
             colors.default
         };
-        let border_color = if is_selected {
+        let border_color = if is_selected && self.focus_handle.contains_focused(window, cx) {
             colors.marked_active
         } else {
             colors.default
@@ -446,54 +487,52 @@ impl VariableList {
                     h_flex()
                         .gap_1()
                         .text_ui_sm(cx)
+                        .w_full()
                         .child(variable.dap.name.clone())
                         .when(!variable.dap.value.is_empty(), |this| {
-                            this.child(
-                                div()
-                                    .id(variable.item_value_id())
-                                    .text_ui_xs(cx)
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .map(|this| {
-                                        if let Some((_, editor)) = self
-                                            .edited_path
-                                            .as_ref()
-                                            .filter(|(path, _)| path == &variable.path)
-                                        {
-                                            this.child(h_flex().w_full().child(editor.clone()))
-                                        } else {
-                                            this.child(
-                                                variable.dap.value.replace("\n", " ").clone(),
-                                            )
-                                            .when(
-                                                self.session
-                                                    .read(cx)
-                                                    .capabilities()
-                                                    .supports_set_variable
-                                                    .unwrap_or_default(),
-                                                    |this| {
-                                                               let path = variable.path.clone();
-                                                        this.on_click(cx.listener(
-                                                            move |this, click: &ClickEvent, window, cx| {
-                                                                if click.down.click_count < 2 {
-                                                                    return;
-                                                                }
-                                                                this.edited_path = Some((
-                                                                    path.clone(),
-                                                                    cx.new(|cx| {
-                                                                        Editor::single_line(
-                                                                            window, cx,
-                                                                        )
-                                                                    }),
-                                                                ));
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                    }
+                            this.child(div().w_full().id(variable.item_value_id()).map(|this| {
+                                if let Some((_, editor)) = self
+                                    .edited_path
+                                    .as_ref()
+                                    .filter(|(path, _)| path == &variable.path)
+                                {
+                                    this.child(div().size_full().px_2().child(editor.clone()))
+                                } else {
+                                    this.text_color(cx.theme().colors().text_muted)
+                                        .when(
+                                            self.session
+                                                .read(cx)
+                                                .capabilities()
+                                                .supports_set_variable
+                                                .unwrap_or_default(),
+                                            |this| {
+                                                let path = variable.path.clone();
+                                                this.on_click(cx.listener(
+                                                    move |this, click: &ClickEvent, window, cx| {
+                                                        if click.down.click_count < 2 {
+                                                            return;
+                                                        }
+                                                        let editor = cx.new(|cx| {
+                                                            Editor::single_line(window, cx)
+                                                        });
+                                                        editor.focus_handle(cx).focus(window);
+                                                        this.edited_path =
+                                                            Some((path.clone(), editor));
 
-                                            )
-                                        }
-                                    }),
-                            )
+                                                        cx.notify();
+                                                    },
+                                                ))
+                                            },
+                                        )
+                                        .child(
+                                            Label::new(&variable.dap.value)
+                                                .single_line()
+                                                .text_ellipsis()
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                }
+                            }))
                         }),
                 ),
             )
@@ -524,13 +563,9 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::collapse_selected_entry))
+            .on_action(cx.listener(Self::cancel_variable_edit))
+            .on_action(cx.listener(Self::confirm_variable_edit))
             //
-            .on_action(
-                cx.listener(|_this, _: &editor::actions::Cancel, _window, _cx| {
-
-                    // this.cancel_set_variable_value(cx)
-                }),
-            )
             .child(list(self.list.clone()).gap_1_5().size_full().flex_grow())
             .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(

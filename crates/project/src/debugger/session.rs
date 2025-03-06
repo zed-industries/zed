@@ -1419,8 +1419,9 @@ impl Session {
                     value,
                     variables_reference,
                 },
-                |this, _response, cx| {
-                    this.invalidate(cx);
+                move |this, _response, cx| {
+                    this.invalidate_command_type(VariablesCommand::command_id());
+                    cx.notify();
                 },
                 cx,
             )
@@ -1457,7 +1458,8 @@ impl Session {
                 });
 
                 // TODO(debugger): only invalidate variables & scopes
-                this.invalidate(cx);
+                this.invalidate_command_type(ScopesCommand::command_id());
+                cx.notify();
             },
             cx,
         )
