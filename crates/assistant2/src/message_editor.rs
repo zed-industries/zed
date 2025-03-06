@@ -472,6 +472,13 @@ impl Render for MessageEditor {
                                                                 window,
                                                                 cx,
                                                             )
+                                                            .map(|binding| {
+                                                                binding
+                                                                    .when(vim_mode_enabled, |kb| {
+                                                                        kb.size(rems_from_px(12.))
+                                                                    })
+                                                                    .into_any_element()
+                                                            }),
                                                         ),
                                                 )
                                                 .on_click(move |_event, window, cx| {
