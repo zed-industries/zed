@@ -97,7 +97,7 @@ use ui::prelude::*;
 use util::{paths::SanitizedPath, serde::default_true, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
 
 use crate::notifications::NotificationId;
@@ -179,7 +179,7 @@ pub struct MoveItemToPane {
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
-pub struct SetBottomDockLayout(pub workspace_settings::BottomDockLayout);
+pub struct SetBottomDockLayout(pub BottomDockLayout);
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -812,7 +812,7 @@ pub struct Workspace {
     center: PaneGroup,
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
-    bottom_dock_layout: workspace_settings::BottomDockLayout,
+    bottom_dock_layout: BottomDockLayout,
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
@@ -1327,13 +1327,13 @@ impl Workspace {
         &self.bottom_dock
     }
 
-    pub fn bottom_dock_layout(&self) -> workspace_settings::BottomDockLayout {
+    pub fn bottom_dock_layout(&self) -> BottomDockLayout {
         self.bottom_dock_layout
     }
 
     pub fn set_bottom_dock_layout(
         &mut self,
-        layout: workspace_settings::BottomDockLayout,
+        layout: BottomDockLayout,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5436,7 +5436,7 @@ impl Render for Workspace {
                                 })
                                 .child({
                                     match self.bottom_dock_layout {
-                                        workspace_settings::BottomDockLayout::Full => div()
+                                        BottomDockLayout::Full => div()
                                             .flex()
                                             .flex_col()
                                             .h_full()
@@ -5503,7 +5503,7 @@ impl Render for Workspace {
                                                 cx,
                                             ))),
 
-                                        workspace_settings::BottomDockLayout::LeftAligned => div()
+                                        BottomDockLayout::LeftAligned => div()
                                                     .flex()
                                                     .flex_row()
                                                     .h_full()
@@ -5557,7 +5557,7 @@ impl Render for Workspace {
                                                         cx,
                                                     )),
 
-                                        workspace_settings::BottomDockLayout::RightAligned => div()
+                                        BottomDockLayout::RightAligned => div()
                                                     .flex()
                                                     .flex_row()
                                                     .h_full()
@@ -5611,7 +5611,7 @@ impl Render for Workspace {
                                                             ),
                                                     ),
 
-                                        workspace_settings::BottomDockLayout::Contained => div()
+                                        BottomDockLayout::Contained => div()
                                             .flex()
                                             .flex_row()
                                             .h_full()

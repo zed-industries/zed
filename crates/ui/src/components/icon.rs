@@ -225,6 +225,7 @@ pub enum IconName {
     Info,
     InlayHint,
     Keyboard,
+    Layout,
     Library,
     LineHeight,
     Link,
