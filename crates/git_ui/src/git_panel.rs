@@ -1,5 +1,6 @@
 use crate::askpass_modal::AskPassModal;
 use crate::branch_picker;
+use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
 use crate::{
@@ -2161,6 +2162,22 @@ index 1234567..abcdef0 100644
         }
     }
 
+    fn expand_commit_editor(
+        &mut self,
+        _: &git::ExpandCommitEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        window.defer(cx, move |window, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    CommitModal::toggle(workspace, window, cx)
+                })
+                .ok();
+        })
+    }
+
     pub fn render_footer(
         &self,
         window: &mut Window,
@@ -2275,7 +2292,7 @@ index 1234567..abcdef0 100644
                                     .on_click(cx.listener({
                                         move |_, _, window, cx| {
                                             window.dispatch_action(
-                                                git::ShowCommitEditor.boxed_clone(),
+                                                git::ExpandCommitEditor.boxed_clone(),
                                                 cx,
                                             )
                                         }
@@ -2893,6 +2910,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::unstage_all))
             .on_action(cx.listener(Self::restore_tracked_files))
             .on_action(cx.listener(Self::clean_all))
+            .on_action(cx.listener(Self::expand_commit_editor))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
