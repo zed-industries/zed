@@ -87,8 +87,15 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let git_store =
-            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
+        let git_store = cx.new(|cx| {
+            GitStore::new(
+                &worktree_store,
+                buffer_store.clone(),
+                session.clone().into(),
+                None,
+                cx,
+            )
+        });
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),

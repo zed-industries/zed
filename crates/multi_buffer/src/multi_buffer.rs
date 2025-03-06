@@ -1071,6 +1071,11 @@ impl MultiBuffer {
         self.history.start_transaction(now)
     }
 
+    pub fn last_transaction_id(&self) -> Option<TransactionId> {
+        let last_transaction = self.history.undo_stack.last()?;
+        return Some(last_transaction.id);
+    }
+
     pub fn end_transaction(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
         self.end_transaction_at(Instant::now(), cx)
     }

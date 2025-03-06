@@ -6,6 +6,7 @@ use project_diff::ProjectDiff;
 use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 use workspace::Workspace;
 
+mod askpass_modal;
 pub mod branch_picker;
 mod commit_modal;
 pub mod git_panel;
@@ -20,30 +21,43 @@ pub fn init(cx: &mut App) {
     branch_picker::init(cx);
     cx.observe_new(ProjectDiff::register).detach();
     commit_modal::init(cx);
+    git_panel::init(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
-        workspace.register_action(|workspace, fetch: &git::Fetch, window, cx| {
+    cx.observe_new(|workspace: &mut Workspace, _, cx| {
+        let project = workspace.project().read(cx);
+        if project.is_via_collab() {
+            return;
+        }
+        workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
             panel.update(cx, |panel, cx| {
-                panel.fetch(fetch, window, cx);
+                panel.fetch(window, cx);
             });
         });
-        workspace.register_action(|workspace, push: &git::Push, window, cx| {
+        workspace.register_action(|workspace, _: &git::Push, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
             panel.update(cx, |panel, cx| {
-                panel.push(push, window, cx);
+                panel.push(false, window, cx);
             });
         });
-        workspace.register_action(|workspace, pull: &git::Pull, window, cx| {
+        workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
             panel.update(cx, |panel, cx| {
-                panel.pull(pull, window, cx);
+                panel.push(true, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, _: &git::Pull, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.pull(window, cx);
             });
         });
     })

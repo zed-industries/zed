@@ -645,7 +645,7 @@ impl ActiveThread {
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
-                    .rounded_md()
+                    .rounded_sm()
                     .child(message_content),
             ),
         };

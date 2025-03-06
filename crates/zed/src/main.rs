@@ -217,29 +217,27 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check =
-        if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-            false
-        } else {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            {
-                crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
-            }
+    let failed_single_instance_check = if *db::ZED_STATELESS
+        || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
+    {
+        false
+    } else {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
+        }
 
-            #[cfg(target_os = "windows")]
-            {
-                !crate::zed::windows_only_instance::check_single_instance(
-                    open_listener.clone(),
-                    args.foreground,
-                )
-            }
+        #[cfg(target_os = "windows")]
+        {
+            !crate::zed::windows_only_instance::check_single_instance(open_listener.clone(), &args)
+        }
 
-            #[cfg(target_os = "macos")]
-            {
-                use zed::mac_only_instance::*;
-                ensure_only_instance() != IsOnlyInstance::Yes
-            }
-        };
+        #[cfg(target_os = "macos")]
+        {
+            use zed::mac_only_instance::*;
+            ensure_only_instance() != IsOnlyInstance::Yes
+        }
+    };
     if failed_single_instance_check {
         println!("zed is already running");
         return;
@@ -508,7 +506,6 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);
-        git_ui::git_panel::init(cx);
         outline_panel::init(cx);
         component_preview::init(cx);
         tasks_ui::init(cx);
@@ -641,6 +638,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
             .detach();
+        return;
+    }
+
+    if let Some(action_index) = request.dock_menu_action {
+        cx.perform_dock_menu_action(action_index);
         return;
     }
 
@@ -954,7 +956,14 @@ struct Args {
     /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]
     #[cfg(target_os = "windows")]
+    #[arg(hide = true)]
     foreground: bool,
+
+    /// The dock action to perform. This is used on Windows only.
+    #[arg(long)]
+    #[cfg(target_os = "windows")]
+    #[arg(hide = true)]
+    dock_action: Option<usize>,
 }
 
 #[derive(Clone, Debug)]

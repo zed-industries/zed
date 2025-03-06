@@ -1426,6 +1426,11 @@ impl App {
         self.platform.set_dock_menu(menus, &self.keymap.borrow());
     }
 
+    /// Performs the action associated with the given dock menu item, only used on Windows for now.
+    pub fn perform_dock_menu_action(&self, action: usize) {
+        self.platform.perform_dock_menu_action(action);
+    }
+
     /// Adds given path to the bottom of the list of recent paths for the application.
     /// The list is usually shown on the application icon's context menu in the dock,
     /// and allows to open the recent files via that context menu.

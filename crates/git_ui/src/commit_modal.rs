@@ -2,7 +2,7 @@
 
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
-use git::{Commit, ShowCommitEditor};
+use git::Commit;
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use ui::{prelude::*, KeybindingHint, PopoverMenu, Tooltip};
 
@@ -109,30 +109,34 @@ struct RestoreDock {
 
 impl CommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &ShowCommitEditor, window, cx| {
-            let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
-                return;
-            };
-
-            git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_modal_open(true, cx);
-            });
-
-            let dock = workspace.dock_at_position(git_panel.position(window, cx));
-            let is_open = dock.read(cx).is_open();
-            let active_index = dock.read(cx).active_panel_index();
-            let dock = dock.downgrade();
-            let restore_dock_position = RestoreDock {
-                dock,
-                is_open,
-                active_index,
-            };
-
-            workspace.open_panel::<GitPanel>(window, cx);
-            workspace.toggle_modal(window, cx, move |window, cx| {
-                CommitModal::new(git_panel, restore_dock_position, window, cx)
-            })
+        workspace.register_action(|workspace, _: &Commit, window, cx| {
+            CommitModal::toggle(workspace, window, cx);
         });
+    }
+
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<'_, Workspace>) {
+        let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
+            return;
+        };
+
+        git_panel.update(cx, |git_panel, cx| {
+            git_panel.set_modal_open(true, cx);
+        });
+
+        let dock = workspace.dock_at_position(git_panel.position(window, cx));
+        let is_open = dock.read(cx).is_open();
+        let active_index = dock.read(cx).active_panel_index();
+        let dock = dock.downgrade();
+        let restore_dock_position = RestoreDock {
+            dock,
+            is_open,
+            active_index,
+        };
+
+        workspace.open_panel::<GitPanel>(window, cx);
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            CommitModal::new(git_panel, restore_dock_position, window, cx)
+        })
     }
 
     fn new(
@@ -297,6 +301,7 @@ impl CommitModal {
             })
             .disabled(!can_commit)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                telemetry::event!("Git Committed", source = "Git Modal");
                 this.git_panel
                     .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
                 cx.emit(DismissEvent);
@@ -330,6 +335,7 @@ impl CommitModal {
     }
 
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel
             .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
         cx.emit(DismissEvent);

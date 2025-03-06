@@ -707,8 +707,15 @@ impl Project {
                 )
             });
 
-            let git_store =
-                cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
+            let git_store = cx.new(|cx| {
+                GitStore::new(
+                    &worktree_store,
+                    buffer_store.clone(),
+                    client.clone().into(),
+                    None,
+                    cx,
+                )
+            });
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -832,7 +839,7 @@ impl Project {
                 GitStore::new(
                     &worktree_store,
                     buffer_store.clone(),
-                    Some(ssh_proto.clone()),
+                    ssh_proto.clone(),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
                 )
@@ -1040,7 +1047,7 @@ impl Project {
             GitStore::new(
                 &worktree_store,
                 buffer_store.clone(),
-                Some(client.clone().into()),
+                client.clone().into(),
                 Some(ProjectId(remote_id)),
                 cx,
             )
