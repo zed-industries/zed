@@ -3,7 +3,7 @@ use crate::branch_picker;
 use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
-use crate::repository_selector::deduplicated_repository_entries;
+use crate::repository_selector::filtered_repository_entries;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -3564,8 +3564,7 @@ impl RenderOnce for PanelRepoFooter {
         let single_repo = project
             .as_ref()
             .map(|project| {
-                deduplicated_repository_entries(project.read(cx).git_store().read(cx), cx).len()
-                    == 1
+                filtered_repository_entries(project.read(cx).git_store().read(cx), cx).len() == 1
             })
             .unwrap_or(true);
 
@@ -4021,11 +4020,10 @@ mod tests {
 
         let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
         let panel = cx.new_window_entity(|window, cx| {
-            GitPanel::new(workspace.clone(), project, app_state, window, cx)
+            GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
         });
 
         let handle = cx.update_window_entity(&panel, |panel, window, cx| {
-            panel.schedule_update(false, window, cx);
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
@@ -4074,6 +4072,58 @@ mod tests {
                 Path::new("/root/zed/crates/gpui").into(),
                 Path::new("/root/zed/crates/util/util.rs").into(),
             ]
-        )
+        );
+
+        let repo_from_single_file_worktree = project.update(cx, |project, cx| {
+            let git_store = project.git_store().read(cx);
+            // The repo that comes from the single-file worktree can't be selected through the UI.
+            let filtered_entries = filtered_repository_entries(git_store, cx)
+                .iter()
+                .map(|repo| repo.read(cx).worktree_abs_path.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                filtered_entries,
+                [Path::new("/root/zed/crates/gpui").into()]
+            );
+            // But we can select it artificially here.
+            git_store
+                .all_repositories()
+                .into_iter()
+                .find(|repo| {
+                    &*repo.read(cx).worktree_abs_path == Path::new("/root/zed/crates/util/util.rs")
+                })
+                .unwrap()
+        });
+
+        // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
+        repo_from_single_file_worktree.update(cx, |repo, cx| repo.activate(cx));
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        pretty_assertions::assert_eq!(
+            entries,
+            [
+                GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Tracked
+                }),
+                GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/gpui/gpui.rs".into(),
+                    repo_path: "crates/gpui/gpui.rs".into(),
+                    worktree_path: Path::new("../../gpui/gpui.rs").into(),
+                    status: StatusCode::Modified.worktree(),
+                    is_staged: Some(false),
+                }),
+                GitListEntry::GitStatusEntry(GitStatusEntry {
+                    abs_path: "/root/zed/crates/util/util.rs".into(),
+                    repo_path: "crates/util/util.rs".into(),
+                    worktree_path: Path::new("util.rs").into(),
+                    status: StatusCode::Modified.worktree(),
+                    is_staged: Some(false),
+                },),
+            ],
+        );
     }
 }

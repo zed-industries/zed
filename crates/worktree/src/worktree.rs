@@ -510,16 +510,23 @@ impl WorkDirectory {
 
     pub fn unrelativize(&self, path: &RepoPath) -> Arc<Path> {
         match self {
-            WorkDirectory::InProject { relative_path } => dbg!(relative_path.join(path).into()),
+            WorkDirectory::InProject { relative_path } => relative_path.join(path).into(),
             WorkDirectory::AboveProject {
                 location_in_repo, ..
             } => {
-                // FIXME location in repo probably is bogus in the case of a single file worktree, need to fix that somehow...
-                let mut location_in_repo = dbg!(&**location_in_repo);
+                if &path.0 == location_in_repo {
+                    // Single-file worktree
+                    return location_in_repo
+                        .file_name()
+                        .map(Path::new)
+                        .unwrap_or(Path::new(""))
+                        .into();
+                }
+                let mut location_in_repo = &**location_in_repo;
                 let mut parents = PathBuf::new();
                 loop {
                     if let Ok(segment) = path.strip_prefix(location_in_repo) {
-                        return dbg!(parents.join(segment).into());
+                        return parents.join(segment).into();
                     }
                     location_in_repo = location_in_repo.parent().unwrap_or(Path::new(""));
                     parents.push(Component::ParentDir);

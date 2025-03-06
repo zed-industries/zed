@@ -22,7 +22,7 @@ impl RepositorySelector {
     ) -> Self {
         let git_store = project_handle.read(cx).git_store().clone();
         let repository_entries = git_store.update(cx, |git_store, cx| {
-            deduplicated_repository_entries(git_store, cx)
+            filtered_repository_entries(git_store, cx)
         });
         let project = project_handle.read(cx);
         let filtered_repositories = repository_entries.clone();
@@ -52,7 +52,7 @@ impl RepositorySelector {
     }
 }
 
-pub(crate) fn deduplicated_repository_entries(
+pub(crate) fn filtered_repository_entries(
     git_store: &GitStore,
     cx: &App,
 ) -> Vec<Entity<Repository>> {
