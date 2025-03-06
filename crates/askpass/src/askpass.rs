@@ -1,21 +1,21 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(unix)]
 use anyhow::Context as _;
 use futures::channel::{mpsc, oneshot};
+#[cfg(unix)]
 use futures::{io::BufReader, AsyncBufReadExt as _};
-use futures::{select_biased, AsyncWriteExt as _, FutureExt as _, SinkExt, StreamExt};
+#[cfg(unix)]
+use futures::{select_biased, AsyncWriteExt as _, FutureExt as _};
+use futures::{SinkExt, StreamExt};
 use gpui::{AsyncApp, BackgroundExecutor, Task};
+#[cfg(unix)]
 use smol::fs;
+#[cfg(unix)]
 use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
+#[cfg(unix)]
 use util::ResultExt as _;
-
-pub struct AskPassSession {
-    script_path: PathBuf,
-    _askpass_task: Task<()>,
-    askpass_opened_rx: Option<oneshot::Receiver<()>>,
-    askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
-}
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -49,6 +49,15 @@ impl AskPassDelegate {
     }
 }
 
+#[cfg(unix)]
+pub struct AskPassSession {
+    script_path: PathBuf,
+    _askpass_task: Task<()>,
+    askpass_opened_rx: Option<oneshot::Receiver<()>>,
+    askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
+}
+
+#[cfg(unix)]
 impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
@@ -158,5 +167,28 @@ impl AskPassSession {
                 return AskPassResult::Timedout
             }
         }
+    }
+}
+
+#[cfg(not(unix))]
+pub struct AskPassSession {
+    path: PathBuf,
+}
+
+#[cfg(not(unix))]
+impl AskPassSession {
+    pub async fn new(_: &BackgroundExecutor, _: AskPassDelegate) -> anyhow::Result<Self> {
+        Ok(Self {
+            path: PathBuf::new(),
+        })
+    }
+
+    pub fn script_path(&self) -> &Path {
+        &self.path
+    }
+
+    pub async fn run(&mut self) -> AskPassResult {
+        futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))).await;
+        AskPassResult::Timedout
     }
 }
