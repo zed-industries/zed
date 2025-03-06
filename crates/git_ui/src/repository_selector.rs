@@ -1,21 +1,13 @@
 use gpui::{
-    AnyElement, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
 };
 use picker::{Picker, PickerDelegate};
-use project::{
-    git::{GitStore, Repository},
-    Project,
-};
+use project::{git::Repository, Project};
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 
 pub struct RepositorySelector {
     picker: Entity<Picker<RepositorySelectorDelegate>>,
-    /// The task used to update the picker's matches when there is a change to
-    /// the repository list.
-    update_matches_task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl RepositorySelector {
@@ -37,34 +29,7 @@ impl RepositorySelector {
                 .width(rems(15.))
         });
 
-        let _subscriptions =
-            vec![cx.subscribe_in(&git_store, window, Self::handle_project_git_event)];
-
-        RepositorySelector {
-            picker,
-            update_matches_task: None,
-            _subscriptions,
-        }
-    }
-
-    pub(crate) fn repositories_len(&self, cx: &App) -> usize {
-        self.picker.read(cx).delegate.repository_entries.len()
-    }
-
-    fn handle_project_git_event(
-        &mut self,
-        git_store: &Entity<GitStore>,
-        _event: &project::git::GitEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // TODO handle events individually
-        let task = self.picker.update(cx, |this, cx| {
-            let query = this.query(cx);
-            this.delegate.repository_entries = git_store.read(cx).all_repositories();
-            this.delegate.update_matches(query, window, cx)
-        });
-        self.update_matches_task = Some(task);
+        RepositorySelector { picker }
     }
 }
 
@@ -79,54 +44,6 @@ impl Focusable for RepositorySelector {
 impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
-    }
-}
-
-#[derive(IntoElement)]
-pub struct RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    repository_selector: Entity<RepositorySelector>,
-    trigger: T,
-    tooltip: TT,
-    handle: Option<PopoverMenuHandle<RepositorySelector>>,
-}
-
-impl<T, TT> RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    pub fn new(repository_selector: Entity<RepositorySelector>, trigger: T, tooltip: TT) -> Self {
-        Self {
-            repository_selector,
-            trigger,
-            tooltip,
-            handle: None,
-        }
-    }
-
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<RepositorySelector>) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-}
-
-impl<T, TT> RenderOnce for RepositorySelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let repository_selector = self.repository_selector.clone();
-
-        PopoverMenu::new("repository-switcher")
-            .menu(move |_window, _cx| Some(repository_selector.clone()))
-            .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
-            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
     }
 }
 

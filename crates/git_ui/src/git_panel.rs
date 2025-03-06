@@ -2,7 +2,6 @@ use crate::askpass_modal::AskPassModal;
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
-use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -251,7 +250,6 @@ pub struct GitPanel {
     pending_commit: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
     pub(crate) project: Entity<Project>,
-    repository_selector: Entity<RepositorySelector>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
@@ -356,8 +354,6 @@ impl GitPanel {
         let scrollbar_state =
             ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
 
-        let repository_selector = cx.new(|cx| RepositorySelector::new(project.clone(), window, cx));
-
         let mut git_panel = Self {
             pending_remote_operations: Default::default(),
             remote_operation_id: 0,
@@ -378,7 +374,6 @@ impl GitPanel {
             pending_commit: None,
             pending_serialization: Task::ready(None),
             project,
-            repository_selector,
             scroll_handle,
             scrollbar_state,
             selected_entry: None,
@@ -2899,7 +2894,7 @@ impl Panel for GitPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
+        Some(ui::IconName::GitBranchSmall).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -3386,16 +3381,20 @@ impl RenderOnce for PanelRepoFooter {
             .color(Color::Muted);
 
         let repo_selector = if let Some(panel) = self.git_panel.clone() {
-            let repo_selector = panel.read(cx).repository_selector.clone();
-            let repo_count = repo_selector.read(cx).repositories_len(cx);
+            let project = panel.read(cx).project.clone();
+            let repo_count = project.read(cx).all_repositories(cx).len();
             let single_repo = repo_count == 1;
 
-            RepositorySelectorPopoverMenu::new(
-                panel.read(cx).repository_selector.clone(),
-                repo_selector_trigger.disabled(single_repo).truncate(true),
-                Tooltip::text("Switch active repository"),
-            )
-            .into_any_element()
+            PopoverMenu::new("repository-switcher")
+                .menu(move |window, cx| {
+                    Some(cx.new(|cx| RepositorySelector::new(project.clone(), window, cx)))
+                })
+                .trigger_with_tooltip(
+                    repo_selector_trigger.disabled(single_repo).truncate(true),
+                    Tooltip::text("Switch active repository"),
+                )
+                .attach(gpui::Corner::BottomLeft)
+                .into_any_element()
         } else {
             // for rendering preview, we don't have git_panel there
             repo_selector_trigger.into_any_element()
