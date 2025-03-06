@@ -4,14 +4,14 @@
 
 use std::iter::Iterator;
 use std::sync::Arc;
-use std::time::Duration;
 
 use client::UserStore;
 use component::{components, ComponentMetadata};
 use gpui::{
-    list, percentage, prelude::*, uniform_list, Animation, AnimationExt, App, Entity, EventEmitter,
-    FocusHandle, Focusable, Task, Transformation, WeakEntity, Window,
+    list, prelude::*, uniform_list, App, Entity, EventEmitter, FocusHandle, Focusable, Task,
+    WeakEntity, Window,
 };
+
 use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::StatusToast;
@@ -58,20 +58,20 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
 }
 
-enum SidebarEntry {
+enum PreviewEntry {
     Component(ComponentMetadata),
     SectionHeader(SharedString),
 }
 
-impl From<ComponentMetadata> for SidebarEntry {
+impl From<ComponentMetadata> for PreviewEntry {
     fn from(component: ComponentMetadata) -> Self {
-        SidebarEntry::Component(component)
+        PreviewEntry::Component(component)
     }
 }
 
-impl From<SharedString> for SidebarEntry {
+impl From<SharedString> for PreviewEntry {
     fn from(section_header: SharedString) -> Self {
-        SidebarEntry::SectionHeader(section_header)
+        PreviewEntry::SectionHeader(section_header)
     }
 }
 
@@ -104,7 +104,9 @@ impl ComponentPreview {
                 let this = cx.entity().downgrade();
                 move |ix, window: &mut Window, cx: &mut App| {
                     this.update(cx, |this, cx| {
-                        this.render_preview(ix, window, cx).into_any_element()
+                        let component = this.get_component(ix);
+                        this.render_preview(ix, &component, window, cx)
+                            .into_any_element()
                     })
                     .unwrap()
                 }
@@ -126,6 +128,8 @@ impl ComponentPreview {
             component_preview.scroll_to_preview(component_preview.selected_index, cx);
         }
 
+        component_preview.update_component_list(cx);
+
         component_preview
     }
 
@@ -139,7 +143,7 @@ impl ComponentPreview {
         self.components[ix].clone()
     }
 
-    fn sidebar_entries(&self) -> Vec<SidebarEntry> {
+    fn scope_ordered_entries(&self) -> Vec<PreviewEntry> {
         use std::collections::HashMap;
 
         // Group components by scope
@@ -177,11 +181,11 @@ impl ComponentPreview {
             if let Some(components) = scope_groups.remove(&scope_key) {
                 if !components.is_empty() {
                     // Add section header
-                    entries.push(SidebarEntry::SectionHeader(scope.to_string().into()));
+                    entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
 
                     // Add all components under this scope
                     for component in components {
-                        entries.push(SidebarEntry::Component(component));
+                        entries.push(PreviewEntry::Component(component));
                     }
                 }
             }
@@ -193,12 +197,12 @@ impl ComponentPreview {
                 if !components.is_empty() {
                     // Add the unknown scope header
                     if let Some(scope_value) = scope {
-                        entries.push(SidebarEntry::SectionHeader(scope_value.to_string().into()));
+                        entries.push(PreviewEntry::SectionHeader(scope_value.to_string().into()));
                     }
 
                     // Add all components under this unknown scope
                     for component in components {
-                        entries.push(SidebarEntry::Component(component.clone()));
+                        entries.push(PreviewEntry::Component(component.clone()));
                     }
                 }
             }
@@ -207,10 +211,10 @@ impl ComponentPreview {
         // Handle components with no scope
         if let Some(components) = scope_groups.get(&None) {
             if !components.is_empty() {
-                entries.push(SidebarEntry::SectionHeader("Uncategorized".into()));
+                entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
 
                 for component in components {
-                    entries.push(SidebarEntry::Component(component.clone()));
+                    entries.push(PreviewEntry::Component(component.clone()));
                 }
             }
         }
@@ -221,12 +225,12 @@ impl ComponentPreview {
     fn render_sidebar_entry(
         &self,
         ix: usize,
-        entry: &SidebarEntry,
+        entry: &PreviewEntry,
         selected: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         match entry {
-            SidebarEntry::Component(component_metadata) => ListItem::new(ix)
+            PreviewEntry::Component(component_metadata) => ListItem::new(ix)
                 .child(Label::new(component_metadata.name().clone()).color(Color::Default))
                 .selectable(true)
                 .toggle_state(selected)
@@ -235,15 +239,15 @@ impl ComponentPreview {
                     this.scroll_to_preview(ix, cx);
                 }))
                 .into_any_element(),
-            SidebarEntry::SectionHeader(shared_string) => ListSubHeader::new(shared_string)
+            PreviewEntry::SectionHeader(shared_string) => ListSubHeader::new(shared_string)
                 .inset(true)
                 .into_any_element(),
         }
     }
 
     fn update_component_list(&mut self, cx: &mut Context<Self>) {
-        let new_len = self.sidebar_entries().len();
-        let entries = self.sidebar_entries();
+        let new_len = self.scope_ordered_entries().len();
+        let entries = self.scope_ordered_entries();
         let weak_entity = cx.entity().downgrade();
 
         let new_list = ListState::new(
@@ -255,10 +259,10 @@ impl ComponentPreview {
 
                 weak_entity
                     .update(cx, |this, cx| match entry {
-                        SidebarEntry::Component(_) => {
-                            this.render_preview(ix, window, cx).into_any_element()
-                        }
-                        SidebarEntry::SectionHeader(shared_string) => this
+                        PreviewEntry::Component(component) => this
+                            .render_preview(ix, component, window, cx)
+                            .into_any_element(),
+                        PreviewEntry::SectionHeader(shared_string) => this
                             .render_scope_header(ix, shared_string.clone(), window, cx)
                             .into_any_element(),
                     })
@@ -284,9 +288,13 @@ impl ComponentPreview {
             .child(Divider::horizontal())
     }
 
-    fn render_preview(&self, ix: usize, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let component = self.get_component(ix);
-
+    fn render_preview(
+        &self,
+        ix: usize,
+        component: &ComponentMetadata,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
         let name = component.name();
         let scope = component.scope();
 
@@ -352,7 +360,7 @@ impl ComponentPreview {
 
 impl Render for ComponentPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let sidebar_entries = self.sidebar_entries();
+        let sidebar_entries = self.scope_ordered_entries();
         let weak_workspace = self.workspace.clone();
 
         h_flex()
