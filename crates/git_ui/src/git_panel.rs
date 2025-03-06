@@ -1419,6 +1419,8 @@ impl GitPanel {
             return;
         };
 
+        telemetry::event!("Git Commit Message Generated");
+
         let diff = repo.update(cx, |repo, cx| {
             if self.has_staged_changes() {
                 repo.diff(DiffType::HeadToIndex, cx)
