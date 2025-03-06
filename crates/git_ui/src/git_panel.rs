@@ -2303,9 +2303,11 @@ impl GitPanel {
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         let enable_coauthors = self.render_co_authors(cx);
-
         let title = self.commit_button_title();
+
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
+        let commit_tooltip_focus_handle = editor_focus_handle.clone();
+        let expand_tooltip_focus_handle = editor_focus_handle.clone();
 
         let branch = active_repository.read(cx).current_branch().cloned();
 
@@ -2365,7 +2367,7 @@ impl GitPanel {
                                                 Tooltip::for_action_in(
                                                     tooltip,
                                                     &Commit,
-                                                    &editor_focus_handle,
+                                                    &commit_tooltip_focus_handle,
                                                     window,
                                                     cx,
                                                 )
@@ -2394,8 +2396,16 @@ impl GitPanel {
                             .child(
                                 panel_icon_button("expand-commit-editor", IconName::Maximize)
                                     .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Transparent)
-                                    .width(expand_button_size.into())
+                                    .size(ui::ButtonSize::Default)
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Open Commit Modal",
+                                            &git::ExpandCommitEditor,
+                                            &expand_tooltip_focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    })
                                     .on_click(cx.listener({
                                         move |_, _, window, cx| {
                                             window.dispatch_action(
