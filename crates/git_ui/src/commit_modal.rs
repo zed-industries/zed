@@ -301,6 +301,7 @@ impl CommitModal {
             })
             .disabled(!can_commit)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                telemetry::event!("Git Committed", source = "Git Modal");
                 this.git_panel
                     .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
                 cx.emit(DismissEvent);
@@ -334,6 +335,7 @@ impl CommitModal {
     }
 
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel
             .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
         cx.emit(DismissEvent);
