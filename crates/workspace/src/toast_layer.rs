@@ -179,10 +179,6 @@ impl Render for ToastLayer {
             return div();
         };
         let handle = cx.weak_entity();
-        let duration_remaining = self
-            .duration_remaining
-            .as_ref()
-            .map(|duration| duration.as_millis());
 
         div().absolute().size_full().bottom_0().left_0().child(
             v_flex()
@@ -194,14 +190,6 @@ impl Render for ToastLayer {
                 .flex_col()
                 .items_center()
                 .track_focus(&active_toast.focus_handle)
-                .child(
-                    div()
-                        .absolute()
-                        .top_8()
-                        .left_8()
-                        .text_3xl()
-                        .child(format!("{:?}", duration_remaining)),
-                )
                 .child(
                     h_flex()
                         .id("active-toast-container")
@@ -218,7 +206,6 @@ impl Render for ToastLayer {
                             cx.stop_propagation();
                         })
                         .on_click(|_, _, cx| {
-                            // todo!("if clicking on the toast does nothing, look no further")
                             cx.stop_propagation();
                         })
                         .child(active_toast.toast.view()),

@@ -144,7 +144,7 @@ impl Focusable for StatusToast {
 impl EventEmitter<DismissEvent> for StatusToast {}
 
 impl ComponentPreview for StatusToast {
-    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         div()
             // let text_example = cx.new(|cx| StatusToast::new("simple-toast", "Operation completed", cx));
             // let action_example =
