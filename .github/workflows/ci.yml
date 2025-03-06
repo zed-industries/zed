@@ -295,7 +295,10 @@ jobs:
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
         if: always()
-        run: Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+        run: |
+          if (Test-Path "${{ env.CARGO_HOME }}/config.toml") {
+            Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+          }
 
   # Windows CI takes twice as long as our other platforms and fast github hosted runners are expensive.
   # But we still want to do CI, so let's only run tests on main and come back to this when we're
@@ -364,7 +367,10 @@ jobs:
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
         if: always()
-        run: Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+        run: |
+          if (Test-Path "${{ env.CARGO_HOME }}/config.toml") {
+            Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+          }
 
   bundle-mac:
     timeout-minutes: 120
