@@ -4023,7 +4023,7 @@ mod tests {
             GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
         });
 
-        let handle = cx.update_window_entity(&panel, |panel, window, cx| {
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
