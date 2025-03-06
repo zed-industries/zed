@@ -7,6 +7,7 @@ mod context;
 mod context_picker;
 mod context_store;
 mod context_strip;
+mod edits;
 mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
