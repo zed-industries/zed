@@ -800,7 +800,7 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
     Ok(std::env::current_exe()?)
 }
 
-pub fn check_pending_installation(app_version: &SemanticVersion) -> bool {
+pub fn check_pending_installation() -> bool {
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
