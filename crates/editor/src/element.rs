@@ -8770,7 +8770,6 @@ fn diff_hunk_controls(
     editor: &Entity<Editor>,
     cx: &mut App,
 ) -> AnyElement {
-    cx.stop_propagation();
     h_flex()
         .h(line_height)
         .mr_1()
