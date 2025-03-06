@@ -10,8 +10,7 @@ use editor::{
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use git::{
-    status::FileStatus, ShowCommitEditor, StageAll, StageAndNext, ToggleStaged, UnstageAll,
-    UnstageAndNext,
+    status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
 };
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
@@ -923,11 +922,11 @@ impl Render for ProjectDiffToolbar {
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(
                                 "Commit",
-                                &ShowCommitEditor,
+                                &Commit,
                                 &focus_handle,
                             ))
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&ShowCommitEditor, window, cx);
+                                this.dispatch_action(&Commit, window, cx);
                             })),
                     ),
             )

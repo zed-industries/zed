@@ -257,9 +257,9 @@ checksum = "34cd60c5e3152cef0a592f1b296f1cc93715d89d2551d85315828c3a09575ff4"
 
 [[package]]
 name = "anyhow"
-version = "1.0.97"
+version = "1.0.96"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
+checksum = "6b964d184e89d9b6b67dd2715bc8e74cf3107fb2b529990c90cf517326150bf4"
 
 [[package]]
 name = "approx"
@@ -356,6 +356,19 @@ dependencies = [
  "serde_repr",
  "url",
  "zbus",
+]
+
+[[package]]
+name = "askpass"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "gpui",
+ "smol",
+ "tempfile",
+ "util",
+ "which 6.0.3",
 ]
 
 [[package]]
@@ -1011,9 +1024,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.87"
+version = "0.1.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d556ec1359574147ec0c4fc5eb525f3f23263a592b1a9c07e0a75b427de55c97"
+checksum = "644dd749086bf3771a2fbc5f256fdb982d53f011c7d5d560304eafeecebce79d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5364,9 +5377,11 @@ name = "git"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "async-trait",
  "collections",
  "derive_more",
+ "futures 0.3.31",
  "git2",
  "gpui",
  "http_client",
@@ -5380,7 +5395,6 @@ dependencies = [
  "serde_json",
  "smol",
  "sum_tree",
- "tempfile",
  "text",
  "time",
  "unindent",
@@ -5424,6 +5438,7 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "buffer_diff",
  "collections",
  "component",
@@ -10258,6 +10273,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "askpass",
  "async-trait",
  "buffer_diff",
  "client",
@@ -11079,6 +11095,7 @@ name = "remote"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "async-trait",
  "collections",
  "fs",
@@ -11099,7 +11116,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "util",
- "which 6.0.3",
 ]
 
 [[package]]

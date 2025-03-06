@@ -1,10 +1,14 @@
-use crate::branch_picker::{self};
+use crate::askpass_modal::AskPassModal;
+use crate::branch_picker;
+use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use crate::{picker_prompt, project_diff, ProjectDiff};
+use anyhow::Result;
+use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
 
@@ -101,7 +105,7 @@ const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
             });
@@ -1465,13 +1469,19 @@ index 1234567..abcdef0 100644
         cx.notify();
     }
 
-    pub(crate) fn fetch(&mut self, _: &git::Fetch, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_push_and_pull(cx) {
+            return;
+        }
+
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
         let guard = self.start_remote_operation();
-        let fetch = repo.read(cx).fetch();
+        let askpass = self.askpass_delegate("git fetch", window, cx);
         cx.spawn(|this, mut cx| async move {
+            let fetch = repo.update(&mut cx, |repo, cx| repo.fetch(askpass, cx))?;
+
             let remote_message = fetch.await?;
             drop(guard);
             this.update(&mut cx, |this, cx| {
@@ -1492,7 +1502,10 @@ index 1234567..abcdef0 100644
         .detach_and_log_err(cx);
     }
 
-    pub(crate) fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn pull(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_push_and_pull(cx) {
+            return;
+        }
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1501,7 +1514,7 @@ index 1234567..abcdef0 100644
         };
         let branch = branch.clone();
         let remote = self.get_current_remote(window, cx);
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn_in(window, move |this, mut cx| async move {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
@@ -1515,12 +1528,16 @@ index 1234567..abcdef0 100644
                 }
             };
 
+            let askpass = this.update_in(&mut cx, |this, window, cx| {
+                this.askpass_delegate(format!("git pull {}", remote.name), window, cx)
+            })?;
+
             let guard = this
                 .update(&mut cx, |this, _| this.start_remote_operation())
                 .ok();
 
-            let pull = repo.update(&mut cx, |repo, _cx| {
-                repo.pull(branch.name.clone(), remote.name.clone())
+            let pull = repo.update(&mut cx, |repo, cx| {
+                repo.pull(branch.name.clone(), remote.name.clone(), askpass, cx)
             })?;
 
             let remote_message = pull.await?;
@@ -1539,7 +1556,10 @@ index 1234567..abcdef0 100644
         .detach_and_log_err(cx);
     }
 
-    pub(crate) fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn push(&mut self, force_push: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_push_and_pull(cx) {
+            return;
+        }
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1547,10 +1567,14 @@ index 1234567..abcdef0 100644
             return;
         };
         let branch = branch.clone();
-        let options = action.options;
+        let options = if force_push {
+            PushOptions::Force
+        } else {
+            PushOptions::SetUpstream
+        };
         let remote = self.get_current_remote(window, cx);
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn_in(window, move |this, mut cx| async move {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
@@ -1564,16 +1588,25 @@ index 1234567..abcdef0 100644
                 }
             };
 
+            let askpass_delegate = this.update_in(&mut cx, |this, window, cx| {
+                this.askpass_delegate(format!("git push {}", remote.name), window, cx)
+            })?;
+
             let guard = this
                 .update(&mut cx, |this, _| this.start_remote_operation())
                 .ok();
 
-            let push = repo.update(&mut cx, |repo, _cx| {
-                repo.push(branch.name.clone(), remote.name.clone(), options)
+            let push = repo.update(&mut cx, |repo, cx| {
+                repo.push(
+                    branch.name.clone(),
+                    remote.name.clone(),
+                    Some(options),
+                    askpass_delegate,
+                    cx,
+                )
             })?;
 
             let remote_output = push.await?;
-
             drop(guard);
 
             this.update(&mut cx, |this, cx| match remote_output {
@@ -1588,6 +1621,34 @@ index 1234567..abcdef0 100644
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn askpass_delegate(
+        &self,
+        operation: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AskPassDelegate {
+        let this = cx.weak_entity();
+        let operation = operation.into();
+        let window = window.window_handle();
+        AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
+                            });
+                        })
+                    })
+                })
+                .ok();
+        })
+    }
+
+    fn can_push_and_pull(&self, cx: &App) -> bool {
+        !self.project.read(cx).is_via_collab()
     }
 
     fn get_current_remote(
@@ -1988,14 +2049,14 @@ index 1234567..abcdef0 100644
         };
         let notif_id = NotificationId::Named("git-operation-error".into());
 
-        let mut message = e.to_string().trim().to_string();
+        let message = e.to_string().trim().to_string();
         let toast;
-        if message.matches("Authentication failed").count() >= 1 {
-            message = format!(
-                "{}\n\n{}",
-                message, "Please set your credentials via the CLI"
-            );
-            toast = Toast::new(notif_id, message);
+        if message
+            .matches(git::repository::REMOTE_CANCELLED_BY_USER)
+            .next()
+            .is_some()
+        {
+            return; // Hide the cancelled by user message
         } else {
             toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
                 window.dispatch_action(workspace::OpenLog.boxed_clone(), cx);
@@ -2106,6 +2167,22 @@ index 1234567..abcdef0 100644
         } else {
             "Commit Tracked"
         }
+    }
+
+    fn expand_commit_editor(
+        &mut self,
+        _: &git::ExpandCommitEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        window.defer(cx, move |window, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    CommitModal::toggle(workspace, window, cx)
+                })
+                .ok();
+        })
     }
 
     pub fn render_footer(
@@ -2222,7 +2299,7 @@ index 1234567..abcdef0 100644
                                     .on_click(cx.listener({
                                         move |_, _, window, cx| {
                                             window.dispatch_action(
-                                                git::ShowCommitEditor.boxed_clone(),
+                                                git::ExpandCommitEditor.boxed_clone(),
                                                 cx,
                                             )
                                         }
@@ -2840,6 +2917,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::unstage_all))
             .on_action(cx.listener(Self::restore_tracked_files))
             .on_action(cx.listener(Self::clean_all))
+            .on_action(cx.listener(Self::expand_commit_editor))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
@@ -2949,7 +3027,7 @@ impl Panel for GitPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
+        Some(ui::IconName::GitBranchSmall).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -3168,14 +3246,8 @@ fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
                     .action("Fetch", git::Fetch.boxed_clone())
                     .action("Pull", git::Pull.boxed_clone())
                     .separator()
-                    .action("Push", git::Push { options: None }.boxed_clone())
-                    .action(
-                        "Force Push",
-                        git::Push {
-                            options: Some(PushOptions::Force),
-                        }
-                        .boxed_clone(),
-                    )
+                    .action("Push", git::Push.boxed_clone())
+                    .action("Force Push", git::ForcePush.boxed_clone())
             }))
         })
         .anchor(Corner::TopRight)
@@ -3253,14 +3325,14 @@ impl PanelRepoFooter {
             move |_, window, cx| {
                 if let Some(panel) = panel.as_ref() {
                     panel.update(cx, |panel, cx| {
-                        panel.push(&git::Push { options: None }, window, cx);
+                        panel.push(false, window, cx);
                     });
                 }
             },
             move |window, cx| {
                 git_action_tooltip(
                     "Push committed changes to remote",
-                    &git::Push { options: None },
+                    &git::Push,
                     "git push",
                     panel_focus_handle.clone(),
                     window,
@@ -3289,7 +3361,7 @@ impl PanelRepoFooter {
             move |_, window, cx| {
                 if let Some(panel) = panel.as_ref() {
                     panel.update(cx, |panel, cx| {
-                        panel.pull(&git::Pull, window, cx);
+                        panel.pull(window, cx);
                     });
                 }
             },
@@ -3319,7 +3391,7 @@ impl PanelRepoFooter {
             move |_, window, cx| {
                 if let Some(panel) = panel.as_ref() {
                     panel.update(cx, |panel, cx| {
-                        panel.fetch(&git::Fetch, window, cx);
+                        panel.fetch(window, cx);
                     });
                 }
             },
@@ -3349,22 +3421,14 @@ impl PanelRepoFooter {
             move |_, window, cx| {
                 if let Some(panel) = panel.as_ref() {
                     panel.update(cx, |panel, cx| {
-                        panel.push(
-                            &git::Push {
-                                options: Some(PushOptions::SetUpstream),
-                            },
-                            window,
-                            cx,
-                        );
+                        panel.push(false, window, cx);
                     });
                 }
             },
             move |window, cx| {
                 git_action_tooltip(
                     "Publish branch to remote",
-                    &git::Push {
-                        options: Some(PushOptions::SetUpstream),
-                    },
+                    &git::Push,
                     "git push --set-upstream",
                     panel_focus_handle.clone(),
                     window,
@@ -3387,22 +3451,14 @@ impl PanelRepoFooter {
             move |_, window, cx| {
                 if let Some(panel) = panel.as_ref() {
                     panel.update(cx, |panel, cx| {
-                        panel.push(
-                            &git::Push {
-                                options: Some(PushOptions::SetUpstream),
-                            },
-                            window,
-                            cx,
-                        );
+                        panel.push(false, window, cx);
                     });
                 }
             },
             move |window, cx| {
                 git_action_tooltip(
                     "Re-publish branch to remote",
-                    &git::Push {
-                        options: Some(PushOptions::SetUpstream),
-                    },
+                    &git::Push,
                     "git push --set-upstream",
                     panel_focus_handle.clone(),
                     window,
@@ -3417,10 +3473,15 @@ impl PanelRepoFooter {
         id: impl Into<SharedString>,
         branch: &Branch,
         cx: &mut App,
-    ) -> impl IntoElement {
+    ) -> Option<impl IntoElement> {
+        if let Some(git_panel) = self.git_panel.as_ref() {
+            if !git_panel.read(cx).can_push_and_pull(cx) {
+                return None;
+            }
+        }
         let id = id.into();
         let upstream = branch.upstream.as_ref();
-        match upstream {
+        Some(match upstream {
             Some(Upstream {
                 tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
                 ..
@@ -3434,7 +3495,7 @@ impl PanelRepoFooter {
                 ..
             }) => self.render_republish_button(id, cx),
             None => self.render_publish_button(id, cx),
-        }
+        })
     }
 }
 
@@ -3550,7 +3611,7 @@ impl RenderOnce for PanelRepoFooter {
                     .child(self.render_overflow_menu(overflow_menu_id))
                     .when_some(branch, |this, branch| {
                         let button = self.render_relevant_button(self.id.clone(), &branch, cx);
-                        this.child(button)
+                        this.children(button)
                     }),
             )
     }

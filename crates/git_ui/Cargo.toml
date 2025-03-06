@@ -18,6 +18,7 @@ test-support = ["multi_buffer/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace= true
 buffer_diff.workspace = true
 collections.workspace = true
 component.workspace = true

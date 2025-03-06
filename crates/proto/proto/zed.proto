@@ -333,12 +333,16 @@ message Envelope {
         ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
 
         RemoteMessageResponse remote_message_response = 311;
+
         GitGetBranches git_get_branches = 312;
         GitCreateBranch git_create_branch = 313;
-        GitChangeBranch git_change_branch = 314; // current max
+        GitChangeBranch git_change_branch = 314;
 
         CheckForPushedCommits check_for_pushed_commits = 315;
-        CheckForPushedCommitsResponse check_for_pushed_commits_response = 316; // current max
+        CheckForPushedCommitsResponse check_for_pushed_commits_response = 316;
+
+        AskPassRequest ask_pass_request = 317;
+        AskPassResponse ask_pass_response = 318; // current max
     }
 
     reserved 87 to 88;
@@ -2818,6 +2822,7 @@ message Push {
     string remote_name = 4;
     string branch_name = 5;
     optional PushOptions options = 6;
+    uint64 askpass_id = 7;
 
     enum PushOptions {
         SET_UPSTREAM = 0;
@@ -2829,6 +2834,7 @@ message Fetch {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
 }
 
 message GetRemotes {
@@ -2852,11 +2858,24 @@ message Pull {
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
+    uint64 askpass_id = 6;
 }
 
 message RemoteMessageResponse {
     string stdout = 1;
     string stderr = 2;
+}
+
+message AskPassRequest {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
+    string prompt = 5;
+}
+
+message AskPassResponse {
+    string response = 1;
 }
 
 message GitGetBranches {
