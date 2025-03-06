@@ -89,7 +89,7 @@ impl StatusToast {
     }
 
     pub fn icon(mut self, icon: ToastIcon) -> Self {
-        self.icon = Some(icon.into());
+        self.icon = Some(icon);
         self
     }
 

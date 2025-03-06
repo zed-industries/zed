@@ -157,7 +157,7 @@ pub fn components() -> AllComponents {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
         all_components.insert(
-            ComponentId(*name),
+            ComponentId(name),
             ComponentMetadata {
                 name: component_name,
                 scope: scope.clone(),

@@ -349,15 +349,11 @@ impl ComponentPreview {
                     window,
                     cx,
                     |this, _, cx| {
-                        this.icon(
-                            ToastIcon::new(IconName::GitBranchSmall)
-                                .color(Color::Muted)
-                                .into(),
-                        )
-                        .action(
-                            "Open Pull Request",
-                            cx.listener(|_, _, _, cx| cx.open_url("https://github.com/")),
-                        )
+                        this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                            .action(
+                                "Open Pull Request",
+                                cx.listener(|_, _, _, cx| cx.open_url("https://github.com/")),
+                            )
                     },
                 );
                 workspace.toggle_status_toast(window, cx, status_toast)
