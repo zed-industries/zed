@@ -20,7 +20,7 @@ use futures::{
     channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
     TryFutureExt as _, TryStreamExt,
 };
-use gpui::{actions, App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity};
+use gpui::{actions, App, AsyncApp, Entity, Global, Task, WeakEntity};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
@@ -1090,7 +1090,7 @@ impl Client {
         let rpc_url = self.rpc_url(http, release_channel);
         let system_id = self.telemetry.system_id();
         let metrics_id = self.telemetry.metrics_id();
-        cx.background_spawn(async move {
+        cx.spawn(|cx| async move {
             use HttpOrHttps::*;
 
             #[derive(Debug)]
@@ -1109,7 +1109,12 @@ impl Client {
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let stream = connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?;
+
+            let stream = {
+                let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
+                let _guard = handle.enter();
+                connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?
+            };
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1148,30 +1153,19 @@ impl Client {
                 request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
             }
 
-            match url_scheme {
-                Https => {
-                    let (stream, _) =
-                        async_tungstenite::async_tls::client_async_tls_with_connector(
-                            request,
-                            stream,
-                            Some(http_client::tls_config().into()),
-                        )
-                        .await?;
-                    Ok(Connection::new(
-                        stream
-                            .map_err(|error| anyhow!(error))
-                            .sink_map_err(|error| anyhow!(error)),
-                    ))
-                }
-                Http => {
-                    let (stream, _) = async_tungstenite::client_async(request, stream).await?;
-                    Ok(Connection::new(
-                        stream
-                            .map_err(|error| anyhow!(error))
-                            .sink_map_err(|error| anyhow!(error)),
-                    ))
-                }
-            }
+            let (stream, _) = async_tungstenite::tokio::client_async_tls_with_connector_and_config(
+                request,
+                stream,
+                Some(Arc::new(http_client::tls_config()).into()),
+                None,
+            )
+            .await?;
+
+            Ok(Connection::new(
+                stream
+                    .map_err(|error| anyhow!(error))
+                    .sink_map_err(|error| anyhow!(error)),
+            ))
         })
     }
 
