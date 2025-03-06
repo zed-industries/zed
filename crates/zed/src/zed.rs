@@ -2268,6 +2268,8 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
         assert!(cx.update(|cx| cx.active_window().is_some()));
 
+        cx.run_until_parked();
+
         // When opening the workspace, the window is not in a edited state.
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
         assert!(window_is_edited(window, cx));
