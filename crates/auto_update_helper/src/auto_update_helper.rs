@@ -32,31 +32,6 @@ use windows::{
 const TOTAL_JOBS: usize = 6;
 const WM_JOB_UPDATED: u32 = WM_USER + 1;
 
-fn generate_log_file() -> Result<File> {
-    let file_path = std::env::current_exe()?
-        .parent()
-        .context("No parent directory")?
-        .parent()
-        .context("No parent directory")?
-        .join("auto_update_helper.log");
-
-    if file_path.exists() {
-        std::fs::remove_file(&file_path).context("Failed to remove existing log file")?;
-    }
-
-    Ok(std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(file_path)
-        .context("Failed to create log file")?)
-}
-
-fn write_to_log_file(log: &mut File, message: impl Debug) {
-    use std::io::Write;
-    let _ = writeln!(log, "{:?}", message);
-}
-
 #[derive(Debug, PartialEq, Eq)]
 enum UpdateStatus {
     RemoveOld(Vec<PathBuf>),
@@ -82,14 +57,11 @@ fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
                     if old_file.exists() {
                         let result = std::fs::remove_file(&old_file);
                         if let Err(error) = result {
-                            // write_to_log_file(
-                            //     log,
-                            //     format!(
-                            //         "Failed to remove old file {}: {:?}",
-                            //         old_file.display(),
-                            //         error
-                            //     ),
-                            // );
+                            log::error!(
+                                "Failed to remove old file {}: {:?}",
+                                old_file.display(),
+                                error
+                            );
                         } else {
                             sccess.push(old_file);
                             unsafe {
@@ -127,15 +99,12 @@ fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
                     if new_file.exists() {
                         let result = std::fs::copy(&new_file, &old_file);
                         if let Err(error) = result {
-                            // write_to_log_file(
-                            //     log,
-                            //     format!(
-                            //         "Failed to copy new file {} to {}: {:?}",
-                            //         new_file.display(),
-                            //         old_file.display(),
-                            //         error
-                            //     ),
-                            // );
+                            log::error!(
+                                "Failed to copy new file {} to {}: {:?}",
+                                new_file.display(),
+                                old_file.display(),
+                                error
+                            );
                         } else {
                             sccess.push((new_file, old_file));
                             unsafe {
@@ -165,10 +134,7 @@ fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
             UpdateStatus::DeleteInstall => {
                 let result = std::fs::remove_dir_all(&install_dir);
                 if let Err(error) = result {
-                    // write_to_log_file(
-                    //     log,
-                    //     format!("Failed to remove install directory: {:?}", error),
-                    // );
+                    log::error!("Failed to remove install directory: {:?}", error);
                     continue;
                 }
                 status = UpdateStatus::DeleteUpdates;
@@ -180,10 +146,7 @@ fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
             UpdateStatus::DeleteUpdates => {
                 let result = std::fs::remove_dir_all(&update_dir);
                 if let Err(error) = result {
-                    // write_to_log_file(
-                    //     log,
-                    //     format!("Failed to remove updates directory: {:?}", error),
-                    // );
+                    log::error!("Failed to remove updates directory: {:?}", error);
                     continue;
                 }
                 status = UpdateStatus::Done;
@@ -205,16 +168,19 @@ fn update(app_dir: &Path, hwnd: isize) -> Result<()> {
     Ok(())
 }
 
-fn run(log: &mut File) -> Result<()> {
-    let app_dir = std::env::current_exe()?
+fn run() -> Result<()> {
+    let helper_dir = std::env::current_exe()?
         .parent()
         .context("No parent directory")?
+        .to_path_buf();
+    init_log(&helper_dir)?;
+    let app_dir = helper_dir
         .parent()
         .context("No parent directory")?
         .to_path_buf();
     let (tx, rx) = std::sync::mpsc::channel();
     let (hwnd_tx, hwnd_rx) = std::sync::mpsc::sync_channel(1);
-    write_to_log_file(log, "Running dialog window");
+    log::info!("======= Starting Zed update =======");
     std::thread::spawn({
         let result_sender = tx.clone();
         move || {
@@ -226,7 +192,7 @@ fn run(log: &mut File) -> Result<()> {
     }
     for result in rx.iter() {
         if let Err(ref e) = result {
-            write_to_log_file(log, e);
+            log::error!("Error: Zed update failed, {:?}", e);
             show_result(
                 format!("Error: {:?}", e),
                 "Error: Zed update failed".to_owned(),
@@ -277,14 +243,25 @@ fn run_dialog_window(hwnd_sender: SyncSender<isize>) -> Result<()> {
     }
 }
 
+fn init_log(helper_dir: &Path) -> Result<()> {
+    simplelog::WriteLogger::init(
+        simplelog::LevelFilter::Info,
+        simplelog::Config::default(),
+        std::fs::File::options()
+            .append(true)
+            .create(true)
+            .open(helper_dir.join("auto_update_helper.log"))?,
+    )?;
+    Ok(())
+}
+
 fn main() {
-    let mut log = generate_log_file().unwrap();
-    if let Err(e) = run(&mut log) {
+    if let Err(e) = run() {
+        log::error!("Error: Zed update failed, {:?}", e);
         show_result(
             format!("Error: {:?}", e),
             "Error: Zed update failed".to_owned(),
         );
-        write_to_log_file(&mut log, e);
     }
 }
 
@@ -313,6 +290,7 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_CREATE => {
+            log::info!("WM_CREATE");
             // Create progress bar
             let mut rect = RECT::default();
             return_if_failed!(GetWindowRect(hwnd, &mut rect));
@@ -373,6 +351,7 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_JOB_UPDATED => {
+            log::info!("WM_JOB_UPDATED");
             let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut isize };
             let progress_bar = HWND(*raw as _);
             SendMessageW(progress_bar, PBM_STEPIT, WPARAM(0), LPARAM(0))
