@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, Window};
 use language::{Capability, Language};
 use multi_buffer::MultiBuffer;
-use project::{lsp_ext_command::ExpandMacro, rust_analyzer_ext::RUST_ANALYZER_NAME};
+use project::lsp_store::{lsp_ext_command::ExpandMacro, rust_analyzer_ext::RUST_ANALYZER_NAME};
 use text::ToPointUtf16;
 
 use crate::{
@@ -129,7 +129,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         project.request_lsp(
             buffer,
             project::LanguageServerToQuery::Other(server_to_query),
-            project::lsp_ext_command::OpenDocs { position },
+            project::lsp_store::lsp_ext_command::OpenDocs { position },
             cx,
         )
     });

@@ -1,9 +1,12 @@
+pub mod clangd_ext;
+pub mod lsp_ext_command;
+pub mod rust_analyzer_ext;
+
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     deserialize_code_actions,
     environment::ProjectEnvironment,
     lsp_command::{self, *},
-    lsp_ext_command,
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     project_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ProjectTree},
@@ -927,8 +930,8 @@ impl LocalLspStore {
             })
             .detach();
 
-        crate::rust_analyzer_ext::register_notifications(this.clone(), language_server);
-        crate::clangd_ext::register_notifications(this, language_server, adapter);
+        rust_analyzer_ext::register_notifications(this.clone(), language_server);
+        clangd_ext::register_notifications(this, language_server, adapter);
     }
 
     fn shutdown_language_servers(

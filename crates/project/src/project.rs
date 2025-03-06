@@ -1,17 +1,14 @@
 pub mod buffer_store;
-pub mod clangd_ext;
 mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod git;
 pub mod image_store;
 pub mod lsp_command;
-pub mod lsp_ext_command;
 pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
 mod project_tree;
-pub mod rust_analyzer_ext;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
