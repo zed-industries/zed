@@ -1177,6 +1177,7 @@ impl GitPanel {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
+            telemetry::event!("Git Committed", source = "Git Panel");
             self.commit_changes(window, cx)
         } else {
             cx.propagate();
@@ -1275,6 +1276,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        telemetry::event!("Git Uncommitted");
 
         let confirmation = self.check_for_pushed_commits(window, cx);
         let prior_head = self.load_commit_details("HEAD", cx);
@@ -1498,6 +1500,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        telemetry::event!("Git Fetched");
         let guard = self.start_remote_operation();
         let askpass = self.askpass_delegate("git fetch", window, cx);
         cx.spawn(|this, mut cx| async move {
@@ -1533,6 +1536,7 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).current_branch() else {
             return;
         };
+        telemetry::event!("Git Pulled");
         let branch = branch.clone();
         let remote = self.get_current_remote(window, cx);
         cx.spawn_in(window, move |this, mut cx| async move {
@@ -1587,6 +1591,7 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).current_branch() else {
             return;
         };
+        telemetry::event!("Git Pushed");
         let branch = branch.clone();
         let options = if force_push {
             PushOptions::Force
@@ -2313,6 +2318,10 @@ impl GitPanel {
                                     .disabled(!can_commit || self.modal_open)
                                     .on_click({
                                         cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                            telemetry::event!(
+                                                "Git Committed",
+                                                source = "Git Panel"
+                                            );
                                             this.commit_changes(window, cx)
                                         })
                                     }),
@@ -3245,7 +3254,7 @@ impl SplitButton {
 impl RenderOnce for SplitButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
-            .rounded_md()
+            .rounded_sm()
             .border_1()
             .border_color(cx.theme().colors().text_muted.alpha(0.12))
             .child(self.left)

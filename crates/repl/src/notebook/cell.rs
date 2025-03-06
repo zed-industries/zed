@@ -646,7 +646,7 @@ impl Render for CodeCell {
                                             // .w_full()
                                             // .mt_3()
                                             // .p_3()
-                                            // .rounded_md()
+                                            // .rounded_sm()
                                             // .bg(cx.theme().colors().editor_background)
                                             // .border(px(1.))
                                             // .border_color(cx.theme().colors().border)

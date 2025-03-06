@@ -645,7 +645,7 @@ impl ActiveThread {
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
-                    .rounded_md()
+                    .rounded_sm()
                     .child(message_content),
             ),
         };
@@ -674,7 +674,7 @@ impl ActiveThread {
                         .pr_2()
                         .bg(cx.theme().colors().editor_foreground.opacity(0.02))
                         .when(is_open, |element| element.border_b_1().rounded_t(px(6.)))
-                        .when(!is_open, |element| element.rounded(px(6.)))
+                        .when(!is_open, |element| element.rounded_md())
                         .border_color(cx.theme().colors().border)
                         .child(
                             h_flex()

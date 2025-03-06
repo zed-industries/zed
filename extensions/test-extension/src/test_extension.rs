@@ -1,6 +1,7 @@
 use std::fs;
 use zed::lsp::CompletionKind;
 use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
+use zed_extension_api::process::Command;
 use zed_extension_api::{self as zed, Result};
 
 struct TestExtension {
@@ -13,6 +14,10 @@ impl TestExtension {
         language_server_id: &LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<String> {
+        let echo_output = Command::new("echo").arg("hello!").output()?;
+
+        println!("{}", String::from_utf8_lossy(&echo_output.stdout));
+
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
                 return Ok(path.clone());
