@@ -15,7 +15,7 @@ use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use theme::{color_alpha, ActiveTheme, ThemeSettings};
+use theme::{ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -332,7 +332,7 @@ pub fn render_item<T>(
     cx: &App,
 ) -> StyledText {
     let highlight_style = HighlightStyle {
-        background_color: Some(color_alpha(cx.theme().colors().text_accent, 0.3)),
+        background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
         ..Default::default()
     };
     let custom_highlights = match_ranges
@@ -359,7 +359,7 @@ pub fn render_item<T>(
         outline_item.highlight_ranges.iter().cloned(),
     );
 
-    StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
+    StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
 }
 
 #[cfg(test)]
@@ -448,7 +448,7 @@ mod tests {
         );
         assert_single_caret_at_row(&editor, 0, cx);
 
-        cx.dispatch_action(menu::SelectPrev);
+        cx.dispatch_action(menu::SelectPrevious);
         ensure_outline_view_contents(&outline_view, cx);
         assert_eq!(
             highlighted_display_rows(&editor, cx),

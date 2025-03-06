@@ -21,10 +21,10 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::ResultExt;
 
-use crate::AllLanguageModelSettings;
+use crate::{ui::InstructionListItem, AllLanguageModelSettings};
 
 const PROVIDER_ID: &str = "openai";
 const PROVIDER_NAME: &str = "OpenAI";
@@ -169,6 +169,17 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         IconName::AiOpenAi
     }
 
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = open_ai::Model::default();
+        Some(Arc::new(OpenAiLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
@@ -307,7 +318,7 @@ impl LanguageModel for OpenAiLanguageModel {
         'static,
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
-        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
         async move {
             Ok(open_ai::extract_text_from_events(completions.await?)
@@ -325,7 +336,7 @@ impl LanguageModel for OpenAiLanguageModel {
         schema: serde_json::Value,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let mut request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
         request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
             function: FunctionDefinition {
                 name: tool_name.clone(),
@@ -352,6 +363,39 @@ impl LanguageModel for OpenAiLanguageModel {
                 )
             })
             .boxed()
+    }
+}
+
+pub fn into_open_ai(
+    request: LanguageModelRequest,
+    model: String,
+    max_output_tokens: Option<u32>,
+) -> open_ai::Request {
+    let stream = !model.starts_with("o1-");
+    open_ai::Request {
+        model,
+        messages: request
+            .messages
+            .into_iter()
+            .map(|msg| match msg.role {
+                Role::User => open_ai::RequestMessage::User {
+                    content: msg.string_contents(),
+                },
+                Role::Assistant => open_ai::RequestMessage::Assistant {
+                    content: Some(msg.string_contents()),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_ai::RequestMessage::System {
+                    content: msg.string_contents(),
+                },
+            })
+            .collect(),
+        stream,
+        stop: request.stop,
+        temperature: request.temperature.unwrap_or(1.0),
+        max_tokens: max_output_tokens,
+        tools: Vec::new(),
+        tool_choice: None,
     }
 }
 
@@ -496,14 +540,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
-        const INSTRUCTIONS: [&str; 4] = [
-            "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
-            " - Create one by visiting:",
-            " - Ensure your OpenAI account has credits",
-            " - Paste your API key below and hit enter to start using the assistant",
-        ];
-
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -512,19 +548,21 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("openai_console", OPENAI_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _, cx| cx.open_url(OPENAI_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(InstructionListItem::new(
+                            "Create one by visiting",
+                            Some("OpenAI's console"),
+                            Some("https://platform.openai.com/api-keys"),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Ensure your OpenAI account has credits",
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste your API key below and hit enter to start using the assistant",
+                        )),
                 )
-                .children(
-                    (2..INSTRUCTIONS.len()).map(|n|
-                        Label::new(INSTRUCTIONS[n])).collect::<Vec<_>>())
                 .child(
                     h_flex()
                         .w_full()
@@ -541,13 +579,13 @@ impl Render for ConfigurationView {
                     Label::new(
                         format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .child(
                     Label::new(
                         "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .into_any()
         } else {

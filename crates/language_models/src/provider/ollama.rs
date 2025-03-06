@@ -157,6 +157,10 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         IconName::AiOllama
     }
 
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.provided_models(cx).into_iter().next()
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
 

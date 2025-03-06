@@ -22,6 +22,8 @@ pub struct SelectPrevious {
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -29,6 +31,15 @@ pub struct MoveToBeginningOfLine {
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToBeginningOfLine {
+    #[serde(default)]
+    pub(super) stop_at_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -208,6 +219,7 @@ impl_actions!(
         ComposeCompletion,
         ConfirmCodeAction,
         ConfirmCompletion,
+        DeleteToBeginningOfLine,
         DeleteToNextWordEnd,
         DeleteToPreviousWordStart,
         ExpandExcerpts,
@@ -253,7 +265,7 @@ gpui::actions!(
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
-        ContextMenuPrev,
+        ContextMenuPrevious,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
@@ -272,7 +284,6 @@ gpui::actions!(
         CutToEndOfLine,
         Delete,
         DeleteLine,
-        DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
         DeleteToPreviousSubwordStart,
@@ -280,7 +291,6 @@ gpui::actions!(
         DuplicateLineDown,
         DuplicateLineUp,
         DuplicateSelection,
-        ExpandAllHunkDiffs,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -298,10 +308,10 @@ gpui::actions!(
         GoToDefinitionSplit,
         GoToDiagnostic,
         GoToHunk,
+        GoToPreviousHunk,
         GoToImplementation,
         GoToImplementationSplit,
-        GoToPrevDiagnostic,
-        GoToPrevHunk,
+        GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
         HalfPageDown,
@@ -345,6 +355,7 @@ gpui::actions!(
         OpenPermalinkToLine,
         OpenSelectionsInMultibuffer,
         OpenUrl,
+        OrganizeImports,
         Outdent,
         AutoIndent,
         PageDown,
@@ -395,7 +406,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,
-        TabPrev,
+        Backtab,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,
@@ -425,3 +436,4 @@ action_as!(go_to_line, ToggleGoToLine as Toggle);
 
 action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);
 action_with_deprecated_aliases!(editor, ToggleSelectedDiffHunks, ["editor::ToggleHunkDiff"]);
+action_with_deprecated_aliases!(editor, ExpandAllDiffHunks, ["editor::ExpandAllHunkDiffs"]);

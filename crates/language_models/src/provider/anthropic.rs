@@ -1,3 +1,4 @@
+use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
 use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
@@ -13,7 +14,7 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -24,10 +25,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
-pub const PROVIDER_ID: &str = "anthropic";
+const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -181,6 +182,17 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn icon(&self) -> IconName {
         IconName::AiAnthropic
+    }
+
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = anthropic::Model::default();
+        Some(Arc::new(AnthropicModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -385,7 +397,8 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request = request.into_anthropic(
+        let request = into_anthropic(
+            request,
             self.model.id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
@@ -416,7 +429,8 @@ impl LanguageModel for AnthropicModel {
         input_schema: serde_json::Value,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_anthropic(
+        let mut request = into_anthropic(
+            request,
             self.model.tool_model_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
@@ -442,6 +456,117 @@ impl LanguageModel for AnthropicModel {
                 .boxed())
             })
             .boxed()
+    }
+}
+
+pub fn into_anthropic(
+    request: LanguageModelRequest,
+    model: String,
+    default_temperature: f32,
+    max_output_tokens: u32,
+) -> anthropic::Request {
+    let mut new_messages: Vec<anthropic::Message> = Vec::new();
+    let mut system_message = String::new();
+
+    for message in request.messages {
+        if message.contents_empty() {
+            continue;
+        }
+
+        match message.role {
+            Role::User | Role::Assistant => {
+                let cache_control = if message.cache {
+                    Some(anthropic::CacheControl {
+                        cache_type: anthropic::CacheControlType::Ephemeral,
+                    })
+                } else {
+                    None
+                };
+                let anthropic_message_content: Vec<anthropic::RequestContent> = message
+                    .content
+                    .into_iter()
+                    .filter_map(|content| match content {
+                        MessageContent::Text(text) => {
+                            if !text.is_empty() {
+                                Some(anthropic::RequestContent::Text {
+                                    text,
+                                    cache_control,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
+                            source: anthropic::ImageSource {
+                                source_type: "base64".to_string(),
+                                media_type: "image/png".to_string(),
+                                data: image.source.to_string(),
+                            },
+                            cache_control,
+                        }),
+                        MessageContent::ToolUse(tool_use) => {
+                            Some(anthropic::RequestContent::ToolUse {
+                                id: tool_use.id.to_string(),
+                                name: tool_use.name.to_string(),
+                                input: tool_use.input,
+                                cache_control,
+                            })
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            Some(anthropic::RequestContent::ToolResult {
+                                tool_use_id: tool_result.tool_use_id.to_string(),
+                                is_error: tool_result.is_error,
+                                content: tool_result.content.to_string(),
+                                cache_control,
+                            })
+                        }
+                    })
+                    .collect();
+                let anthropic_role = match message.role {
+                    Role::User => anthropic::Role::User,
+                    Role::Assistant => anthropic::Role::Assistant,
+                    Role::System => unreachable!("System role should never occur here"),
+                };
+                if let Some(last_message) = new_messages.last_mut() {
+                    if last_message.role == anthropic_role {
+                        last_message.content.extend(anthropic_message_content);
+                        continue;
+                    }
+                }
+                new_messages.push(anthropic::Message {
+                    role: anthropic_role,
+                    content: anthropic_message_content,
+                });
+            }
+            Role::System => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.string_contents());
+            }
+        }
+    }
+
+    anthropic::Request {
+        model,
+        messages: new_messages,
+        max_tokens: max_output_tokens,
+        system: Some(system_message),
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| anthropic::Tool {
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.input_schema,
+            })
+            .collect(),
+        tool_choice: None,
+        metadata: None,
+        stop_sequences: Vec::new(),
+        temperature: request.temperature.or(Some(default_temperature)),
+        top_k: None,
+        top_p: None,
     }
 }
 
@@ -512,9 +637,11 @@ pub fn map_to_language_model_completion_events(
                                         Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
                                                 id: tool_use.id.into(),
-                                                name: tool_use.name,
+                                                name: tool_use.name.into(),
                                                 input: if tool_use.input_json.is_empty() {
-                                                    serde_json::Value::Null
+                                                    serde_json::Value::Object(
+                                                        serde_json::Map::default(),
+                                                    )
                                                 } else {
                                                     serde_json::Value::from_str(
                                                         &tool_use.input_json,
@@ -679,12 +806,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ANTHROPIC_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:",
-            "- Create one at:",
-            "- Paste your API key below and hit enter to use the assistant:",
-        ];
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -693,17 +814,20 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(
+                            InstructionListItem::new(
+                                "Create one by visiting",
+                                Some("Anthropic's settings"),
+                                Some("https://console.anthropic.com/settings/keys")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                        )
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()
@@ -720,7 +844,8 @@ impl Render for ConfigurationView {
                     Label::new(
                         format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .into_any()
         } else {

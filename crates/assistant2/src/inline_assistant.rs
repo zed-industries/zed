@@ -24,12 +24,11 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::LanguageModelRegistry;
-use language_models::report_assistant_event;
+use language_model::{report_assistant_event, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};

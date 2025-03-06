@@ -4,25 +4,27 @@ use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
-use futures::future::Shared;
-use futures::{FutureExt as _, StreamExt as _};
+use futures::StreamExt as _;
 use gpui::{App, Context, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason,
 };
-use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError};
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
 use crate::thread_store::SavedThread;
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
     Chat,
+    /// Used when summarizing a thread.
+    Summarize,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -41,7 +43,7 @@ impl std::fmt::Display for ThreadId {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct MessageId(usize);
+pub struct MessageId(pub(crate) usize);
 
 impl MessageId {
     fn post_inc(&mut self) -> Self {
@@ -70,9 +72,7 @@ pub struct Thread {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     tools: Arc<ToolWorkingSet>,
-    tool_uses_by_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
-    tool_results_by_message: HashMap<MessageId, Vec<LanguageModelToolResult>>,
-    pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
+    tool_use: ToolUseState,
 }
 
 impl Thread {
@@ -89,9 +89,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
-            tool_uses_by_message: HashMap::default(),
-            tool_results_by_message: HashMap::default(),
-            pending_tool_uses_by_id: HashMap::default(),
+            tool_use: ToolUseState::new(),
         }
     }
 
@@ -101,7 +99,14 @@ impl Thread {
         tools: Arc<ToolWorkingSet>,
         _cx: &mut Context<Self>,
     ) -> Self {
-        let next_message_id = MessageId(saved.messages.len());
+        let next_message_id = MessageId(
+            saved
+                .messages
+                .last()
+                .map(|message| message.id.0 + 1)
+                .unwrap_or(0),
+        );
+        let tool_use = ToolUseState::from_saved_messages(&saved.messages);
 
         Self {
             id,
@@ -123,9 +128,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
-            tool_uses_by_message: HashMap::default(),
-            tool_results_by_message: HashMap::default(),
-            pending_tool_uses_by_id: HashMap::default(),
+            tool_use,
         }
     }
 
@@ -187,7 +190,19 @@ impl Thread {
     }
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
-        self.pending_tool_uses_by_id.values().collect()
+        self.tool_use.pending_tool_uses()
+    }
+
+    pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
+        self.tool_use.tool_uses_for_message(id)
+    }
+
+    pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
+        self.tool_use.tool_results_for_message(id)
+    }
+
+    pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
+        self.tool_use.message_has_tool_results(message_id)
     }
 
     pub fn insert_user_message(
@@ -220,6 +235,34 @@ impl Thread {
         id
     }
 
+    pub fn edit_message(
+        &mut self,
+        id: MessageId,
+        new_role: Role,
+        new_text: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+            return false;
+        };
+        message.role = new_role;
+        message.text = new_text;
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageEdited(id));
+        true
+    }
+
+    pub fn delete_message(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self.messages.iter().position(|message| message.id == id) else {
+            return false;
+        };
+        self.messages.remove(index);
+        self.context_by_message.remove(&id);
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageDeleted(id));
+        true
+    }
+
     /// Returns the representation of this [`Thread`] in a textual form.
     ///
     /// This is the representation we use when attaching a thread as context to another thread.
@@ -241,9 +284,34 @@ impl Thread {
         text
     }
 
+    pub fn send_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        request_kind: RequestKind,
+        use_tools: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut request = self.to_completion_request(request_kind, cx);
+
+        if use_tools {
+            request.tools = self
+                .tools()
+                .tools(cx)
+                .into_iter()
+                .map(|tool| LanguageModelRequestTool {
+                    name: tool.name(),
+                    description: tool.description(),
+                    input_schema: tool.input_schema(),
+                })
+                .collect();
+        }
+
+        self.stream_completion(request, model, cx);
+    }
+
     pub fn to_completion_request(
         &self,
-        _request_kind: RequestKind,
+        request_kind: RequestKind,
         _cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
@@ -265,12 +333,13 @@ impl Thread {
                 content: Vec::new(),
                 cache: false,
             };
-
-            if let Some(tool_results) = self.tool_results_by_message.get(&message.id) {
-                for tool_result in tool_results {
-                    request_message
-                        .content
-                        .push(MessageContent::ToolResult(tool_result.clone()));
+            match request_kind {
+                RequestKind::Chat => {
+                    self.tool_use
+                        .attach_tool_results(message.id, &mut request_message);
+                }
+                RequestKind::Summarize => {
+                    // We don't care about tool use during summarization.
                 }
             }
 
@@ -280,11 +349,13 @@ impl Thread {
                     .push(MessageContent::Text(message.text.clone()));
             }
 
-            if let Some(tool_uses) = self.tool_uses_by_message.get(&message.id) {
-                for tool_use in tool_uses {
-                    request_message
-                        .content
-                        .push(MessageContent::ToolUse(tool_use.clone()));
+            match request_kind {
+                RequestKind::Chat => {
+                    self.tool_use
+                        .attach_tool_uses(message.id, &mut request_message);
+                }
+                RequestKind::Summarize => {
+                    // We don't care about tool use during summarization.
                 }
             }
 
@@ -360,21 +431,8 @@ impl Thread {
                                     .rfind(|message| message.role == Role::Assistant)
                                 {
                                     thread
-                                        .tool_uses_by_message
-                                        .entry(last_assistant_message.id)
-                                        .or_default()
-                                        .push(tool_use.clone());
-
-                                    thread.pending_tool_uses_by_id.insert(
-                                        tool_use.id.clone(),
-                                        PendingToolUse {
-                                            assistant_message_id: last_assistant_message.id,
-                                            id: tool_use.id,
-                                            name: tool_use.name,
-                                            input: tool_use.input,
-                                            status: PendingToolUseStatus::Idle,
-                                        },
-                                    );
+                                        .tool_use
+                                        .request_tool_use(last_assistant_message.id, tool_use);
                                 }
                             }
                         }
@@ -451,7 +509,7 @@ impl Thread {
             return;
         }
 
-        let mut request = self.to_completion_request(RequestKind::Chat, cx);
+        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
@@ -494,7 +552,6 @@ impl Thread {
 
     pub fn insert_tool_output(
         &mut self,
-        assistant_message_id: MessageId,
         tool_use_id: LanguageModelToolUseId,
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
@@ -505,50 +562,18 @@ impl Thread {
                 let output = output.await;
                 thread
                     .update(&mut cx, |thread, cx| {
-                        // The tool use was requested by an Assistant message,
-                        // so we want to attach the tool results to the next
-                        // user message.
-                        let next_user_message = MessageId(assistant_message_id.0 + 1);
+                        thread
+                            .tool_use
+                            .insert_tool_output(tool_use_id.clone(), output);
 
-                        let tool_results = thread
-                            .tool_results_by_message
-                            .entry(next_user_message)
-                            .or_default();
-
-                        match output {
-                            Ok(output) => {
-                                tool_results.push(LanguageModelToolResult {
-                                    tool_use_id: tool_use_id.to_string(),
-                                    content: output,
-                                    is_error: false,
-                                });
-
-                                cx.emit(ThreadEvent::ToolFinished { tool_use_id });
-                            }
-                            Err(err) => {
-                                tool_results.push(LanguageModelToolResult {
-                                    tool_use_id: tool_use_id.to_string(),
-                                    content: err.to_string(),
-                                    is_error: true,
-                                });
-
-                                if let Some(tool_use) =
-                                    thread.pending_tool_uses_by_id.get_mut(&tool_use_id)
-                                {
-                                    tool_use.status = PendingToolUseStatus::Error(err.to_string());
-                                }
-                            }
-                        }
+                        cx.emit(ThreadEvent::ToolFinished { tool_use_id });
                     })
                     .ok();
             }
         });
 
-        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-            tool_use.status = PendingToolUseStatus::Running {
-                _task: insert_output_task.shared(),
-            };
-        }
+        self.tool_use
+            .run_pending_tool(tool_use_id, insert_output_task);
     }
 
     /// Cancels the last pending completion, if there are any pending.
@@ -576,6 +601,8 @@ pub enum ThreadEvent {
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     MessageAdded(MessageId),
+    MessageEdited(MessageId),
+    MessageDeleted(MessageId),
     SummaryChanged,
     UsePendingTools,
     ToolFinished {
@@ -589,27 +616,4 @@ impl EventEmitter<ThreadEvent> for Thread {}
 struct PendingCompletion {
     id: usize,
     _task: Task<()>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PendingToolUse {
-    pub id: LanguageModelToolUseId,
-    /// The ID of the Assistant message in which the tool use was requested.
-    pub assistant_message_id: MessageId,
-    pub name: String,
-    pub input: serde_json::Value,
-    pub status: PendingToolUseStatus,
-}
-
-#[derive(Debug, Clone)]
-pub enum PendingToolUseStatus {
-    Idle,
-    Running { _task: Shared<Task<()>> },
-    Error(#[allow(unused)] String),
-}
-
-impl PendingToolUseStatus {
-    pub fn is_idle(&self) -> bool {
-        matches!(self, PendingToolUseStatus::Idle)
-    }
 }

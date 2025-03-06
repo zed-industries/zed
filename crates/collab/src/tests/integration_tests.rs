@@ -14,7 +14,7 @@ use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
@@ -6354,7 +6354,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 1 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_1.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_1.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6375,7 +6375,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6507,7 +6507,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in right pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6545,7 +6545,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in left pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6741,19 +6741,24 @@ async fn test_remote_git_branches(
         .collect::<HashSet<_>>();
 
     let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
+
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
-    let root_path = ProjectPath::root_path(worktree_id);
-    // Client A sees that a guest has joined.
+    // Client A sees that a guest has joined and the repo has been populated
     executor.run_until_parked();
 
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
+
+    let root_path = ProjectPath::root_path(worktree_id);
+
     let branches_b = cx_b
-        .update(|cx| project_b.update(cx, |project, cx| project.branches(root_path.clone(), cx)))
+        .update(|cx| repo_b.update(cx, |repository, _| repository.branches()))
         .await
+        .unwrap()
         .unwrap();
 
     let new_branch = branches[2];
@@ -6765,13 +6770,10 @@ async fn test_remote_git_branches(
 
     assert_eq!(branches_b, branches_set);
 
-    cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
-        })
-    })
-    .await
-    .unwrap();
+    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
+        .await
+        .unwrap()
+        .unwrap();
 
     executor.run_until_parked();
 
@@ -6789,11 +6791,21 @@ async fn test_remote_git_branches(
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
-        })
+        repo_b
+            .read(cx)
+            .create_branch("totally-new-branch".to_string())
     })
     .await
+    .unwrap()
+    .unwrap();
+
+    cx_b.update(|cx| {
+        repo_b
+            .read(cx)
+            .change_branch("totally-new-branch".to_string())
+    })
+    .await
+    .unwrap()
     .unwrap();
 
     executor.run_until_parked();

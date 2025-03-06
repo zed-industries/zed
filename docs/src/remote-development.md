@@ -42,7 +42,7 @@ The list of remote servers is stored in your settings file {#kb zed::OpenSetting
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"]
+      "projects": [{ "paths": ["~/code/zed/zed"] }]
     }
   ]
 }
@@ -55,7 +55,7 @@ Zed shells out to the `ssh` on your path, and so it will inherit any configurati
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"],
+      "projects": [{ "paths": ["~/code/zed/zed"] }],
       // any argument to pass to the ssh master process
       "args": ["-i", "~/.ssh/work_id_file"],
       "port": 22, // defaults to 22
@@ -73,7 +73,7 @@ There are two additional Zed-specific options per connection, `upload_binary_ove
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"],
+      "projects": [{ "paths": ["~/code/zed/zed"] }],
       // by default Zed will download the server binary from the internet on the remote.
       // When this is true, it'll be downloaded to your laptop and uploaded over SSH.
       // This is useful when your remote server has restricted internet access.
@@ -195,7 +195,8 @@ Supported options:
 - `-i` - to use a specific key file
 - `-o` - to set custom options
 - `-J` / `-w` - to proxy the SSH connection
-- And also... `-4`, `-6`, `-A`, `-a`, `-C`, `-K`, `-k`, `-X`, `-x`, `-Y`, `-y`, `-B`, `-b`, `-c`, `-D`, `-I`, `-i`, `-J`, `-l`, `-m`, `-o`, `-P`, `-p`, `-w`
+- `-F` for specifying an `ssh_config`
+- And also... `-4`, `-6`, `-A`, `-B`, `-C`, `-D`, `-I`, `-K`, `-P`, `-X`, `-Y`, `-a`, `-b`, `-c`, `-i`, `-k`, `-l`, `-m`, `-o`, `-p`, `-w`, `-x`, `-y`
 
 Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
 
@@ -203,7 +204,6 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 - Zed extensions are not yet supported on remotes, so languages that need them for support do not work.
 - You can't open files from the remote Terminal by typing the `zed` command.
-- Zed does not yet support automatic port-forwarding. You can use `-R` and `-L` in your SSH arguments for now.
 
 ## Feedback
 

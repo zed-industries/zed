@@ -103,12 +103,20 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
 
-    let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+    let mut prev_buffer_font_size_settings =
+        ThemeSettings::get_global(cx).buffer_font_size_settings();
+    let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
     cx.observe_global::<SettingsStore>(move |cx| {
-        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
-        if buffer_font_size != prev_buffer_font_size {
-            prev_buffer_font_size = buffer_font_size;
+        let buffer_font_size_settings = ThemeSettings::get_global(cx).buffer_font_size_settings();
+        if buffer_font_size_settings != prev_buffer_font_size_settings {
+            prev_buffer_font_size_settings = buffer_font_size_settings;
             reset_buffer_font_size(cx);
+        }
+
+        let ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+        if ui_font_size_settings != prev_ui_font_size_settings {
+            prev_ui_font_size_settings = ui_font_size_settings;
+            reset_ui_font_size(cx);
         }
     })
     .detach();
@@ -339,14 +347,6 @@ impl Theme {
         hsla.l = (hsla.l - amount).max(0.0);
         hsla
     }
-}
-
-/// Compounds a color with an alpha value.
-/// TODO: Replace this with a method on Hsla.
-pub fn color_alpha(color: Hsla, alpha: f32) -> Hsla {
-    let mut color = color;
-    color.a = alpha;
-    color
 }
 
 /// Asynchronously reads the user theme from the specified path.
