@@ -3268,13 +3268,12 @@ impl Editor {
                 buffer.read_with(cx, |buffer, _| (buffer.version(), buffer.parse_status()));
 
             cx.spawn_in(window, |this, mut cx| async move {
-                let Some(buffer_parse_status) = dbg!(buffer_parse_status_rx.recv().await.ok())
-                else {
+                let Some(buffer_parse_status) = buffer_parse_status_rx.recv().await.ok() else {
                     return Some(());
                 };
                 if buffer_parse_status == language::ParseStatus::Parsing {
                     let Some(language::ParseStatus::Idle) =
-                        dbg!(buffer_parse_status_rx.recv().await.ok())
+                        buffer_parse_status_rx.recv().await.ok()
                     else {
                         return Some(());
                     };
