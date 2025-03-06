@@ -359,7 +359,7 @@ pub fn render_item<T>(
         outline_item.highlight_ranges.iter().cloned(),
     );
 
-    StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
+    StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
 }
 
 #[cfg(test)]
@@ -448,7 +448,7 @@ mod tests {
         );
         assert_single_caret_at_row(&editor, 0, cx);
 
-        cx.dispatch_action(menu::SelectPrev);
+        cx.dispatch_action(menu::SelectPrevious);
         ensure_outline_view_contents(&outline_view, cx);
         assert_eq!(
             highlighted_display_rows(&editor, cx),

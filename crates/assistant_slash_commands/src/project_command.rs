@@ -13,7 +13,7 @@ use feature_flags::FeatureFlag;
 use gpui::{App, Task, WeakEntity};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use semantic_index::SemanticDb;
 use serde::Deserialize;

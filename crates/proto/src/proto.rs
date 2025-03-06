@@ -236,6 +236,8 @@ messages!(
     (ExpandAllForProjectEntryResponse, Foreground),
     (Follow, Foreground),
     (FollowResponse, Foreground),
+    (ApplyCodeActionKind, Foreground),
+    (ApplyCodeActionKindResponse, Foreground),
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
@@ -422,7 +424,7 @@ messages!(
     (FlushBufferedMessages, Foreground),
     (LanguageServerPromptRequest, Foreground),
     (LanguageServerPromptResponse, Foreground),
-    (GitBranches, Background),
+    (GitGetBranches, Background),
     (GitBranchesResponse, Background),
     (UpdateGitBranch, Background),
     (ListToolchains, Foreground),
@@ -449,6 +451,11 @@ messages!(
     (GetRemotes, Background),
     (GetRemotesResponse, Background),
     (Pull, Background),
+    (RemoteMessageResponse, Background),
+    (GitCreateBranch, Background),
+    (GitChangeBranch, Background),
+    (CheckForPushedCommits, Background),
+    (CheckForPushedCommitsResponse, Background),
 );
 
 request_messages!(
@@ -472,6 +479,7 @@ request_messages!(
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
+    (ApplyCodeActionKind, ApplyCodeActionKindResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
     (GetCachedEmbeddings, GetCachedEmbeddingsResponse),
@@ -571,7 +579,7 @@ request_messages!(
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
-    (GitBranches, GitBranchesResponse),
+    (GitGetBranches, GitBranchesResponse),
     (UpdateGitBranch, Ack),
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
@@ -586,10 +594,13 @@ request_messages!(
     (GitReset, Ack),
     (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
-    (Push, Ack),
-    (Fetch, Ack),
+    (Push, RemoteMessageResponse),
+    (Fetch, RemoteMessageResponse),
     (GetRemotes, GetRemotesResponse),
-    (Pull, Ack),
+    (Pull, RemoteMessageResponse),
+    (GitCreateBranch, Ack),
+    (GitChangeBranch, Ack),
+    (CheckForPushedCommits, CheckForPushedCommitsResponse),
 );
 
 entity_messages!(
@@ -610,6 +621,7 @@ entity_messages!(
     ExpandProjectEntry,
     ExpandAllForProjectEntry,
     FindSearchCandidates,
+    ApplyCodeActionKind,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,
@@ -674,7 +686,7 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    GitBranches,
+    GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
     ActivateToolchain,
@@ -690,6 +702,9 @@ entity_messages!(
     Fetch,
     GetRemotes,
     Pull,
+    GitChangeBranch,
+    GitCreateBranch,
+    CheckForPushedCommits,
 );
 
 entity_messages!(

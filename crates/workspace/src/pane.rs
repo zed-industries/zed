@@ -1,7 +1,7 @@
 use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
+        ShowCloseButton, ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -172,7 +172,7 @@ impl_actions!(
 actions!(
     pane,
     [
-        ActivatePrevItem,
+        ActivatePreviousItem,
         ActivateNextItem,
         ActivateLastItem,
         AlternateFile,
@@ -2269,7 +2269,7 @@ impl Pane {
 
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
-        let always_show_close_button = settings.always_show_close_button;
+        let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
@@ -2373,18 +2373,21 @@ impl Pane {
                         close_pinned: false,
                     };
                     end_slot_tooltip_text = "Close Tab";
-                    IconButton::new("close tab", IconName::Close)
-                        .when(!always_show_close_button, |button| {
-                            button.visible_on_hover("")
-                        })
-                        .shape(IconButtonShape::Square)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
-                        .on_click(cx.listener(move |pane, _, window, cx| {
-                            pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                                .detach_and_log_err(cx);
-                        }))
+                    match show_close_button {
+                        ShowCloseButton::Always => IconButton::new("close tab", IconName::Close),
+                        ShowCloseButton::Hover => {
+                            IconButton::new("close tab", IconName::Close).visible_on_hover("")
+                        }
+                        ShowCloseButton::Hidden => return this,
+                    }
+                    .shape(IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::None)
+                    .icon_size(IconSize::XSmall)
+                    .on_click(cx.listener(move |pane, _, window, cx| {
+                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                            .detach_and_log_err(cx);
+                    }))
                 }
                 .map(|this| {
                     if is_active {
@@ -2566,15 +2569,34 @@ impl Pane {
                         })
                     };
                     if let Some(entry) = single_entry_to_resolve {
+                        let project_path = pane
+                            .read(cx)
+                            .item_for_entry(entry, cx)
+                            .and_then(|item| item.project_path(cx));
+                        let worktree = project_path.as_ref().and_then(|project_path| {
+                            pane.read(cx)
+                                .project
+                                .upgrade()?
+                                .read(cx)
+                                .worktree_for_id(project_path.worktree_id, cx)
+                        });
+                        let has_relative_path = worktree.as_ref().is_some_and(|worktree| {
+                            worktree
+                                .read(cx)
+                                .root_entry()
+                                .map_or(false, |entry| entry.is_dir())
+                        });
+
                         let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
                         let parent_abs_path = entry_abs_path
                             .as_deref()
                             .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
-                        let relative_path = pane
-                            .read(cx)
-                            .item_for_entry(entry, cx)
-                            .and_then(|item| item.project_path(cx))
-                            .map(|project_path| project_path.path);
+                        let relative_path = project_path
+                            .map(|project_path| project_path.path)
+                            .filter(|_| has_relative_path);
+
+                        let visible_in_project_panel = relative_path.is_some()
+                            && worktree.is_some_and(|worktree| worktree.read(cx).is_visible());
 
                         let entry_id = entry.to_proto();
                         menu = menu
@@ -2603,21 +2625,23 @@ impl Pane {
                             })
                             .map(pin_tab_entries)
                             .separator()
-                            .entry(
-                                "Reveal In Project Panel",
-                                Some(Box::new(RevealInProjectPanel {
-                                    entry_id: Some(entry_id),
-                                })),
-                                window.handler_for(&pane, move |pane, _, cx| {
-                                    pane.project
-                                        .update(cx, |_, cx| {
-                                            cx.emit(project::Event::RevealInProjectPanel(
-                                                ProjectEntryId::from_proto(entry_id),
-                                            ))
-                                        })
-                                        .ok();
-                                }),
-                            )
+                            .when(visible_in_project_panel, |menu| {
+                                menu.entry(
+                                    "Reveal In Project Panel",
+                                    Some(Box::new(RevealInProjectPanel {
+                                        entry_id: Some(entry_id),
+                                    })),
+                                    window.handler_for(&pane, move |pane, _, cx| {
+                                        pane.project
+                                            .update(cx, |_, cx| {
+                                                cx.emit(project::Event::RevealInProjectPanel(
+                                                    ProjectEntryId::from_proto(entry_id),
+                                                ))
+                                            })
+                                            .ok();
+                                    }),
+                                )
+                            })
                             .when_some(parent_abs_path, |menu, parent_abs_path| {
                                 menu.entry(
                                     "Open in Terminal",
@@ -3179,7 +3203,7 @@ impl Render for Pane {
                 }),
             )
             .on_action(
-                cx.listener(|pane: &mut Pane, _: &ActivatePrevItem, window, cx| {
+                cx.listener(|pane: &mut Pane, _: &ActivatePreviousItem, window, cx| {
                     pane.activate_prev_item(true, window, cx);
                 }),
             )
@@ -3276,7 +3300,7 @@ impl Render for Pane {
                 pane.child(self.render_tab_bar(window, cx))
             })
             .child({
-                let has_worktrees = project.read(cx).worktrees(cx).next().is_some();
+                let has_worktrees = project.read(cx).visible_worktrees(cx).next().is_some();
                 // main content
                 div()
                     .flex_1()

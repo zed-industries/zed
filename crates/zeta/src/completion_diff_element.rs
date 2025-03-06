@@ -78,7 +78,7 @@ impl CompletionDiffElement {
             font_style: settings.buffer_font.style,
             ..Default::default()
         };
-        let element = StyledText::new(diff).with_highlights(&text_style, diff_highlights);
+        let element = StyledText::new(diff).with_default_highlights(&text_style, diff_highlights);
         let text_layout = element.layout().clone();
 
         CompletionDiffElement {

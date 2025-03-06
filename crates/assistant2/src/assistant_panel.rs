@@ -15,12 +15,14 @@ use editor::Editor;
 use fs::Fs;
 use gpui::{
     prelude::*, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal,
+    WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use project::Project;
-use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
+use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use time::UtcOffset;
 use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
@@ -608,7 +610,7 @@ impl AssistantPanel {
                     .id("title")
                     .overflow_x_scroll()
                     .px(DynamicSpacing::Base08.rems(cx))
-                    .child(Label::new(title).text_ellipsis()),
+                    .child(Label::new(title).truncate()),
             )
             .child(
                 h_flex()
@@ -992,12 +994,21 @@ impl AssistantPanel {
             )
             .into_any()
     }
+
+    fn key_context(&self) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("AssistantPanel2");
+        if matches!(self.active_view, ActiveView::PromptEditor) {
+            key_context.add("prompt_editor");
+        }
+        key_context
+    }
 }
 
 impl Render for AssistantPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .key_context("AssistantPanel2")
+            .key_context(self.key_context())
             .justify_between()
             .size_full()
             .on_action(cx.listener(Self::cancel))
@@ -1012,12 +1023,7 @@ impl Render for AssistantPanel {
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .child(
-                        h_flex()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(self.message_editor.clone()),
-                    )
+                    .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::PromptEditor => parent.children(self.context_editor.clone()),

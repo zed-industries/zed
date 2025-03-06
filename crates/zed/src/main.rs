@@ -23,7 +23,7 @@ use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
@@ -171,17 +171,12 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 fn main() {
     let args = Args::parse();
 
-    #[cfg(target_os = "windows")]
-    let run_foreground = args.foreground;
-
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    if run_foreground {
-        unsafe {
-            use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
-            if run_foreground {
-                let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-            }
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         }
     }
 
@@ -235,7 +230,7 @@ fn main() {
             {
                 !crate::zed::windows_only_instance::check_single_instance(
                     open_listener.clone(),
-                    run_foreground,
+                    args.foreground,
                 )
             }
 
@@ -482,6 +477,7 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
+        scripting_tool::init(cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,
@@ -1025,7 +1021,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
     let extension_store = ExtensionStore::global(cx);
     let theme_registry = ThemeRegistry::global(cx);
     let theme_settings = ThemeSettings::get_global(cx);
-    let appearance = cx.window_appearance().into();
+    let appearance = SystemAppearance::global(cx).0;
 
     if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
         let theme_name = theme_selection.theme(appearance);
