@@ -1233,7 +1233,7 @@ fn corner_suffixes() -> Vec<CornerStyleSuffix> {
             doc_string_suffix: "0px",
         },
         CornerStyleSuffix {
-            suffix: "sm",
+            suffix: "xs",
             radius_tokens: quote! { rems(0.125) },
             doc_string_suffix: "2px (0.125rem)",
         },
