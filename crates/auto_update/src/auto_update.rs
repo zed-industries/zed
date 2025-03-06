@@ -63,7 +63,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct JsonRelease {
     pub version: String,
     pub url: String,
@@ -311,7 +311,6 @@ impl AutoUpdater {
             let result = Self::update(this.upgrade()?, cx.clone()).await;
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
-                println!("Polling for updates: {:?}", result);
                 if let Err(error) = result {
                     log::error!("auto-update failed: error:{:?}", error);
                     this.status = AutoUpdateStatus::Errored;
@@ -485,21 +484,16 @@ impl AutoUpdater {
             )
         })?;
 
-        // let release =
-        //     Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
+        let release =
+            Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
-        // let should_download = match *RELEASE_CHANNEL {
-        //     ReleaseChannel::Nightly => cx
-        //         .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
-        //         .ok()
-        //         .flatten()
-        //         .unwrap_or(true),
-        //     _ => release.version.parse::<SemanticVersion>()? > current_version,
-        // };
-        let should_download = {
-            let dir_path = Path::new("C:\\zjk\\projects\\installer1\\zed");
-            let installer = dir_path.join("Installer.exe");
-            installer.exists()
+        let should_download = match *RELEASE_CHANNEL {
+            ReleaseChannel::Nightly => cx
+                .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
+                .ok()
+                .flatten()
+                .unwrap_or(true),
+            _ => release.version.parse::<SemanticVersion>()? > current_version,
         };
 
         if !should_download {
@@ -530,8 +524,7 @@ impl AutoUpdater {
         );
 
         let downloaded_asset = installer_dir.path().join(filename);
-        // download_release(&downloaded_asset, release, client, &cx).await?;
-        download_release(&downloaded_asset, &cx).await?;
+        download_release(&downloaded_asset, release, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
@@ -636,7 +629,6 @@ fn build_remote_server_update_request_body(cx: &AsyncApp) -> Result<UpdateReques
     })
 }
 
-#[cfg(not(target_os = "windows"))]
 async fn download_release(
     target_path: &Path,
     release: JsonRelease,
@@ -672,26 +664,6 @@ async fn download_release(
     let mut response = client.get(&release.url, request_body, true).await?;
     smol::io::copy(response.body_mut(), &mut target_file).await?;
     log::info!("downloaded update. path:{:?}", target_path);
-
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-async fn download_release(
-    target_path: &Path,
-    // release: JsonRelease,
-    // client: Arc<HttpClientWithUrl>,
-    cx: &AsyncApp,
-) -> Result<()> {
-    smol::fs::copy(
-        "C:\\zjk\\projects\\installer1\\zed\\Installer.exe",
-        target_path,
-    )
-    .await
-    .unwrap();
-    smol::fs::remove_file("C:\\zjk\\projects\\installer1\\zed\\Installer.exe")
-        .await
-        .unwrap();
 
     Ok(())
 }
