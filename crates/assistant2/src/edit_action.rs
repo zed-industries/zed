@@ -39,11 +39,19 @@ pub enum EditAction {
 /// ```
 #[derive(Debug)]
 pub struct EditActionParser {
+    state: State,
     pre_fence_line: Vec<u8>,
     marker_ix: usize,
+    offset: usize,
     old_bytes: Vec<u8>,
     new_bytes: Vec<u8>,
-    state: State,
+    errors: Vec<(usize, ParseError)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParseError {
+    ExpectedMarker { expected: &'static [u8], found: u8 },
+    NoOp,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -66,11 +74,13 @@ impl EditActionParser {
     /// Creates a new `EditActionParser`
     pub fn new() -> Self {
         Self {
+            state: State::Default,
             pre_fence_line: Vec::new(),
             marker_ix: 0,
+            offset: 0,
             old_bytes: Vec::new(),
             new_bytes: Vec::new(),
-            state: State::Default,
+            errors: Vec::new(),
         }
     }
 
@@ -80,6 +90,8 @@ impl EditActionParser {
     /// maintains its state between calls, allowing you to process streaming input
     /// as it becomes available. Actions are only returned once they are fully parsed.
     ///
+    /// If a block fails to parse, it will simply be skipped and an error will be recorded.
+    /// All errors can be accessed through the `EditActionsParser::errors` method.
     pub fn parse_chunk(&mut self, input: &str) -> Vec<EditAction> {
         use State::*;
 
@@ -152,14 +164,21 @@ impl EditActionParser {
                     }
                 }
             };
+
+            self.offset += 1;
         }
 
         actions
     }
 
+    /// Returns a reference to the errors encountered during parsing.
+    pub fn errors(&self) -> &[(usize, ParseError)] {
+        &self.errors
+    }
+
     fn action(&mut self) -> Option<EditAction> {
         if self.old_bytes.is_empty() && self.new_bytes.is_empty() {
-            // todo! record az error
+            self.errors.push((self.offset, ParseError::NoOp));
             return None;
         }
 
@@ -179,12 +198,18 @@ impl EditActionParser {
         }
     }
 
-    fn expect_marker(&mut self, byte: u8, marker: &[u8]) -> bool {
+    fn expect_marker(&mut self, byte: u8, marker: &'static [u8]) -> bool {
         match match_marker(byte, marker, &mut self.marker_ix) {
             MarkerMatch::Complete => true,
             MarkerMatch::Partial => false,
             MarkerMatch::None => {
-                // todo az: record error
+                self.errors.push((
+                    self.offset,
+                    ParseError::ExpectedMarker {
+                        expected: marker,
+                        found: byte,
+                    },
+                ));
                 self.reset();
                 false
             }
@@ -498,6 +523,13 @@ fn this_will_be_deleted() {
 
         // Should not create an action when both sections are empty
         assert_eq!(actions.len(), 0);
+
+        // Check that the NoOp error was added
+        assert_eq!(parser.errors().len(), 1);
+        match parser.errors()[0].1 {
+            ParseError::NoOp => {}
+            _ => panic!("Expected NoOp error"),
+        }
     }
 
     #[test]
@@ -558,5 +590,73 @@ fn replacement() {}"#;
         assert!(parser.pre_fence_line.is_empty());
         assert!(parser.old_bytes.is_empty());
         assert!(parser.new_bytes.is_empty());
+    }
+
+    #[test]
+    fn test_invalid_search_marker() {
+        let input = r#"src/main.rs
+```rust
+<<<<<<< WRONG_MARKER
+fn original() {}
+=======
+fn replacement() {}
+>>>>>>> REPLACE
+```
+"#;
+
+        let mut parser = EditActionParser::new();
+        let actions = parser.parse_chunk(input);
+        assert_eq!(actions.len(), 0);
+
+        assert_eq!(parser.errors().len(), 1);
+        let error = &parser.errors()[0];
+
+        assert_eq!(error.0, 28);
+        assert_eq!(
+            error.1,
+            ParseError::ExpectedMarker {
+                expected: b"<<<<<<< SEARCH\n",
+                found: b'W'
+            }
+        );
+    }
+
+    #[test]
+    fn test_missing_closing_fence() {
+        let input = r#"src/main.rs
+```rust
+<<<<<<< SEARCH
+fn original() {}
+=======
+fn replacement() {}
+>>>>>>> REPLACE
+<!-- Missing closing fence -->
+
+src/utils.rs
+```rust
+<<<<<<< SEARCH
+fn utils_func() {}
+=======
+fn new_utils_func() {}
+>>>>>>> REPLACE
+```
+"#;
+
+        let mut parser = EditActionParser::new();
+        let actions = parser.parse_chunk(input);
+
+        // Only the second block should be parsed
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0],
+            EditAction::Replace {
+                file_path: "src/utils.rs".to_string(),
+                old: "fn utils_func() {}".to_string(),
+                new: "fn new_utils_func() {}".to_string(),
+            }
+        );
+
+        // The parser should continue after an error
+        assert_eq!(parser.state, State::Default);
     }
 }
