@@ -11,6 +11,7 @@ pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
 mod project_tree;
+pub mod rust_analyzer_ext;
 pub mod search;
 mod task_inventory;
 pub mod task_store;

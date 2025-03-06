@@ -4,15 +4,13 @@ use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, Window};
 use language::{Capability, Language};
 use multi_buffer::MultiBuffer;
-use project::lsp_ext_command::ExpandMacro;
+use project::{lsp_ext_command::ExpandMacro, rust_analyzer_ext::RUST_ANALYZER_NAME};
 use text::ToPointUtf16;
 
 use crate::{
     element::register_action, lsp_ext::find_specific_language_server_in_selection, Editor,
     ExpandMacroRecursively, OpenDocs,
 };
-
-const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 
 fn is_rust_language(language: &Language) -> bool {
     language.name() == "Rust".into()
