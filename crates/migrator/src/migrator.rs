@@ -72,7 +72,7 @@ pub fn migrate_edit_prediction_provider_settings(text: &str) -> Result<Option<St
     migrate(
         &text,
         &[(
-            SETTINGS_REPLACE_NESTED_KEY,
+            SETTINGS_NESTED_KEY_VALUE_PATTERN,
             replace_edit_prediction_provider_setting,
         )],
         &EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY,
@@ -90,7 +90,7 @@ const KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS: MigrationPatterns = &[
         ACTION_ARGUMENT_OBJECT_PATTERN,
         replace_action_argument_object_with_single_value,
     ),
-    (ACTION_STRING_PATTERN, rename_string_action),
+    (ACTION_STRING_PATTERN, replace_string_action),
     (CONTEXT_PREDICATE_PATTERN, rename_context_key),
 ];
 
@@ -384,19 +384,32 @@ const ACTION_STRING_PATTERN: &str = r#"(document
     (#eq? @name "bindings")
 )"#;
 
-fn rename_string_action(
+fn replace_string_action(
     contents: &str,
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
     let action_name_ix = query.capture_index_for_name("action_name")?;
-    let action_name_range = mat
-        .nodes_for_capture_index(action_name_ix)
-        .next()?
-        .byte_range();
+    let action_name_node = mat.nodes_for_capture_index(action_name_ix).next()?;
+    let action_name_range = action_name_node.byte_range();
     let action_name = contents.get(action_name_range.clone())?;
-    let new_action_name = STRING_REPLACE.get(&action_name)?;
-    Some((action_name_range, new_action_name.to_string()))
+
+    if let Some(new_action_name) = STRING_REPLACE.get(&action_name) {
+        return Some((action_name_range, new_action_name.to_string()));
+    }
+
+    if let Some((new_action_name, options)) = STRING_TO_ARRAY_REPLACE.get(action_name) {
+        let full_string_range = action_name_node.parent()?.byte_range();
+        let mut options_parts = Vec::new();
+        for (key, value) in options.iter() {
+            options_parts.push(format!("\"{}\": {}", key, value));
+        }
+        let options_str = options_parts.join(", ");
+        let replacement = format!("[\"{}\", {{ {} }}]", new_action_name, options_str);
+        return Some((full_string_range, replacement));
+    }
+
+    None
 }
 
 /// "ctrl-k ctrl-1": "inline_completion::ToggleMenu" -> "edit_prediction::ToggleMenu"
@@ -424,20 +437,53 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
             "editor::ToggleInlineCompletions",
             "editor::ToggleEditPrediction",
         ),
+        (
+            "editor::GoToPrevDiagnostic",
+            "editor::GoToPreviousDiagnostic",
+        ),
+        ("editor::ContextMenuPrev", "editor::ContextMenuPrevious"),
+        ("search::SelectPrevMatch", "search::SelectPreviousMatch"),
+        ("file_finder::SelectPrev", "file_finder::SelectPrevious"),
+        ("menu::SelectPrev", "menu::SelectPrevious"),
+        ("editor::TabPrev", "editor::Backtab"),
+        ("pane::ActivatePrevItem", "pane::ActivatePreviousItem"),
+        ("vim::MoveToPrev", "vim::MoveToPrevious"),
+        ("vim::MoveToPrevMatch", "vim::MoveToPreviousMatch"),
     ])
 });
 
-const CONTEXT_PREDICATE_PATTERN: &str = r#"
-(array
-    (object
-        (pair
-            key: (string (string_content) @name)
-            value: (string (string_content) @context_predicate)
+/// "editor::GoToPrevHunk" -> ["editor::GoToPreviousHunk", { "center_cursor": true }]
+static STRING_TO_ARRAY_REPLACE: LazyLock<HashMap<&str, (&str, HashMap<&str, bool>)>> =
+    LazyLock::new(|| {
+        HashMap::from_iter([
+            (
+                "editor::GoToHunk",
+                (
+                    "editor::GoToHunk",
+                    HashMap::from_iter([("center_cursor", true)]),
+                ),
+            ),
+            (
+                "editor::GoToPrevHunk",
+                (
+                    "editor::GoToPreviousHunk",
+                    HashMap::from_iter([("center_cursor", true)]),
+                ),
+            ),
+        ])
+    });
+
+const CONTEXT_PREDICATE_PATTERN: &str = r#"(document
+    (array
+        (object
+            (pair
+                key: (string (string_content) @name)
+                value: (string (string_content) @context_predicate)
+            )
         )
     )
-)
-(#eq? @name "context")
-"#;
+    (#eq? @name "context")
+)"#;
 
 fn rename_context_key(
     contents: &str,
@@ -571,8 +617,16 @@ pub static ACTION_ARGUMENT_SNAKE_CASE_REPLACE: LazyLock<HashMap<&str, &str>> =
 const SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
     (SETTINGS_STRING_REPLACE_QUERY, replace_setting_name),
     (
-        SETTINGS_REPLACE_NESTED_KEY,
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
         replace_edit_prediction_provider_setting,
+    ),
+    (
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
+        replace_tab_close_button_setting_key,
+    ),
+    (
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
+        replace_tab_close_button_setting_value,
     ),
     (
         SETTINGS_REPLACE_IN_LANGUAGES_QUERY,
@@ -594,7 +648,7 @@ static SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(
         &tree_sitter_json::LANGUAGE.into(),
-        SETTINGS_REPLACE_NESTED_KEY,
+        SETTINGS_NESTED_KEY_VALUE_PATTERN,
     )
     .unwrap()
 });
@@ -639,14 +693,14 @@ pub static SETTINGS_STRING_REPLACE: LazyLock<HashMap<&'static str, &'static str>
         ])
     });
 
-const SETTINGS_REPLACE_NESTED_KEY: &str = r#"
+const SETTINGS_NESTED_KEY_VALUE_PATTERN: &str = r#"
 (object
   (pair
     key: (string (string_content) @parent_key)
     value: (object
         (pair
             key: (string (string_content) @setting_name)
-            value: (_) @value
+            value: (_) @setting_value
         )
     )
   )
@@ -674,6 +728,73 @@ fn replace_edit_prediction_provider_setting(
 
     if parent_object_name == "features" && setting_name == "inline_completion_provider" {
         return Some((setting_range, "edit_prediction_provider".into()));
+    }
+
+    None
+}
+
+fn replace_tab_close_button_setting_key(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let parent_object_capture_ix = query.capture_index_for_name("parent_key")?;
+    let parent_object_range = mat
+        .nodes_for_capture_index(parent_object_capture_ix)
+        .next()?
+        .byte_range();
+    let parent_object_name = contents.get(parent_object_range.clone())?;
+
+    let setting_name_ix = query.capture_index_for_name("setting_name")?;
+    let setting_range = mat
+        .nodes_for_capture_index(setting_name_ix)
+        .next()?
+        .byte_range();
+    let setting_name = contents.get(setting_range.clone())?;
+
+    if parent_object_name == "tabs" && setting_name == "always_show_close_button" {
+        return Some((setting_range, "show_close_button".into()));
+    }
+
+    None
+}
+
+fn replace_tab_close_button_setting_value(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let parent_object_capture_ix = query.capture_index_for_name("parent_key")?;
+    let parent_object_range = mat
+        .nodes_for_capture_index(parent_object_capture_ix)
+        .next()?
+        .byte_range();
+    let parent_object_name = contents.get(parent_object_range.clone())?;
+
+    let setting_name_ix = query.capture_index_for_name("setting_name")?;
+    let setting_name_range = mat
+        .nodes_for_capture_index(setting_name_ix)
+        .next()?
+        .byte_range();
+    let setting_name = contents.get(setting_name_range.clone())?;
+
+    let setting_value_ix = query.capture_index_for_name("setting_value")?;
+    let setting_value_range = mat
+        .nodes_for_capture_index(setting_value_ix)
+        .next()?
+        .byte_range();
+    let setting_value = contents.get(setting_value_range.clone())?;
+
+    if parent_object_name == "tabs" && setting_name == "always_show_close_button" {
+        match setting_value {
+            "true" => {
+                return Some((setting_value_range, "\"always\"".to_string()));
+            }
+            "false" => {
+                return Some((setting_value_range, "\"hover\"".to_string()));
+            }
+            _ => {}
+        }
     }
 
     None
@@ -858,6 +979,34 @@ mod tests {
                 [
                     {
                         "context": "Editor && edit_prediction && !showing_completions"
+                    }
+                ]
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_string_to_array_replace() {
+        assert_migrate_keymap(
+            r#"
+                [
+                    {
+                        "bindings": {
+                            "ctrl-q": "editor::GoToHunk",
+                            "ctrl-w": "editor::GoToPrevHunk"
+                        }
+                    }
+                ]
+            "#,
+            Some(
+                r#"
+                [
+                    {
+                        "bindings": {
+                            "ctrl-q": ["editor::GoToHunk", { "center_cursor": true }],
+                            "ctrl-w": ["editor::GoToPreviousHunk", { "center_cursor": true }]
+                        }
                     }
                 ]
             "#,

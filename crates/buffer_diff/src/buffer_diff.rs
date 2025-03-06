@@ -56,8 +56,8 @@ pub enum DiffHunkSecondaryStatus {
 /// A diff hunk resolved to rows in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk {
-    /// The buffer range, expressed in terms of rows.
-    pub row_range: Range<u32>,
+    /// The buffer range as points.
+    pub range: Range<Point>,
     /// The range in the buffer to which this hunk corresponds.
     pub buffer_range: Range<Anchor>,
     /// The range in the buffer's diff base text to which this hunk corresponds.
@@ -362,6 +362,7 @@ impl BufferDiffInner {
             pending_hunks = secondary.pending_hunks.clone();
         }
 
+        let max_point = buffer.max_point();
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || loop {
             let (start_point, (start_anchor, start_base)) = summaries.next()?;
@@ -371,7 +372,7 @@ impl BufferDiffInner {
                 continue;
             }
 
-            if end_point.column > 0 {
+            if end_point.column > 0 && end_point < max_point {
                 end_point.row += 1;
                 end_point.column = 0;
                 end_anchor = buffer.anchor_before(end_point);
@@ -416,7 +417,7 @@ impl BufferDiffInner {
             }
 
             return Some(DiffHunk {
-                row_range: start_point.row..end_point.row,
+                range: start_point..end_point,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: start_anchor..end_anchor,
                 secondary_status,
@@ -442,14 +443,9 @@ impl BufferDiffInner {
 
             let hunk = cursor.item()?;
             let range = hunk.buffer_range.to_point(buffer);
-            let end_row = if range.end.column > 0 {
-                range.end.row + 1
-            } else {
-                range.end.row
-            };
 
             Some(DiffHunk {
-                row_range: range.start.row..end_row,
+                range,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
                 // The secondary status is not used by callers of this method.
@@ -667,11 +663,13 @@ impl std::fmt::Debug for BufferDiff {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum BufferDiffEvent {
     DiffChanged {
         changed_range: Option<Range<text::Anchor>>,
     },
     LanguageChanged,
+    HunksStagedOrUnstaged(Option<Rope>),
 }
 
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
@@ -766,6 +764,17 @@ impl BufferDiff {
         self.secondary_diff.clone()
     }
 
+    pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
+        if let Some(secondary_diff) = &self.secondary_diff {
+            secondary_diff.update(cx, |diff, _| {
+                diff.inner.pending_hunks.clear();
+            });
+            cx.emit(BufferDiffEvent::DiffChanged {
+                changed_range: Some(Anchor::MIN..Anchor::MAX),
+            });
+        }
+    }
+
     pub fn stage_or_unstage_hunks(
         &mut self,
         stage: bool,
@@ -788,6 +797,9 @@ impl BufferDiff {
                 }
             });
         }
+        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
+            new_index_text.clone(),
+        ));
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
             let changed_range = first.buffer_range.start..last.buffer_range.end;
             cx.emit(BufferDiffEvent::DiffChanged {
@@ -902,6 +914,14 @@ impl BufferDiff {
                 .as_ref()
                 .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
         }
+    }
+
+    pub fn hunks<'a>(
+        &'a self,
+        buffer_snapshot: &'a text::BufferSnapshot,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        self.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer_snapshot, cx)
     }
 
     pub fn hunks_intersecting_range<'a>(
@@ -1136,12 +1156,10 @@ pub fn assert_hunks<Iter>(
     let actual_hunks = diff_hunks
         .map(|hunk| {
             (
-                hunk.row_range.clone(),
+                hunk.range.clone(),
                 &diff_base[hunk.diff_base_byte_range.clone()],
                 buffer
-                    .text_for_range(
-                        Point::new(hunk.row_range.start, 0)..Point::new(hunk.row_range.end, 0),
-                    )
+                    .text_for_range(hunk.range.clone())
                     .collect::<String>(),
                 hunk.status(),
             )
@@ -1150,7 +1168,14 @@ pub fn assert_hunks<Iter>(
 
     let expected_hunks: Vec<_> = expected_hunks
         .iter()
-        .map(|(r, s, h, status)| (r.clone(), *s, h.to_string(), *status))
+        .map(|(r, old_text, new_text, status)| {
+            (
+                Point::new(r.start, 0)..Point::new(r.end, 0),
+                *old_text,
+                new_text.to_string(),
+                *status,
+            )
+        })
         .collect();
 
     assert_eq!(actual_hunks, expected_hunks);

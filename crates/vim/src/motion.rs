@@ -6,7 +6,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
 };
-use gpui::{actions, impl_actions, px, Context, Window};
+use gpui::{action_with_deprecated_aliases, actions, impl_actions, px, Context, Window};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -24,7 +24,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Motion {
     Left,
-    Backspace,
+    WrappingLeft,
     Down {
         display_lines: bool,
     },
@@ -32,7 +32,7 @@ pub enum Motion {
         display_lines: bool,
     },
     Right,
-    Space,
+    WrappingRight,
     NextWordStart {
         ignore_punctuation: bool,
     },
@@ -74,6 +74,7 @@ pub enum Motion {
     StartOfDocument,
     EndOfDocument,
     Matching,
+    GoToPercentage,
     UnmatchedForward {
         char: char,
     },
@@ -281,6 +282,7 @@ actions!(
         StartOfDocument,
         EndOfDocument,
         Matching,
+        GoToPercentage,
         NextLineStart,
         PreviousLineStart,
         StartOfLineDownward,
@@ -304,12 +306,19 @@ actions!(
     ]
 );
 
+action_with_deprecated_aliases!(vim, WrappingLeft, ["vim::Backspace"]);
+action_with_deprecated_aliases!(vim, WrappingRight, ["vim::Space"]);
+
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
         vim.motion(Motion::Left, window, cx)
     });
+    Vim::action(editor, cx, |vim, _: &WrappingLeft, window, cx| {
+        vim.motion(Motion::WrappingLeft, window, cx)
+    });
+    // Deprecated.
     Vim::action(editor, cx, |vim, _: &Backspace, window, cx| {
-        vim.motion(Motion::Backspace, window, cx)
+        vim.motion(Motion::WrappingLeft, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Down, window, cx| {
         vim.motion(
@@ -332,8 +341,12 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Right, window, cx| {
         vim.motion(Motion::Right, window, cx)
     });
+    Vim::action(editor, cx, |vim, _: &WrappingRight, window, cx| {
+        vim.motion(Motion::WrappingRight, window, cx)
+    });
+    // Deprecated.
     Vim::action(editor, cx, |vim, _: &Space, window, cx| {
-        vim.motion(Motion::Space, window, cx)
+        vim.motion(Motion::WrappingRight, window, cx)
     });
     Vim::action(
         editor,
@@ -390,6 +403,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &Matching, window, cx| {
         vim.motion(Motion::Matching, window, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &GoToPercentage, window, cx| {
+        vim.motion(Motion::GoToPercentage, window, cx)
     });
     Vim::action(
         editor,
@@ -632,6 +648,7 @@ impl Motion {
             | PreviousMethodEnd
             | NextComment
             | PreviousComment
+            | GoToPercentage
             | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
@@ -639,11 +656,11 @@ impl Motion {
             | UnmatchedBackward { .. }
             | FindForward { .. }
             | Left
-            | Backspace
+            | WrappingLeft
             | Right
             | SentenceBackward
             | SentenceForward
-            | Space
+            | WrappingRight
             | StartOfLine { .. }
             | EndOfLineDownward
             | GoToColumn
@@ -679,9 +696,9 @@ impl Motion {
             | FindForward { .. }
             | RepeatFind { .. }
             | Left
-            | Backspace
+            | WrappingLeft
             | Right
-            | Space
+            | WrappingRight
             | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
@@ -690,6 +707,7 @@ impl Motion {
             | StartOfLineDownward
             | EndOfLineDownward
             | GoToColumn
+            | GoToPercentage
             | NextWordStart { .. }
             | NextWordEnd { .. }
             | PreviousWordStart { .. }
@@ -734,6 +752,7 @@ impl Motion {
             | EndOfLine { .. }
             | EndOfLineDownward
             | Matching
+            | GoToPercentage
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | FindForward { .. }
@@ -747,9 +766,9 @@ impl Motion {
             | NextLineStart
             | PreviousLineStart => true,
             Left
-            | Backspace
+            | WrappingLeft
             | Right
-            | Space
+            | WrappingRight
             | StartOfLine { .. }
             | StartOfLineDownward
             | StartOfParagraph
@@ -796,7 +815,7 @@ impl Motion {
         let infallible = self.infallible();
         let (new_point, goal) = match self {
             Left => (left(map, point, times), SelectionGoal::None),
-            Backspace => (backspace(map, point, times), SelectionGoal::None),
+            WrappingLeft => (wrapping_left(map, point, times), SelectionGoal::None),
             Down {
                 display_lines: false,
             } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details),
@@ -810,7 +829,7 @@ impl Motion {
                 display_lines: true,
             } => up_display(map, point, goal, times, text_layout_details),
             Right => (right(map, point, times), SelectionGoal::None),
-            Space => (space(map, point, times), SelectionGoal::None),
+            WrappingRight => (wrapping_right(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
                 next_word_start(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
@@ -875,6 +894,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
+            GoToPercentage => (go_to_percentage(map, point, times), SelectionGoal::None),
             UnmatchedForward { char } => (
                 unmatched_forward(map, point, *char, times),
                 SelectionGoal::None,
@@ -1219,7 +1239,7 @@ impl Motion {
                 // DisplayPoint
 
                 if !inclusive
-                    && self != &Motion::Backspace
+                    && self != &Motion::WrappingLeft
                     && end_point.row > start_point.row
                     && end_point.column == 0
                 {
@@ -1274,7 +1294,7 @@ fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Display
     point
 }
 
-pub(crate) fn backspace(
+pub(crate) fn wrapping_left(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
     times: usize,
@@ -1288,9 +1308,9 @@ pub(crate) fn backspace(
     point
 }
 
-fn space(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        point = wrapping_right(map, point);
+        point = wrapping_right_single(map, point);
         if point == map.max_point() {
             break;
         }
@@ -1298,7 +1318,7 @@ fn space(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Displa
     point
 }
 
-fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+fn wrapping_right_single(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let max_column = map.line_len(point.row()).saturating_sub(1);
     if point.column() < max_column {
         *point.column_mut() += 1;
@@ -1329,12 +1349,25 @@ pub(crate) fn start_of_relative_buffer_row(
 
 fn up_down_buffer_rows(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
+    mut point: DisplayPoint,
     mut goal: SelectionGoal,
-    times: isize,
+    mut times: isize,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
+
+    while map.is_folded_buffer_header(point.row()) {
+        if times < 0 {
+            (point, _) = movement::up(map, point, goal, true, text_layout_details);
+            times += 1;
+        } else if times > 0 {
+            (point, _) = movement::down(map, point, goal, true, text_layout_details);
+            times -= 1;
+        } else {
+            break;
+        }
+    }
+
     let start = map.display_point_to_fold_point(point, Bias::Left);
     let begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
@@ -2168,6 +2201,22 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     } else {
         display_point
     }
+}
+
+// Go to {count} percentage in the file, on the first
+// non-blank in the line linewise.  To compute the new
+// line number this formula is used:
+// ({count} * number-of-lines + 99) / 100
+//
+// https://neovim.io/doc/user/motion.html#N%25
+fn go_to_percentage(map: &DisplaySnapshot, point: DisplayPoint, count: usize) -> DisplayPoint {
+    let total_lines = map.buffer_snapshot.max_point().row + 1;
+    let target_line = (count * total_lines as usize + 99) / 100;
+    let target_point = DisplayPoint::new(
+        DisplayRow(target_line.saturating_sub(1) as u32),
+        point.column(),
+    );
+    map.clip_point(target_point, Bias::Left)
 }
 
 fn unmatched_forward(
@@ -3445,5 +3494,104 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_go_to_percentage(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // Normal mode
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("2 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox ˇjumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.simulate_shared_keystrokes("2 5 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox jumps over
+            the ˇlazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.simulate_shared_keystrokes("7 5 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The ˇquick brown
+            fox jumps over
+            the lazy dog"});
+
+        // Visual mode
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("v 5 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jˇ»umps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("v 1 0 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lˇ»azy dog"});
     }
 }

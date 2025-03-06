@@ -237,6 +237,7 @@ pub enum IconName {
     Menu,
     MessageBubbles,
     MessageCircle,
+    Cloud,
     Mic,
     MicMute,
     Microscope,
@@ -328,6 +329,7 @@ pub enum IconName {
     ZedPredictUp,
     ZedPredictDown,
     ZedPredictDisabled,
+    ZedPredictError,
     ZedXCopilot,
 }
 
