@@ -382,6 +382,7 @@ pub fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                 sha: commit.sha.to_string().into(),
                 subject: commit.subject.to_string().into(),
                 commit_timestamp: commit.commit_timestamp,
+                has_parent: true,
             }
         }),
     }

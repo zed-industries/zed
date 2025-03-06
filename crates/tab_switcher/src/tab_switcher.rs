@@ -436,11 +436,10 @@ impl PickerDelegate for TabSwitcherDelegate {
             .child(div().w_2())
             .into_any_element();
         let close_button = div()
-            // We need this on_mouse_up here instead of on_click on the close
-            // button because Picker intercepts the same events and handles them
-            // as click's on list items.
-            // See the same handler in Picker for more details.
+            .id("close-button")
             .on_mouse_up(
+                // We need this on_mouse_up here because on macOS you may have ctrl held
+                // down to open the menu, and a ctrl-click comes through as a right click.
                 MouseButton::Right,
                 cx.listener(move |picker, _: &MouseUpEvent, window, cx| {
                     cx.stop_propagation();
@@ -451,7 +450,11 @@ impl PickerDelegate for TabSwitcherDelegate {
                 IconButton::new("close_tab", IconName::Close)
                     .icon_size(IconSize::Small)
                     .icon_color(indicator_color)
-                    .tooltip(Tooltip::text("Close")),
+                    .tooltip(Tooltip::text("Close"))
+                    .on_click(cx.listener(move |picker, _, window, cx| {
+                        cx.stop_propagation();
+                        picker.delegate.close_item_at(ix, window, cx);
+                    })),
             )
             .into_any_element();
 

@@ -257,9 +257,9 @@ checksum = "34cd60c5e3152cef0a592f1b296f1cc93715d89d2551d85315828c3a09575ff4"
 
 [[package]]
 name = "anyhow"
-version = "1.0.96"
+version = "1.0.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b964d184e89d9b6b67dd2715bc8e74cf3107fb2b529990c90cf517326150bf4"
+checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
 
 [[package]]
 name = "approx"
@@ -658,6 +658,7 @@ dependencies = [
  "assistant_tool",
  "chrono",
  "gpui",
+ "project",
  "schemars",
  "serde",
  "serde_json",
@@ -1010,9 +1011,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.86"
+version = "0.1.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "644dd749086bf3771a2fbc5f256fdb982d53f011c7d5d560304eafeecebce79d"
+checksum = "d556ec1359574147ec0c4fc5eb525f3f23263a592b1a9c07e0a75b427de55c97"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5437,6 +5438,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "language_model",
  "linkify",
  "linkme",
  "log",
@@ -13608,6 +13610,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "log",
  "project",
  "rand 0.8.5",
  "schemars",
@@ -14313,9 +14316,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.25.2"
+version = "0.25.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5168a515fe492af54c5cc8800ff8c840be09fa5168de45838afaecd3e008bce4"
+checksum = "b9ac5ea5e7f2f1700842ec071401010b9c59bf735295f6e9fa079c3dc035b167"
 dependencies = [
  "cc",
  "regex",
@@ -16995,27 +16998,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_csharp"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_deno"
-version = "0.1.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_elixir"
-version = "0.1.4"
-dependencies = [
- "zed_extension_api 0.2.0",
-]
-
-[[package]]
 name = "zed_emmet"
 version = "0.0.3"
 dependencies = [
@@ -17034,17 +17016,6 @@ name = "zed_extension_api"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "594fd10dd0f2f853eb243e2425e7c95938cef49adb81d9602921d002c5e6d9d9"
-dependencies = [
- "serde",
- "serde_json",
- "wit-bindgen",
-]
-
-[[package]]
-name = "zed_extension_api"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
 dependencies = [
  "serde",
  "serde_json",

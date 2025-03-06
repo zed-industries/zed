@@ -4,7 +4,6 @@ use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
 use git::{Commit, ShowCommitEditor};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
-use project::Project;
 use ui::{prelude::*, KeybindingHint, PopoverMenu, Tooltip};
 
 use editor::{Editor, EditorElement};
@@ -129,10 +128,9 @@ impl CommitModal {
                 active_index,
             };
 
-            let project = workspace.project().clone();
             workspace.open_panel::<GitPanel>(window, cx);
             workspace.toggle_modal(window, cx, move |window, cx| {
-                CommitModal::new(git_panel, restore_dock_position, project, window, cx)
+                CommitModal::new(git_panel, restore_dock_position, window, cx)
             })
         });
     }
@@ -140,11 +138,11 @@ impl CommitModal {
     fn new(
         git_panel: Entity<GitPanel>,
         restore_dock: RestoreDock,
-        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
+        let active_repository = panel.active_repository.clone();
         let suggested_commit_message = panel.suggest_commit_message();
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
@@ -188,7 +186,7 @@ impl CommitModal {
         let properties = ModalContainerProperties::new(window, 50);
 
         Self {
-            branch_list: branch_picker::popover(project.clone(), window, cx),
+            branch_list: branch_picker::popover(active_repository.clone(), window, cx),
             git_panel,
             commit_editor,
             restore_dock,
