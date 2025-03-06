@@ -367,8 +367,7 @@ jobs:
       # TODO: Remove this
       - name: Test
         run: |
-          $params = @{}
-          Invoke-TrustedSigning $params
+          iscc.exe
 
       # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
       - name: Copy Git Repo to Dev Drive
