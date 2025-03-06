@@ -494,6 +494,13 @@ jobs:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
 
+      - name: Upload Linux remote server to workflow run if main branch or specific label
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.gz
+          path: target/zed-remote-server-linux-x86_64.gz
+
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
@@ -541,6 +548,13 @@ jobs:
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
+
+      - name: Upload Linux remote server to workflow run if main branch or specific label
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.gz
+          path: target/zed-remote-server-linux-aarch64.gz
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
