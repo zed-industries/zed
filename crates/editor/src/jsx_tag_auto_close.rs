@@ -22,10 +22,6 @@ const TS_NODE_TAG_NAME_CHILD_INDEX: usize = 0;
 /// Maximum number of parent elements to walk back when checking if an open tag
 /// is already closed.
 ///
-/// Note: this is arbitrarily chosen. It is used to prevent walking the entire tree
-/// in large documents, in addition to making sure malformed subtrees outside of a
-/// reasonable scope do not interfere with checking if a tag is already closed
-///
 /// See the comment in `generate_auto_close_edits` for more details
 const ALREADY_CLOSED_PARENT_ELEMENT_WALK_BACK_LIMIT: usize = 2;
 
@@ -42,19 +38,19 @@ pub(crate) fn should_auto_close(
         if !text.ends_with(">") {
             continue;
         }
-        let Some(layer) = buffer.syntax_layer_at(edited_range.start) else {
+        let Some(layer) = buffer.smallest_syntax_layer_containing(edited_range.clone()) else {
             continue;
         };
         let Some(node) = layer
             .node()
-            .descendant_for_byte_range(edited_range.start, edited_range.end)
+            .named_descendant_for_byte_range(edited_range.start, edited_range.end)
         else {
             continue;
         };
         let mut jsx_open_tag_node = node;
-        if node.grammar_name() != config.open_tag_node_name {
+        if dbg!(node.grammar_name()) != config.open_tag_node_name {
             if let Some(parent) = node.parent() {
-                if parent.grammar_name() == config.open_tag_node_name {
+                if dbg!(parent.grammar_name()) == config.open_tag_node_name {
                     jsx_open_tag_node = parent;
                 }
             }
@@ -103,11 +99,12 @@ pub(crate) fn generate_auto_close_edits(
     let mut edits = Vec::with_capacity(state.len());
     for auto_edit in state {
         let edited_range = ranges[auto_edit.edit_index].clone();
-        let Some(layer) = buffer.syntax_ancestor(edited_range.clone()) else {
+        let Some(layer) = buffer.smallest_syntax_layer_containing(edited_range.clone()) else {
             continue;
         };
         // todo! perf: use layer.language().id_for_kind() to get kind ids for faster checking
-        let Some(open_tag) = layer.descendant_for_byte_range(
+        let layer_root_node = layer.node();
+        let Some(open_tag) = layer_root_node.descendant_for_byte_range(
             auto_edit.open_tag_range.start,
             auto_edit.open_tag_range.end,
         ) else {
@@ -139,14 +136,17 @@ pub(crate) fn generate_auto_close_edits(
          * We have to walk up the tree some amount because tree-sitters error correction is not
          * designed to handle this case, and usually does not represent the tree structure
          * in the way we might expect,
-         * eg.  during testing with the following tree in a TSX file
-         *      (where `|` is the cursor and the user just typed `>`)
+         *
+         * We half to walk up the tree until we hit an element with a different open tag name (`doing_deep_search == true`)
+         * because tree-sitter may pair the new open tag with the root of the tree's closing tag leaving the
+         * root's opening tag unclosed.
+         * e.g
          *      ```
          *      <div>
-         *          <div>|
+         *          <div>|cursor here|
          *      </div>
          *      ```
-         *     tree-sitter represented the tree as
+         *     in Astro/vue/svelte tree-sitter represented the tree as
          *      (
          *          (jsx_element
          *              (jsx_opening_element
@@ -166,49 +166,17 @@ pub(crate) fn generate_auto_close_edits(
          *
          * The errors with the tree-sitter tree caused by error correction,
          * are also why the naive algorithm was chosen, as the alternative
-         * approach would be to maintain or construct a full parse tree
+         * approach would be to maintain or construct a full parse tree (like tree-sitter)
          * that better represents errors in a way that we can simply check
          * the enclosing scope of the entered tag for a closing tag
          * This is far more complex and expensive, and was deemed impractical
          * given that the naive algorithm is sufficient in the majority of cases.
          */
         {
-            let mut tree_root_node = open_tag;
-            let mut found_non_tag_root = false;
-            let mut parent_element_node_count = 0;
-            // todo! child_with_descendant
-            while let Some(parent) = tree_root_node.parent() {
-                tree_root_node = parent;
-                let is_element = parent.kind() == config.jsx_element_node_name;
-                let is_error = parent.is_error();
-                if is_error || !is_element {
-                    found_non_tag_root = true;
-                    break;
-                }
-                if is_element {
-                    parent_element_node_count += 1;
-                }
-                if parent_element_node_count == ALREADY_CLOSED_PARENT_ELEMENT_WALK_BACK_LIMIT {
-                    break;
-                }
-            }
-
-            let mut unclosed_open_tag_count: i32 = 0;
-
-            let mut cursor = tree_root_node.walk();
-
-            let mut stack = Vec::with_capacity(tree_root_node.descendant_count());
-
-            if !found_non_tag_root {
-                stack.push(tree_root_node);
-            } else {
-                stack.extend(tree_root_node.children(&mut cursor));
-            }
-
-            let tag_node_name_equals = |node: &Node, tag_node_name: &str, name: &str| {
+            let tag_node_name_equals = |node: &Node, tag_name_node_name: &str, name: &str| {
                 let is_empty = name.len() == 0;
                 if let Some(node_name) = node.named_child(TS_NODE_TAG_NAME_CHILD_INDEX) {
-                    if node_name.kind() != tag_node_name {
+                    if node_name.kind() != tag_name_node_name {
                         return is_empty;
                     }
                     let range = node_name.byte_range();
@@ -216,6 +184,82 @@ pub(crate) fn generate_auto_close_edits(
                 }
                 return is_empty;
             };
+
+            let mut found_non_tag_root = false;
+            let tree_root_node = {
+                // todo! circular buffer of length ALREADY_CLOSED_PARENT_WALK_BACK_LIMIT using indices rather than Vec
+                let mut ancestors = Vec::with_capacity(
+                    layer_root_node.descendant_count() - open_tag.descendant_count(),
+                );
+                ancestors.push(layer_root_node);
+                let mut cur = layer_root_node;
+                // walk down the tree until we hit the open tag
+                // note: this is what node.parent() does internally
+                while let Some(descendant) = cur.child_with_descendant(open_tag) {
+                    if descendant == open_tag {
+                        break;
+                    }
+                    ancestors.push(descendant);
+                    cur = descendant;
+                }
+
+                assert!(ancestors.len() > 0);
+
+                let mut tree_root_node = open_tag;
+
+                let mut parent_element_node_count = 0;
+                let mut doing_deep_search = false;
+
+                for &ancestor in ancestors.iter().rev() {
+                    tree_root_node = ancestor;
+                    let is_element = ancestor.kind() == config.jsx_element_node_name;
+                    let is_error = ancestor.is_error();
+                    if is_error || !is_element {
+                        found_non_tag_root = true;
+                        break;
+                    }
+                    if is_element {
+                        let is_first = parent_element_node_count == 0;
+                        if !is_first {
+                            let has_open_tag_with_same_tag_name = ancestor
+                                .named_child(0)
+                                .filter(|n| n.kind() == config.open_tag_node_name)
+                                .map_or(false, |element_open_tag_node| {
+                                    tag_node_name_equals(
+                                        &element_open_tag_node,
+                                        &config.tag_name_node_name,
+                                        &tag_name,
+                                    )
+                                });
+                            if has_open_tag_with_same_tag_name {
+                                doing_deep_search = true;
+                            } else if doing_deep_search {
+                                break;
+                            }
+                        }
+                        parent_element_node_count += 1;
+                        if !doing_deep_search
+                            && parent_element_node_count
+                                >= ALREADY_CLOSED_PARENT_ELEMENT_WALK_BACK_LIMIT
+                        {
+                            break;
+                        }
+                    }
+                }
+                tree_root_node
+            };
+
+            let mut unclosed_open_tag_count: i32 = 0;
+
+            let mut cursor = tree_root_node.walk();
+
+            let mut stack = Vec::with_capacity(tree_root_node.descendant_count());
+
+            if found_non_tag_root {
+                stack.extend(tree_root_node.children(&mut cursor));
+            } else {
+                stack.push(tree_root_node);
+            }
 
             let mut has_erroneous_close_tag = false;
             let mut erroneous_close_tag_node_name = "";

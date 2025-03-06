@@ -3080,6 +3080,25 @@ impl BufferSnapshot {
             .last()
     }
 
+    pub fn smallest_syntax_layer_containing<D: ToOffset>(
+        &self,
+        range: Range<D>,
+    ) -> Option<SyntaxLayer> {
+        let range = range.to_offset(self);
+        return self
+            .syntax
+            .layers_for_range(range, &self.text, false)
+            .max_by(|a, b| {
+                if a.depth != b.depth {
+                    a.depth.cmp(&b.depth)
+                } else if a.offset.0 != b.offset.0 {
+                    a.offset.0.cmp(&b.offset.0)
+                } else {
+                    a.node().end_byte().cmp(&b.node().end_byte()).reverse()
+                }
+            });
+    }
+
     /// Returns the main [`Language`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
