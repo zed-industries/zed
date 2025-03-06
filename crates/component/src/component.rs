@@ -262,6 +262,7 @@ impl RenderOnce for ComponentExample {
             .text_size(px(10.))
             .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.flex_1())
+            .when(!self.grow, |this| this.flex_none())
             .child(self.element)
             .child(self.variant_name)
             .into_any_element()
