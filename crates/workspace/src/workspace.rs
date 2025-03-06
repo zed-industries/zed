@@ -2183,7 +2183,13 @@ impl Workspace {
                     } else {
                         Some(
                             this.update_in(&mut cx, |this, window, cx| {
-                                this.open_path(project_path, pane, true, window, cx)
+                                this.open_path(
+                                    project_path,
+                                    pane,
+                                    options.focus.unwrap_or(true),
+                                    window,
+                                    cx,
+                                )
                             })
                             .log_err()?
                             .await,

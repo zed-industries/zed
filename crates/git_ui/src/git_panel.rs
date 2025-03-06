@@ -4017,7 +4017,7 @@ mod tests {
 
         let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
         let panel = cx.new_window_entity(|window, cx| {
-            GitPanel::new(workspace, project, app_state, window, cx)
+            GitPanel::new(workspace.clone(), project, app_state, window, cx)
         });
 
         let handle = cx.update_window_entity(&panel, |panel, window, cx| {
@@ -4049,6 +4049,27 @@ mod tests {
                     is_staged: Some(false),
                 },),
             ],
+        );
+
+        cx.update_window_entity(&panel, |panel, window, cx| {
+            panel.select_last(&Default::default(), window, cx);
+            assert_eq!(panel.selected_entry, Some(2));
+            panel.open_diff(&Default::default(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let worktree_roots = workspace.update(cx, |workspace, cx| {
+            workspace
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path())
+                .collect::<Vec<_>>()
+        });
+        pretty_assertions::assert_eq!(
+            worktree_roots,
+            vec![
+                Path::new("/root/zed/crates/gpui").into(),
+                Path::new("/root/zed/crates/util/util.rs").into(),
+            ]
         )
     }
 }
