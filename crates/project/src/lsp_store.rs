@@ -3186,7 +3186,7 @@ impl LspStore {
                     }
                 }
             }
-            BufferStoreEvent::BufferDropped(_) => {}
+            _ => {}
         }
     }
 

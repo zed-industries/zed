@@ -1,66 +1,49 @@
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
 };
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
-use project::{
-    git::{GitStore, Repository},
-    Project,
-};
+use project::{git::Repository, Project};
 use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
 
 pub struct RepositorySelector {
     picker: Entity<Picker<RepositorySelectorDelegate>>,
-    /// The task used to update the picker's matches when there is a change to
-    /// the repository list.
-    update_matches_task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl RepositorySelector {
-    pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let git_store = project.read(cx).git_store().clone();
+    pub fn new(
+        project_handle: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let project = project_handle.read(cx);
+        let git_store = project.git_store().clone();
         let all_repositories = git_store.read(cx).all_repositories();
         let filtered_repositories = all_repositories.clone();
+
+        let widest_item_ix = all_repositories.iter().position_max_by(|a, b| {
+            a.read(cx)
+                .display_name(project, cx)
+                .len()
+                .cmp(&b.read(cx).display_name(project, cx).len())
+        });
+
         let delegate = RepositorySelectorDelegate {
-            project: project.downgrade(),
+            project: project_handle.downgrade(),
             repository_selector: cx.entity().downgrade(),
-            repository_entries: all_repositories,
+            repository_entries: all_repositories.clone(),
             filtered_repositories,
             selected_index: 0,
         };
 
         let picker = cx.new(|cx| {
             Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .widest_item(widest_item_ix)
                 .max_height(Some(rems(20.).into()))
-                .width(rems(15.))
         });
 
-        let _subscriptions =
-            vec![cx.subscribe_in(&git_store, window, Self::handle_project_git_event)];
-
-        RepositorySelector {
-            picker,
-            update_matches_task: None,
-            _subscriptions,
-        }
-    }
-
-    fn handle_project_git_event(
-        &mut self,
-        git_store: &Entity<GitStore>,
-        _event: &project::git::GitEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // TODO handle events individually
-        let task = self.picker.update(cx, |this, cx| {
-            let query = this.query(cx);
-            this.delegate.repository_entries = git_store.read(cx).all_repositories();
-            this.delegate.update_matches(query, window, cx)
-        });
-        self.update_matches_task = Some(task);
+        RepositorySelector { picker }
     }
 }
 
@@ -186,7 +169,6 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let project = self.project.upgrade()?;
         let repo_info = self.filtered_repositories.get(ix)?;
         let display_name = repo_info.read(cx).display_name(project.read(cx), cx);
-        // TODO: Implement repository item rendering
         Some(
             ListItem::new(ix)
                 .inset(true)
