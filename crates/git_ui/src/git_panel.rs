@@ -60,7 +60,7 @@ use ui::{
     ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
-use workspace::AppState;
+use workspace::{AppState, OpenOptions, OpenVisible};
 
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -744,14 +744,17 @@ impl GitPanel {
                         workspace
                             .open_abs_path(
                                 entry.abs_path.clone(),
-                                true, /* FIXME */
+                                OpenOptions {
+                                    visible: Some(OpenVisible::All),
+                                    focus: Some(false),
+                                    ..Default::default()
+                                },
                                 window,
                                 cx,
                             )
                             .detach_and_log_err(cx);
                     })
                     .ok();
-                self.focus_handle.focus(window);
             } else {
                 self.workspace
                     .update(cx, |workspace, cx| {
