@@ -1374,6 +1374,11 @@ begin
   Result := CompareText(ExpandConstant('{param:' + Name + '}'), Value) = 0;
 end;
 
+function IsUpdating(): Boolean;
+begin
+  Result := SwitchHasValue('update', 'true') and WizardSilent();
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   UpdateResultCode: Integer;
@@ -1402,9 +1407,4 @@ begin
     Result := ExpandConstant('{app}\install')
   else
     Result := ExpandConstant('{app}');
-end;
-
-function IsUpdating(Param: string): Boolean;
-begin
-  Result := (ExpandConstant('{param:update}') = 'true') and WizardSilent();
 end;
