@@ -29,6 +29,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
     while start.elapsed().as_secs() < 10 {
         match status {
             UpdateStatus::RemoveOld(old_files) => {
+                log::info!("Removing old files: {:?}", old_files);
                 let mut sccess = Vec::with_capacity(old_files.len());
                 for old_file in old_files.iter() {
                     if old_file.exists() {
@@ -44,6 +45,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
                             unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0)) }?;
                         }
                     } else {
+                        log::warn!("Old file not found: {}", old_file.display());
                         sccess.push(old_file);
                         unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0)) }?;
                     }
@@ -67,6 +69,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
                 }
             }
             UpdateStatus::CopyNew(new_files) => {
+                log::info!("Copying new files: {:?}", new_files);
                 let mut sccess = Vec::with_capacity(new_files.len());
                 for (new_file, old_file) in new_files.iter() {
                     if new_file.exists() {
@@ -83,6 +86,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
                             unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0)) }?;
                         }
                     } else {
+                        log::warn!("New file not found: {}", new_file.display());
                         sccess.push((new_file, old_file));
                         unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0)) }?;
                     }
@@ -101,6 +105,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
                 }
             }
             UpdateStatus::DeleteInstall => {
+                log::info!("Deleting install directory: {}", install_dir.display());
                 let result = std::fs::remove_dir_all(&install_dir);
                 if let Err(error) = result {
                     log::error!("Failed to remove install directory: {:?}", error);
@@ -112,6 +117,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
             UpdateStatus::DeleteUpdates => {
+                log::info!("Deleting updates directory: {}", update_dir.display());
                 let result = std::fs::remove_dir_all(&update_dir);
                 if let Err(error) = result {
                     log::error!("Failed to remove updates directory: {:?}", error);
@@ -131,6 +137,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
     if status != UpdateStatus::Done {
         Err(anyhow::anyhow!("Failed to update Zed, timeout"))
     } else {
+        log::info!("Zed updated successfully");
         Ok(())
     }
 }

@@ -16,8 +16,8 @@ use windows::{
                 GetWindowRect, PostQuitMessage, RegisterClassW, SendMessageW, SetWindowLongPtrW,
                 SystemParametersInfoW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
                 SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
-                WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD,
-                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+                WM_CLOSE, WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION,
+                WS_CHILD, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -34,7 +34,7 @@ struct DialogInfo {
 
 pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWND> {
     unsafe {
-        let class_name = windows::core::w!("ProgressBarJunkui");
+        let class_name = windows::core::w!("Zed-Auto-Updater-Dialog-Class");
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
             lpszClassName: class_name,
@@ -171,6 +171,7 @@ unsafe extern "system" fn wnd_proc(
             })
         }
         WM_TERMINATE => {
+            log::info!("WM_TERMINATE");
             with_dialog_data(hwnd, |data| {
                 if let Ok(result) = data.borrow_mut().rx.recv() {
                     if let Err(e) = result {
@@ -182,6 +183,7 @@ unsafe extern "system" fn wnd_proc(
             PostQuitMessage(0);
             LRESULT(0)
         }
+        WM_CLOSE => LRESULT(1), // Prevent user occassionally closing the window
         WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT(0)
