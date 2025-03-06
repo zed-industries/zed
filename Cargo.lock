@@ -359,6 +359,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "askpass"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "gpui",
+ "smol",
+ "tempfile",
+ "util",
+ "which 6.0.3",
+]
+
+[[package]]
 name = "assets"
 version = "0.1.0"
 dependencies = [
@@ -5357,9 +5370,11 @@ name = "git"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "async-trait",
  "collections",
  "derive_more",
+ "futures 0.3.31",
  "git2",
  "gpui",
  "http_client",
@@ -5373,7 +5388,6 @@ dependencies = [
  "serde_json",
  "smol",
  "sum_tree",
- "tempfile",
  "text",
  "time",
  "unindent",
@@ -5417,6 +5431,7 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "buffer_diff",
  "collections",
  "component",
@@ -10204,6 +10219,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "askpass",
  "async-trait",
  "buffer_diff",
  "client",
@@ -11025,6 +11041,7 @@ name = "remote"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "async-trait",
  "collections",
  "fs",
@@ -11045,7 +11062,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "util",
- "which 6.0.3",
 ]
 
 [[package]]
