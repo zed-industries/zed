@@ -14,7 +14,7 @@ use gpui::{
 
 use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
-use notifications::status_toast::StatusToast;
+use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
 use ui::{prelude::*, Divider, ListItem, ListSubHeader};
 
@@ -345,13 +345,29 @@ impl ComponentPreview {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_status_toast(window, cx, |_, cx| {
-                    StatusToast::with_icon(
-                        "success-toast-pr",
-                        IconName::GitBranchSmall,
+                    StatusToast::new(
                         "`zed/new-notification-system` created!",
+                        window,
                         cx,
+                        |mut this, window, cx| {
+                            this.icon(
+                                ToastIcon::new(IconName::GitBranchSmall)
+                                    .color(Color::Muted)
+                                    .into(),
+                            )
+                            .action(
+                                "Open Pull Request",
+                                cx.listener(|_, _, _, cx| cx.open_url("https://github.com/")),
+                            )
+                        },
                     )
-                    .action("Open Pull Request")
+                    //StatusToast::with_icon(
+                    //    "success-toast-pr",
+                    //    IconName::GitBranchSmall,
+                    //    "`zed/new-notification-system` created!",
+                    //    cx,
+                    //)
+                    // .action("Open Pull Request")
                 });
             });
         }
