@@ -23,7 +23,7 @@ use windows::{
     },
 };
 
-use crate::{show_error, TOTAL_JOBS, WM_JOB_UPDATED, WM_TERMINATE};
+use crate::windows_impl::{show_error, TOTAL_JOBS, WM_JOB_UPDATED, WM_TERMINATE};
 
 #[repr(C)]
 #[derive(Debug)]
