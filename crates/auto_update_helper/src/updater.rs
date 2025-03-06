@@ -18,10 +18,10 @@ enum UpdateStatus {
 
 pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
     let hwnd = HWND(hwnd as _);
-    let (copy_job, cleanup_job) = collect_jobs(app_dir);
+    let (remove_job, copy_job, cleanup_job) = collect_jobs(app_dir);
 
     let start = std::time::Instant::now();
-    let mut status = UpdateStatus::RemoveOld(copy_job.paths_to_delete());
+    let mut status = UpdateStatus::RemoveOld(remove_job);
     while start.elapsed().as_secs() < 10 {
         match status {
             UpdateStatus::RemoveOld(old_files) => {
@@ -77,10 +77,11 @@ struct CopyDetails {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CleanupJob(Vec<PathBuf>);
 
-fn collect_jobs(appdir: &Path) -> (CopyJob, CleanupJob) {
+fn collect_jobs(appdir: &Path) -> (RemoveJob, CopyJob, CleanupJob) {
     let updates_dir = appdir.join("updates");
     let install_dir = appdir.join("install");
     (
+        RemoveJob(vec![appdir.join("Zed.exe"), appdir.join("bin\\zed.exe")]),
         CopyJob(vec![
             CopyDetails {
                 from: install_dir.join("Zed.exe"),
@@ -134,10 +135,6 @@ impl RemoveJob {
 }
 
 impl CopyJob {
-    fn paths_to_delete(&self) -> RemoveJob {
-        RemoveJob(self.0.iter().map(|details| details.to.clone()).collect())
-    }
-
     #[cfg(not(debug_assertions))]
     fn run(self, hwnd: HWND) -> Result<Option<Self>> {
         let mut jobs = Vec::with_capacity(self.0.len());
