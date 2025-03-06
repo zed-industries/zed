@@ -45,6 +45,7 @@ if [[ -n $apt ]]; then
     libsqlite3-dev
     musl-tools
     musl-dev
+    build-essential
   )
   if (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.(04|10))' /etc/os-release); then
     deps+=( mold libstdc++-14-dev )

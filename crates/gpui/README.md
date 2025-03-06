@@ -11,7 +11,7 @@ GPUI is still in active development as we work on the Zed code editor and isn't 
 gpui = { git = "https://github.com/zed-industries/zed" }
 ```
 
-Everything in GPUI starts with an `App`. You can create one with `App::new()`, and kick off your application by passing a callback to `App::run()`. Inside this callback, you can create a new window with `AppContext::open_window()`, and register your first root view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
+Everything in GPUI starts with an `Application`. You can create one with `Application::new()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
 
 ### Dependencies
 
@@ -41,9 +41,9 @@ On macOS, GPUI uses Metal for rendering. In order to use Metal, you need to do t
 
 GPUI offers three different [registers](<https://en.wikipedia.org/wiki/Register_(sociolinguistics)>) depending on your needs:
 
-- State management and communication with Models. Whenever you need to store application state that communicates between different parts of your application, you'll want to use GPUI's models. Models are owned by GPUI and are only accessible through an owned smart pointer similar to an `Rc`. See the `app::model_context` module for more information.
+- State management and communication with `Entity`'s. Whenever you need to store application state that communicates between different parts of your application, you'll want to use GPUI's entities. Entities are owned by GPUI and are only accessible through an owned smart pointer similar to an `Rc`. See the `app::context` module for more information.
 
-- High level, declarative UI with Views. All UI in GPUI starts with a View. A view is simply a model that can be rendered, via the `Render` trait. At the start of each frame, GPUI will call this render method on the root view of a given window. Views build a tree of `elements`, lay them out and style them with a tailwind-style API, and then give them to GPUI to turn into pixels. See the `div` element for an all purpose swiss-army knife of rendering.
+- High level, declarative UI with views. All UI in GPUI starts with a view. A view is simply an `Entity` that can be rendered, by implementing the `Render` trait. At the start of each frame, GPUI will call this render method on the root view of a given window. Views build a tree of `elements`, lay them out and style them with a tailwind-style API, and then give them to GPUI to turn into pixels. See the `div` element for an all purpose swiss-army knife of rendering.
 
 - Low level, imperative UI with Elements. Elements are the building blocks of UI in GPUI, and they provide a nice wrapper around an imperative API that provides as much flexibility and control as you need. Elements have total control over how they and their child elements are rendered and can be used for making efficient views into large lists, implement custom layouting for a code editor, and anything else you can think of. See the `element` module for more information.
 
@@ -55,7 +55,7 @@ In addition to the systems above, GPUI provides a range of smaller services that
 
 - Actions are user-defined structs that are used for converting keystrokes into logical operations in your UI. Use this for implementing keyboard shortcuts, such as cmd-q. See the `action` module for more information.
 
-- Platform services, such as `quit the app` or `open a URL` are available as methods on the `app::AppContext`.
+- Platform services, such as `quit the app` or `open a URL` are available as methods on the `app::App`.
 
 - An async executor that is integrated with the platform's event loop. See the `executor` module for more information.,
 

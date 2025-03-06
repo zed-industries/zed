@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::App;
 use parking_lot::Mutex;
 
 use crate::{SlashCommand, SlashCommandRegistry};
@@ -23,7 +23,7 @@ struct WorkingSetState {
 }
 
 impl SlashCommandWorkingSet {
-    pub fn command(&self, name: &str, cx: &AppContext) -> Option<Arc<dyn SlashCommand>> {
+    pub fn command(&self, name: &str, cx: &App) -> Option<Arc<dyn SlashCommand>> {
         self.state
             .lock()
             .context_server_commands_by_name
@@ -32,7 +32,7 @@ impl SlashCommandWorkingSet {
             .or_else(|| SlashCommandRegistry::global(cx).command(name))
     }
 
-    pub fn command_names(&self, cx: &AppContext) -> Vec<Arc<str>> {
+    pub fn command_names(&self, cx: &App) -> Vec<Arc<str>> {
         let mut command_names = SlashCommandRegistry::global(cx).command_names();
         command_names.extend(
             self.state
@@ -45,7 +45,7 @@ impl SlashCommandWorkingSet {
         command_names
     }
 
-    pub fn featured_command_names(&self, cx: &AppContext) -> Vec<Arc<str>> {
+    pub fn featured_command_names(&self, cx: &App) -> Vec<Arc<str>> {
         SlashCommandRegistry::global(cx).featured_command_names()
     }
 

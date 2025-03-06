@@ -1,4 +1,4 @@
-use gpui::{prelude::*, App, AppContext, EventEmitter, Model, ModelContext};
+use gpui::{prelude::*, App, Application, Context, Entity, EventEmitter};
 
 struct Counter {
     count: usize,
@@ -11,9 +11,9 @@ struct Change {
 impl EventEmitter<Change> for Counter {}
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
-        let counter: Model<Counter> = cx.new_model(|_cx| Counter { count: 0 });
-        let subscriber = cx.new_model(|cx: &mut ModelContext<Counter>| {
+    Application::new().run(|cx: &mut App| {
+        let counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
+        let subscriber = cx.new(|cx: &mut Context<Counter>| {
             cx.subscribe(&counter, |subscriber, _emitter, event, _cx| {
                 subscriber.count += event.increment * 2;
             })

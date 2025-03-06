@@ -38,6 +38,7 @@ gpui.workspace = true
 http_client.workspace = true
 inline_completion.workspace = true
 language.workspace = true
+log.workspace = true
 lsp.workspace = true
 menu.workspace = true
 node_runtime.workspace = true
@@ -59,20 +60,22 @@ workspace.workspace = true
 async-std = { version = "1.12.0", features = ["unstable"] }
 
 [dev-dependencies]
-indoc.workspace = true
-serde_json.workspace = true
-clock = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }

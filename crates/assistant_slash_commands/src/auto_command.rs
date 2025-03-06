@@ -5,7 +5,7 @@ use assistant_slash_command::{
 };
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, Task, WeakView, WindowContext};
+use gpui::{App, AsyncApp, Task, WeakEntity, Window};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -45,7 +45,7 @@ impl SlashCommand for AutoCommand {
         self.description()
     }
 
-    fn label(&self, cx: &AppContext) -> CodeLabel {
+    fn label(&self, cx: &App) -> CodeLabel {
         create_label_for_command("auto", &["--prompt"], cx)
     }
 
@@ -53,8 +53,9 @@ impl SlashCommand for AutoCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.
         // However, we can use this opportunity to kick off a drain of the backlog.
@@ -74,14 +75,14 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("No project indexer, cannot use /auto")));
         };
 
-        let cx: &mut AppContext = cx;
+        let cx: &mut App = cx;
 
-        cx.spawn(|cx: gpui::AsyncAppContext| async move {
+        cx.spawn(|cx: gpui::AsyncApp| async move {
             let task = project_index.read_with(&cx, |project_index, cx| {
                 project_index.flush_summary_backlogs(cx)
             })?;
 
-            cx.background_executor().spawn(task).await;
+            cx.background_spawn(task).await;
 
             anyhow::Ok(Vec::new())
         })
@@ -96,9 +97,10 @@ impl SlashCommand for AutoCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: language::BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
@@ -115,7 +117,7 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("no project indexer")));
         };
 
-        let task = cx.spawn(|cx: AsyncWindowContext| async move {
+        let task = window.spawn(cx, |cx| async move {
             let summaries = project_index
                 .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
                 .await?;
@@ -127,7 +129,7 @@ impl SlashCommand for AutoCommand {
         // so you don't have to write it again.
         let original_prompt = argument.to_string();
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let commands = task.await?;
             let mut prompt = String::new();
 
@@ -187,7 +189,7 @@ struct CommandToRun {
 async fn commands_for_summaries(
     summaries: &[FileSummary],
     original_prompt: &str,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Result<Vec<CommandToRun>> {
     if summaries.is_empty() {
         log::warn!("Inferring no context because there were no summaries available.");
@@ -283,57 +285,56 @@ async fn commands_for_summaries(
         })
         .collect::<Vec<_>>();
 
-    cx.background_executor()
-        .spawn(async move {
-            let futures = completion_streams
-                .into_iter()
-                .enumerate()
-                .map(|(ix, (stream, tx))| async move {
-                    let start = std::time::Instant::now();
-                    let events = stream.await?;
-                    log::info!("Time taken for awaiting /await chunk stream #{ix}: {:?}", start.elapsed());
+    cx.background_spawn(async move {
+        let futures = completion_streams
+            .into_iter()
+            .enumerate()
+            .map(|(ix, (stream, tx))| async move {
+                let start = std::time::Instant::now();
+                let events = stream.await?;
+                log::info!("Time taken for awaiting /await chunk stream #{ix}: {:?}", start.elapsed());
 
-                    let completion: String = events
-                        .filter_map(|event| async {
-                            if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
-                                Some(text)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                        .await;
-
-                    log::info!("Time taken for all /auto chunks to come back for #{ix}: {:?}", start.elapsed());
-
-                    for line in completion.split('\n') {
-                        if let Some(first_space) = line.find(' ') {
-                            let command = &line[..first_space].trim();
-                            let arg = &line[first_space..].trim();
-
-                            tx.send(CommandToRun {
-                                name: command.to_string(),
-                                arg: arg.to_string(),
-                            })
-                            .await?;
-                        } else if !line.trim().is_empty() {
-                            // All slash-commands currently supported in context inference need a space for the argument.
-                            log::warn!(
-                                "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash command): {:?}",
-                                line
-                            );
+                let completion: String = events
+                    .filter_map(|event| async {
+                        if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
+                            Some(text)
+                        } else {
+                            None
                         }
+                    })
+                    .collect()
+                    .await;
+
+                log::info!("Time taken for all /auto chunks to come back for #{ix}: {:?}", start.elapsed());
+
+                for line in completion.split('\n') {
+                    if let Some(first_space) = line.find(' ') {
+                        let command = &line[..first_space].trim();
+                        let arg = &line[first_space..].trim();
+
+                        tx.send(CommandToRun {
+                            name: command.to_string(),
+                            arg: arg.to_string(),
+                        })
+                        .await?;
+                    } else if !line.trim().is_empty() {
+                        // All slash-commands currently supported in context inference need a space for the argument.
+                        log::warn!(
+                            "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash command): {:?}",
+                            line
+                        );
                     }
+                }
 
-                    anyhow::Ok(())
-                })
-                .collect::<Vec<_>>();
+                anyhow::Ok(())
+            })
+            .collect::<Vec<_>>();
 
-            let _ = futures::future::try_join_all(futures).await.log_err();
+        let _ = futures::future::try_join_all(futures).await.log_err();
 
-            let duration = all_start.elapsed();
-            eprintln!("All futures completed in {:?}", duration);
-        })
+        let duration = all_start.elapsed();
+        eprintln!("All futures completed in {:?}", duration);
+    })
         .await;
 
     drop(tx); // Close the channel so that rx.collect() won't hang. This is safe because all futures have completed.

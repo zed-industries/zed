@@ -17,6 +17,7 @@ async-trait.workspace = true
 collections.workspace = true
 extension.workspace = true
 futures.workspace = true
+fs.workspace = true
 gpui.workspace = true
 language.workspace = true
 lsp.workspace = true

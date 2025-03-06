@@ -9,7 +9,7 @@ use derive_more::{Deref, Display};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, BackgroundExecutor, Task};
+use gpui::{App, BackgroundExecutor, Task};
 use heed::types::SerdeBincode;
 use heed::Database;
 use parking_lot::RwLock;
@@ -62,7 +62,7 @@ pub struct IndexedDocsStore {
 }
 
 impl IndexedDocsStore {
-    pub fn try_global(provider: ProviderId, cx: &AppContext) -> Result<Arc<Self>> {
+    pub fn try_global(provider: ProviderId, cx: &App) -> Result<Arc<Self>> {
         let registry = IndexedDocsRegistry::global(cx);
         registry
             .get_provider_store(provider.clone())

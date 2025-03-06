@@ -1,9 +1,8 @@
 use crate::inline_prompt_editor::CodegenStatus;
 use client::telemetry::Telemetry;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui::{AppContext, EventEmitter, Model, ModelContext, Task};
-use language_model::{LanguageModelRegistry, LanguageModelRequest};
-use language_models::report_assistant_event;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
+use language_model::{report_assistant_event, LanguageModelRegistry, LanguageModelRequest};
 use std::{sync::Arc, time::Instant};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
@@ -11,7 +10,7 @@ use terminal::Terminal;
 pub struct TerminalCodegen {
     pub status: CodegenStatus,
     pub telemetry: Option<Arc<Telemetry>>,
-    terminal: Model<Terminal>,
+    terminal: Entity<Terminal>,
     generation: Task<()>,
     pub message_id: Option<String>,
     transaction: Option<TerminalTransaction>,
@@ -20,7 +19,7 @@ pub struct TerminalCodegen {
 impl EventEmitter<CodegenEvent> for TerminalCodegen {}
 
 impl TerminalCodegen {
-    pub fn new(terminal: Model<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
+    pub fn new(terminal: Entity<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
         Self {
             terminal,
             telemetry,
@@ -31,7 +30,7 @@ impl TerminalCodegen {
         }
     }
 
-    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
+    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut Context<Self>) {
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -53,7 +52,7 @@ impl TerminalCodegen {
 
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let task = cx.background_executor().spawn({
+                let task = cx.background_spawn({
                     let message_id = message_id.clone();
                     let executor = cx.background_executor().clone();
                     async move {
@@ -131,20 +130,20 @@ impl TerminalCodegen {
         cx.notify();
     }
 
-    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn stop(&mut self, cx: &mut Context<Self>) {
         self.status = CodegenStatus::Done;
         self.generation = Task::ready(());
         cx.emit(CodegenEvent::Finished);
         cx.notify();
     }
 
-    pub fn complete(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn complete(&mut self, cx: &mut Context<Self>) {
         if let Some(transaction) = self.transaction.take() {
             transaction.complete(cx);
         }
     }
 
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn undo(&mut self, cx: &mut Context<Self>) {
         if let Some(transaction) = self.transaction.take() {
             transaction.undo(cx);
         }
@@ -156,31 +155,34 @@ pub enum CodegenEvent {
     Finished,
 }
 
+#[cfg(not(target_os = "windows"))]
 pub const CLEAR_INPUT: &str = "\x15";
+#[cfg(target_os = "windows")]
+pub const CLEAR_INPUT: &str = "\x03";
 const CARRIAGE_RETURN: &str = "\x0d";
 
 struct TerminalTransaction {
-    terminal: Model<Terminal>,
+    terminal: Entity<Terminal>,
 }
 
 impl TerminalTransaction {
-    pub fn start(terminal: Model<Terminal>) -> Self {
+    pub fn start(terminal: Entity<Terminal>) -> Self {
         Self { terminal }
     }
 
-    pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
+    pub fn push(&mut self, hunk: String, cx: &mut App) {
         // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
         let input = Self::sanitize_input(hunk);
         self.terminal
             .update(cx, |terminal, _| terminal.input(input));
     }
 
-    pub fn undo(&self, cx: &mut AppContext) {
+    pub fn undo(&self, cx: &mut App) {
         self.terminal
             .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
     }
 
-    pub fn complete(&self, cx: &mut AppContext) {
+    pub fn complete(&self, cx: &mut App) {
         self.terminal.update(cx, |terminal, _| {
             terminal.input(CARRIAGE_RETURN.to_string())
         });

@@ -9,7 +9,7 @@ use ec4rs::{
     Properties as EditorconfigProperties,
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::AppContext;
+use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
@@ -27,7 +27,7 @@ use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
 /// Initializes the language settings.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     AllLanguageSettings::register(cx);
 }
 
@@ -35,7 +35,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn language_settings<'a>(
     language: Option<LanguageName>,
     file: Option<&'a Arc<dyn File>>,
-    cx: &'a AppContext,
+    cx: &'a App,
 ) -> Cow<'a, LanguageSettings> {
     let location = file.map(|f| SettingsLocation {
         worktree_id: f.worktree_id(cx),
@@ -47,7 +47,7 @@ pub fn language_settings<'a>(
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
     file: Option<&'a Arc<dyn File>>,
-    cx: &'a AppContext,
+    cx: &'a App,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| SettingsLocation {
         worktree_id: f.worktree_id(cx),
@@ -59,8 +59,8 @@ pub fn all_language_settings<'a>(
 /// The settings for all languages.
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
-    /// The inline completion settings.
-    pub inline_completions: InlineCompletionSettings,
+    /// The edit prediction settings.
+    pub edit_predictions: EditPredictionSettings,
     defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
@@ -109,12 +109,17 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
-    /// Controls whether inline completions are shown immediately (true)
-    /// or manually by triggering `editor::ShowInlineCompletion` (false).
-    pub show_inline_completions: bool,
-    /// Controls whether inline completions are shown in the given language
+    /// Controls where the `editor::Rewrap` action is allowed for this language.
+    ///
+    /// Note: This setting has no effect in Vim mode, as rewrap is already
+    /// allowed everywhere.
+    pub allow_rewrap: RewrapBehavior,
+    /// Controls whether edit predictions are shown immediately (true)
+    /// or manually by triggering `editor::ShowEditPrediction` (false).
+    pub show_edit_predictions: bool,
+    /// Controls whether edit predictions are shown in the given language
     /// scopes.
-    pub inline_completions_disabled_in: Vec<String>,
+    pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -195,10 +200,10 @@ impl LanguageSettings {
     }
 }
 
-/// The provider that supplies inline completions.
+/// The provider that supplies edit predictions.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum InlineCompletionProvider {
+pub enum EditPredictionProvider {
     None,
     #[default]
     Copilot,
@@ -206,14 +211,76 @@ pub enum InlineCompletionProvider {
     Zed,
 }
 
-/// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)
+impl EditPredictionProvider {
+    pub fn is_zed(&self) -> bool {
+        match self {
+            EditPredictionProvider::Zed => true,
+            EditPredictionProvider::None
+            | EditPredictionProvider::Copilot
+            | EditPredictionProvider::Supermaven => false,
+        }
+    }
+}
+
+/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
-pub struct InlineCompletionSettings {
-    /// The provider that supplies inline completions.
-    pub provider: InlineCompletionProvider,
-    /// A list of globs representing files that inline completions should be disabled for.
-    pub disabled_globs: Vec<GlobMatcher>,
+pub struct EditPredictionSettings {
+    /// The provider that supplies edit predictions.
+    pub provider: EditPredictionProvider,
+    /// A list of globs representing files that edit predictions should be disabled for.
+    /// This list adds to a pre-existing, sensible default set of globs.
+    /// Any additional ones you add are combined with them.
+    pub disabled_globs: Vec<DisabledGlob>,
+    /// Configures how edit predictions are displayed in the buffer.
+    pub mode: EditPredictionsMode,
+    /// Settings specific to GitHub Copilot.
+    pub copilot: CopilotSettings,
+    /// Whether edit predictions are enabled in the assistant panel.
+    /// This setting has no effect if globally disabled.
+    pub enabled_in_assistant: bool,
+}
+
+impl EditPredictionSettings {
+    /// Returns whether edit predictions are enabled for the given path.
+    pub fn enabled_for_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+        !self.disabled_globs.iter().any(|glob| {
+            if glob.is_absolute {
+                file.as_local()
+                    .map_or(false, |local| glob.matcher.is_match(local.abs_path(cx)))
+            } else {
+                glob.matcher.is_match(file.path())
+            }
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DisabledGlob {
+    matcher: GlobMatcher,
+    is_absolute: bool,
+}
+
+/// The mode in which edit predictions should be displayed.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditPredictionsMode {
+    /// If provider supports it, display inline when holding modifier key (e.g., alt).
+    /// Otherwise, eager preview is used.
+    #[serde(alias = "auto")]
+    Subtle,
+    /// Display inline when there are no language server completions available.
+    #[default]
+    #[serde(alias = "eager_preview")]
+    Eager,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CopilotSettings {
+    /// HTTP/HTTPS proxy to use for Copilot.
+    pub proxy: Option<String>,
+    /// Disable certificate verification for proxy (not recommended).
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for all languages.
@@ -222,9 +289,9 @@ pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
     pub features: Option<FeaturesContent>,
-    /// The inline completion settings.
+    /// The edit prediction settings.
     #[serde(default)]
-    pub inline_completions: Option<InlineCompletionSettingsContent>,
+    pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
@@ -322,20 +389,28 @@ pub struct LanguageSettingsContent {
     /// Default: ["..."]
     #[serde(default)]
     pub language_servers: Option<Vec<String>>,
-    /// Controls whether inline completions are shown immediately (true)
-    /// or manually by triggering `editor::ShowInlineCompletion` (false).
+    /// Controls where the `editor::Rewrap` action is allowed for this language.
+    ///
+    /// Note: This setting has no effect in Vim mode, as rewrap is already
+    /// allowed everywhere.
+    ///
+    /// Default: "in_comments"
+    #[serde(default)]
+    pub allow_rewrap: Option<RewrapBehavior>,
+    /// Controls whether edit predictions are shown immediately (true)
+    /// or manually by triggering `editor::ShowEditPrediction` (false).
     ///
     /// Default: true
     #[serde(default)]
-    pub show_inline_completions: Option<bool>,
-    /// Controls whether inline completions are shown in the given language
+    pub show_edit_predictions: Option<bool>,
+    /// Controls whether edit predictions are shown in the given language
     /// scopes.
     ///
     /// Example: ["string", "comment"]
     ///
     /// Default: []
     #[serde(default)]
-    pub inline_completions_disabled_in: Option<Vec<String>>,
+    pub edit_predictions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
@@ -400,12 +475,52 @@ pub struct LanguageSettingsContent {
     pub show_completion_documentation: Option<bool>,
 }
 
-/// The contents of the inline completion settings.
+/// The behavior of `editor::Rewrap`.
+#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RewrapBehavior {
+    /// Only rewrap within comments.
+    #[default]
+    InComments,
+    /// Only rewrap within the current selection(s).
+    InSelections,
+    /// Allow rewrapping anywhere.
+    Anywhere,
+}
+
+/// The contents of the edit prediction settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct InlineCompletionSettingsContent {
-    /// A list of globs representing files that inline completions should be disabled for.
+pub struct EditPredictionSettingsContent {
+    /// A list of globs representing files that edit predictions should be disabled for.
+    /// This list adds to a pre-existing, sensible default set of globs.
+    /// Any additional ones you add are combined with them.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
+    /// The mode used to display edit predictions in the buffer.
+    /// Provider support required.
+    #[serde(default)]
+    pub mode: EditPredictionsMode,
+    /// Settings specific to GitHub Copilot.
+    #[serde(default)]
+    pub copilot: CopilotSettingsContent,
+    /// Whether edit predictions are enabled in the assistant prompt editor.
+    /// This has no effect if globally disabled.
+    #[serde(default = "default_true")]
+    pub enabled_in_assistant: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct CopilotSettingsContent {
+    /// HTTP/HTTPS proxy to use for Copilot.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub proxy: Option<String>,
+    /// Disable certificate verification for the proxy (not recommended).
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for enabling/disabling features.
@@ -414,8 +529,8 @@ pub struct InlineCompletionSettingsContent {
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
-    /// Determines which inline completion provider to use.
-    pub inline_completion_provider: Option<InlineCompletionProvider>,
+    /// Determines which edit prediction provider to use.
+    pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
@@ -817,6 +932,13 @@ pub struct InlayHintSettings {
     /// Default: 50
     #[serde(default = "scroll_debounce_ms")]
     pub scroll_debounce_ms: u64,
+    /// Toggles inlay hints (hides or shows) when the user presses the modifiers specified.
+    /// If only a subset of the modifiers specified is pressed, hints are not toggled.
+    /// If no modifiers are specified, this is equivalent to `None`.
+    ///
+    /// Default: None
+    #[serde(default)]
+    pub toggle_on_modifiers_press: Option<Modifiers>,
 }
 
 fn edit_debounce_ms() -> u64 {
@@ -857,7 +979,7 @@ impl AllLanguageSettings {
         &'a self,
         location: Option<SettingsLocation<'a>>,
         language_name: Option<&LanguageName>,
-        cx: &'a AppContext,
+        cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
         let settings = language_name
             .and_then(|name| self.languages.get(name))
@@ -876,30 +998,20 @@ impl AllLanguageSettings {
         }
     }
 
-    /// Returns whether inline completions are enabled for the given path.
-    pub fn inline_completions_enabled_for_path(&self, path: &Path) -> bool {
-        !self
-            .inline_completions
-            .disabled_globs
-            .iter()
-            .any(|glob| glob.is_match(path))
+    /// Returns whether edit predictions are enabled for the given path.
+    pub fn edit_predictions_enabled_for_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+        self.edit_predictions.enabled_for_file(file, cx)
     }
 
-    /// Returns whether inline completions are enabled for the given language and path.
-    pub fn inline_completions_enabled(
-        &self,
-        language: Option<&Arc<Language>>,
-        path: Option<&Path>,
-        cx: &AppContext,
-    ) -> bool {
-        if let Some(path) = path {
-            if !self.inline_completions_enabled_for_path(path) {
-                return false;
-            }
-        }
-
+    /// Returns whether edit predictions are enabled for the given language and path.
+    pub fn show_edit_predictions(&self, language: Option<&Arc<Language>>, cx: &App) -> bool {
         self.language(None, language.map(|l| l.name()).as_ref(), cx)
-            .show_inline_completions
+            .show_edit_predictions
+    }
+
+    /// Returns the edit predictions preview mode for the given language and path.
+    pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
+        self.edit_predictions.mode
     }
 }
 
@@ -979,7 +1091,7 @@ impl settings::Settings for AllLanguageSettings {
 
     type FileContent = AllLanguageSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let default_value = sources.default;
 
         // A default is provided for all settings.
@@ -994,15 +1106,38 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         let mut copilot_enabled = default_value.features.as_ref().and_then(|f| f.copilot);
-        let mut inline_completion_provider = default_value
+        let mut edit_prediction_provider = default_value
             .features
             .as_ref()
-            .and_then(|f| f.inline_completion_provider);
-        let mut completion_globs = default_value
-            .inline_completions
+            .and_then(|f| f.edit_prediction_provider);
+        let mut edit_predictions_mode = default_value
+            .edit_predictions
+            .as_ref()
+            .map(|edit_predictions| edit_predictions.mode)
+            .ok_or_else(Self::missing_default)?;
+
+        let mut completion_globs: HashSet<&String> = default_value
+            .edit_predictions
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
+            .map(|globs| globs.iter().collect())
             .ok_or_else(Self::missing_default)?;
+
+        let mut copilot_settings = default_value
+            .edit_predictions
+            .as_ref()
+            .map(|settings| settings.copilot.clone())
+            .map(|copilot| CopilotSettings {
+                proxy: copilot.proxy,
+                proxy_no_verify: copilot.proxy_no_verify,
+            })
+            .unwrap_or_default();
+
+        let mut edit_predictions_enabled_in_assistant = default_value
+            .edit_predictions
+            .as_ref()
+            .map(|settings| settings.enabled_in_assistant)
+            .unwrap_or(true);
 
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
 
@@ -1023,16 +1158,34 @@ impl settings::Settings for AllLanguageSettings {
             if let Some(provider) = user_settings
                 .features
                 .as_ref()
-                .and_then(|f| f.inline_completion_provider)
+                .and_then(|f| f.edit_prediction_provider)
             {
-                inline_completion_provider = Some(provider);
+                edit_prediction_provider = Some(provider);
             }
-            if let Some(globs) = user_settings
-                .inline_completions
+
+            if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {
+                edit_predictions_mode = edit_predictions.mode;
+                edit_predictions_enabled_in_assistant = edit_predictions.enabled_in_assistant;
+
+                if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
+                    completion_globs.extend(disabled_globs.iter());
+                }
+            }
+
+            if let Some(proxy) = user_settings
+                .edit_predictions
                 .as_ref()
-                .and_then(|f| f.disabled_globs.as_ref())
+                .and_then(|settings| settings.copilot.proxy.clone())
             {
-                completion_globs = globs;
+                copilot_settings.proxy = Some(proxy);
+            }
+
+            if let Some(proxy_no_verify) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.copilot.proxy_no_verify)
+            {
+                copilot_settings.proxy_no_verify = Some(proxy_no_verify);
             }
 
             // A user's global settings override the default global settings and
@@ -1073,18 +1226,26 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         Ok(Self {
-            inline_completions: InlineCompletionSettings {
-                provider: if let Some(provider) = inline_completion_provider {
+            edit_predictions: EditPredictionSettings {
+                provider: if let Some(provider) = edit_prediction_provider {
                     provider
                 } else if copilot_enabled.unwrap_or(true) {
-                    InlineCompletionProvider::Copilot
+                    EditPredictionProvider::Copilot
                 } else {
-                    InlineCompletionProvider::None
+                    EditPredictionProvider::None
                 },
                 disabled_globs: completion_globs
                     .iter()
-                    .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
+                    .filter_map(|g| {
+                        Some(DisabledGlob {
+                            matcher: globset::Glob::new(g).ok()?.compile_matcher(),
+                            is_absolute: Path::new(g).is_absolute(),
+                        })
+                    })
                     .collect(),
+                mode: edit_predictions_mode,
+                copilot: copilot_settings,
+                enabled_in_assistant: edit_predictions_enabled_in_assistant,
             },
             defaults,
             languages,
@@ -1095,7 +1256,7 @@ impl settings::Settings for AllLanguageSettings {
     fn json_schema(
         generator: &mut schemars::gen::SchemaGenerator,
         params: &settings::SettingsJsonSchemaParams,
-        _: &AppContext,
+        _: &App,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
 
@@ -1188,13 +1349,14 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.enable_language_server,
     );
     merge(&mut settings.language_servers, src.language_servers.clone());
+    merge(&mut settings.allow_rewrap, src.allow_rewrap);
     merge(
-        &mut settings.show_inline_completions,
-        src.show_inline_completions,
+        &mut settings.show_edit_predictions,
+        src.show_edit_predictions,
     );
     merge(
-        &mut settings.inline_completions_disabled_in,
-        src.inline_completions_disabled_in.clone(),
+        &mut settings.edit_predictions_disabled_in,
+        src.edit_predictions_disabled_in.clone(),
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
     merge(
@@ -1238,6 +1400,8 @@ pub struct PrettierSettings {
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestAppContext;
+
     use super::*;
 
     #[test]
@@ -1280,6 +1444,132 @@ mod tests {
         let raw_auto = "{\"formatter\": {}}";
         let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
         assert!(result.is_err());
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {
+        use crate::TestFile;
+        use std::path::PathBuf;
+
+        let cx = cx.app.borrow_mut();
+
+        let build_settings = |globs: &[&str]| -> EditPredictionSettings {
+            EditPredictionSettings {
+                disabled_globs: globs
+                    .iter()
+                    .map(|glob_str| {
+                        #[cfg(windows)]
+                        let glob_str = {
+                            let mut g = String::new();
+
+                            if glob_str.starts_with('/') {
+                                g.push_str("C:");
+                            }
+
+                            g.push_str(&glob_str.replace('/', "\\"));
+                            g
+                        };
+                        #[cfg(windows)]
+                        let glob_str = glob_str.as_str();
+
+                        DisabledGlob {
+                            matcher: globset::Glob::new(glob_str).unwrap().compile_matcher(),
+                            is_absolute: Path::new(glob_str).is_absolute(),
+                        }
+                    })
+                    .collect(),
+                ..Default::default()
+            }
+        };
+
+        const WORKTREE_NAME: &str = "project";
+        let make_test_file = |segments: &[&str]| -> Arc<dyn File> {
+            let mut path_buf = PathBuf::new();
+            path_buf.extend(segments);
+
+            Arc::new(TestFile {
+                path: path_buf.as_path().into(),
+                root_name: WORKTREE_NAME.to_string(),
+                local_root: Some(PathBuf::from(if cfg!(windows) {
+                    "C:\\absolute\\"
+                } else {
+                    "/absolute/"
+                })),
+            })
+        };
+
+        let test_file = make_test_file(&["src", "test", "file.rs"]);
+
+        // Test relative globs
+        let settings = build_settings(&["*.rs"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["*.txt"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test absolute globs
+        let settings = build_settings(&["/absolute/**/*.rs"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["/other/**/*.rs"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test exact path match relative
+        let settings = build_settings(&["src/test/file.rs"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["src/test/otherfile.rs"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test exact path match absolute
+        let settings = build_settings(&[&format!("/absolute/{}/src/test/file.rs", WORKTREE_NAME)]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["/other/test/otherfile.rs"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test * glob
+        let settings = build_settings(&["*"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["*.txt"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test **/* glob
+        let settings = build_settings(&["**/*"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["other/**/*"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test directory/** glob
+        let settings = build_settings(&["src/**"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+
+        let test_file_root: Arc<dyn File> = Arc::new(TestFile {
+            path: PathBuf::from("file.rs").as_path().into(),
+            root_name: WORKTREE_NAME.to_string(),
+            local_root: Some(PathBuf::from("/absolute/")),
+        });
+        assert!(settings.enabled_for_file(&test_file_root, &cx));
+
+        let settings = build_settings(&["other/**"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test **/directory/* glob
+        let settings = build_settings(&["**/test/*"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["**/other/*"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test multiple globs
+        let settings = build_settings(&["*.rs", "*.txt", "src/**"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["*.txt", "*.md", "other/**"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test dot files
+        let dot_file = make_test_file(&[".config", "settings.json"]);
+        let settings = build_settings(&[".*/**"]);
+        assert!(!settings.enabled_for_file(&dot_file, &cx));
+
+        let dot_env_file = make_test_file(&[".env"]);
+        let settings = build_settings(&[".env"]);
+        assert!(!settings.enabled_for_file(&dot_env_file, &cx));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
-use gpui::{BackgroundExecutor, Model, TestAppContext};
+use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use language::{
     range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
 };
@@ -953,8 +953,8 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let dot_git_dir = repo_path.join(".git");
                     let contents = contents
-                        .iter()
-                        .map(|(path, contents)| (path.as_path(), contents.clone()))
+                        .into_iter()
+                        .map(|(path, contents)| (path.into(), contents))
                         .collect::<Vec<_>>();
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
                         client.fs().create_dir(&dot_git_dir).await?;
@@ -1339,19 +1339,19 @@ impl RandomizedTest for ProjectCollaborationTest {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(host_buffer.read(cx).remote_id())
+                            .get_unstaged_diff(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
-                            .base_text_string(cx)
+                            .base_text_string()
                     });
                     let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(guest_buffer.read(cx).remote_id())
+                            .get_unstaged_diff(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
-                            .base_text_string(cx)
+                            .base_text_string()
                     });
                     assert_eq!(
                             guest_diff_base, host_diff_base,
@@ -1475,10 +1475,10 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
 fn buffer_for_full_path(
     client: &TestClient,
-    project: &Model<Project>,
+    project: &Entity<Project>,
     full_path: &PathBuf,
     cx: &TestAppContext,
-) -> Option<Model<language::Buffer>> {
+) -> Option<Entity<language::Buffer>> {
     client
         .buffers_for_project(project)
         .iter()
@@ -1494,7 +1494,7 @@ fn project_for_root_name(
     client: &TestClient,
     root_name: &str,
     cx: &TestAppContext,
-) -> Option<Model<Project>> {
+) -> Option<Entity<Project>> {
     if let Some(ix) = project_ix_for_root_name(client.local_projects().deref(), root_name, cx) {
         return Some(client.local_projects()[ix].clone());
     }
@@ -1506,7 +1506,7 @@ fn project_for_root_name(
 }
 
 fn project_ix_for_root_name(
-    projects: &[Model<Project>],
+    projects: &[Entity<Project>],
     root_name: &str,
     cx: &TestAppContext,
 ) -> Option<usize> {
@@ -1518,7 +1518,7 @@ fn project_ix_for_root_name(
     })
 }
 
-fn root_name_for_project(project: &Model<Project>, cx: &TestAppContext) -> String {
+fn root_name_for_project(project: &Entity<Project>, cx: &TestAppContext) -> String {
     project.read_with(cx, |project, cx| {
         project
             .visible_worktrees(cx)
@@ -1531,7 +1531,7 @@ fn root_name_for_project(project: &Model<Project>, cx: &TestAppContext) -> Strin
 }
 
 fn project_path_for_full_path(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     full_path: &Path,
     cx: &TestAppContext,
 ) -> Option<ProjectPath> {
@@ -1552,7 +1552,7 @@ fn project_path_for_full_path(
 }
 
 async fn ensure_project_shared(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     client: &TestClient,
     cx: &mut TestAppContext,
 ) {
@@ -1585,7 +1585,7 @@ async fn ensure_project_shared(
     }
 }
 
-fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Model<Project>> {
+fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Entity<Project>> {
     client
         .local_projects()
         .deref()

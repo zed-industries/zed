@@ -126,7 +126,7 @@ Zed supports hundreds of programming languages and text formats. Some work out-o
 - [Nix](https://github.com/zed-extensions/nix)
 - [Noir](https://github.com/shuklaayush/zed-noir)
 - [Nu](https://github.com/zed-extensions/nu)
-- [Odin](https://github.com/clseibold/zed-odin)
+- [Odin](https://github.com/rxptr/zed-odin)
 - [Pact](https://github.com/kadena-community/pact-zed)
 - [Pest](https://github.com/pest-parser/zed-pest)
 - [PICA200 assembly](https://github.com/Squareheron942/zed-pica200)

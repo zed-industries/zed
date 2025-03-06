@@ -21,7 +21,8 @@ use client::{
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+pub use dock::Panel;
+use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -32,12 +33,11 @@ use futures::{
 };
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
-    transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
-    Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
-    Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle,
-    WindowId, WindowOptions,
+    transparent_black, Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
+    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
+    Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions,
 };
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -48,7 +48,7 @@ use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
-    simple_message_notification::MessageNotification, DetachAndPromptErr, NotificationHandle,
+    simple_message_notification::MessageNotification, DetachAndPromptErr, Notifications,
 };
 pub use pane::*;
 pub use pane_group::*;
@@ -61,7 +61,9 @@ use persistence::{
     SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
-use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree};
+use project::{
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+};
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -104,6 +106,8 @@ use crate::persistence::{
     SerializedAxis,
 };
 
+pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
     env::var("ZED_WINDOW_SIZE")
         .ok()
@@ -131,8 +135,6 @@ actions!(
         ClearAllNotifications,
         CloseAllDocks,
         CloseWindow,
-        CopyPath,
-        CopyRelativePath,
         Feedback,
         FollowNextCollaborator,
         MoveFocusedPanelToNextPosition,
@@ -146,6 +148,7 @@ actions!(
         Open,
         OpenFiles,
         OpenInTerminal,
+        OpenComponentPreview,
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
@@ -177,6 +180,7 @@ pub struct SetBottomDockLayout(pub BottomDockLayout);
 pub struct SwapPaneInDirection(pub SplitDirection);
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
@@ -184,6 +188,7 @@ pub struct MoveItemToPane {
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
@@ -191,25 +196,25 @@ pub struct MoveItemToPaneInDirection {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
@@ -218,6 +223,7 @@ pub struct CloseInactiveTabsAndPanes {
 pub struct SendKeystrokes(pub String);
 
 #[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
@@ -236,7 +242,6 @@ impl_actions!(
     workspace,
     [
         ActivatePane,
-        ActivatePaneInDirection,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
         MoveItemToPane,
@@ -245,9 +250,22 @@ impl_actions!(
         Reload,
         Save,
         SaveAll,
-        SwapPaneInDirection,
         SendKeystrokes,
         SetBottomDockLayout
+    ]
+);
+
+actions!(
+    workspace,
+    [
+        ActivatePaneLeft,
+        ActivatePaneRight,
+        ActivatePaneUp,
+        ActivatePaneDown,
+        SwapPaneLeft,
+        SwapPaneRight,
+        SwapPaneUp,
+        SwapPaneDown,
     ]
 );
 
@@ -266,7 +284,7 @@ pub struct Toast {
     id: NotificationId,
     msg: Cow<'static, str>,
     autohide: bool,
-    on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
+    on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut Window, &mut App)>)>,
 }
 
 impl Toast {
@@ -282,7 +300,7 @@ impl Toast {
     pub fn on_click<F, M>(mut self, message: M, on_click: F) -> Self
     where
         M: Into<Cow<'static, str>>,
-        F: Fn(&mut WindowContext) + 'static,
+        F: Fn(&mut Window, &mut App) + 'static,
     {
         self.on_click = Some((message.into(), Arc::new(on_click)));
         self
@@ -303,6 +321,7 @@ impl PartialEq for Toast {
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
@@ -329,18 +348,14 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
-pub fn init_settings(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut App) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
 }
 
-fn prompt_and_open_paths(
-    app_state: Arc<AppState>,
-    options: PathPromptOptions,
-    cx: &mut AppContext,
-) {
+fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
     let paths = cx.prompt_for_paths(options);
     cx.spawn(|cx| async move {
         match paths.await.anyhow().and_then(|res| res) {
@@ -359,7 +374,7 @@ fn prompt_and_open_paths(
                         .and_then(|window| window.downcast::<Workspace>())
                     {
                         workspace_window
-                            .update(cx, |workspace, cx| {
+                            .update(cx, |workspace, _, cx| {
                                 workspace.show_portal_error(err.to_string(), cx);
                             })
                             .ok();
@@ -372,9 +387,9 @@ fn prompt_and_open_paths(
     .detach();
 }
 
-pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
-    notifications::init(cx);
+    component::init();
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
@@ -382,7 +397,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &Open, cx: &mut AppContext| {
+        move |_: &Open, cx: &mut App| {
             if let Some(app_state) = app_state.upgrade() {
                 prompt_and_open_paths(
                     app_state,
@@ -398,7 +413,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &OpenFiles, cx: &mut AppContext| {
+        move |_: &OpenFiles, cx: &mut App| {
             let directories = cx.can_select_mixed_files_and_dirs();
             if let Some(app_state) = app_state.upgrade() {
                 prompt_and_open_paths(
@@ -419,30 +434,31 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 struct ProjectItemOpeners(Vec<ProjectItemOpener>);
 
 type ProjectItemOpener = fn(
-    &Model<Project>,
+    &Entity<Project>,
     &ProjectPath,
-    &mut WindowContext,
+    &mut Window,
+    &mut App,
 )
     -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
 
-type WorkspaceItemBuilder = Box<dyn FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
+type WorkspaceItemBuilder = Box<dyn FnOnce(&mut Window, &mut Context<Pane>) -> Box<dyn ItemHandle>>;
 
 impl Global for ProjectItemOpeners {}
 
 /// Registers a [ProjectItem] for the app. When opening a file, all the registered
 /// items will get a chance to open the file, starting from the project item that
 /// was added last.
-pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
+pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
     let builders = cx.default_global::<ProjectItemOpeners>();
-    builders.push(|project, project_path, cx| {
+    builders.push(|project, project_path, window, cx| {
         let project_item = <I::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
         let project = project.clone();
-        Some(cx.spawn(|cx| async move {
+        Some(window.spawn(cx, |cx| async move {
             let project_item = project_item.await?;
             let project_entry_id: Option<ProjectEntryId> =
                 project_item.read_with(&cx, project::ProjectItem::entry_id)?;
-            let build_workspace_item = Box::new(|cx: &mut ViewContext<Pane>| {
-                Box::new(cx.new_view(|cx| I::for_project_item(project, project_item, cx)))
+            let build_workspace_item = Box::new(|window: &mut Window, cx: &mut Context<Pane>| {
+                Box::new(cx.new(|cx| I::for_project_item(project, project_item, window, cx)))
                     as Box<dyn ItemHandle>
             }) as Box<_>;
             Ok((project_entry_id, build_workspace_item))
@@ -455,10 +471,11 @@ pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
 
 struct FollowableViewDescriptor {
     from_state_proto: fn(
-        View<Workspace>,
+        Entity<Workspace>,
         ViewId,
         &mut Option<proto::view::Variant>,
-        &mut WindowContext,
+        &mut Window,
+        &mut App,
     ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>,
     to_followable_view: fn(&AnyView) -> Box<dyn FollowableItemHandle>,
 }
@@ -466,12 +483,12 @@ struct FollowableViewDescriptor {
 impl Global for FollowableViewRegistry {}
 
 impl FollowableViewRegistry {
-    pub fn register<I: FollowableItem>(cx: &mut AppContext) {
+    pub fn register<I: FollowableItem>(cx: &mut App) {
         cx.default_global::<Self>().0.insert(
             TypeId::of::<I>(),
             FollowableViewDescriptor {
-                from_state_proto: |workspace, id, state, cx| {
-                    I::from_state_proto(workspace, id, state, cx).map(|task| {
+                from_state_proto: |workspace, id, state, window, cx| {
+                    I::from_state_proto(workspace, id, state, window, cx).map(|task| {
                         cx.foreground_executor()
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
@@ -482,21 +499,22 @@ impl FollowableViewRegistry {
     }
 
     pub fn from_state_proto(
-        workspace: View<Workspace>,
+        workspace: Entity<Workspace>,
         view_id: ViewId,
         mut state: Option<proto::view::Variant>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>> {
         cx.update_default_global(|this: &mut Self, cx| {
             this.0.values().find_map(|descriptor| {
-                (descriptor.from_state_proto)(workspace.clone(), view_id, &mut state, cx)
+                (descriptor.from_state_proto)(workspace.clone(), view_id, &mut state, window, cx)
             })
         })
     }
 
     pub fn to_followable_view(
         view: impl Into<AnyView>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Box<dyn FollowableItemHandle>> {
         let this = cx.try_global::<Self>()?;
         let view = view.into();
@@ -508,13 +526,14 @@ impl FollowableViewRegistry {
 #[derive(Copy, Clone)]
 struct SerializableItemDescriptor {
     deserialize: fn(
-        Model<Project>,
-        WeakView<Workspace>,
+        Entity<Project>,
+        WeakEntity<Workspace>,
         WorkspaceId,
         ItemId,
-        &mut ViewContext<Pane>,
+        &mut Window,
+        &mut Context<Pane>,
     ) -> Task<Result<Box<dyn ItemHandle>>>,
-    cleanup: fn(WorkspaceId, Vec<ItemId>, &mut WindowContext) -> Task<Result<()>>,
+    cleanup: fn(WorkspaceId, Vec<ItemId>, &mut Window, &mut App) -> Task<Result<()>>,
     view_to_serializable_item: fn(AnyView) -> Box<dyn SerializableItemHandle>,
 }
 
@@ -529,11 +548,12 @@ impl Global for SerializableItemRegistry {}
 impl SerializableItemRegistry {
     fn deserialize(
         item_kind: &str,
-        project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
         workspace_id: WorkspaceId,
         item_item: ItemId,
-        cx: &mut ViewContext<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
     ) -> Task<Result<Box<dyn ItemHandle>>> {
         let Some(descriptor) = Self::descriptor(item_kind, cx) else {
             return Task::ready(Err(anyhow!(
@@ -542,14 +562,15 @@ impl SerializableItemRegistry {
             )));
         };
 
-        (descriptor.deserialize)(project, workspace, workspace_id, item_item, cx)
+        (descriptor.deserialize)(project, workspace, workspace_id, item_item, window, cx)
     }
 
     fn cleanup(
         item_kind: &str,
         workspace_id: WorkspaceId,
         loaded_items: Vec<ItemId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         let Some(descriptor) = Self::descriptor(item_kind, cx) else {
             return Task::ready(Err(anyhow!(
@@ -558,35 +579,37 @@ impl SerializableItemRegistry {
             )));
         };
 
-        (descriptor.cleanup)(workspace_id, loaded_items, cx)
+        (descriptor.cleanup)(workspace_id, loaded_items, window, cx)
     }
 
     fn view_to_serializable_item_handle(
         view: AnyView,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Box<dyn SerializableItemHandle>> {
         let this = cx.try_global::<Self>()?;
         let descriptor = this.descriptors_by_type.get(&view.entity_type())?;
         Some((descriptor.view_to_serializable_item)(view))
     }
 
-    fn descriptor(item_kind: &str, cx: &AppContext) -> Option<SerializableItemDescriptor> {
+    fn descriptor(item_kind: &str, cx: &App) -> Option<SerializableItemDescriptor> {
         let this = cx.try_global::<Self>()?;
         this.descriptors_by_kind.get(item_kind).copied()
     }
 }
 
-pub fn register_serializable_item<I: SerializableItem>(cx: &mut AppContext) {
+pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
     let serialized_item_kind = I::serialized_item_kind();
 
     let registry = cx.default_global::<SerializableItemRegistry>();
     let descriptor = SerializableItemDescriptor {
-        deserialize: |project, workspace, workspace_id, item_id, cx| {
-            let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+        deserialize: |project, workspace, workspace_id, item_id, window, cx| {
+            let task = I::deserialize(project, workspace, workspace_id, item_id, window, cx);
             cx.foreground_executor()
                 .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
         },
-        cleanup: |workspace_id, loaded_items, cx| I::cleanup(workspace_id, loaded_items, cx),
+        cleanup: |workspace_id, loaded_items, window, cx| {
+            I::cleanup(workspace_id, loaded_items, window, cx)
+        },
         view_to_serializable_item: |view| Box::new(view.downcast::<I>().unwrap()),
     };
     registry
@@ -600,12 +623,12 @@ pub fn register_serializable_item<I: SerializableItem>(cx: &mut AppContext) {
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
-    pub user_store: Model<UserStore>,
-    pub workspace_store: Model<WorkspaceStore>,
+    pub user_store: Entity<UserStore>,
+    pub workspace_store: Entity<WorkspaceStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
+    pub build_window_options: fn(Option<Uuid>, &mut App) -> WindowOptions,
     pub node_runtime: NodeRuntime,
-    pub session: Model<AppSession>,
+    pub session: Entity<AppSession>,
 }
 
 struct GlobalAppState(Weak<AppState>);
@@ -625,19 +648,20 @@ struct Follower {
 }
 
 impl AppState {
-    pub fn global(cx: &AppContext) -> Weak<Self> {
+    #[track_caller]
+    pub fn global(cx: &App) -> Weak<Self> {
         cx.global::<GlobalAppState>().0.clone()
     }
-    pub fn try_global(cx: &AppContext) -> Option<Weak<Self>> {
+    pub fn try_global(cx: &App) -> Option<Weak<Self>> {
         cx.try_global::<GlobalAppState>()
             .map(|state| state.0.clone())
     }
-    pub fn set_global(state: Weak<AppState>, cx: &mut AppContext) {
+    pub fn set_global(state: Weak<AppState>, cx: &mut App) {
         cx.set_global(GlobalAppState(state));
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut AppContext) -> Arc<Self> {
+    pub fn test(cx: &mut App) -> Arc<Self> {
         use node_runtime::NodeRuntime;
         use session::Session;
         use settings::SettingsStore;
@@ -652,9 +676,9 @@ impl AppState {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
-        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
-        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let session = cx.new(|cx| AppSession::new(Session::test(), cx));
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
@@ -686,9 +710,16 @@ impl DelayedDebouncedEditAction {
         }
     }
 
-    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ViewContext<Workspace>, func: F)
-    where
-        F: 'static + Send + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> Task<Result<()>>,
+    fn fire_new<F>(
+        &mut self,
+        delay: Duration,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+        func: F,
+    ) where
+        F: 'static
+            + Send
+            + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> Task<Result<()>>,
     {
         if let Some(channel) = self.cancel_channel.take() {
             _ = channel.send(());
@@ -698,7 +729,7 @@ impl DelayedDebouncedEditAction {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn(move |workspace, mut cx| async move {
+        self.task = Some(cx.spawn_in(window, move |workspace, mut cx| async move {
             let mut timer = cx.background_executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -710,7 +741,9 @@ impl DelayedDebouncedEditAction {
             }
 
             if let Some(result) = workspace
-                .update(&mut cx, |workspace, cx| (func)(workspace, cx))
+                .update_in(&mut cx, |workspace, window, cx| {
+                    (func)(workspace, window, cx)
+                })
                 .log_err()
             {
                 result.await.log_err();
@@ -720,7 +753,7 @@ impl DelayedDebouncedEditAction {
 }
 
 pub enum Event {
-    PaneAdded(View<Pane>),
+    PaneAdded(Entity<Pane>),
     PaneRemoved,
     ItemAdded {
         item: Box<dyn ItemHandle>,
@@ -728,12 +761,12 @@ pub enum Event {
     ItemRemoved,
     ActiveItemChanged,
     UserSavedItem {
-        pane: WeakView<Pane>,
+        pane: WeakEntity<Pane>,
         item: Box<dyn WeakItemHandle>,
         save_intent: SaveIntent,
     },
     ContactRequestedJoin(u64),
-    WorkspaceCreated(WeakView<Workspace>),
+    WorkspaceCreated(WeakEntity<Workspace>),
     SpawnTask {
         action: Box<SpawnInTerminal>,
     },
@@ -754,14 +787,19 @@ pub enum OpenVisible {
 }
 
 type PromptForNewPath = Box<
-    dyn Fn(&mut Workspace, &mut ViewContext<Workspace>) -> oneshot::Receiver<Option<ProjectPath>>,
+    dyn Fn(
+        &mut Workspace,
+        &mut Window,
+        &mut Context<Workspace>,
+    ) -> oneshot::Receiver<Option<ProjectPath>>,
 >;
 
 type PromptForOpenPath = Box<
     dyn Fn(
         &mut Workspace,
         DirectoryLister,
-        &mut ViewContext<Workspace>,
+        &mut Window,
+        &mut Context<Workspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
@@ -772,30 +810,30 @@ type PromptForOpenPath = Box<
 /// The `Workspace` owns everybody's state and serves as a default, "global context",
 /// that can be used to register a global action to be triggered from any place in the window.
 pub struct Workspace {
-    weak_self: WeakView<Self>,
-    workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
+    weak_self: WeakEntity<Self>,
+    workspace_actions: Vec<Box<dyn Fn(Div, &mut Window, &mut Context<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
-    left_dock: View<Dock>,
-    bottom_dock: View<Dock>,
+    left_dock: Entity<Dock>,
+    bottom_dock: Entity<Dock>,
     bottom_dock_layout: BottomDockLayout,
-    right_dock: View<Dock>,
-    panes: Vec<View<Pane>>,
-    panes_by_item: HashMap<EntityId, WeakView<Pane>>,
-    active_pane: View<Pane>,
-    last_active_center_pane: Option<WeakView<Pane>>,
+    right_dock: Entity<Dock>,
+    panes: Vec<Entity<Pane>>,
+    panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
+    active_pane: Entity<Pane>,
+    last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
-    status_bar: View<StatusBar>,
-    modal_layer: View<ModalLayer>,
+    status_bar: Entity<StatusBar>,
+    modal_layer: Entity<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(NotificationId, Box<dyn NotificationHandle>)>,
-    project: Model<Project>,
+    notifications: Notifications,
+    project: Entity<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
-    last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
+    last_leaders_by_pane: HashMap<WeakEntity<Pane>, PeerId>,
     window_edited: bool,
-    active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
+    active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
     app_state: Arc<AppState>,
@@ -825,8 +863,8 @@ pub struct ViewId {
 }
 
 pub struct FollowerState {
-    center_pane: View<Pane>,
-    dock_pane: Option<View<Pane>>,
+    center_pane: Entity<Pane>,
+    dock_pane: Option<Entity<Pane>>,
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, FollowerView>,
 }
@@ -842,47 +880,49 @@ impl Workspace {
 
     pub fn new(
         workspace_id: Option<WorkspaceId>,
-        project: Model<Project>,
+        project: Entity<Project>,
         app_state: Arc<AppState>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&project, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&project, move |this, _, event, cx| {
+        cx.observe_in(&project, window, |_, _, _, cx| cx.notify())
+            .detach();
+        cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
                 project::Event::RemoteIdChanged(_) => {
-                    this.update_window_title(cx);
+                    this.update_window_title(window, cx);
                 }
 
                 project::Event::CollaboratorLeft(peer_id) => {
-                    this.collaborator_left(*peer_id, cx);
+                    this.collaborator_left(*peer_id, window, cx);
                 }
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
-                    this.update_window_title(cx);
-                    this.serialize_workspace(cx);
+                    this.update_window_title(window, cx);
+                    this.serialize_workspace(window, cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
-                    this.update_window_edited(cx);
+                    this.update_window_edited(window, cx);
                     let leaders_to_unfollow =
                         this.follower_states.keys().copied().collect::<Vec<_>>();
                     for leader_id in leaders_to_unfollow {
-                        this.unfollow(leader_id, cx);
+                        this.unfollow(leader_id, window, cx);
                     }
                 }
 
                 project::Event::DisconnectedFromSshRemote => {
-                    this.update_window_edited(cx);
+                    this.update_window_edited(window, cx);
                 }
 
                 project::Event::Closed => {
-                    cx.remove_window();
+                    window.remove_window();
                 }
 
                 project::Event::DeletedEntry(_, entry_id) => {
                     for pane in this.panes.iter() {
                         pane.update(cx, |pane, cx| {
-                            pane.handle_deleted_project_item(*entry_id, cx)
+                            pane.handle_deleted_project_item(*entry_id, window, cx)
                         });
                     }
                 }
@@ -893,7 +933,7 @@ impl Workspace {
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
                     cx,
-                    |cx| cx.new_view(|_| MessageNotification::new(message.clone())),
+                    |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
                 ),
 
                 project::Event::HideToast { notification_id } => {
@@ -911,8 +951,8 @@ impl Workspace {
                         NotificationId::composite::<LanguageServerPrompt>(id as usize),
                         cx,
                         |cx| {
-                            cx.new_view(|_| {
-                                notifications::LanguageServerPrompt::new(request.clone())
+                            cx.new(|cx| {
+                                notifications::LanguageServerPrompt::new(request.clone(), cx)
                             })
                         },
                     );
@@ -924,40 +964,43 @@ impl Workspace {
         })
         .detach();
 
-        cx.on_focus_lost(|this, cx| {
+        cx.on_focus_lost(window, |this, window, cx| {
             let focus_handle = this.focus_handle(cx);
-            cx.focus(&focus_handle);
+            window.focus(&focus_handle);
         })
         .detach();
 
-        let weak_handle = cx.view().downgrade();
+        let weak_handle = cx.entity().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
-        let center_pane = cx.new_view(|cx| {
+        let center_pane = cx.new(|cx| {
             let mut center_pane = Pane::new(
                 weak_handle.clone(),
                 project.clone(),
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                window,
                 cx,
             );
-            center_pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            center_pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             center_pane
         });
-        cx.subscribe(&center_pane, Self::handle_pane_event).detach();
+        cx.subscribe_in(&center_pane, window, Self::handle_pane_event)
+            .detach();
 
-        cx.focus_view(&center_pane);
+        window.focus(&center_pane.focus_handle(cx));
+
         cx.emit(Event::PaneAdded(center_pane.clone()));
 
-        let window_handle = cx.window_handle().downcast::<Workspace>().unwrap();
+        let window_handle = window.window_handle().downcast::<Workspace>().unwrap();
         app_state.workspace_store.update(cx, |store, _| {
             store.workspaces.insert(window_handle);
         });
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user();
         let mut connection_status = app_state.client.status();
-        let _observe_current_user = cx.spawn(|this, mut cx| async move {
+        let _observe_current_user = cx.spawn_in(window, |this, mut cx| async move {
             current_user.next().await;
             connection_status.next().await;
             let mut stream =
@@ -973,7 +1016,7 @@ impl Workspace {
         // that each asynchronous operation can be run in order.
         let (leader_updates_tx, mut leader_updates_rx) =
             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
-        let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
+        let _apply_leader_updates = cx.spawn_in(window, |this, mut cx| async move {
             while let Some((leader_id, update)) = leader_updates_rx.next().await {
                 Self::process_leader_update(&this, leader_id, update, &mut cx)
                     .await
@@ -985,86 +1028,88 @@ impl Workspace {
 
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
 
-        let left_dock = Dock::new(DockPosition::Left, cx);
-        let bottom_dock = Dock::new(DockPosition::Bottom, cx);
+        let left_dock = Dock::new(DockPosition::Left, window, cx);
+        let bottom_dock = Dock::new(DockPosition::Bottom, window, cx);
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
-        let right_dock = Dock::new(DockPosition::Right, cx);
-        let left_dock_buttons = cx.new_view(|cx| PanelButtons::new(left_dock.clone(), cx));
-        let bottom_dock_buttons = cx.new_view(|cx| PanelButtons::new(bottom_dock.clone(), cx));
-        let right_dock_buttons = cx.new_view(|cx| PanelButtons::new(right_dock.clone(), cx));
-        let status_bar = cx.new_view(|cx| {
-            let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
-            status_bar.add_left_item(left_dock_buttons, cx);
-            status_bar.add_right_item(right_dock_buttons, cx);
-            status_bar.add_right_item(bottom_dock_buttons, cx);
+        let right_dock = Dock::new(DockPosition::Right, window, cx);
+        let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
+        let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
+        let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let status_bar = cx.new(|cx| {
+            let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
+            status_bar.add_left_item(left_dock_buttons, window, cx);
+            status_bar.add_right_item(right_dock_buttons, window, cx);
+            status_bar.add_right_item(bottom_dock_buttons, window, cx);
             status_bar
         });
 
-        let modal_layer = cx.new_view(|_| ModalLayer::new());
+        let modal_layer = cx.new(|_| ModalLayer::new());
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
-            let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
+            let subscriptions = vec![cx.subscribe_in(&call, window, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
 
         let (serializable_items_tx, serializable_items_rx) =
             mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
-        let _items_serializer = cx.spawn(|this, mut cx| async move {
+        let _items_serializer = cx.spawn_in(window, |this, mut cx| async move {
             Self::serialize_items(&this, serializable_items_rx, &mut cx).await
         });
 
         let subscriptions = vec![
-            cx.observe_window_activation(Self::on_window_activation_changed),
-            cx.observe_window_bounds(move |this, cx| {
+            cx.observe_window_activation(window, Self::on_window_activation_changed),
+            cx.observe_window_bounds(window, move |this, window, cx| {
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
-                this.bounds_save_task_queued = Some(cx.spawn(|this, mut cx| async move {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(100))
-                        .await;
-                    this.update(&mut cx, |this, cx| {
-                        if let Some(display) = cx.display() {
-                            if let Ok(display_uuid) = display.uuid() {
-                                let window_bounds = cx.inner_window_bounds();
-                                if let Some(database_id) = workspace_id {
-                                    cx.background_executor()
-                                        .spawn(DB.set_window_open_status(
-                                            database_id,
-                                            SerializedWindowBounds(window_bounds),
-                                            display_uuid,
-                                        ))
-                                        .detach_and_log_err(cx);
+                this.bounds_save_task_queued =
+                    Some(cx.spawn_in(window, |this, mut cx| async move {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(100))
+                            .await;
+                        this.update_in(&mut cx, |this, window, cx| {
+                            if let Some(display) = window.display(cx) {
+                                if let Ok(display_uuid) = display.uuid() {
+                                    let window_bounds = window.inner_window_bounds();
+                                    if let Some(database_id) = workspace_id {
+                                        cx.background_executor()
+                                            .spawn(DB.set_window_open_status(
+                                                database_id,
+                                                SerializedWindowBounds(window_bounds),
+                                                display_uuid,
+                                            ))
+                                            .detach_and_log_err(cx);
+                                    }
                                 }
                             }
-                        }
-                        this.bounds_save_task_queued.take();
-                    })
-                    .ok();
-                }));
+                            this.bounds_save_task_queued.take();
+                        })
+                        .ok();
+                    }));
                 cx.notify();
             }),
-            cx.observe_window_appearance(|_, cx| {
-                let window_appearance = cx.appearance();
+            cx.observe_window_appearance(window, |_, window, cx| {
+                let window_appearance = window.appearance();
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
                 ThemeSettings::reload_current_theme(cx);
+                ThemeSettings::reload_current_icon_theme(cx);
             }),
-            cx.on_release(|this, window, cx| {
-                this.app_state.workspace_store.update(cx, |store, _| {
-                    let window = window.downcast::<Self>().unwrap();
-                    store.workspaces.remove(&window);
+            cx.on_release(move |this, cx| {
+                this.app_state.workspace_store.update(cx, move |store, _| {
+                    store.workspaces.remove(&window_handle.clone());
                 })
             }),
         ];
 
-        cx.defer(|this, cx| {
-            this.update_window_title(cx);
+        cx.defer_in(window, |this, window, cx| {
+            this.update_window_title(window, cx);
+            this.show_initial_notifications(cx);
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -1118,7 +1163,7 @@ impl Workspace {
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
         env: Option<HashMap<String, String>>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<
         anyhow::Result<(
             WindowHandle<Workspace>,
@@ -1202,12 +1247,13 @@ impl Workspace {
                     .await;
             }
             let window = if let Some(window) = requesting_window {
-                cx.update_window(window.into(), |_, cx| {
-                    cx.replace_root_view(|cx| {
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.replace_root(cx, |window, cx| {
                         Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
                             app_state.clone(),
+                            window,
                             cx,
                         )
                     });
@@ -1244,10 +1290,15 @@ impl Workspace {
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
-                    move |cx| {
-                        cx.new_view(|cx| {
-                            let mut workspace =
-                                Workspace::new(Some(workspace_id), project_handle, app_state, cx);
+                    move |window, cx| {
+                        cx.new(|cx| {
+                            let mut workspace = Workspace::new(
+                                Some(workspace_id),
+                                project_handle,
+                                app_state,
+                                window,
+                                cx,
+                            );
                             workspace.centered_layout = centered_layout;
                             workspace
                         })
@@ -1257,28 +1308,28 @@ impl Workspace {
 
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
-                .update(&mut cx, |_workspace, cx| {
-                    open_items(serialized_workspace, project_paths, cx)
+                .update(&mut cx, |_workspace, window, cx| {
+                    open_items(serialized_workspace, project_paths, window, cx)
                 })?
                 .await
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, cx| cx.activate_window())
+                .update(&mut cx, |_, window, _| window.activate_window())
                 .log_err();
             Ok((window, opened_items))
         })
     }
 
-    pub fn weak_handle(&self) -> WeakView<Self> {
+    pub fn weak_handle(&self) -> WeakEntity<Self> {
         self.weak_self.clone()
     }
 
-    pub fn left_dock(&self) -> &View<Dock> {
+    pub fn left_dock(&self) -> &Entity<Dock> {
         &self.left_dock
     }
 
-    pub fn bottom_dock(&self) -> &View<Dock> {
+    pub fn bottom_dock(&self) -> &Entity<Dock> {
         &self.bottom_dock
     }
 
@@ -1292,31 +1343,45 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
-    pub fn right_dock(&self) -> &View<Dock> {
+    pub fn right_dock(&self) -> &Entity<Dock> {
         &self.right_dock
+    }
+
+    pub fn all_docks(&self) -> [&Entity<Dock>; 3] {
+        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+    }
+
+    pub fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
+        match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        }
     }
 
     pub fn is_edited(&self) -> bool {
         self.window_edited
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
-        let focus_handle = panel.focus_handle(cx);
-        cx.on_focus_in(&focus_handle, Self::handle_panel_focused)
+    pub fn add_panel<T: Panel>(
+        &mut self,
+        panel: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus_handle = panel.panel_focus_handle(cx);
+        cx.on_focus_in(&focus_handle, window, Self::handle_panel_focused)
             .detach();
 
-        let dock = match panel.position(cx) {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
+        let dock_position = panel.position(window, cx);
+        let dock = self.dock_at_position(dock_position);
 
         dock.update(cx, |dock, cx| {
-            dock.add_panel(panel, self.weak_self.clone(), cx)
+            dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
     }
 
-    pub fn status_bar(&self) -> &View<StatusBar> {
+    pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
     }
 
@@ -1324,17 +1389,17 @@ impl Workspace {
         &self.app_state
     }
 
-    pub fn user_store(&self) -> &Model<UserStore> {
+    pub fn user_store(&self) -> &Entity<UserStore> {
         &self.app_state.user_store
     }
 
-    pub fn project(&self) -> &Model<Project> {
+    pub fn project(&self) -> &Entity<Project> {
         &self.project
     }
 
     pub fn recent_navigation_history_iter(
         &self,
-        cx: &AppContext,
+        cx: &App,
     ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
@@ -1388,7 +1453,7 @@ impl Workspace {
     pub fn recent_navigation_history(
         &self,
         limit: Option<usize>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<(ProjectPath, Option<PathBuf>)> {
         self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
@@ -1397,13 +1462,14 @@ impl Workspace {
 
     fn navigate_history(
         &mut self,
-        pane: WeakView<Pane>,
+        pane: WeakEntity<Pane>,
         mode: NavigationMode,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, cx| {
-                pane.focus(cx);
+                window.focus(&pane.focus_handle(cx));
                 loop {
                     // Retrieve the weak item handle from the history.
                     let entry = pane.nav_history_mut().pop(mode, cx)?;
@@ -1416,12 +1482,12 @@ impl Workspace {
                     {
                         let prev_active_item_index = pane.active_item_index();
                         pane.nav_history_mut().set_mode(mode);
-                        pane.activate_item(index, true, true, cx);
+                        pane.activate_item(index, true, true, window, cx);
                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
 
                         let mut navigated = prev_active_item_index != pane.active_item_index();
                         if let Some(data) = entry.data {
-                            navigated |= pane.active_item()?.navigate(data, cx);
+                            navigated |= pane.active_item()?.navigate(data, window, cx);
                         }
 
                         if navigated {
@@ -1443,9 +1509,9 @@ impl Workspace {
 
         if let Some((project_path, abs_path, entry)) = to_load {
             // If the item was no longer present, then load it again from its previous path, first try the local path
-            let open_by_project_path = self.load_path(project_path.clone(), cx);
+            let open_by_project_path = self.load_path(project_path.clone(), window, cx);
 
-            cx.spawn(|workspace, mut cx| async move {
+            cx.spawn_in(window, |workspace, mut cx| async move {
                 let open_by_project_path = open_by_project_path.await;
                 let mut navigated = false;
                 match open_by_project_path
@@ -1457,19 +1523,20 @@ impl Workspace {
                             pane.active_item().map(|p| p.item_id())
                         })?;
 
-                        pane.update(&mut cx, |pane, cx| {
+                        pane.update_in(&mut cx, |pane, window, cx| {
                             let item = pane.open_item(
                                 project_entry_id,
                                 true,
                                 entry.is_preview,
+                                true,
                                 None,
-                                cx,
+                                window, cx,
                                 build_item,
                             );
                             navigated |= Some(item.item_id()) != prev_active_item_id;
                             pane.nav_history_mut().set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
-                                navigated |= item.navigate(data, cx);
+                                navigated |= item.navigate(data, window, cx);
                             }
                         })?;
                     }
@@ -1481,19 +1548,19 @@ impl Workspace {
                                 pane.nav_history_mut().set_mode(mode);
                                 pane.active_item().map(|p| p.item_id())
                             })?;
-                            let open_by_abs_path = workspace.update(&mut cx, |workspace, cx| {
-                                workspace.open_abs_path(abs_path.clone(), false, cx)
+                            let open_by_abs_path = workspace.update_in(&mut cx, |workspace, window, cx| {
+                                workspace.open_abs_path(abs_path.clone(), false, window, cx)
                             })?;
                             match open_by_abs_path
                                 .await
                                 .with_context(|| format!("Navigating to {abs_path:?}"))
                             {
                                 Ok(item) => {
-                                    pane.update(&mut cx, |pane, cx| {
+                                    pane.update_in(&mut cx, |pane, window, cx| {
                                         navigated |= Some(item.item_id()) != prev_active_item_id;
                                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
                                         if let Some(data) = entry.data {
-                                            navigated |= item.navigate(data, cx);
+                                            navigated |= item.navigate(data, window, cx);
                                         }
                                     })?;
                                 }
@@ -1507,8 +1574,8 @@ impl Workspace {
 
                 if !navigated {
                     workspace
-                        .update(&mut cx, |workspace, cx| {
-                            Self::navigate_history(workspace, pane, mode, cx)
+                        .update_in(&mut cx, |workspace, window, cx| {
+                            Self::navigate_history(workspace, pane, mode, window, cx)
                         })?
                         .await?;
                 }
@@ -1522,24 +1589,31 @@ impl Workspace {
 
     pub fn go_back(
         &mut self,
-        pane: WeakView<Pane>,
-        cx: &mut ViewContext<Workspace>,
+        pane: WeakEntity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        self.navigate_history(pane, NavigationMode::GoingBack, cx)
+        self.navigate_history(pane, NavigationMode::GoingBack, window, cx)
     }
 
     pub fn go_forward(
         &mut self,
-        pane: WeakView<Pane>,
-        cx: &mut ViewContext<Workspace>,
+        pane: WeakEntity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        self.navigate_history(pane, NavigationMode::GoingForward, cx)
+        self.navigate_history(pane, NavigationMode::GoingForward, window, cx)
     }
 
-    pub fn reopen_closed_item(&mut self, cx: &mut ViewContext<Workspace>) -> Task<Result<()>> {
+    pub fn reopen_closed_item(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
         self.navigate_history(
             self.active_pane().downgrade(),
             NavigationMode::ReopeningClosedItem,
+            window,
             cx,
         )
     }
@@ -1548,7 +1622,7 @@ impl Workspace {
         &self.app_state.client
     }
 
-    pub fn set_titlebar_item(&mut self, item: AnyView, cx: &mut ViewContext<Self>) {
+    pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
         self.titlebar_item = Some(item);
         cx.notify();
     }
@@ -1573,18 +1647,19 @@ impl Workspace {
         &mut self,
         path_prompt_options: PathPromptOptions,
         lister: DirectoryLister,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
-            let rx = prompt(self, lister, cx);
+            let rx = prompt(self, lister, window, cx);
             self.on_prompt_for_open_path = Some(prompt);
             rx
         } else {
             let (tx, rx) = oneshot::channel();
             let abs_path = cx.prompt_for_paths(path_prompt_options);
 
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn_in(window, |this, mut cx| async move {
                 let Ok(result) = abs_path.await else {
                     return Ok(());
                 };
@@ -1594,10 +1669,10 @@ impl Workspace {
                         tx.send(result).log_err();
                     }
                     Err(err) => {
-                        let rx = this.update(&mut cx, |this, cx| {
+                        let rx = this.update_in(&mut cx, |this, window, cx| {
                             this.show_portal_error(err.to_string(), cx);
                             let prompt = this.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(this, lister, cx);
+                            let rx = prompt(this, lister, window, cx);
                             this.on_prompt_for_open_path = Some(prompt);
                             rx
                         })?;
@@ -1616,13 +1691,14 @@ impl Workspace {
 
     pub fn prompt_for_new_path(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
         if (self.project.read(cx).is_via_collab() || self.project.read(cx).is_via_ssh())
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, cx);
+            let rx = prompt(self, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             rx
         } else {
@@ -1636,15 +1712,15 @@ impl Workspace {
 
             let (tx, rx) = oneshot::channel();
             let abs_path = cx.prompt_for_new_path(&start_abs_path);
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn_in(window, |this, mut cx| async move {
                 let abs_path = match abs_path.await? {
                     Ok(path) => path,
                     Err(err) => {
-                        let rx = this.update(&mut cx, |this, cx| {
+                        let rx = this.update_in(&mut cx, |this, window, cx| {
                             this.show_portal_error(err.to_string(), cx);
 
                             let prompt = this.on_prompt_for_new_path.take().unwrap();
-                            let rx = prompt(this, cx);
+                            let rx = prompt(this, window, cx);
                             this.on_prompt_for_new_path = Some(prompt);
                             rx
                         })?;
@@ -1693,37 +1769,39 @@ impl Workspace {
     /// to the callback. Otherwise, a new empty window will be created.
     pub fn with_local_workspace<T, F>(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
         callback: F,
     ) -> Task<Result<T>>
     where
         T: 'static,
-        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: 'static + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
-            Task::ready(Ok(callback(self, cx)))
+            Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
-            cx.spawn(|_vh, mut cx| async move {
+            cx.spawn_in(window, |_vh, mut cx| async move {
                 let (workspace, _) = task.await?;
                 workspace.update(&mut cx, callback)
             })
         }
     }
 
-    pub fn worktrees<'a>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Model<Worktree>> {
+    pub fn worktrees<'a>(&self, cx: &'a App) -> impl 'a + Iterator<Item = Entity<Worktree>> {
         self.project.read(cx).worktrees(cx)
     }
 
     pub fn visible_worktrees<'a>(
         &self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = Model<Worktree>> {
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = Entity<Worktree>> {
         self.project.read(cx).visible_worktrees(cx)
     }
 
-    pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static {
         let futures = self
             .worktrees(cx)
             .filter_map(|worktree| worktree.read(cx).as_local())
@@ -1736,15 +1814,15 @@ impl Workspace {
         }
     }
 
-    pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
+    pub fn close_global(_: &CloseWindow, cx: &mut App) {
         cx.defer(|cx| {
             cx.windows().iter().find(|window| {
                 window
-                    .update(cx, |_, cx| {
-                        if cx.is_window_active() {
+                    .update(cx, |_, window, _| {
+                        if window.is_window_active() {
                             //This can only get called when the window's project connection has been lost
                             //so we don't need to prompt the user for anything and instead just close the window
-                            cx.remove_window();
+                            window.remove_window();
                             true
                         } else {
                             false
@@ -1755,14 +1833,11 @@ impl Workspace {
         });
     }
 
-    pub fn close_window(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) {
-        let prepare = self.prepare_to_close(CloseIntent::CloseWindow, cx);
-        let window = cx.window_handle();
-        cx.spawn(|_, mut cx| async move {
+    pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        let prepare = self.prepare_to_close(CloseIntent::CloseWindow, window, cx);
+        cx.spawn_in(window, |_, mut cx| async move {
             if prepare.await? {
-                window.update(&mut cx, |_, cx| {
-                    cx.remove_window();
-                })?;
+                cx.update(|window, _cx| window.remove_window())?;
             }
             anyhow::Ok(())
         })
@@ -1772,21 +1847,22 @@ impl Workspace {
     pub fn move_focused_panel_to_next_position(
         &mut self,
         _: &MoveFocusedPanelToNextPosition,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        let docks = self.all_docks();
         let active_dock = docks
             .into_iter()
-            .find(|dock| dock.focus_handle(cx).contains_focused(cx));
+            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
 
         if let Some(dock) = active_dock {
             dock.update(cx, |dock, cx| {
                 let active_panel = dock
                     .active_panel()
-                    .filter(|panel| panel.focus_handle(cx).contains_focused(cx));
+                    .filter(|panel| panel.panel_focus_handle(cx).contains_focused(window, cx));
 
                 if let Some(panel) = active_panel {
-                    panel.move_to_next_position(cx);
+                    panel.move_to_next_position(window, cx);
                 }
             })
         }
@@ -1795,18 +1871,18 @@ impl Workspace {
     pub fn prepare_to_close(
         &mut self,
         close_intent: CloseIntent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
-        let window = cx.window_handle();
 
         // On Linux and Windows, closing the last window should restore the last workspace.
         let save_last_workspace = cfg!(not(target_os = "macos"))
             && close_intent != CloseIntent::ReplaceWindow
             && cx.windows().len() == 1;
 
-        cx.spawn(|this, mut cx| async move {
-            let workspace_count = (*cx).update(|cx| {
+        cx.spawn_in(window, |this, mut cx| async move {
+            let workspace_count = cx.update(|_window, cx| {
                 cx.windows()
                     .iter()
                     .filter(|window| window.downcast::<Workspace>().is_some())
@@ -1818,12 +1894,13 @@ impl Workspace {
                     && workspace_count == 1
                     && active_call.read_with(&cx, |call, _| call.room().is_some())?
                 {
-                    let answer = window.update(&mut cx, |_, cx| {
-                        cx.prompt(
+                    let answer = cx.update(|window, cx| {
+                        window.prompt(
                             PromptLevel::Warning,
                             "Do you want to leave the current call?",
                             None,
                             &["Close window and hang up", "Cancel"],
+                            cx,
                         )
                     })?;
 
@@ -1839,8 +1916,8 @@ impl Workspace {
             }
 
             let save_result = this
-                .update(&mut cx, |this, cx| {
-                    this.save_all_internal(SaveIntent::Close, cx)
+                .update_in(&mut cx, |this, window, cx| {
+                    this.save_all_internal(SaveIntent::Close, window, cx)
                 })?
                 .await;
 
@@ -1850,20 +1927,31 @@ impl Workspace {
                 && !save_last_workspace
                 && save_result.as_ref().map_or(false, |&res| res)
             {
-                this.update(&mut cx, |this, cx| this.remove_from_session(cx))?
-                    .await;
+                this.update_in(&mut cx, |this, window, cx| {
+                    this.remove_from_session(window, cx)
+                })?
+                .await;
             }
 
             save_result
         })
     }
 
-    fn save_all(&mut self, action: &SaveAll, cx: &mut ViewContext<Self>) {
-        self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx)
-            .detach_and_log_err(cx);
+    fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_all_internal(
+            action.save_intent.unwrap_or(SaveIntent::SaveAll),
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
-    fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
+    fn send_keystrokes(
+        &mut self,
+        action: &SendKeystrokes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut state = self.dispatching_keystrokes.borrow_mut();
         if !state.0.insert(action.0.clone()) {
             cx.propagate();
@@ -1880,25 +1968,25 @@ impl Workspace {
         drop(state);
 
         let keystrokes = self.dispatching_keystrokes.clone();
-        cx.window_context()
-            .spawn(|mut cx| async move {
+        window
+            .spawn(cx, |mut cx| async move {
                 // limit to 100 keystrokes to avoid infinite recursion.
                 for _ in 0..100 {
                     let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
                         keystrokes.borrow_mut().0.clear();
                         return Ok(());
                     };
-                    cx.update(|cx| {
-                        let focused = cx.focused();
-                        cx.dispatch_keystroke(keystroke.clone());
-                        if cx.focused() != focused {
+                    cx.update(|window, cx| {
+                        let focused = window.focused(cx);
+                        window.dispatch_keystroke(keystroke.clone(), cx);
+                        if window.focused(cx) != focused {
                             // dispatch_keystroke may cause the focus to change.
                             // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
                             // And we need that to happen before the next keystroke to keep vim mode happy...
                             // (Note that the tests always do this implicitly, so you must manually test with something like:
                             //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                             // )
-                            cx.draw();
+                            window.draw(cx);
                         }
                     })?;
                 }
@@ -1912,7 +2000,8 @@ impl Workspace {
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_disconnected(cx) {
             return Task::ready(Ok(true));
@@ -1933,16 +2022,16 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
-        cx.spawn(|workspace, mut cx| async move {
+        cx.spawn_in(window, |workspace, mut cx| async move {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let (serialize_tasks, remaining_dirty_items) =
-                    workspace.update(&mut cx, |workspace, cx| {
+                    workspace.update_in(&mut cx, |workspace, window, cx| {
                         let mut remaining_dirty_items = Vec::new();
                         let mut serialize_tasks = Vec::new();
                         for (pane, item) in dirty_items {
                             if let Some(task) = item
                                 .to_serializable_item_handle(cx)
-                                .and_then(|handle| handle.serialize(workspace, true, cx))
+                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
                             {
                                 serialize_tasks.push(task);
                             } else {
@@ -1955,22 +2044,23 @@ impl Workspace {
                 futures::future::try_join_all(serialize_tasks).await?;
 
                 if remaining_dirty_items.len() > 1 {
-                    let answer = workspace.update(&mut cx, |_, cx| {
-                        let (prompt, detail) = Pane::file_names_for_prompt(
+                    let answer = workspace.update_in(&mut cx, |_, window, cx| {
+                        let detail = Pane::file_names_for_prompt(
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
-                            remaining_dirty_items.len(),
                             cx,
                         );
-                        cx.prompt(
+                        window.prompt(
                             PromptLevel::Warning,
-                            &prompt,
+                            &"Do you want to save all changes in the following files?",
                             Some(&detail),
                             &["Save all", "Discard all", "Cancel"],
+                            cx,
                         )
                     })?;
                     match answer.await.log_err() {
                         Some(0) => save_intent = SaveIntent::SaveAll,
                         Some(1) => save_intent = SaveIntent::Skip,
+                        Some(2) => return Ok(false),
                         _ => {}
                     }
                 }
@@ -1982,23 +2072,12 @@ impl Workspace {
 
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
-                    cx.update(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
+                    cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
-                    if let Some(ix) =
-                        pane.update(&mut cx, |pane, _| pane.index_for_item(item.as_ref()))?
-                    {
-                        if !Pane::save_item(
-                            project.clone(),
-                            &pane,
-                            ix,
-                            &*item,
-                            save_intent,
-                            &mut cx,
-                        )
+                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, &mut cx)
                         .await?
-                        {
-                            return Ok(false);
-                        }
+                    {
+                        return Ok(false);
                     }
                 }
             }
@@ -2010,23 +2089,24 @@ impl Workspace {
         &mut self,
         replace_current_window: bool,
         paths: Vec<PathBuf>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let window = cx.window_handle().downcast::<Self>();
+        let window_handle = window.window_handle().downcast::<Self>();
         let is_remote = self.project.read(cx).is_via_collab();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
         let window_to_replace = if replace_current_window {
-            window
+            window_handle
         } else if is_remote || has_worktree || has_dirty_items {
             None
         } else {
-            window
+            window_handle
         };
         let app_state = self.app_state.clone();
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|_, cx| async move {
             cx.update(|cx| {
                 open_paths(
                     &paths,
@@ -2048,8 +2128,9 @@ impl Workspace {
         &mut self,
         mut abs_paths: Vec<PathBuf>,
         visible: OpenVisible,
-        pane: Option<WeakView<Pane>>,
-        cx: &mut ViewContext<Self>,
+        pane: Option<WeakEntity<Pane>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
         log::info!("open paths {abs_paths:?}");
 
@@ -2057,7 +2138,7 @@ impl Workspace {
 
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn_in(window, move |this, mut cx| async move {
             let mut tasks = Vec::with_capacity(abs_paths.len());
 
             for abs_path in &abs_paths {
@@ -2124,8 +2205,8 @@ impl Workspace {
                         None
                     } else {
                         Some(
-                            this.update(&mut cx, |this, cx| {
-                                this.open_path(project_path, pane, true, cx)
+                            this.update_in(&mut cx, |this, window, cx| {
+                                this.open_path(project_path, pane, true, window, cx)
                             })
                             .log_err()?
                             .await,
@@ -2142,17 +2223,35 @@ impl Workspace {
     pub fn open_resolved_path(
         &mut self,
         path: ResolvedPath,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         match path {
             ResolvedPath::ProjectPath { project_path, .. } => {
-                self.open_path(project_path, None, true, cx)
+                self.open_path(project_path, None, true, window, cx)
             }
-            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, cx),
+            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, window, cx),
         }
     }
 
-    fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
+    pub fn absolute_path_of_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        self.project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            // TODO: use `abs_path` or `root_dir`
+            .map(|wt| wt.read(cx).abs_path().as_ref().to_path_buf())
+    }
+
+    fn add_folder_to_project(
+        &mut self,
+        _: &AddFolderToProject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let project = self.project.read(cx);
         if project.is_via_collab() {
             self.show_error(
@@ -2168,13 +2267,14 @@ impl Workspace {
                 multiple: true,
             },
             DirectoryLister::Project(self.project.clone()),
+            window,
             cx,
         );
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
-                    .update(&mut cx, |this, cx| {
-                        this.open_paths(paths, OpenVisible::All, None, cx)
+                    .update_in(&mut cx, |this, window, cx| {
+                        this.open_paths(paths, OpenVisible::All, None, window, cx)
                     })?
                     .await;
                 for result in results.into_iter().flatten() {
@@ -2187,11 +2287,11 @@ impl Workspace {
     }
 
     pub fn project_path_for_path(
-        project: Model<Project>,
+        project: Entity<Project>,
         abs_path: &Path,
         visible: bool,
-        cx: &mut AppContext,
-    ) -> Task<Result<(Model<Worktree>, ProjectPath)>> {
+        cx: &mut App,
+    ) -> Task<Result<(Entity<Worktree>, ProjectPath)>> {
         let entry = project.update(cx, |project, cx| {
             project.find_or_create_worktree(abs_path, visible, cx)
         });
@@ -2208,53 +2308,50 @@ impl Workspace {
         })
     }
 
-    pub fn items<'a>(
-        &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = &'a Box<dyn ItemHandle>> {
+    pub fn items<'a>(&'a self, cx: &'a App) -> impl 'a + Iterator<Item = &'a Box<dyn ItemHandle>> {
         self.panes.iter().flat_map(|pane| pane.read(cx).items())
     }
 
-    pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<View<T>> {
+    pub fn item_of_type<T: Item>(&self, cx: &App) -> Option<Entity<T>> {
         self.items_of_type(cx).max_by_key(|item| item.item_id())
     }
 
     pub fn items_of_type<'a, T: Item>(
         &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = View<T>> {
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = Entity<T>> {
         self.panes
             .iter()
             .flat_map(|pane| pane.read(cx).items_of_type())
     }
 
-    pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+    pub fn active_item(&self, cx: &App) -> Option<Box<dyn ItemHandle>> {
         self.active_pane().read(cx).active_item()
     }
 
-    pub fn active_item_as<I: 'static>(&self, cx: &AppContext) -> Option<View<I>> {
+    pub fn active_item_as<I: 'static>(&self, cx: &App) -> Option<Entity<I>> {
         let item = self.active_item(cx)?;
         item.to_any().downcast::<I>().ok()
     }
 
-    fn active_project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
     pub fn save_active_item(
         &mut self,
         save_intent: SaveIntent,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
         let pane = self.active_pane();
-        let item_ix = pane.read(cx).active_item_index();
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
-        cx.spawn(|mut cx| async move {
+        window.spawn(cx, |mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
+                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
                     .await
                     .map(|_| ())
             } else {
@@ -2266,11 +2363,15 @@ impl Workspace {
     pub fn close_inactive_items_and_panes(
         &mut self,
         action: &CloseInactiveTabsAndPanes,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        if let Some(task) =
-            self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-        {
+        if let Some(task) = self.close_all_internal(
+            true,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            window,
+            cx,
+        ) {
             task.detach_and_log_err(cx)
         }
     }
@@ -2278,11 +2379,15 @@ impl Workspace {
     pub fn close_all_items_and_panes(
         &mut self,
         action: &CloseAllItemsAndPanes,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        if let Some(task) =
-            self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-        {
+        if let Some(task) = self.close_all_internal(
+            false,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            window,
+            cx,
+        ) {
             task.detach_and_log_err(cx)
         }
     }
@@ -2291,7 +2396,8 @@ impl Workspace {
         &mut self,
         retain_active_pane: bool,
         save_intent: SaveIntent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let current_pane = self.active_pane();
 
@@ -2304,6 +2410,7 @@ impl Workspace {
                         save_intent: None,
                         close_pinned: false,
                     },
+                    window,
                     cx,
                 )
             }) {
@@ -2322,6 +2429,7 @@ impl Workspace {
                         save_intent: Some(save_intent),
                         close_pinned: false,
                     },
+                    window,
                     cx,
                 )
             }) {
@@ -2332,7 +2440,7 @@ impl Workspace {
         if tasks.is_empty() {
             None
         } else {
-            Some(cx.spawn(|_, _| async move {
+            Some(cx.spawn_in(window, |_, _| async move {
                 for task in tasks {
                     task.await?
                 }
@@ -2341,100 +2449,99 @@ impl Workspace {
         }
     }
 
-    pub fn is_dock_at_position_open(
-        &self,
-        position: DockPosition,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        let dock = match position {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
-        dock.read(cx).is_open()
+    pub fn is_dock_at_position_open(&self, position: DockPosition, cx: &mut Context<Self>) -> bool {
+        self.dock_at_position(position).read(cx).is_open()
     }
 
-    pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
-        let dock = match dock_side {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
+    pub fn toggle_dock(
+        &mut self,
+        dock_side: DockPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dock = self.dock_at_position(dock_side);
         let mut focus_center = false;
         let mut reveal_dock = false;
         dock.update(cx, |dock, cx| {
             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
             let was_visible = dock.is_open() && !other_is_zoomed;
-            dock.set_open(!was_visible, cx);
+            dock.set_open(!was_visible, window, cx);
 
             if dock.active_panel().is_none() && dock.panels_len() > 0 {
-                dock.activate_panel(0, cx);
+                dock.activate_panel(0, window, cx);
             }
 
             if let Some(active_panel) = dock.active_panel() {
                 if was_visible {
-                    if active_panel.focus_handle(cx).contains_focused(cx) {
+                    if active_panel
+                        .panel_focus_handle(cx)
+                        .contains_focused(window, cx)
+                    {
                         focus_center = true;
                     }
                 } else {
-                    let focus_handle = &active_panel.focus_handle(cx);
-                    cx.focus(focus_handle);
+                    let focus_handle = &active_panel.panel_focus_handle(cx);
+                    window.focus(focus_handle);
                     reveal_dock = true;
                 }
             }
         });
 
         if reveal_dock {
-            self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
+            self.dismiss_zoomed_items_to_reveal(Some(dock_side), window, cx);
         }
 
         if focus_center {
-            self.active_pane.update(cx, |pane, cx| pane.focus(cx))
+            self.active_pane
+                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
         }
 
         cx.notify();
-        self.serialize_workspace(cx);
+        self.serialize_workspace(window, cx);
     }
 
-    pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
-
-        for dock in docks {
+    pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
-                dock.set_open(false, cx);
+                dock.set_open(false, window, cx);
             });
         }
 
-        cx.focus_self();
+        cx.focus_self(window);
         cx.notify();
-        self.serialize_workspace(cx);
+        self.serialize_workspace(window, cx);
     }
 
     /// Transfer focus to the panel of the given type.
-    pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<View<T>> {
-        let panel = self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?;
+    pub fn focus_panel<T: Panel>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<T>> {
+        let panel = self.focus_or_unfocus_panel::<T>(window, cx, |_, _, _| true)?;
         panel.to_any().downcast().ok()
     }
 
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
-    pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| {
-            !panel.focus_handle(cx).contains_focused(cx)
+    pub fn toggle_panel_focus<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_or_unfocus_panel::<T>(window, cx, |panel, window, cx| {
+            !panel.panel_focus_handle(cx).contains_focused(window, cx)
         });
     }
 
     pub fn activate_panel_for_proto_id(
         &mut self,
         panel_id: PanelId,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut panel = None;
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_proto_id(panel_id) {
                 panel = dock.update(cx, |dock, cx| {
-                    dock.activate_panel(panel_index, cx);
-                    dock.set_open(true, cx);
+                    dock.activate_panel(panel_index, window, cx);
+                    dock.set_open(true, window, cx);
                     dock.active_panel().cloned()
                 });
                 break;
@@ -2443,7 +2550,7 @@ impl Workspace {
 
         if panel.is_some() {
             cx.notify();
-            self.serialize_workspace(cx);
+            self.serialize_workspace(window, cx);
         }
 
         panel
@@ -2452,22 +2559,23 @@ impl Workspace {
     /// Focus or unfocus the given panel type, depending on the given callback.
     fn focus_or_unfocus_panel<T: Panel>(
         &mut self,
-        cx: &mut ViewContext<Self>,
-        should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        should_focus: impl Fn(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
                 let panel = dock.update(cx, |dock, cx| {
-                    dock.activate_panel(panel_index, cx);
+                    dock.activate_panel(panel_index, window, cx);
 
                     let panel = dock.active_panel().cloned();
                     if let Some(panel) = panel.as_ref() {
-                        if should_focus(&**panel, cx) {
-                            dock.set_open(true, cx);
-                            panel.focus_handle(cx).focus(cx);
+                        if should_focus(&**panel, window, cx) {
+                            dock.set_open(true, window, cx);
+                            panel.panel_focus_handle(cx).focus(window);
                         } else {
                             focus_center = true;
                         }
@@ -2476,7 +2584,8 @@ impl Workspace {
                 });
 
                 if focus_center {
-                    self.active_pane.update(cx, |pane, cx| pane.focus(cx))
+                    self.active_pane
+                        .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
                 }
 
                 result_panel = panel;
@@ -2486,7 +2595,7 @@ impl Workspace {
         }
 
         if serialize {
-            self.serialize_workspace(cx);
+            self.serialize_workspace(window, cx);
         }
 
         cx.notify();
@@ -2494,19 +2603,19 @@ impl Workspace {
     }
 
     /// Open the panel of the given type
-    pub fn open_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+    pub fn open_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 dock.update(cx, |dock, cx| {
-                    dock.activate_panel(panel_index, cx);
-                    dock.set_open(true, cx);
+                    dock.activate_panel(panel_index, window, cx);
+                    dock.set_open(true, window, cx);
                 });
             }
         }
     }
 
-    pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
-        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+    pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
+        self.all_docks()
             .iter()
             .find_map(|dock| dock.read(cx).panel::<T>())
     }
@@ -2514,7 +2623,8 @@ impl Workspace {
     fn dismiss_zoomed_items_to_reveal(
         &mut self,
         dock_to_reveal: Option<DockPosition>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         // If a center pane is zoomed, unzoom it.
         for pane in &self.panes {
@@ -2525,13 +2635,14 @@ impl Workspace {
 
         // If another dock is zoomed, hide it.
         let mut focus_center = false;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
-                        if panel.is_zoomed(cx) {
-                            focus_center |= panel.focus_handle(cx).contains_focused(cx);
-                            dock.set_open(false, cx);
+                        if panel.is_zoomed(window, cx) {
+                            focus_center |=
+                                panel.panel_focus_handle(cx).contains_focused(window, cx);
+                            dock.set_open(false, window, cx);
                         }
                     }
                 }
@@ -2539,7 +2650,8 @@ impl Workspace {
         }
 
         if focus_center {
-            self.active_pane.update(cx, |pane, cx| pane.focus(cx))
+            self.active_pane
+                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
         }
 
         if self.zoomed_position != dock_to_reveal {
@@ -2551,22 +2663,26 @@ impl Workspace {
         cx.notify();
     }
 
-    fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
-        let pane = cx.new_view(|cx| {
+    fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
+        let pane = cx.new(|cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                window,
                 cx,
             );
-            pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             pane
         });
-        cx.subscribe(&pane, Self::handle_pane_event).detach();
+        cx.subscribe_in(&pane, window, Self::handle_pane_event)
+            .detach();
         self.panes.push(pane.clone());
-        cx.focus_view(&pane);
+
+        window.focus(&pane.focus_handle(cx));
+
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
     }
@@ -2574,11 +2690,14 @@ impl Workspace {
     pub fn add_item_to_center(
         &mut self,
         item: Box<dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> bool {
         if let Some(center_pane) = self.last_active_center_pane.clone() {
             if let Some(center_pane) = center_pane.upgrade() {
-                center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+                center_pane.update(cx, |pane, cx| {
+                    pane.add_item(item, true, true, None, window, cx)
+                });
                 true
             } else {
                 false
@@ -2593,7 +2712,8 @@ impl Workspace {
         item: Box<dyn ItemHandle>,
         destination_index: Option<usize>,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         self.add_item(
             self.active_pane.clone(),
@@ -2601,27 +2721,35 @@ impl Workspace {
             destination_index,
             false,
             focus_item,
+            window,
             cx,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_item(
         &mut self,
-        pane: View<Pane>,
+        pane: Entity<Pane>,
         item: Box<dyn ItemHandle>,
         destination_index: Option<usize>,
         activate_pane: bool,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
-            self.client()
-                .telemetry()
-                .report_app_event(format!("{}: open", text));
+            telemetry::event!(text);
         }
 
         pane.update(cx, |pane, cx| {
-            pane.add_item(item, activate_pane, focus_item, destination_index, cx)
+            pane.add_item(
+                item,
+                activate_pane,
+                focus_item,
+                destination_index,
+                window,
+                cx,
+            )
         });
     }
 
@@ -2629,21 +2757,23 @@ impl Workspace {
         &mut self,
         split_direction: SplitDirection,
         item: Box<dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
-        self.add_item(new_pane, item, None, true, true, cx);
+        let new_pane = self.split_pane(self.active_pane.clone(), split_direction, window, cx);
+        self.add_item(new_pane, item, None, true, true, window, cx);
     }
 
     pub fn open_abs_path(
         &mut self,
         abs_path: PathBuf,
         visible: bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        cx.spawn(|workspace, mut cx| async move {
+        cx.spawn_in(window, |workspace, mut cx| async move {
             let open_paths_task_result = workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     workspace.open_paths(
                         vec![abs_path.clone()],
                         if visible {
@@ -2652,6 +2782,7 @@ impl Workspace {
                             OpenVisible::None
                         },
                         None,
+                        window,
                         cx,
                     )
                 })
@@ -2678,34 +2809,41 @@ impl Workspace {
         &mut self,
         abs_path: PathBuf,
         visible: bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let project_path_task =
             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let (_, path) = project_path_task.await?;
-            this.update(&mut cx, |this, cx| this.split_path(path, cx))?
-                .await
+            this.update_in(&mut cx, |this, window, cx| {
+                this.split_path(path, window, cx)
+            })?
+            .await
         })
     }
 
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
-        pane: Option<WeakView<Pane>>,
+        pane: Option<WeakEntity<Pane>>,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.open_path_preview(path, pane, focus_item, false, cx)
+        self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
-        pane: Option<WeakView<Pane>>,
+        pane: Option<WeakEntity<Pane>>,
         focus_item: bool,
         allow_preview: bool,
-        cx: &mut WindowContext,
+        activate: bool,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
@@ -2716,28 +2854,34 @@ impl Workspace {
             })
         });
 
-        let task = self.load_path(path.into(), cx);
-        cx.spawn(move |mut cx| async move {
+        let task = self.load_path(path.into(), window, cx);
+        window.spawn(cx, move |mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
-            pane.update(&mut cx, |pane, cx| {
-                pane.open_item(
+            let result = pane.update_in(&mut cx, |pane, window, cx| {
+                let result = pane.open_item(
                     project_entry_id,
                     focus_item,
                     allow_preview,
+                    activate,
                     None,
+                    window,
                     cx,
                     build_item,
-                )
-            })
+                );
+
+                result
+            });
+            result
         })
     }
 
     pub fn split_path(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.split_path_preview(path, false, None, cx)
+        self.split_path_preview(path, false, None, window, cx)
     }
 
     pub fn split_path_preview(
@@ -2745,7 +2889,8 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         allow_preview: bool,
         split_direction: Option<SplitDirection>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
             self.panes
@@ -2756,23 +2901,29 @@ impl Workspace {
 
         if let Member::Pane(center_pane) = &self.center.root {
             if center_pane.read(cx).items_len() == 0 {
-                return self.open_path(path, Some(pane), true, cx);
+                return self.open_path(path, Some(pane), true, window, cx);
             }
         }
 
-        let task = self.load_path(path.into(), cx);
-        cx.spawn(|this, mut cx| async move {
+        let task = self.load_path(path.into(), window, cx);
+        cx.spawn_in(window, |this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
-            this.update(&mut cx, move |this, cx| -> Option<_> {
+            this.update_in(&mut cx, move |this, window, cx| -> Option<_> {
                 let pane = pane.upgrade()?;
-                let new_pane =
-                    this.split_pane(pane, split_direction.unwrap_or(SplitDirection::Right), cx);
+                let new_pane = this.split_pane(
+                    pane,
+                    split_direction.unwrap_or(SplitDirection::Right),
+                    window,
+                    cx,
+                );
                 new_pane.update(cx, |new_pane, cx| {
                     Some(new_pane.open_item(
                         project_entry_id,
                         true,
                         allow_preview,
+                        true,
                         None,
+                        window,
                         cx,
                         build_item,
                     ))
@@ -2785,14 +2936,15 @@ impl Workspace {
     fn load_path(
         &mut self,
         path: ProjectPath,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let project = self.project().clone();
         let project_item_builders = cx.default_global::<ProjectItemOpeners>().clone();
         let Some(open_project_item) = project_item_builders
             .iter()
             .rev()
-            .find_map(|open_project_item| open_project_item(&project, &path, cx))
+            .find_map(|open_project_item| open_project_item(&project, &path, window, cx))
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
@@ -2801,10 +2953,10 @@ impl Workspace {
 
     pub fn find_project_item<T>(
         &self,
-        pane: &View<Pane>,
-        project_item: &Model<T::Item>,
-        cx: &AppContext,
-    ) -> Option<View<T>>
+        pane: &Entity<Pane>,
+        project_item: &Entity<T::Item>,
+        cx: &App,
+    ) -> Option<Entity<T>>
     where
         T: ProjectItem,
     {
@@ -2828,9 +2980,9 @@ impl Workspace {
 
     pub fn is_project_item_open<T>(
         &self,
-        pane: &View<Pane>,
-        project_item: &Model<T::Item>,
-        cx: &AppContext,
+        pane: &Entity<Pane>,
+        project_item: &Entity<T::Item>,
+        cx: &App,
     ) -> bool
     where
         T: ProjectItem,
@@ -2841,28 +2993,30 @@ impl Workspace {
 
     pub fn open_project_item<T>(
         &mut self,
-        pane: View<Pane>,
-        project_item: Model<T::Item>,
+        pane: Entity<Pane>,
+        project_item: Entity<T::Item>,
         activate_pane: bool,
         focus_item: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> View<T>
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<T>
     where
         T: ProjectItem,
     {
         if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
-            self.activate_item(&item, activate_pane, focus_item, cx);
+            self.activate_item(&item, activate_pane, focus_item, window, cx);
             return item;
         }
 
-        let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        let item =
+            cx.new(|cx| T::for_project_item(self.project().clone(), project_item, window, cx));
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
             if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
                 if let Some(preview_item_id) = pane.preview_item_id() {
                     if preview_item_id != item_id {
-                        destination_index = pane.close_current_preview_item(cx);
+                        destination_index = pane.close_current_preview_item(window, cx);
                     }
                 }
             }
@@ -2875,15 +3029,23 @@ impl Workspace {
             destination_index,
             activate_pane,
             focus_item,
+            window,
             cx,
         );
         item
     }
 
-    pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-        if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
+    pub fn open_shared_screen(
+        &mut self,
+        peer_id: PeerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(shared_screen) =
+            self.shared_screen_for_peer(peer_id, &self.active_pane, window, cx)
+        {
             self.active_pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(shared_screen), false, true, None, cx)
+                pane.add_item(Box::new(shared_screen), false, true, None, window, cx)
             });
         }
     }
@@ -2893,7 +3055,8 @@ impl Workspace {
         item: &dyn ItemHandle,
         activate_pane: bool,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             pane.read(cx)
@@ -2902,7 +3065,7 @@ impl Workspace {
         });
         if let Some((pane, ix)) = result {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(ix, activate_pane, focus_item, cx)
+                pane.activate_item(ix, activate_pane, focus_item, window, cx)
             });
             true
         } else {
@@ -2910,44 +3073,62 @@ impl Workspace {
         }
     }
 
-    fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
+    fn activate_pane_at_index(
+        &mut self,
+        action: &ActivatePane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let panes = self.center.panes();
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-            cx.focus_view(&pane);
+            window.focus(&pane.focus_handle(cx));
         } else {
-            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, cx);
+            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx);
         }
     }
 
-    fn move_item_to_pane_at_index(&mut self, action: &MoveItemToPane, cx: &mut ViewContext<Self>) {
+    fn move_item_to_pane_at_index(
+        &mut self,
+        action: &MoveItemToPane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(&target_pane) = self.center.panes().get(action.destination) else {
             return;
         };
-        move_active_item(&self.active_pane, target_pane, action.focus, true, cx);
+        move_active_item(
+            &self.active_pane,
+            target_pane,
+            action.focus,
+            true,
+            window,
+            cx,
+        );
     }
 
-    pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
+    pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
         let panes = self.center.panes();
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let next_ix = (ix + 1) % panes.len();
             let next_pane = panes[next_ix].clone();
-            cx.focus_view(&next_pane);
+            window.focus(&next_pane.focus_handle(cx));
         }
     }
 
-    pub fn activate_previous_pane(&mut self, cx: &mut WindowContext) {
+    pub fn activate_previous_pane(&mut self, window: &mut Window, cx: &mut App) {
         let panes = self.center.panes();
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
             let prev_pane = panes[prev_ix].clone();
-            cx.focus_view(&prev_pane);
+            window.focus(&prev_pane.focus_handle(cx));
         }
     }
 
     pub fn activate_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         use ActivateInDirectionTarget as Target;
         enum Origin {
@@ -2964,7 +3145,7 @@ impl Workspace {
         ]
         .into_iter()
         .find_map(|(dock, origin)| {
-            if dock.focus_handle(cx).contains_focused(cx) && dock.read(cx).is_open() {
+            if dock.focus_handle(cx).contains_focused(window, cx) && dock.read(cx).is_open() {
                 Some(origin)
             } else {
                 None
@@ -2987,7 +3168,7 @@ impl Workspace {
         };
 
         let try_dock =
-            |dock: &View<Dock>| dock.read(cx).is_open().then(|| Target::Dock(dock.clone()));
+            |dock: &Entity<Dock>| dock.read(cx).is_open().then(|| Target::Dock(dock.clone()));
 
         let target = match (origin, direction) {
             // We're in the center, so we first try to go to a different pane,
@@ -3032,13 +3213,15 @@ impl Workspace {
         };
 
         match target {
-            Some(ActivateInDirectionTarget::Pane(pane)) => cx.focus_view(&pane),
+            Some(ActivateInDirectionTarget::Pane(pane)) => {
+                window.focus(&pane.focus_handle(cx));
+            }
             Some(ActivateInDirectionTarget::Dock(dock)) => {
                 // Defer this to avoid a panic when the dock's active panel is already on the stack.
-                cx.defer(move |cx| {
+                window.defer(cx, move |window, cx| {
                     let dock = dock.read(cx);
                     if let Some(panel) = dock.active_panel() {
-                        panel.focus_handle(cx).focus(cx);
+                        panel.panel_focus_handle(cx).focus(window);
                     } else {
                         log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.position());
                     }
@@ -3051,64 +3234,95 @@ impl Workspace {
     pub fn move_item_to_pane_in_direction(
         &mut self,
         action: &MoveItemToPaneInDirection,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         if let Some(destination) = self.find_pane_in_direction(action.direction, cx) {
-            move_active_item(&self.active_pane, &destination, action.focus, true, cx);
+            move_active_item(
+                &self.active_pane,
+                &destination,
+                action.focus,
+                true,
+                window,
+                cx,
+            );
         }
     }
 
-    pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
+    pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
         self.center.bounding_box_for_pane(pane)
     }
 
     pub fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &WindowContext,
-    ) -> Option<View<Pane>> {
+        cx: &App,
+    ) -> Option<Entity<Pane>> {
         self.center
             .find_pane_in_direction(&self.active_pane, direction, cx)
             .cloned()
     }
 
-    pub fn swap_pane_in_direction(
-        &mut self,
-        direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
             self.center.swap(&self.active_pane, &to);
             cx.notify();
         }
     }
 
-    pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut ViewContext<Self>) {
-        self.center
-            .resize(&self.active_pane, axis, amount, &self.bounds);
+    pub fn resize_pane(
+        &mut self,
+        axis: gpui::Axis,
+        amount: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let docks = self.all_docks();
+        let active_dock = docks
+            .into_iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+
+        if let Some(dock) = active_dock {
+            let Some(panel_size) = dock.read(cx).active_panel_size(window, cx) else {
+                return;
+            };
+            match dock.read(cx).position() {
+                DockPosition::Left => resize_left_dock(panel_size + amount, self, window, cx),
+                DockPosition::Bottom => resize_bottom_dock(panel_size + amount, self, window, cx),
+                DockPosition::Right => resize_right_dock(panel_size + amount, self, window, cx),
+            }
+        } else {
+            self.center
+                .resize(&self.active_pane, axis, amount, &self.bounds);
+        }
         cx.notify();
     }
 
-    pub fn reset_pane_sizes(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn reset_pane_sizes(&mut self, cx: &mut Context<Self>) {
         self.center.reset_pane_sizes();
         cx.notify();
     }
 
-    fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+    fn handle_pane_focused(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // This is explicitly hoisted out of the following check for pane identity as
         // terminal panel panes are not registered as a center panes.
         self.status_bar.update(cx, |status_bar, cx| {
-            status_bar.set_active_pane(&pane, cx);
+            status_bar.set_active_pane(&pane, window, cx);
         });
         if self.active_pane != pane {
-            self.set_active_pane(&pane, cx);
+            self.set_active_pane(&pane, window, cx);
         }
 
         if self.last_active_center_pane.is_none() {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
-        self.dismiss_zoomed_items_to_reveal(None, cx);
+        self.dismiss_zoomed_items_to_reveal(None, window, cx);
         if pane.read(cx).is_zoomed() {
             self.zoomed = Some(pane.downgrade().into());
         } else {
@@ -3116,69 +3330,75 @@ impl Workspace {
         }
         self.zoomed_position = None;
         cx.emit(Event::ZoomChanged);
-        self.update_active_view_for_followers(cx);
-        pane.model.update(cx, |pane, _| {
+        self.update_active_view_for_followers(window, cx);
+        pane.update(cx, |pane, _| {
             pane.track_alternate_file_items();
         });
 
         cx.notify();
     }
 
-    fn set_active_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) {
+    fn set_active_pane(
+        &mut self,
+        pane: &Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.active_pane = pane.clone();
-        self.active_item_path_changed(cx);
+        self.active_item_path_changed(window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
     }
 
-    fn handle_panel_focused(&mut self, cx: &mut ViewContext<Self>) {
-        self.update_active_view_for_followers(cx);
+    fn handle_panel_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_active_view_for_followers(window, cx);
     }
 
     fn handle_pane_event(
         &mut self,
-        pane: View<Pane>,
+        pane: &Entity<Pane>,
         event: &pane::Event,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let mut serialize_workspace = true;
         match event {
             pane::Event::AddItem { item } => {
-                item.added_to_pane(self, pane, cx);
+                item.added_to_pane(self, pane.clone(), window, cx);
                 cx.emit(Event::ItemAdded {
                     item: item.boxed_clone(),
                 });
             }
             pane::Event::Split(direction) => {
-                self.split_and_clone(pane, *direction, cx);
+                self.split_and_clone(pane.clone(), *direction, window, cx);
             }
             pane::Event::JoinIntoNext => {
-                self.join_pane_into_next(pane, cx);
+                self.join_pane_into_next(pane.clone(), window, cx);
             }
             pane::Event::JoinAll => {
-                self.join_all_panes(cx);
+                self.join_all_panes(window, cx);
             }
             pane::Event::Remove { focus_on_pane } => {
-                self.remove_pane(pane, focus_on_pane.clone(), cx);
+                self.remove_pane(pane.clone(), focus_on_pane.clone(), window, cx);
             }
             pane::Event::ActivateItem {
                 local,
                 focus_changed,
             } => {
-                cx.on_next_frame(|_, cx| {
-                    cx.invalidate_character_coordinates();
+                cx.on_next_frame(window, |_, window, _| {
+                    window.invalidate_character_coordinates();
                 });
 
-                pane.model.update(cx, |pane, _| {
+                pane.update(cx, |pane, _| {
                     pane.track_alternate_file_items();
                 });
                 if *local {
-                    self.unfollow_in_pane(&pane, cx);
+                    self.unfollow_in_pane(&pane, window, cx);
                 }
-                if &pane == self.active_pane() {
-                    self.active_item_path_changed(cx);
-                    self.update_active_view_for_followers(cx);
+                if pane == self.active_pane() {
+                    self.active_item_path_changed(window, cx);
+                    self.update_active_view_for_followers(window, cx);
                 }
-                serialize_workspace = *focus_changed || &pane != self.active_pane();
+                serialize_workspace = *focus_changed || pane != self.active_pane();
             }
             pane::Event::UserSavedItem { item, save_intent } => {
                 cx.emit(Event::UserSavedItem {
@@ -3189,16 +3409,16 @@ impl Workspace {
                 serialize_workspace = false;
             }
             pane::Event::ChangeItemTitle => {
-                if pane == self.active_pane {
-                    self.active_item_path_changed(cx);
+                if *pane == self.active_pane {
+                    self.active_item_path_changed(window, cx);
                 }
-                self.update_window_edited(cx);
+                self.update_window_edited(window, cx);
                 serialize_workspace = false;
             }
             pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item_id } => {
                 cx.emit(Event::ActiveItemChanged);
-                self.update_window_edited(cx);
+                self.update_window_edited(window, cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
                     if entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
@@ -3206,15 +3426,15 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
-                cx.on_next_frame(|_, cx| {
-                    cx.invalidate_character_coordinates();
+                cx.on_next_frame(window, |_, window, _| {
+                    window.invalidate_character_coordinates();
                 });
-                self.handle_pane_focused(pane.clone(), cx);
+                self.handle_pane_focused(pane.clone(), window, cx);
             }
             pane::Event::ZoomIn => {
-                if pane == self.active_pane {
+                if *pane == self.active_pane {
                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
-                    if pane.read(cx).has_focus(cx) {
+                    if pane.read(cx).has_focus(window, cx) {
                         self.zoomed = Some(pane.downgrade().into());
                         self.zoomed_position = None;
                         cx.emit(Event::ZoomChanged);
@@ -3233,27 +3453,29 @@ impl Workspace {
         }
 
         if serialize_workspace {
-            self.serialize_workspace(cx);
+            self.serialize_workspace(window, cx);
         }
     }
 
     pub fn unfollow_in_pane(
         &mut self,
-        pane: &View<Pane>,
-        cx: &mut ViewContext<Workspace>,
+        pane: &Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) -> Option<PeerId> {
         let leader_id = self.leader_for_pane(pane)?;
-        self.unfollow(leader_id, cx);
+        self.unfollow(leader_id, window, cx);
         Some(leader_id)
     }
 
     pub fn split_pane(
         &mut self,
-        pane_to_split: View<Pane>,
+        pane_to_split: Entity<Pane>,
         split_direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
-    ) -> View<Pane> {
-        let new_pane = self.add_pane(cx);
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
+        let new_pane = self.add_pane(window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -3263,30 +3485,35 @@ impl Workspace {
 
     pub fn split_and_clone(
         &mut self,
-        pane: View<Pane>,
+        pane: Entity<Pane>,
         direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<Pane>> {
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Pane>> {
         let item = pane.read(cx).active_item()?;
-        let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
-            let new_pane = self.add_pane(cx);
-            new_pane.update(cx, |pane, cx| pane.add_item(clone, true, true, None, cx));
-            self.center.split(&pane, &new_pane, direction).unwrap();
-            Some(new_pane)
-        } else {
-            None
-        };
+        let maybe_pane_handle =
+            if let Some(clone) = item.clone_on_split(self.database_id(), window, cx) {
+                let new_pane = self.add_pane(window, cx);
+                new_pane.update(cx, |pane, cx| {
+                    pane.add_item(clone, true, true, None, window, cx)
+                });
+                self.center.split(&pane, &new_pane, direction).unwrap();
+                Some(new_pane)
+            } else {
+                None
+            };
         cx.notify();
         maybe_pane_handle
     }
 
     pub fn split_pane_with_item(
         &mut self,
-        pane_to_split: WeakView<Pane>,
+        pane_to_split: WeakEntity<Pane>,
         split_direction: SplitDirection,
-        from: WeakView<Pane>,
+        from: WeakEntity<Pane>,
         item_id_to_move: EntityId,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let Some(pane_to_split) = pane_to_split.upgrade() else {
             return;
@@ -3295,8 +3522,8 @@ impl Workspace {
             return;
         };
 
-        let new_pane = self.add_pane(cx);
-        move_item(&from, &new_pane, item_id_to_move, 0, cx);
+        let new_pane = self.add_pane(window, cx);
+        move_item(&from, &new_pane, item_id_to_move, 0, window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -3305,37 +3532,43 @@ impl Workspace {
 
     pub fn split_pane_with_project_entry(
         &mut self,
-        pane_to_split: WeakView<Pane>,
+        pane_to_split: WeakEntity<Pane>,
         split_direction: SplitDirection,
         project_entry: ProjectEntryId,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let pane_to_split = pane_to_split.upgrade()?;
-        let new_pane = self.add_pane(cx);
+        let new_pane = self.add_pane(window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
 
         let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
-        let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
+        let task = self.open_path(path, Some(new_pane.downgrade()), true, window, cx);
         Some(cx.foreground_executor().spawn(async move {
             task.await?;
             Ok(())
         }))
     }
 
-    pub fn join_all_panes(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn join_all_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let active_item = self.active_pane.read(cx).active_item();
         for pane in &self.panes {
-            join_pane_into_active(&self.active_pane, pane, cx);
+            join_pane_into_active(&self.active_pane, pane, window, cx);
         }
         if let Some(active_item) = active_item {
-            self.activate_item(active_item.as_ref(), true, true, cx);
+            self.activate_item(active_item.as_ref(), true, true, window, cx);
         }
         cx.notify();
     }
 
-    pub fn join_pane_into_next(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+    pub fn join_pane_into_next(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let next_pane = self
             .find_pane_in_direction(SplitDirection::Right, cx)
             .or_else(|| self.find_pane_in_direction(SplitDirection::Down, cx))
@@ -3344,19 +3577,20 @@ impl Workspace {
         let Some(next_pane) = next_pane else {
             return;
         };
-        move_all_items(&pane, &next_pane, cx);
+        move_all_items(&pane, &next_pane, window, cx);
         cx.notify();
     }
 
     fn remove_pane(
         &mut self,
-        pane: View<Pane>,
-        focus_on: Option<View<Pane>>,
-        cx: &mut ViewContext<Self>,
+        pane: Entity<Pane>,
+        focus_on: Option<Entity<Pane>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         if self.center.remove(&pane).unwrap() {
-            self.force_remove_pane(&pane, &focus_on, cx);
-            self.unfollow_in_pane(&pane, cx);
+            self.force_remove_pane(&pane, &focus_on, window, cx);
+            self.unfollow_in_pane(&pane, window, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             for removed_item in pane.read(cx).items() {
                 self.panes_by_item.remove(&removed_item.item_id());
@@ -3364,22 +3598,22 @@ impl Workspace {
 
             cx.notify();
         } else {
-            self.active_item_path_changed(cx);
+            self.active_item_path_changed(window, cx);
         }
         cx.emit(Event::PaneRemoved);
     }
 
-    pub fn panes(&self) -> &[View<Pane>] {
+    pub fn panes(&self) -> &[Entity<Pane>] {
         &self.panes
     }
 
-    pub fn active_pane(&self) -> &View<Pane> {
+    pub fn active_pane(&self) -> &Entity<Pane> {
         &self.active_pane
     }
 
-    pub fn focused_pane(&self, cx: &WindowContext) -> View<Pane> {
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
-            if dock.focus_handle(cx).contains_focused(cx) {
+    pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
+        for dock in self.all_docks() {
+            if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(pane) = dock
                     .read(cx)
                     .active_panel()
@@ -3392,23 +3626,25 @@ impl Workspace {
         self.active_pane().clone()
     }
 
-    pub fn adjacent_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
+    pub fn adjacent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
         self.find_pane_in_direction(SplitDirection::Right, cx)
             .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
-            .unwrap_or_else(|| self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx))
+            .unwrap_or_else(|| {
+                self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
+            })
             .clone()
     }
 
-    pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<View<Pane>> {
+    pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<Entity<Pane>> {
         let weak_pane = self.panes_by_item.get(&handle.item_id())?;
         weak_pane.upgrade()
     }
 
-    fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+    fn collaborator_left(&mut self, peer_id: PeerId, window: &mut Window, cx: &mut Context<Self>) {
         self.follower_states.retain(|leader_id, state| {
             if *leader_id == peer_id {
                 for item in state.items_by_leader_view_id.values() {
-                    item.view.set_leader_peer_id(None, cx);
+                    item.view.set_leader_peer_id(None, window, cx);
                 }
                 false
             } else {
@@ -3421,14 +3657,15 @@ impl Workspace {
     pub fn start_following(
         &mut self,
         leader_id: PeerId,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let pane = self.active_pane().clone();
 
         self.last_leaders_by_pane
             .insert(pane.downgrade(), leader_id);
-        self.unfollow(leader_id, cx);
-        self.unfollow_in_pane(&pane, cx);
+        self.unfollow(leader_id, window, cx);
+        self.unfollow_in_pane(&pane, window, cx);
         self.follower_states.insert(
             leader_id,
             FollowerState {
@@ -3448,7 +3685,7 @@ impl Workspace {
             leader_id: Some(leader_id),
         });
 
-        Some(cx.spawn(|this, mut cx| async move {
+        Some(cx.spawn_in(window, |this, mut cx| async move {
             let response = request.await?;
             this.update(&mut cx, |this, _| {
                 let state = this
@@ -3464,7 +3701,9 @@ impl Workspace {
             if let Some(view) = response.active_view {
                 Self::add_view_from_leader(this.clone(), leader_id, &view, &mut cx).await?;
             }
-            this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx))?;
+            this.update_in(&mut cx, |this, window, cx| {
+                this.leader_updated(leader_id, window, cx)
+            })?;
             Ok(())
         }))
     }
@@ -3472,7 +3711,8 @@ impl Workspace {
     pub fn follow_next_collaborator(
         &mut self,
         _: &FollowNextCollaborator,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let collaborators = self.project.read(cx).collaborators();
         let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
@@ -3500,15 +3740,15 @@ impl Workspace {
         else {
             return;
         };
-        if self.unfollow_in_pane(&pane, cx) == Some(leader_id) {
+        if self.unfollow_in_pane(&pane, window, cx) == Some(leader_id) {
             return;
         }
-        if let Some(task) = self.start_following(leader_id, cx) {
+        if let Some(task) = self.start_following(leader_id, window, cx) {
             task.detach_and_log_err(cx)
         }
     }
 
-    pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) {
+    pub fn follow(&mut self, leader_id: PeerId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(room) = ActiveCall::global(cx).read(cx).room() else {
             return;
         };
@@ -3540,21 +3780,27 @@ impl Workspace {
 
         // if you're already following, find the right pane and focus it.
         if let Some(follower_state) = self.follower_states.get(&leader_id) {
-            cx.focus_view(follower_state.pane());
+            window.focus(&follower_state.pane().focus_handle(cx));
+
             return;
         }
 
         // Otherwise, follow.
-        if let Some(task) = self.start_following(leader_id, cx) {
+        if let Some(task) = self.start_following(leader_id, window, cx) {
             task.detach_and_log_err(cx)
         }
     }
 
-    pub fn unfollow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
+    pub fn unfollow(
+        &mut self,
+        leader_id: PeerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
         cx.notify();
         let state = self.follower_states.remove(&leader_id)?;
         for (_, item) in state.items_by_leader_view_id {
-            item.view.set_leader_peer_id(None, cx);
+            item.view.set_leader_peer_id(None, window, cx);
         }
 
         let project_id = self.project.read(cx).remote_id();
@@ -3575,16 +3821,16 @@ impl Workspace {
         self.follower_states.contains_key(&peer_id)
     }
 
-    fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
         self.project
             .update(cx, |project, cx| project.set_active_path(active_entry, cx));
 
-        self.update_window_title(cx);
+        self.update_window_title(window, cx);
     }
 
-    fn update_window_title(&mut self, cx: &mut WindowContext) {
+    fn update_window_title(&mut self, window: &mut Window, cx: &mut App) {
         let project = self.project().read(cx);
         let mut title = String::new();
 
@@ -3625,21 +3871,21 @@ impl Workspace {
             title.push_str(" ↗");
         }
 
-        cx.set_window_title(&title);
+        window.set_window_title(&title);
     }
 
-    fn update_window_edited(&mut self, cx: &mut WindowContext) {
+    fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
         let is_edited = !self.project.read(cx).is_disconnected(cx)
             && self
                 .items(cx)
                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
-            cx.set_window_edited(self.window_edited)
+            window.set_window_edited(self.window_edited)
         }
     }
 
-    fn render_notifications(&self, _cx: &ViewContext<Self>) -> Option<Div> {
+    fn render_notifications(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Div> {
         if self.notifications.is_empty() {
             None
         } else {
@@ -3657,7 +3903,7 @@ impl Workspace {
                     .children(
                         self.notifications
                             .iter()
-                            .map(|(_, notification)| notification.to_any()),
+                            .map(|(_, notification)| notification.clone().into_any()),
                     ),
             )
         }
@@ -3668,19 +3914,20 @@ impl Workspace {
     fn active_view_for_follower(
         &self,
         follower_project_id: Option<u64>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<proto::View> {
-        let (item, panel_id) = self.active_item_for_followers(cx);
+        let (item, panel_id) = self.active_item_for_followers(window, cx);
         let item = item?;
         let leader_id = self
             .pane_for(&*item)
             .and_then(|pane| self.leader_for_pane(&pane));
 
         let item_handle = item.to_followable_item_handle(cx)?;
-        let id = item_handle.remote_id(&self.app_state.client, cx)?;
-        let variant = item_handle.to_state_proto(cx)?;
+        let id = item_handle.remote_id(&self.app_state.client, window, cx)?;
+        let variant = item_handle.to_state_proto(window, cx)?;
 
-        if item_handle.is_project_item(cx)
+        if item_handle.is_project_item(window, cx)
             && (follower_project_id.is_none()
                 || follower_project_id != self.project.read(cx).remote_id())
         {
@@ -3698,9 +3945,10 @@ impl Workspace {
     fn handle_follow(
         &mut self,
         follower_project_id: Option<u64>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> proto::FollowResponse {
-        let active_view = self.active_view_for_follower(follower_project_id, cx);
+        let active_view = self.active_view_for_follower(follower_project_id, window, cx);
 
         cx.notify();
         proto::FollowResponse {
@@ -3715,7 +3963,8 @@ impl Workspace {
         &mut self,
         leader_id: PeerId,
         message: proto::UpdateFollowers,
-        _cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
         self.leader_updates_tx
             .unbounded_send((leader_id, message))
@@ -3723,7 +3972,7 @@ impl Workspace {
     }
 
     async fn process_leader_update(
-        this: &WeakView<Self>,
+        this: &WeakEntity<Self>,
         leader_id: PeerId,
         update: proto::UpdateFollowers,
         cx: &mut AsyncWindowContext,
@@ -3777,12 +4026,17 @@ impl Workspace {
                     .id
                     .ok_or_else(|| anyhow!("missing update view id"))?;
                 let mut tasks = Vec::new();
-                this.update(cx, |this, cx| {
+                this.update_in(cx, |this, window, cx| {
                     let project = this.project.clone();
                     if let Some(state) = this.follower_states.get(&leader_id) {
                         let view_id = ViewId::from_proto(id.clone())?;
                         if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
-                            tasks.push(item.view.apply_update_proto(&project, variant.clone(), cx));
+                            tasks.push(item.view.apply_update_proto(
+                                &project,
+                                variant.clone(),
+                                window,
+                                cx,
+                            ));
                         }
                     }
                     anyhow::Ok(())
@@ -3790,12 +4044,14 @@ impl Workspace {
                 try_join_all(tasks).await.log_err();
             }
         }
-        this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
+        this.update_in(cx, |this, window, cx| {
+            this.leader_updated(leader_id, window, cx)
+        })?;
         Ok(())
     }
 
     async fn add_view_from_leader(
-        this: WeakView<Self>,
+        this: WeakEntity<Self>,
         leader_id: PeerId,
         view: &proto::View,
         cx: &mut AsyncWindowContext,
@@ -3815,11 +4071,11 @@ impl Workspace {
                 .context("stopped following")?;
             anyhow::Ok(state.pane().clone())
         })??;
-        let existing_item = pane.update(cx, |pane, cx| {
+        let existing_item = pane.update_in(cx, |pane, window, cx| {
             let client = this.read(cx).client().clone();
             pane.items().find_map(|item| {
                 let item = item.to_followable_item_handle(cx)?;
-                if item.remote_id(&client, cx) == Some(id) {
+                if item.remote_id(&client, window, cx) == Some(id) {
                     Some(item)
                 } else {
                     None
@@ -3834,8 +4090,8 @@ impl Workspace {
                 Err(anyhow!("missing view variant"))?;
             }
 
-            let task = cx.update(|cx| {
-                FollowableViewRegistry::from_state_proto(this.clone(), id, variant, cx)
+            let task = cx.update(|window, cx| {
+                FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
             })?;
 
             let Some(task) = task else {
@@ -3845,11 +4101,11 @@ impl Workspace {
             };
 
             let mut new_item = task.await?;
-            pane.update(cx, |pane, cx| {
+            pane.update_in(cx, |pane, window, cx| {
                 let mut item_to_remove = None;
                 for (ix, item) in pane.items().enumerate() {
                     if let Some(item) = item.to_followable_item_handle(cx) {
-                        match new_item.dedup(item.as_ref(), cx) {
+                        match new_item.dedup(item.as_ref(), window, cx) {
                             Some(item::Dedup::KeepExisting) => {
                                 new_item =
                                     item.boxed_clone().to_followable_item_handle(cx).unwrap();
@@ -3865,17 +4121,17 @@ impl Workspace {
                 }
 
                 if let Some((ix, id)) = item_to_remove {
-                    pane.remove_item(id, false, false, cx);
-                    pane.add_item(new_item.boxed_clone(), false, false, Some(ix), cx);
+                    pane.remove_item(id, false, false, window, cx);
+                    pane.add_item(new_item.boxed_clone(), false, false, Some(ix), window, cx);
                 }
             })?;
 
             new_item
         };
 
-        this.update(cx, |this, cx| {
+        this.update_in(cx, |this, window, cx| {
             let state = this.follower_states.get_mut(&leader_id)?;
-            item.set_leader_peer_id(Some(leader_id), cx);
+            item.set_leader_peer_id(Some(leader_id), window, cx);
             state.items_by_leader_view_id.insert(
                 id,
                 FollowerView {
@@ -3890,25 +4146,25 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
+    pub fn update_active_view_for_followers(&mut self, window: &mut Window, cx: &mut App) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-        if cx.is_window_active() {
-            let (active_item, panel_id) = self.active_item_for_followers(cx);
+        if window.is_window_active() {
+            let (active_item, panel_id) = self.active_item_for_followers(window, cx);
 
             if let Some(item) = active_item {
-                if item.focus_handle(cx).contains_focused(cx) {
+                if item.item_focus_handle(cx).contains_focused(window, cx) {
                     let leader_id = self
                         .pane_for(&*item)
                         .and_then(|pane| self.leader_for_pane(&pane));
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let id = item
-                            .remote_id(&self.app_state.client, cx)
+                            .remote_id(&self.app_state.client, window, cx)
                             .map(|id| id.to_proto());
 
                         if let Some(id) = id.clone() {
-                            if let Some(variant) = item.to_state_proto(cx) {
+                            if let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
                                     id: Some(id.clone()),
                                     leader_id,
@@ -3916,7 +4172,7 @@ impl Workspace {
                                     panel_id: panel_id.map(|id| id as i32),
                                 });
 
-                                is_project_item = item.is_project_item(cx);
+                                is_project_item = item.is_project_item(window, cx);
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
@@ -3936,6 +4192,7 @@ impl Workspace {
             self.update_followers(
                 is_project_item,
                 proto::update_followers::Variant::UpdateActiveView(update),
+                window,
                 cx,
             );
         }
@@ -3943,12 +4200,13 @@ impl Workspace {
 
     fn active_item_for_followers(
         &self,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (Option<Box<dyn ItemHandle>>, Option<proto::PanelId>) {
         let mut active_item = None;
         let mut panel_id = None;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
-            if dock.focus_handle(cx).contains_focused(cx) {
+        for dock in self.all_docks() {
+            if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
                     if let Some(pane) = panel.pane(cx) {
                         if let Some(item) = pane.read(cx).active_item() {
@@ -3971,7 +4229,8 @@ impl Workspace {
         &self,
         project_only: bool,
         update: proto::update_followers::Variant,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Option<()> {
         // If this update only applies to for followers in the current project,
         // then skip it unless this project is shared. If it applies to all
@@ -3987,7 +4246,7 @@ impl Workspace {
         })
     }
 
-    pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
+    pub fn leader_for_pane(&self, pane: &Entity<Pane>) -> Option<PeerId> {
         self.follower_states.iter().find_map(|(leader_id, state)| {
             if state.center_pane == *pane || state.dock_pane.as_ref() == Some(pane) {
                 Some(*leader_id)
@@ -3997,7 +4256,12 @@ impl Workspace {
         })
     }
 
-    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
+    fn leader_updated(
+        &mut self,
+        leader_id: PeerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
         cx.notify();
 
         let call = self.active_call()?;
@@ -4025,42 +4289,44 @@ impl Workspace {
         let mut item_to_activate = None;
         if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
             if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                if leader_in_this_project || !item.view.is_project_item(cx) {
+                if leader_in_this_project || !item.view.is_project_item(window, cx) {
                     item_to_activate = Some((item.location, item.view.boxed_clone()));
                 }
             }
         } else if let Some(shared_screen) =
-            self.shared_screen_for_peer(leader_id, &state.center_pane, cx)
+            self.shared_screen_for_peer(leader_id, &state.center_pane, window, cx)
         {
             item_to_activate = Some((None, Box::new(shared_screen)));
         }
 
         let (panel_id, item) = item_to_activate?;
 
-        let mut transfer_focus = state.center_pane.read(cx).has_focus(cx);
+        let mut transfer_focus = state.center_pane.read(cx).has_focus(window, cx);
         let pane;
         if let Some(panel_id) = panel_id {
-            pane = self.activate_panel_for_proto_id(panel_id, cx)?.pane(cx)?;
+            pane = self
+                .activate_panel_for_proto_id(panel_id, window, cx)?
+                .pane(cx)?;
             let state = self.follower_states.get_mut(&leader_id)?;
             state.dock_pane = Some(pane.clone());
         } else {
             pane = state.center_pane.clone();
             let state = self.follower_states.get_mut(&leader_id)?;
             if let Some(dock_pane) = state.dock_pane.take() {
-                transfer_focus |= dock_pane.focus_handle(cx).contains_focused(cx);
+                transfer_focus |= dock_pane.focus_handle(cx).contains_focused(window, cx);
             }
         }
 
         pane.update(cx, |pane, cx| {
-            let focus_active_item = pane.has_focus(cx) || transfer_focus;
+            let focus_active_item = pane.has_focus(window, cx) || transfer_focus;
             if let Some(index) = pane.index_for_item(item.as_ref()) {
-                pane.activate_item(index, false, false, cx);
+                pane.activate_item(index, false, false, window, cx);
             } else {
-                pane.add_item(item.boxed_clone(), false, false, None, cx)
+                pane.add_item(item.boxed_clone(), false, false, None, window, cx)
             }
 
             if focus_active_item {
-                pane.focus_active_item(cx)
+                pane.focus_active_item(window, cx)
             }
         });
 
@@ -4071,9 +4337,10 @@ impl Workspace {
     fn shared_screen_for_peer(
         &self,
         _peer_id: PeerId,
-        _pane: &View<Pane>,
-        _cx: &mut WindowContext,
-    ) -> Option<View<SharedScreen>> {
+        _pane: &Entity<Pane>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<Entity<SharedScreen>> {
         None
     }
 
@@ -4081,9 +4348,10 @@ impl Workspace {
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
-        pane: &View<Pane>,
-        cx: &mut WindowContext,
-    ) -> Option<View<SharedScreen>> {
+        pane: &Entity<Pane>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Entity<SharedScreen>> {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(peer_id)?;
@@ -4096,30 +4364,29 @@ impl Workspace {
             }
         }
 
-        Some(cx.new_view(|cx| SharedScreen::new(track, peer_id, user.clone(), cx)))
+        Some(cx.new(|cx| SharedScreen::new(track, peer_id, user.clone(), window, cx)))
     }
 
-    pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
-        if cx.is_window_active() {
-            self.update_active_view_for_followers(cx);
+    pub fn on_window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.is_window_active() {
+            self.update_active_view_for_followers(window, cx);
 
             if let Some(database_id) = self.database_id {
-                cx.background_executor()
-                    .spawn(persistence::DB.update_timestamp(database_id))
+                cx.background_spawn(persistence::DB.update_timestamp(database_id))
                     .detach();
             }
         } else {
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
                     if let Some(item) = pane.active_item() {
-                        item.workspace_deactivated(cx);
+                        item.workspace_deactivated(window, cx);
                     }
                     for item in pane.items() {
                         if matches!(
                             item.workspace_settings(cx).autosave,
                             AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
                         ) {
-                            Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
+                            Pane::autosave_item(item.as_ref(), self.project.clone(), window, cx)
                                 .detach_and_log_err(cx);
                         }
                     }
@@ -4128,20 +4395,21 @@ impl Workspace {
         }
     }
 
-    pub fn active_call(&self) -> Option<&Model<ActiveCall>> {
+    pub fn active_call(&self) -> Option<&Entity<ActiveCall>> {
         self.active_call.as_ref().map(|(call, _)| call)
     }
 
     fn on_active_call_event(
         &mut self,
-        _: Model<ActiveCall>,
+        _: &Entity<ActiveCall>,
         event: &call::room::Event,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         match event {
             call::room::Event::ParticipantLocationChanged { participant_id }
             | call::room::Event::RemoteVideoTracksChanged { participant_id } => {
-                self.leader_updated(*participant_id, cx);
+                self.leader_updated(*participant_id, window, cx);
             }
             _ => {}
         }
@@ -4151,7 +4419,11 @@ impl Workspace {
         self.database_id
     }
 
-    fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
+    pub fn session_id(&self) -> Option<String> {
+        self.session_id.clone()
+    }
+
+    fn local_paths(&self, cx: &App) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
         if project.is_local() {
@@ -4166,38 +4438,41 @@ impl Workspace {
         }
     }
 
-    fn remove_panes(&mut self, member: Member, cx: &mut ViewContext<Workspace>) {
+    fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
                 for child in members.iter() {
-                    self.remove_panes(child.clone(), cx)
+                    self.remove_panes(child.clone(), window, cx)
                 }
             }
             Member::Pane(pane) => {
-                self.force_remove_pane(&pane, &None, cx);
+                self.force_remove_pane(&pane, &None, window, cx);
             }
         }
     }
 
-    fn remove_from_session(&mut self, cx: &mut WindowContext) -> Task<()> {
+    fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(cx)
+        self.serialize_workspace_internal(window, cx)
     }
 
     fn force_remove_pane(
         &mut self,
-        pane: &View<Pane>,
-        focus_on: &Option<View<Pane>>,
-        cx: &mut ViewContext<Workspace>,
+        pane: &Entity<Pane>,
+        focus_on: &Option<Entity<Pane>>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) {
         self.panes.retain(|p| p != pane);
         if let Some(focus_on) = focus_on {
-            focus_on.update(cx, |pane, cx| pane.focus(cx));
+            focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         } else {
-            self.panes
-                .last()
-                .unwrap()
-                .update(cx, |pane, cx| pane.focus(cx));
+            if self.active_pane() == pane {
+                self.panes
+                    .last()
+                    .unwrap()
+                    .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            }
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -4205,14 +4480,14 @@ impl Workspace {
         cx.notify();
     }
 
-    fn serialize_workspace(&mut self, cx: &mut ViewContext<Self>) {
+    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._schedule_serialize.is_none() {
-            self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
+            self._schedule_serialize = Some(cx.spawn_in(window, |this, mut cx| async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
-                this.update(&mut cx, |this, cx| {
-                    this.serialize_workspace_internal(cx).detach();
+                this.update_in(&mut cx, |this, window, cx| {
+                    this.serialize_workspace_internal(window, cx).detach();
                     this._schedule_serialize.take();
                 })
                 .log_err();
@@ -4220,12 +4495,16 @@ impl Workspace {
         }
     }
 
-    fn serialize_workspace_internal(&self, cx: &mut WindowContext) -> Task<()> {
+    fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
 
-        fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
+        fn serialize_pane_handle(
+            pane_handle: &Entity<Pane>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> SerializedPane {
             let (items, active, pinned_count) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
@@ -4242,7 +4521,7 @@ impl Workspace {
                             })
                         })
                         .collect::<Vec<_>>(),
-                    pane.has_focus(cx),
+                    pane.has_focus(window, cx),
                     pane.pinned_count(),
                 )
             };
@@ -4252,7 +4531,8 @@ impl Workspace {
 
         fn build_serialized_pane_group(
             pane_group: &Member,
-            cx: &WindowContext,
+            window: &mut Window,
+            cx: &mut App,
         ) -> SerializedPaneGroup {
             match pane_group {
                 Member::Axis(PaneAxis {
@@ -4264,17 +4544,21 @@ impl Workspace {
                     axis: SerializedAxis(*axis),
                     children: members
                         .iter()
-                        .map(|member| build_serialized_pane_group(member, cx))
+                        .map(|member| build_serialized_pane_group(member, window, cx))
                         .collect::<Vec<_>>(),
                     flexes: Some(flexes.lock().clone()),
                 },
                 Member::Pane(pane_handle) => {
-                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, cx))
+                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, window, cx))
                 }
             }
         }
 
-        fn build_serialized_docks(this: &Workspace, cx: &mut WindowContext) -> DockStructure {
+        fn build_serialized_docks(
+            this: &Workspace,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
@@ -4282,7 +4566,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             let right_dock = this.right_dock.read(cx);
@@ -4292,7 +4576,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             let bottom_dock = this.bottom_dock.read(cx);
@@ -4302,7 +4586,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             DockStructure {
@@ -4337,9 +4621,9 @@ impl Workspace {
         };
 
         if let Some(location) = location {
-            let center_group = build_serialized_pane_group(&self.center.root, cx);
-            let docks = build_serialized_docks(self, cx);
-            let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
+            let center_group = build_serialized_pane_group(&self.center.root, window, cx);
+            let docks = build_serialized_docks(self, window, cx);
+            let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
             let serialized_workspace = SerializedWorkspace {
                 id: database_id,
                 location,
@@ -4349,20 +4633,19 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
-                window_id: Some(cx.window_handle().window_id().as_u64()),
+                window_id: Some(window.window_handle().window_id().as_u64()),
             };
-            return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
+            return window.spawn(cx, |_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
     }
 
     async fn serialize_items(
-        this: &WeakView<Self>,
+        this: &WeakEntity<Self>,
         items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         const CHUNK_SIZE: usize = 200;
-        const THROTTLE_TIME: Duration = Duration::from_millis(200);
 
         let mut serializable_items = items_rx.ready_chunks(CHUNK_SIZE);
 
@@ -4378,16 +4661,17 @@ impl Workspace {
             // We use into_iter() here so that the references to the items are moved into
             // the tasks and not kept alive while we're sleeping.
             for (_, item) in unique_items.into_iter() {
-                if let Ok(Some(task)) =
-                    this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
-                {
-                    cx.background_executor()
-                        .spawn(async move { task.await.log_err() })
+                if let Ok(Some(task)) = this.update_in(cx, |workspace, window, cx| {
+                    item.serialize(workspace, false, window, cx)
+                }) {
+                    cx.background_spawn(async move { task.await.log_err() })
                         .detach();
                 }
             }
 
-            cx.background_executor().timer(THROTTLE_TIME).await;
+            cx.background_executor()
+                .timer(SERIALIZATION_THROTTLE_TIME)
+                .await;
         }
 
         Ok(())
@@ -4405,9 +4689,10 @@ impl Workspace {
     pub(crate) fn load_workspace(
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
-        cx.spawn(|workspace, mut cx| async move {
+        cx.spawn_in(window, |workspace, mut cx| async move {
             let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
 
             let mut center_group = None;
@@ -4431,7 +4716,7 @@ impl Workspace {
             let mut items_by_project_path = HashMap::default();
             let mut item_ids_by_kind = HashMap::default();
             let mut all_deserialized_items = Vec::default();
-            cx.update(|cx| {
+            cx.update(|_, cx| {
                 for item in center_items.unwrap_or_default().into_iter().flatten() {
                     if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
                         item_ids_by_kind
@@ -4456,17 +4741,17 @@ impl Workspace {
                 .collect::<Vec<_>>();
 
             // Remove old panes from workspace panes list
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
                 if let Some((center_group, active_pane)) = center_group {
-                    workspace.remove_panes(workspace.center.root.clone(), cx);
+                    workspace.remove_panes(workspace.center.root.clone(), window, cx);
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
                     if let Some(active_pane) = active_pane {
-                        workspace.set_active_pane(&active_pane, cx);
-                        cx.focus_self();
+                        workspace.set_active_pane(&active_pane, window, cx);
+                        cx.focus_self(window);
                     } else {
-                        workspace.set_active_pane(&workspace.center.first_pane(), cx);
+                        workspace.set_active_pane(&workspace.center.first_pane(), window, cx);
                     }
                 }
 
@@ -4481,7 +4766,7 @@ impl Workspace {
                 {
                     dock.update(cx, |dock, cx| {
                         dock.serialized_dock = Some(serialized_dock.clone());
-                        dock.restore_state(cx);
+                        dock.restore_state(window, cx);
                     });
                 }
 
@@ -4493,7 +4778,7 @@ impl Workspace {
             // the database filling up, we delete items that haven't been loaded now.
             //
             // The items that have been loaded, have been saved after they've been added to the workspace.
-            let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
+            let clean_up_tasks = workspace.update_in(&mut cx, |_, window, cx| {
                 item_ids_by_kind
                     .into_iter()
                     .map(|(item_kind, loaded_items)| {
@@ -4501,6 +4786,7 @@ impl Workspace {
                             item_kind,
                             serialized_workspace.id,
                             loaded_items,
+                            window,
                             cx,
                         )
                         .log_err()
@@ -4511,12 +4797,12 @@ impl Workspace {
             futures::future::join_all(clean_up_tasks).await;
 
             workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                    workspace.serialize_workspace_internal(cx).detach();
+                    workspace.serialize_workspace_internal(window, cx).detach();
 
                     // Ensure that we mark the window as edited if we did load dirty items
-                    workspace.update_window_edited(cx);
+                    workspace.update_window_edited(window, cx);
                 })
                 .ok();
 
@@ -4524,8 +4810,8 @@ impl Workspace {
         })
     }
 
-    fn actions(&self, div: Div, cx: &mut ViewContext<Self>) -> Div {
-        self.add_workspace_actions_listeners(div, cx)
+    fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        self.add_workspace_actions_listeners(div, window, cx)
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
@@ -4536,56 +4822,91 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
-            .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
+            .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
-                workspace.unfollow_in_pane(&pane, cx);
+                workspace.unfollow_in_pane(&pane, window, cx);
             }))
-            .on_action(cx.listener(|workspace, action: &Save, cx| {
+            .on_action(cx.listener(|workspace, action: &Save, window, cx| {
                 workspace
-                    .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
-                    .detach_and_prompt_err("Failed to save", cx, |_, _| None);
+                    .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), window, cx)
+                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
-            .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, cx| {
+            .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, window, cx| {
                 workspace
-                    .save_active_item(SaveIntent::SaveWithoutFormat, cx)
-                    .detach_and_prompt_err("Failed to save", cx, |_, _| None);
+                    .save_active_item(SaveIntent::SaveWithoutFormat, window, cx)
+                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
-            .on_action(cx.listener(|workspace, _: &SaveAs, cx| {
+            .on_action(cx.listener(|workspace, _: &SaveAs, window, cx| {
                 workspace
-                    .save_active_item(SaveIntent::SaveAs, cx)
-                    .detach_and_prompt_err("Failed to save", cx, |_, _| None);
-            }))
-            .on_action(cx.listener(|workspace, _: &ActivatePreviousPane, cx| {
-                workspace.activate_previous_pane(cx)
+                    .save_active_item(SaveIntent::SaveAs, window, cx)
+                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
             .on_action(
-                cx.listener(|workspace, _: &ActivateNextPane, cx| workspace.activate_next_pane(cx)),
+                cx.listener(|workspace, _: &ActivatePreviousPane, window, cx| {
+                    workspace.activate_previous_pane(window, cx)
+                }),
             )
-            .on_action(cx.listener(|workspace, _: &ActivateNextWindow, cx| {
-                workspace.activate_next_window(cx)
-            }))
-            .on_action(cx.listener(|workspace, _: &ActivatePreviousWindow, cx| {
-                workspace.activate_previous_window(cx)
+            .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
+                workspace.activate_next_pane(window, cx)
             }))
             .on_action(
-                cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
-                    workspace.activate_pane_in_direction(action.0, cx)
+                cx.listener(|workspace, _: &ActivateNextWindow, _window, cx| {
+                    workspace.activate_next_window(cx)
                 }),
             )
             .on_action(
-                cx.listener(|workspace, action: &MoveItemToPaneInDirection, cx| {
-                    workspace.move_item_to_pane_in_direction(action, cx)
+                cx.listener(|workspace, _: &ActivatePreviousWindow, _window, cx| {
+                    workspace.activate_previous_window(cx)
                 }),
             )
-            .on_action(cx.listener(|workspace, action: &SwapPaneInDirection, cx| {
-                workspace.swap_pane_in_direction(action.0, cx)
+            .on_action(cx.listener(|workspace, _: &ActivatePaneLeft, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Left, window, cx)
             }))
-            .on_action(cx.listener(|this, _: &ToggleLeftDock, cx| {
-                this.toggle_dock(DockPosition::Left, cx);
+            .on_action(cx.listener(|workspace, _: &ActivatePaneRight, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Right, window, cx)
             }))
+            .on_action(cx.listener(|workspace, _: &ActivatePaneUp, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Up, window, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivatePaneDown, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Down, window, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
+                workspace.activate_next_pane(window, cx)
+            }))
+            .on_action(cx.listener(
+                |workspace, action: &MoveItemToPaneInDirection, window, cx| {
+                    workspace.move_item_to_pane_in_direction(action, window, cx)
+                },
+            ))
+            .on_action(cx.listener(|workspace, _: &SwapPaneLeft, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Left, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneRight, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Right, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneUp, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Up, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Down, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
+                this.toggle_dock(DockPosition::Left, window, cx);
+            }))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleRightDock, window, cx| {
+                    workspace.toggle_dock(DockPosition::Right, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleBottomDock, window, cx| {
+                    workspace.toggle_dock(DockPosition::Bottom, window, cx);
+                },
+            ))
             .on_action(
-                cx.listener(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-                    workspace.toggle_dock(DockPosition::Right, cx);
+                cx.listener(|workspace: &mut Workspace, _: &CloseAllDocks, window, cx| {
+                    workspace.close_all_docks(window, cx);
                 }),
             )
             .on_action(cx.listener(|workspace, action: &SetBottomDockLayout, cx| {
@@ -4601,30 +4922,30 @@ impl Workspace {
                     workspace.close_all_docks(cx);
                 }),
             )
-            .on_action(
-                cx.listener(|workspace: &mut Workspace, _: &ClearAllNotifications, cx| {
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ClearAllNotifications, _, cx| {
                     workspace.clear_all_notifications(cx);
-                }),
-            )
-            .on_action(
-                cx.listener(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
-                    workspace.reopen_closed_item(cx).detach();
-                }),
-            )
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
+                    workspace.reopen_closed_item(window, cx).detach();
+                },
+            ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         use node_runtime::NodeRuntime;
         use session::Session;
 
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
 
-        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
-        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
-        cx.activate_window();
+        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+        let session = cx.new(|cx| AppSession::new(Session::test(), cx));
+        window.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
@@ -4635,54 +4956,66 @@ impl Workspace {
             node_runtime: NodeRuntime::unavailable(),
             session,
         });
-        let workspace = Self::new(Default::default(), project, app_state, cx);
-        workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
+        let workspace = Self::new(Default::default(), project, app_state, window, cx);
+        workspace
+            .active_pane
+            .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         workspace
     }
 
     pub fn register_action<A: Action>(
         &mut self,
-        callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,
+        callback: impl Fn(&mut Self, &A, &mut Window, &mut Context<Self>) + 'static,
     ) -> &mut Self {
         let callback = Arc::new(callback);
 
-        self.workspace_actions.push(Box::new(move |div, cx| {
+        self.workspace_actions.push(Box::new(move |div, _, cx| {
             let callback = callback.clone();
-            div.on_action(
-                cx.listener(move |workspace, event, cx| (callback.clone())(workspace, event, cx)),
-            )
+            div.on_action(cx.listener(move |workspace, event, window, cx| {
+                (callback.clone())(workspace, event, window, cx)
+            }))
         }));
         self
     }
 
-    fn add_workspace_actions_listeners(&self, mut div: Div, cx: &mut ViewContext<Self>) -> Div {
+    fn add_workspace_actions_listeners(
+        &self,
+        mut div: Div,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         for action in self.workspace_actions.iter() {
-            div = (action)(div, cx)
+            div = (action)(div, window, cx)
         }
         div
     }
 
-    pub fn has_active_modal(&self, cx: &WindowContext) -> bool {
+    pub fn has_active_modal(&self, _: &mut Window, cx: &mut App) -> bool {
         self.modal_layer.read(cx).has_active_modal()
     }
 
-    pub fn active_modal<V: ManagedView + 'static>(&self, cx: &AppContext) -> Option<View<V>> {
+    pub fn active_modal<V: ManagedView + 'static>(&self, cx: &App) -> Option<Entity<V>> {
         self.modal_layer.read(cx).active_modal()
     }
 
-    pub fn toggle_modal<V: ModalView, B>(&mut self, cx: &mut WindowContext, build: B)
+    pub fn toggle_modal<V: ModalView, B>(&mut self, window: &mut Window, cx: &mut App, build: B)
     where
-        B: FnOnce(&mut ViewContext<V>) -> V,
+        B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
-        self.modal_layer
-            .update(cx, |modal_layer, cx| modal_layer.toggle_modal(cx, build))
+        self.modal_layer.update(cx, |modal_layer, cx| {
+            modal_layer.toggle_modal(window, cx, build)
+        })
     }
 
-    pub fn toggle_centered_layout(&mut self, _: &ToggleCenteredLayout, cx: &mut ViewContext<Self>) {
+    pub fn toggle_centered_layout(
+        &mut self,
+        _: &ToggleCenteredLayout,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.centered_layout = !self.centered_layout;
         if let Some(database_id) = self.database_id() {
-            cx.background_executor()
-                .spawn(DB.set_centered_layout(database_id, self.centered_layout))
+            cx.background_spawn(DB.set_centered_layout(database_id, self.centered_layout))
                 .detach_and_log_err(cx);
         }
         cx.notify();
@@ -4697,8 +5030,9 @@ impl Workspace {
     fn render_dock(
         &self,
         position: DockPosition,
-        dock: &View<Dock>,
-        cx: &WindowContext,
+        dock: &Entity<Dock>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<Div> {
         if self.zoomed_position == Some(position) {
             return None;
@@ -4707,7 +5041,7 @@ impl Workspace {
         let leader_border = dock.read(cx).active_panel().and_then(|panel| {
             let pane = panel.pane(cx)?;
             let follower_states = &self.follower_states;
-            leader_border_for_pane(follower_states, &pane, cx)
+            leader_border_for_pane(follower_states, &pane, window, cx)
         });
 
         Some(
@@ -4720,16 +5054,15 @@ impl Workspace {
         )
     }
 
-    pub fn for_window(cx: &mut WindowContext) -> Option<View<Workspace>> {
-        let window = cx.window_handle().downcast::<Workspace>()?;
-        cx.read_window(&window, |workspace, _| workspace).ok()
+    pub fn for_window(window: &mut Window, _: &mut App) -> Option<Entity<Workspace>> {
+        window.root().flatten()
     }
 
     pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
         self.zoomed.as_ref()
     }
 
-    pub fn activate_next_window(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_next_window(&mut self, cx: &mut Context<Self>) {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
@@ -4742,10 +5075,12 @@ impl Workspace {
         else {
             return;
         };
-        next_window.update(cx, |_, cx| cx.activate_window()).ok();
+        next_window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
     }
 
-    pub fn activate_previous_window(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_previous_window(&mut self, cx: &mut Context<Self>) {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
@@ -4759,14 +5094,17 @@ impl Workspace {
         else {
             return;
         };
-        prev_window.update(cx, |_, cx| cx.activate_window()).ok();
+        prev_window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
     }
 }
 
 fn leader_border_for_pane(
     follower_states: &HashMap<PeerId, FollowerState>,
-    pane: &View<Pane>,
-    cx: &WindowContext,
+    pane: &Entity<Pane>,
+    _: &Window,
+    cx: &App,
 ) -> Option<Div> {
     let (leader_id, _follower_state) = follower_states.iter().find_map(|(leader_id, state)| {
         if state.pane() == pane {
@@ -4808,7 +5146,8 @@ fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
 fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
-    cx: &mut ViewContext<Workspace>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
 ) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
     let restored_items = serialized_workspace.map(|serialized_workspace| {
         Workspace::load_workspace(
@@ -4818,11 +5157,12 @@ fn open_items(
                 .map(|(_, project_path)| project_path)
                 .cloned()
                 .collect(),
+            window,
             cx,
         )
     });
 
-    cx.spawn(|workspace, mut cx| async move {
+    cx.spawn_in(window, |workspace, mut cx| async move {
         let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
         if let Some(restored_items) = restored_items {
@@ -4831,7 +5171,7 @@ fn open_items(
             let restored_project_paths = restored_items
                 .iter()
                 .filter_map(|item| {
-                    cx.update(|cx| item.as_ref()?.project_path(cx))
+                    cx.update(|_, cx| item.as_ref()?.project_path(cx))
                         .ok()
                         .flatten()
                 })
@@ -4879,8 +5219,14 @@ fn open_items(
                                 return Some((
                                     ix,
                                     workspace
-                                        .update(&mut cx, |workspace, cx| {
-                                            workspace.open_path(file_project_path, None, true, cx)
+                                        .update_in(&mut cx, |workspace, window, cx| {
+                                            workspace.open_path(
+                                                file_project_path,
+                                                None,
+                                                true,
+                                                window,
+                                                cx,
+                                            )
                                         })
                                         .log_err()?
                                         .await,
@@ -4903,26 +5249,27 @@ fn open_items(
 }
 
 enum ActivateInDirectionTarget {
-    Pane(View<Pane>),
-    Dock(View<Dock>),
+    Pane(Entity<Pane>),
+    Dock(Entity<Dock>),
 }
 
-fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
+fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncApp) {
     const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml";
 
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _, cx| {
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 struct DatabaseFailedNotification;
 
-                workspace.show_notification_once(
+                workspace.show_notification(
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
                     |cx| {
-                        cx.new_view(|_| {
-                            MessageNotification::new("Failed to load the database file.")
-                                .with_click_message("File an issue")
-                                .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
+                        cx.new(|cx| {
+                            MessageNotification::new("Failed to load the database file.", cx)
+                                .primary_message("File an Issue")
+                                .primary_icon(IconName::Plus)
+                                .primary_on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
                         })
                     },
                 );
@@ -4931,17 +5278,23 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
-impl FocusableView for Workspace {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+impl Focusable for Workspace {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.active_pane.focus_handle(cx)
     }
 }
 
-#[derive(Clone, Render)]
+#[derive(Clone)]
 struct DraggedDock(DockPosition);
 
+impl Render for DraggedDock {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
 impl Render for Workspace {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().clone());
@@ -4966,13 +5319,13 @@ impl Render for Workspace {
         } else {
             (None, None)
         };
-        let ui_font = theme::setup_ui_font(cx);
+        let ui_font = theme::setup_ui_font(window, cx);
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
 
         client_side_decorations(
-            self.actions(div(), cx)
+            self.actions(div(), window, cx)
                 .key_context(context)
                 .relative()
                 .size_full()
@@ -5006,39 +5359,51 @@ impl Render for Workspace {
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .child({
-                                    let this = cx.view().clone();
+                                    let this = cx.entity().clone();
                                     canvas(
-                                        move |bounds, cx| {
+                                        move |bounds, window, cx| {
                                             this.update(cx, |this, cx| {
                                                 let bounds_changed = this.bounds != bounds;
                                                 this.bounds = bounds;
 
                                                 if bounds_changed {
                                                     this.left_dock.update(cx, |dock, cx| {
-                                                        dock.clamp_panel_size(bounds.size.width, cx)
+                                                        dock.clamp_panel_size(
+                                                            bounds.size.width,
+                                                            window,
+                                                            cx,
+                                                        )
                                                     });
 
                                                     this.right_dock.update(cx, |dock, cx| {
-                                                        dock.clamp_panel_size(bounds.size.width, cx)
+                                                        dock.clamp_panel_size(
+                                                            bounds.size.width,
+                                                            window,
+                                                            cx,
+                                                        )
                                                     });
 
                                                     this.bottom_dock.update(cx, |dock, cx| {
                                                         dock.clamp_panel_size(
                                                             bounds.size.height,
+                                                            window,
                                                             cx,
                                                         )
                                                     });
                                                 }
                                             })
                                         },
-                                        |_, _, _| {},
+                                        |_, _, _, _| {},
                                     )
                                     .absolute()
                                     .size_full()
                                 })
                                 .when(self.zoomed.is_none(), |this| {
                                     this.on_drag_move(cx.listener(
-                                        move |workspace, e: &DragMoveEvent<DraggedDock>, cx| {
+                                        move |workspace,
+                                              e: &DragMoveEvent<DraggedDock>,
+                                              window,
+                                              cx| {
                                             if workspace.previous_dock_drag_coordinates
                                                 != Some(e.event.position)
                                             {
@@ -5050,6 +5415,7 @@ impl Render for Workspace {
                                                             e.event.position.x
                                                                 - workspace.bounds.left(),
                                                             workspace,
+                                                            window,
                                                             cx,
                                                         );
                                                     }
@@ -5058,6 +5424,7 @@ impl Render for Workspace {
                                                             workspace.bounds.right()
                                                                 - e.event.position.x,
                                                             workspace,
+                                                            window,
                                                             cx,
                                                         );
                                                     }
@@ -5066,11 +5433,12 @@ impl Render for Workspace {
                                                             workspace.bounds.bottom()
                                                                 - e.event.position.y,
                                                             workspace,
+                                                            window,
                                                             cx,
                                                         );
                                                     }
                                                 };
-                                                workspace.serialize_workspace(cx);
+                                                workspace.serialize_workspace(window, cx);
                                             }
                                         },
                                     ))
@@ -5312,11 +5680,12 @@ impl Render for Workspace {
                                         }
                                     })
                                 }))
-                                .children(self.render_notifications(cx)),
+                                .children(self.render_notifications(window, cx)),
                         )
                         .child(self.status_bar.clone())
                         .child(self.modal_layer.clone()),
                 ),
+            window,
             cx,
         )
     }
@@ -5325,36 +5694,47 @@ impl Render for Workspace {
 fn resize_bottom_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
 ) {
     let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        bottom_dock.resize_active_panel(Some(size), cx);
+        bottom_dock.resize_active_panel(Some(size), window, cx);
     });
 }
 
-fn resize_right_dock(new_size: Pixels, workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+fn resize_right_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
     workspace.right_dock.update(cx, |right_dock, cx| {
-        right_dock.resize_active_panel(Some(size), cx);
+        right_dock.resize_active_panel(Some(size), window, cx);
     });
 }
 
-fn resize_left_dock(new_size: Pixels, workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+fn resize_left_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
 
     workspace.left_dock.update(cx, |left_dock, cx| {
-        left_dock.resize_active_panel(Some(size), cx);
+        left_dock.resize_active_panel(Some(size), window, cx);
     });
 }
 
 impl WorkspaceStore {
-    pub fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         Self {
             workspaces: Default::default(),
             _subscriptions: vec![
-                client.add_request_handler(cx.weak_model(), Self::handle_follow),
-                client.add_message_handler(cx.weak_model(), Self::handle_update_followers),
+                client.add_request_handler(cx.weak_entity(), Self::handle_follow),
+                client.add_message_handler(cx.weak_entity(), Self::handle_update_followers),
             ],
             client,
         }
@@ -5364,7 +5744,7 @@ impl WorkspaceStore {
         &self,
         project_id: Option<u64>,
         update: proto::update_followers::Variant,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<()> {
         let active_call = ActiveCall::try_global(cx)?;
         let room_id = active_call.read(cx).room()?.read(cx).id();
@@ -5378,9 +5758,9 @@ impl WorkspaceStore {
     }
 
     pub async fn handle_follow(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::Follow>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::FollowResponse> {
         this.update(&mut cx, |this, cx| {
             let follower = Follower {
@@ -5391,8 +5771,9 @@ impl WorkspaceStore {
             let mut response = proto::FollowResponse::default();
             this.workspaces.retain(|workspace| {
                 workspace
-                    .update(cx, |workspace, cx| {
-                        let handler_response = workspace.handle_follow(follower.project_id, cx);
+                    .update(cx, |workspace, window, cx| {
+                        let handler_response =
+                            workspace.handle_follow(follower.project_id, window, cx);
                         if let Some(active_view) = handler_response.active_view.clone() {
                             if workspace.project.read(cx).remote_id() == follower.project_id {
                                 response.active_view = Some(active_view)
@@ -5407,9 +5788,9 @@ impl WorkspaceStore {
     }
 
     async fn handle_update_followers(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let leader_id = envelope.original_sender_id()?;
         let update = envelope.payload;
@@ -5417,12 +5798,12 @@ impl WorkspaceStore {
         this.update(&mut cx, |this, cx| {
             this.workspaces.retain(|workspace| {
                 workspace
-                    .update(cx, |workspace, cx| {
+                    .update(cx, |workspace, window, cx| {
                         let project_id = workspace.project.read(cx).remote_id();
                         if update.project_id != project_id && update.project_id.is_some() {
                             return;
                         }
-                        workspace.handle_update_followers(leader_id, update.clone(), cx);
+                        workspace.handle_update_followers(leader_id, update.clone(), window, cx);
                     })
                     .is_ok()
             });
@@ -5450,17 +5831,17 @@ impl ViewId {
 }
 
 impl FollowerState {
-    fn pane(&self) -> &View<Pane> {
+    fn pane(&self) -> &Entity<Pane> {
         self.dock_pane.as_ref().unwrap_or(&self.center_pane)
     }
 }
 
 pub trait WorkspaceHandle {
-    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
+    fn file_project_paths(&self, cx: &App) -> Vec<ProjectPath>;
 }
 
-impl WorkspaceHandle for View<Workspace> {
-    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
+impl WorkspaceHandle for Entity<Workspace> {
+    fn file_project_paths(&self, cx: &App) -> Vec<ProjectPath> {
         self.read(cx)
             .worktrees(cx)
             .flat_map(|worktree| {
@@ -5482,36 +5863,6 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-pub fn activate_workspace_for_project(
-    cx: &mut AppContext,
-    predicate: impl Fn(&Project, &AppContext) -> bool + Send + 'static,
-) -> Option<WindowHandle<Workspace>> {
-    for window in cx.windows() {
-        let Some(workspace) = window.downcast::<Workspace>() else {
-            continue;
-        };
-
-        let predicate = workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project.read(cx);
-                if predicate(project, cx) {
-                    cx.activate_window();
-                    true
-                } else {
-                    false
-                }
-            })
-            .log_err()
-            .unwrap_or(false);
-
-        if predicate {
-            return Some(workspace);
-        }
-    }
-
-    None
-}
-
 pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
@@ -5531,8 +5882,8 @@ async fn join_channel_internal(
     channel_id: ChannelId,
     app_state: &Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
-    active_call: &Model<ActiveCall>,
-    cx: &mut AsyncAppContext,
+    active_call: &Entity<ActiveCall>,
+    cx: &mut AsyncApp,
 ) -> Result<bool> {
     let (should_prompt, open_room) = active_call.update(cx, |active_call, cx| {
         let Some(room) = active_call.room().map(|room| room.read(cx)) else {
@@ -5568,12 +5919,13 @@ async fn join_channel_internal(
     if should_prompt {
         if let Some(workspace) = requesting_window {
             let answer = workspace
-                .update(cx, |_, cx| {
-                    cx.prompt(
+                .update(cx, |_, window, cx| {
+                    window.prompt(
                         PromptLevel::Warning,
                         "Do you want to switch channels?",
                         Some("Leaving this call will unshare your current project."),
                         &["Yes, Join Channel", "Cancel"],
+                        cx,
                     )
                 })?
                 .await;
@@ -5631,7 +5983,7 @@ async fn join_channel_internal(
         // If you are the first to join a channel, see if you should share your project.
         if room.remote_participants().is_empty() && !room.local_participant_is_guest() {
             if let Some(workspace) = requesting_window {
-                let project = workspace.update(cx, |workspace, cx| {
+                let project = workspace.update(cx, |workspace, _, cx| {
                     let project = workspace.project.read(cx);
 
                     if !CallSettings::get_global(cx).share_on_join {
@@ -5673,7 +6025,7 @@ pub fn join_channel(
     channel_id: ChannelId,
     app_state: Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Task<Result<()>> {
     let active_call = ActiveCall::global(cx);
     cx.spawn(|mut cx| async move {
@@ -5715,7 +6067,7 @@ pub fn join_channel(
             log::error!("failed to join channel: {}", err);
             if let Some(active_window) = active_window {
                 active_window
-                    .update(&mut cx, |_, cx| {
+                    .update(&mut cx, |_, window, cx| {
                         let detail: SharedString = match err.error_code() {
                             ErrorCode::SignedOut => {
                                 "Please sign in to continue.".into()
@@ -5732,12 +6084,12 @@ pub fn join_channel(
                             ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
                             _ => format!("{}\n\nPlease try again.", err).into(),
                         };
-                        cx.prompt(
+                        window.prompt(
                             PromptLevel::Critical,
                             "Failed to join channel",
                             Some(&detail),
                             &["Ok"],
-                        )
+                        cx)
                     })?
                     .await
                     .ok();
@@ -5751,7 +6103,7 @@ pub fn join_channel(
 
 pub async fn get_any_active_workspace(
     app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> anyhow::Result<WindowHandle<Workspace>> {
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
@@ -5762,7 +6114,7 @@ pub async fn get_any_active_workspace(
     activate_any_workspace_window(&mut cx).context("could not open zed")
 }
 
-fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandle<Workspace>> {
+fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Workspace>> {
     cx.update(|cx| {
         if let Some(workspace_window) = cx
             .active_window()
@@ -5774,7 +6126,7 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
         for window in cx.windows() {
             if let Some(workspace_window) = window.downcast::<Workspace>() {
                 workspace_window
-                    .update(cx, |_, cx| cx.activate_window())
+                    .update(cx, |_, window, _| window.activate_window())
                     .ok();
                 return Some(workspace_window);
             }
@@ -5785,7 +6137,7 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
     .flatten()
 }
 
-pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> {
+pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<Workspace>> {
     cx.windows()
         .into_iter()
         .filter_map(|window| window.downcast::<Workspace>())
@@ -5803,13 +6155,12 @@ pub struct OpenOptions {
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
-
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
     open_options: OpenOptions,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Task<
     anyhow::Result<(
         WindowHandle<Workspace>,
@@ -5821,57 +6172,77 @@ pub fn open_paths(
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
 
-    if open_options.open_new_workspace != Some(true) {
-        for window in local_workspace_windows(cx) {
-            if let Ok(workspace) = window.read(cx) {
-                let m = workspace
-                    .project
-                    .read(cx)
-                    .visibility_for_paths(&abs_paths, cx);
-                if m > best_match {
-                    existing = Some(window);
-                    best_match = m;
-                } else if best_match.is_none() && open_options.open_new_workspace == Some(false) {
-                    existing = Some(window)
-                }
-            }
-        }
-    }
-
     cx.spawn(move |mut cx| async move {
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
-            let all_files = abs_paths.iter().map(|path| app_state.fs.metadata(path));
-            if futures::future::join_all(all_files)
+        if open_options.open_new_workspace != Some(true) {
+            let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
+            let all_metadatas = futures::future::join_all(all_paths)
                 .await
                 .into_iter()
                 .filter_map(|result| result.ok().flatten())
-                .all(|file| !file.is_dir)
-            {
-                cx.update(|cx| {
-                    for window in local_workspace_windows(cx) {
-                        if let Ok(workspace) = window.read(cx) {
-                            let project = workspace.project().read(cx);
-                            if project.is_via_collab() {
-                                continue;
-                            }
+                .collect::<Vec<_>>();
+
+            cx.update(|cx| {
+                for window in local_workspace_windows(&cx) {
+                    if let Ok(workspace) = window.read(&cx) {
+                        let m = workspace.project.read(&cx).visibility_for_paths(
+                            &abs_paths,
+                            &all_metadatas,
+                            open_options.open_new_workspace == None,
+                            cx,
+                        );
+                        if m > best_match {
                             existing = Some(window);
-                            open_visible = OpenVisible::None;
-                            break;
+                            best_match = m;
+                        } else if best_match.is_none()
+                            && open_options.open_new_workspace == Some(false)
+                        {
+                            existing = Some(window)
                         }
                     }
-                })?;
+                }
+            })?;
+
+            if open_options.open_new_workspace.is_none() && existing.is_none() {
+                if all_metadatas.iter().all(|file| !file.is_dir) {
+                    cx.update(|cx| {
+                        if let Some(window) = cx
+                            .active_window()
+                            .and_then(|window| window.downcast::<Workspace>())
+                        {
+                            if let Ok(workspace) = window.read(cx) {
+                                let project = workspace.project().read(cx);
+                                if project.is_local() && !project.is_via_collab() {
+                                    existing = Some(window);
+                                    open_visible = OpenVisible::None;
+                                    return;
+                                }
+                            }
+                        }
+                        for window in local_workspace_windows(cx) {
+                            if let Ok(workspace) = window.read(cx) {
+                                let project = workspace.project().read(cx);
+                                if project.is_via_collab() {
+                                    continue;
+                                }
+                                existing = Some(window);
+                                open_visible = OpenVisible::None;
+                                break;
+                            }
+                        }
+                    })?;
+                }
             }
         }
 
         if let Some(existing) = existing {
             let open_task = existing
-                .update(&mut cx, |workspace, cx| {
-                    cx.activate_window();
-                    workspace.open_paths(abs_paths, open_visible, None, cx)
+                .update(&mut cx, |workspace, window, cx| {
+                    window.activate_window();
+                    workspace.open_paths(abs_paths, open_visible, None, window, cx)
                 })?
                 .await;
 
-            _ = existing.update(&mut cx, |workspace, cx| {
+            _ = existing.update(&mut cx, |workspace, _, cx| {
                 for item in open_task.iter().flatten() {
                     if let Err(e) = item {
                         workspace.show_error(&e, cx);
@@ -5898,15 +6269,15 @@ pub fn open_paths(
 pub fn open_new(
     open_options: OpenOptions,
     app_state: Arc<AppState>,
-    cx: &mut AppContext,
-    init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
+    cx: &mut App,
+    init: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
     let task = Workspace::new_local(Vec::new(), app_state, None, open_options.env, cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await?;
-        workspace.update(&mut cx, |workspace, cx| {
+        workspace.update(&mut cx, |workspace, window, cx| {
             if opened_paths.is_empty() {
-                init(workspace, cx)
+                init(workspace, window, cx)
             }
         })?;
         Ok(())
@@ -5915,10 +6286,11 @@ pub fn open_new(
 
 pub fn create_and_open_local_file(
     path: &'static Path,
-    cx: &mut ViewContext<Workspace>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
     default_content: impl 'static + Send + FnOnce() -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
-    cx.spawn(|workspace, mut cx| async move {
+    cx.spawn_in(window, |workspace, mut cx| async move {
         let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
@@ -5927,9 +6299,15 @@ pub fn create_and_open_local_file(
         }
 
         let mut items = workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(cx, |workspace, cx| {
-                    workspace.open_paths(vec![path.to_path_buf()], OpenVisible::None, None, cx)
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.with_local_workspace(window, cx, |workspace, window, cx| {
+                    workspace.open_paths(
+                        vec![path.to_path_buf()],
+                        OpenVisible::None,
+                        None,
+                        window,
+                        cx,
+                    )
                 })
             })?
             .await?
@@ -5947,7 +6325,7 @@ pub fn open_ssh_project(
     delegate: Arc<dyn SshClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
@@ -6012,30 +6390,26 @@ pub fn open_ssh_project(
                 .unwrap_or_else(|| anyhow!("no paths given")));
         }
 
-        cx.update_window(window.into(), |_, cx| {
-            cx.replace_root_view(|cx| {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.replace_root(cx, |window, cx| {
+                telemetry::event!("SSH Project Opened");
+
                 let mut workspace =
-                    Workspace::new(Some(workspace_id), project, app_state.clone(), cx);
-
-                workspace
-                    .client()
-                    .telemetry()
-                    .report_app_event("open ssh project".to_string());
-
+                    Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
                 workspace.set_serialized_ssh_project(serialized_ssh_project);
                 workspace
             });
         })?;
 
         window
-            .update(&mut cx, |_, cx| {
-                cx.activate_window();
+            .update(&mut cx, |_, window, cx| {
+                window.activate_window();
 
-                open_items(serialized_workspace, project_paths_to_open, cx)
+                open_items(serialized_workspace, project_paths_to_open, window, cx)
             })?
             .await?;
 
-        window.update(&mut cx, |workspace, cx| {
+        window.update(&mut cx, |workspace, _, cx| {
             for error in project_path_errors {
                 if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                     if let Some(path) = error.error_tag("path") {
@@ -6052,7 +6426,7 @@ pub fn open_ssh_project(
 fn serialize_ssh_project(
     connection_options: SshConnectionOptions,
     paths: Vec<PathBuf>,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Task<
     Result<(
         SerializedSshProject,
@@ -6060,7 +6434,7 @@ fn serialize_ssh_project(
         Option<SerializedWorkspace>,
     )>,
 > {
-    cx.background_executor().spawn(async move {
+    cx.background_spawn(async move {
         let serialized_ssh_project = persistence::DB
             .get_or_create_ssh_project(
                 connection_options.host.clone(),
@@ -6092,22 +6466,24 @@ pub fn join_in_room_project(
     project_id: u64,
     follow_user_id: u64,
     app_state: Arc<AppState>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Task<Result<()>> {
     let windows = cx.windows();
     cx.spawn(|mut cx| async move {
-        let existing_workspace = windows.into_iter().find_map(|window| {
-            window.downcast::<Workspace>().and_then(|window| {
-                window
-                    .update(&mut cx, |workspace, cx| {
-                        if workspace.project().read(cx).remote_id() == Some(project_id) {
-                            Some(window)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(None)
-            })
+        let existing_workspace = windows.into_iter().find_map(|window_handle| {
+            window_handle
+                .downcast::<Workspace>()
+                .and_then(|window_handle| {
+                    window_handle
+                        .update(&mut cx, |workspace, _window, cx| {
+                            if workspace.project().read(cx).remote_id() == Some(project_id) {
+                                Some(window_handle)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(None)
+                })
         });
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
@@ -6132,17 +6508,17 @@ pub fn join_in_room_project(
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
-                cx.open_window(options, |cx| {
-                    cx.new_view(|cx| {
-                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                cx.open_window(options, |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), window, cx)
                     })
                 })
             })??
         };
 
-        workspace.update(&mut cx, |workspace, cx| {
+        workspace.update(&mut cx, |workspace, window, cx| {
             cx.activate(true);
-            cx.activate_window();
+            window.activate_window();
 
             if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
                 let follow_peer_id = room
@@ -6163,7 +6539,7 @@ pub fn join_in_room_project(
                     });
 
                 if let Some(follow_peer_id) = follow_peer_id {
-                    workspace.follow(follow_peer_id, cx);
+                    workspace.follow(follow_peer_id, window, cx);
                 }
             }
         })?;
@@ -6172,7 +6548,7 @@ pub fn join_in_room_project(
     })
 }
 
-pub fn reload(reload: &Reload, cx: &mut AppContext) {
+pub fn reload(reload: &Reload, cx: &mut App) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
         .windows()
@@ -6187,12 +6563,13 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
     let mut prompt = None;
     if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
         prompt = window
-            .update(cx, |_, cx| {
-                cx.prompt(
+            .update(cx, |_, window, cx| {
+                window.prompt(
                     PromptLevel::Info,
                     "Are you sure you want to restart?",
                     None,
                     &["Restart", "Cancel"],
+                    cx,
                 )
             })
             .ok();
@@ -6209,8 +6586,8 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
-            if let Ok(should_close) = window.update(&mut cx, |workspace, cx| {
-                workspace.prepare_to_close(CloseIntent::Quit, cx)
+            if let Ok(should_close) = window.update(&mut cx, |workspace, window, cx| {
+                workspace.prepare_to_close(CloseIntent::Quit, window, cx)
             }) {
                 if !should_close.await? {
                     return Ok(());
@@ -6237,12 +6614,16 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
-pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext) -> Stateful<Div> {
+pub fn client_side_decorations(
+    element: impl IntoElement,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
-    let decorations = cx.window_decorations();
+    let decorations = window.window_decorations();
 
     if matches!(decorations, Decorations::Client { .. }) {
-        cx.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+        window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
     }
 
     struct GlobalResizeEdge(ResizeEdge);
@@ -6278,8 +6659,8 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                 .when(!tiling.right, |div| {
                     div.pr(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
-                .on_mouse_move(move |e, cx| {
-                    let size = cx.window_bounds().get_bounds().size;
+                .on_mouse_move(move |e, window, cx| {
+                    let size = window.window_bounds().get_bounds().size;
                     let pos = e.position;
 
                     let new_edge =
@@ -6287,13 +6668,16 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
 
                     let edge = cx.try_global::<GlobalResizeEdge>();
                     if new_edge != edge.map(|edge| edge.0) {
-                        cx.window_handle()
-                            .update(cx, |workspace, cx| cx.notify(Some(workspace.entity_id())))
+                        window
+                            .window_handle()
+                            .update(cx, |workspace, _, cx| {
+                                cx.notify(workspace.entity_id());
+                            })
                             .ok();
                     }
                 })
-                .on_mouse_down(MouseButton::Left, move |e, cx| {
-                    let size = cx.window_bounds().get_bounds().size;
+                .on_mouse_down(MouseButton::Left, move |e, window, _| {
+                    let size = window.window_bounds().get_bounds().size;
                     let pos = e.position;
 
                     let edge = match resize_edge(
@@ -6306,7 +6690,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                         None => return,
                     };
 
-                    cx.start_window_resize(edge);
+                    window.start_window_resize(edge);
                 }),
         })
         .size_full()
@@ -6347,7 +6731,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                             }])
                         }),
                 })
-                .on_mouse_move(|_e, cx| {
+                .on_mouse_move(|_e, _, cx| {
                     cx.stop_propagation();
                 })
                 .size_full()
@@ -6357,25 +6741,25 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
             Decorations::Server => div,
             Decorations::Client { tiling, .. } => div.child(
                 canvas(
-                    |_bounds, cx| {
-                        cx.insert_hitbox(
+                    |_bounds, window, _| {
+                        window.insert_hitbox(
                             Bounds::new(
                                 point(px(0.0), px(0.0)),
-                                cx.window_bounds().get_bounds().size,
+                                window.window_bounds().get_bounds().size,
                             ),
                             false,
                         )
                     },
-                    move |_bounds, hitbox, cx| {
-                        let mouse = cx.mouse_position();
-                        let size = cx.window_bounds().get_bounds().size;
+                    move |_bounds, hitbox, window, cx| {
+                        let mouse = window.mouse_position();
+                        let size = window.window_bounds().get_bounds().size;
                         let Some(edge) =
                             resize_edge(mouse, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling)
                         else {
                             return;
                         };
                         cx.set_global(GlobalResizeEdge(edge));
-                        cx.set_cursor_style(
+                        window.set_cursor_style(
                             match edge {
                                 ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
                                 ResizeEdge::Left | ResizeEdge::Right => {
@@ -6455,7 +6839,12 @@ fn resize_edge(
     }
 }
 
-fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut WindowContext) {
+fn join_pane_into_active(
+    active_pane: &Entity<Pane>,
+    pane: &Entity<Pane>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if pane == active_pane {
         return;
     } else if pane.read(cx).items_len() == 0 {
@@ -6465,11 +6854,16 @@ fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut W
             });
         })
     } else {
-        move_all_items(pane, active_pane, cx);
+        move_all_items(pane, active_pane, window, cx);
     }
 }
 
-fn move_all_items(from_pane: &View<Pane>, to_pane: &View<Pane>, cx: &mut WindowContext) {
+fn move_all_items(
+    from_pane: &Entity<Pane>,
+    to_pane: &Entity<Pane>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let destination_is_different = from_pane != to_pane;
     let mut moved_items = 0;
     for (item_ix, item_handle) in from_pane
@@ -6483,25 +6877,26 @@ fn move_all_items(from_pane: &View<Pane>, to_pane: &View<Pane>, cx: &mut WindowC
         if destination_is_different {
             // Close item from previous pane
             from_pane.update(cx, |source, cx| {
-                source.remove_item_and_focus_on_pane(ix, false, to_pane.clone(), cx);
+                source.remove_item_and_focus_on_pane(ix, false, to_pane.clone(), window, cx);
             });
             moved_items += 1;
         }
 
         // This automatically removes duplicate items in the pane
         to_pane.update(cx, |destination, cx| {
-            destination.add_item(item_handle, true, true, None, cx);
-            destination.focus(cx)
+            destination.add_item(item_handle, true, true, None, window, cx);
+            window.focus(&destination.focus_handle(cx))
         });
     }
 }
 
 pub fn move_item(
-    source: &View<Pane>,
-    destination: &View<Pane>,
+    source: &Entity<Pane>,
+    destination: &Entity<Pane>,
     item_id_to_move: EntityId,
     destination_index: usize,
-    cx: &mut WindowContext,
+    window: &mut Window,
+    cx: &mut App,
 ) {
     let Some((item_ix, item_handle)) = source
         .read(cx)
@@ -6517,23 +6912,24 @@ pub fn move_item(
     if source != destination {
         // Close item from previous pane
         source.update(cx, |source, cx| {
-            source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), cx);
+            source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), window, cx);
         });
     }
 
     // This automatically removes duplicate items in the pane
     destination.update(cx, |destination, cx| {
-        destination.add_item(item_handle, true, true, Some(destination_index), cx);
-        destination.focus(cx)
+        destination.add_item(item_handle, true, true, Some(destination_index), window, cx);
+        window.focus(&destination.focus_handle(cx))
     });
 }
 
 pub fn move_active_item(
-    source: &View<Pane>,
-    destination: &View<Pane>,
+    source: &Entity<Pane>,
+    destination: &Entity<Pane>,
     focus_destination: bool,
     close_if_empty: bool,
-    cx: &mut WindowContext,
+    window: &mut Window,
+    cx: &mut App,
 ) {
     if source == destination {
         return;
@@ -6543,13 +6939,14 @@ pub fn move_active_item(
     };
     source.update(cx, |source_pane, cx| {
         let item_id = active_item.item_id();
-        source_pane.remove_item(item_id, false, close_if_empty, cx);
+        source_pane.remove_item(item_id, false, close_if_empty, window, cx);
         destination.update(cx, |target_pane, cx| {
             target_pane.add_item(
                 active_item,
                 focus_destination,
                 focus_destination,
                 Some(target_pane.items_len()),
+                window,
                 cx,
             );
         });
@@ -6570,7 +6967,7 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        px, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView, Render, TestAppContext,
+        px, DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext,
     };
     use project::{Project, ProjectEntryId};
@@ -6583,28 +6980,29 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.new_view(|cx| {
+        let item1 = cx.new(|cx| {
             let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
         });
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(0)));
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.new_view(|cx| {
+        let item2 = cx.new_window_entity(|_window, cx| {
             let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
         });
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, window, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
         item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
@@ -6612,13 +7010,13 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.new_view(|cx| {
+        let item3 = cx.new(|cx| {
             let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
         });
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, window, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
         item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
@@ -6647,22 +7045,23 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.new_view(|cx| {
+        let item1 = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
-        let item2 = cx.new_view(|cx| {
+        let item2 = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
         // Add an item to an empty pane
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1), None, true, cx)
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item1), None, true, window, cx)
         });
         project.update(cx, |project, cx| {
             assert_eq!(
@@ -6675,8 +7074,8 @@ mod tests {
         assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
 
         // Add a second item to a non-empty pane
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item2), None, true, cx)
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item2), None, true, window, cx)
         });
         assert_eq!(cx.window_title().as_deref(), Some("root1 — two.txt"));
         project.update(cx, |project, cx| {
@@ -6689,8 +7088,9 @@ mod tests {
         });
 
         // Close the active item
-        pane.update(cx, |pane, cx| {
-            pane.close_active_item(&Default::default(), cx).unwrap()
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&Default::default(), window, cx)
+                .unwrap()
         })
         .await
         .unwrap();
@@ -6726,33 +7126,36 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.new_view(TestItem::new);
-        workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx)
+        let item1 = cx.new(TestItem::new);
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx)
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(CloseIntent::CloseWindow, cx));
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.new_view(|cx| TestItem::new(cx).with_dirty(true));
-        let item3 = cx.new_view(|cx| {
+        let item2 = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+        let item3 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
-        workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
-            w.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, window, cx);
+            w.add_item_to_active_pane(Box::new(item3.clone()), None, true, window, cx);
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(CloseIntent::CloseWindow, cx));
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
         cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2); // cancel save all
-        cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2); // cancel save all
+        cx.simulate_prompt_answer("Cancel"); // cancel save all
         cx.executor().run_until_parked();
         assert!(!cx.has_pending_prompt());
         assert!(!task.await.unwrap());
@@ -6771,25 +7174,28 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are dirty untitled items, but they can serialize, then there is no prompt.
-        let item1 = cx.new_view(|cx| {
+        let item1 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_serialize(|| Some(Task::ready(Ok(()))))
         });
-        let item2 = cx.new_view(|cx| {
+        let item2 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 .with_serialize(|| Some(Task::ready(Ok(()))))
         });
-        workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
-            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx);
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, window, cx);
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(CloseIntent::CloseWindow, cx));
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
         assert!(task.await.unwrap());
     }
 
@@ -6800,63 +7206,56 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let item1 = cx.new_view(|cx| {
+        let item1 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let item2 = cx.new_view(|cx| {
+        let item2 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let item3 = cx.new_view(|cx| {
+        let item3 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[dirty_project_item(3, "3.txt", cx)])
         });
-        let item4 = cx.new_view(|cx| {
+        let item4 = cx.new(|cx| {
             TestItem::new(cx).with_dirty(true).with_project_items(&[{
                 let project_item = TestProjectItem::new_untitled(cx);
                 project_item.update(cx, |project_item, _| project_item.is_dirty = true);
                 project_item
             }])
         });
-        let pane = workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
-            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
-            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
-            workspace.add_item_to_active_pane(Box::new(item4.clone()), None, true, cx);
+        let pane = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item4.clone()), None, true, window, cx);
             workspace.active_pane().clone()
         });
 
-        let close_items = pane.update(cx, |pane, cx| {
-            pane.activate_item(1, true, true, cx);
+        let close_items = pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, true, true, window, cx);
             assert_eq!(pane.active_item().unwrap().item_id(), item2.item_id());
             let item1_id = item1.item_id();
             let item3_id = item3.item_id();
             let item4_id = item4.item_id();
-            pane.close_items(cx, SaveIntent::Close, move |id| {
+            pane.close_items(window, cx, SaveIntent::Close, move |id| {
                 [item1_id, item3_id, item4_id].contains(&id)
             })
         });
         cx.executor().run_until_parked();
 
         assert!(cx.has_pending_prompt());
-        // Ignore "Save all" prompt
-        cx.simulate_prompt_answer(2);
-        cx.executor().run_until_parked();
-        // There's a prompt to save item 1.
-        pane.update(cx, |pane, _| {
-            assert_eq!(pane.items_len(), 4);
-            assert_eq!(pane.active_item().unwrap().item_id(), item1.item_id());
-        });
-        // Confirm saving item 1.
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Save all");
+
         cx.executor().run_until_parked();
 
         // Item 1 is saved. There's a prompt to save item 3.
@@ -6870,7 +7269,7 @@ mod tests {
         assert!(cx.has_pending_prompt());
 
         // Cancel saving item 3.
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Discard");
         cx.executor().run_until_parked();
 
         // Item 3 is reloaded. There's a prompt to save item 4.
@@ -6881,11 +7280,6 @@ mod tests {
             assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().item_id(), item4.item_id());
         });
-        assert!(cx.has_pending_prompt());
-
-        // Confirm saving item 4.
-        cx.simulate_prompt_answer(0);
-        cx.executor().run_until_parked();
 
         // There's a prompt for a path for item 4.
         cx.simulate_new_path_selection(|_| Some(Default::default()));
@@ -6907,13 +7301,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
-                cx.new_view(|cx| {
+                cx.new(|cx| {
                     TestItem::new(cx)
                         .with_dirty(true)
                         .with_project_items(&[dirty_project_item(
@@ -6924,7 +7319,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let item_2_3 = cx.new_view(|cx| {
+        let item_2_3 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -6933,7 +7328,7 @@ mod tests {
                     single_entry_items[3].read(cx).project_items[0].clone(),
                 ])
         });
-        let item_3_4 = cx.new_view(|cx| {
+        let item_3_4 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -6946,67 +7341,110 @@ mod tests {
         // Create two panes that contain the following project entries:
         //   left pane:
         //     multi-entry items:   (2, 3)
-        //     single-entry items:  0, 1, 2, 3, 4
+        //     single-entry items:  0, 2, 3, 4
         //   right pane:
-        //     single-entry items:  1
+        //     single-entry items:  4, 1
         //     multi-entry items:   (3, 4)
-        let left_pane = workspace.update(cx, |workspace, cx| {
+        let (left_pane, right_pane) = workspace.update_in(cx, |workspace, window, cx| {
             let left_pane = workspace.active_pane().clone();
-            workspace.add_item_to_active_pane(Box::new(item_2_3.clone()), None, true, cx);
-            for item in single_entry_items {
-                workspace.add_item_to_active_pane(Box::new(item), None, true, cx);
-            }
-            left_pane.update(cx, |pane, cx| {
-                pane.activate_item(2, true, true, cx);
-            });
+            workspace.add_item_to_active_pane(Box::new(item_2_3.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(
+                single_entry_items[0].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(
+                single_entry_items[2].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(
+                single_entry_items[3].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(
+                single_entry_items[4].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
 
             let right_pane = workspace
-                .split_and_clone(left_pane.clone(), SplitDirection::Right, cx)
+                .split_and_clone(left_pane.clone(), SplitDirection::Right, window, cx)
                 .unwrap();
 
             right_pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(item_3_4.clone()), true, true, None, cx);
+                pane.add_item(
+                    single_entry_items[1].boxed_clone(),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+                pane.add_item(Box::new(item_3_4.clone()), true, true, None, window, cx);
             });
 
-            left_pane
+            (left_pane, right_pane)
         });
 
-        cx.focus_view(&left_pane);
+        cx.focus(&right_pane);
 
-        // When closing all of the items in the left pane, we should be prompted twice:
-        // once for project entry 0, and once for project entry 2. Project entries 1,
-        // 3, and 4 are all still open in the other paten. After those two
-        // prompts, the task should complete.
-
-        let close = left_pane.update(cx, |pane, cx| {
-            pane.close_all_items(&CloseAllItems::default(), cx).unwrap()
+        let mut close = right_pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(&CloseAllItems::default(), window, cx)
+                .unwrap()
         });
         cx.executor().run_until_parked();
 
-        // Discard "Save all" prompt
-        cx.simulate_prompt_answer(2);
+        let msg = cx.pending_prompt().unwrap().0;
+        assert!(msg.contains("1.txt"));
+        assert!(!msg.contains("2.txt"));
+        assert!(!msg.contains("3.txt"));
+        assert!(!msg.contains("4.txt"));
 
-        cx.executor().run_until_parked();
-        left_pane.update(cx, |pane, cx| {
-            assert_eq!(
-                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
-                &[ProjectEntryId::from_proto(0)]
-            );
-        });
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
+        close.await.unwrap();
 
-        cx.executor().run_until_parked();
-        left_pane.update(cx, |pane, cx| {
-            assert_eq!(
-                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
-                &[ProjectEntryId::from_proto(2)]
-            );
+        left_pane
+            .update_in(cx, |left_pane, window, cx| {
+                left_pane.close_item_by_id(
+                    single_entry_items[3].entity_id(),
+                    SaveIntent::Skip,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        close = right_pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(&CloseAllItems::default(), window, cx)
+                .unwrap()
         });
-        cx.simulate_prompt_answer(0);
+        cx.executor().run_until_parked();
+
+        let details = cx.pending_prompt().unwrap().1;
+        assert!(details.contains("1.txt"));
+        assert!(!details.contains("2.txt"));
+        assert!(details.contains("3.txt"));
+        // ideally this assertion could be made, but today we can only
+        // save whole items not project items, so the orphaned item 3 causes
+        // 4 to be saved too.
+        // assert!(!details.contains("4.txt"));
+
+        cx.simulate_prompt_answer("Save all");
 
         cx.executor().run_until_parked();
         close.await.unwrap();
-        left_pane.update(cx, |pane, _| {
+        right_pane.update(cx, |pane, _| {
             assert_eq!(pane.items_len(), 0);
         });
     }
@@ -7017,15 +7455,16 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let item = cx.new_view(|cx| {
+        let item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.entity_id();
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
         });
 
         // Autosave on window change.
@@ -7043,13 +7482,13 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Re-activating the window doesn't save the file.
-        cx.update(|cx| cx.activate_window());
+        cx.update(|window, _| window.activate_window());
         cx.executor().run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Autosave on focus change.
-        item.update(cx, |item, cx| {
-            cx.focus_self();
+        item.update_in(cx, |item, window, cx| {
+            cx.focus_self(window);
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::OnFocusChange);
@@ -7059,13 +7498,13 @@ mod tests {
         });
 
         // Blurring the item saves the file.
-        item.update(cx, |_, cx| cx.blur());
+        item.update_in(cx, |_, window, _| window.blur());
         cx.executor().run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        item.update(cx, |item, cx| {
-            cx.focus_self();
+        item.update_in(cx, |item, window, cx| {
+            cx.focus_self(window);
             item.is_dirty = true;
         });
         cx.deactivate_window();
@@ -7103,8 +7542,8 @@ mod tests {
             }
         });
 
-        pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveIntent::Close, move |id| id == item_id)
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
         })
         .await
         .unwrap();
@@ -7112,22 +7551,22 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
         });
-        item.update(cx, |item, cx| {
+        item.update_in(cx, |item, window, cx| {
             item.project_items[0].update(cx, |item, _| {
                 item.entry_id = None;
             });
             item.is_dirty = true;
-            cx.blur();
+            window.blur();
         });
         cx.run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
-        let _close_items = pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveIntent::Close, move |id| id == item_id)
+        let _close_items = pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
         });
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
@@ -7141,19 +7580,20 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let item = cx.new_view(|cx| {
+        let item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         let toolbar = pane.update(cx, |pane, _| pane.toolbar().clone());
         let toolbar_notify_count = Rc::new(RefCell::new(0));
 
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
             let toolbar_notification_count = toolbar_notify_count.clone();
-            cx.observe(&toolbar, move |_, _, _| {
+            cx.observe_in(&toolbar, window, move |_, _, _, _| {
                 *toolbar_notification_count.borrow_mut() += 1
             })
             .detach();
@@ -7164,7 +7604,7 @@ mod tests {
             assert!(!pane.can_navigate_forward());
         });
 
-        item.update(cx, |item, cx| {
+        item.update_in(cx, |item, _, cx| {
             item.set_state("one".to_string(), cx);
         });
 
@@ -7177,7 +7617,9 @@ mod tests {
         });
 
         workspace
-            .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
             .await
             .unwrap();
 
@@ -7194,142 +7636,145 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let panel = workspace.update(cx, |workspace, cx| {
-            let panel = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
-            workspace.add_panel(panel.clone(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            workspace.add_panel(panel.clone(), window, cx);
 
             workspace
                 .right_dock()
-                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+                .update(cx, |right_dock, cx| right_dock.set_open(true, window, cx));
 
             panel
         });
 
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
-        pane.update(cx, |pane, cx| {
-            let item = cx.new_view(TestItem::new);
-            pane.add_item(Box::new(item), true, true, None, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(TestItem::new);
+            pane.add_item(Box::new(item), true, true, None, window, cx);
         });
 
         // Transfer focus from center to panel
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
-            assert!(!panel.is_zoomed(cx));
-            assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(!panel.is_zoomed(window, cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Transfer focus from panel to center
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
-            assert!(!panel.is_zoomed(cx));
-            assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(!panel.is_zoomed(window, cx));
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Close the dock
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_dock(DockPosition::Right, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
-            assert!(!panel.is_zoomed(cx));
-            assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(!panel.is_zoomed(window, cx));
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Open the dock
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_dock(DockPosition::Right, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
-            assert!(!panel.is_zoomed(cx));
-            assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(!panel.is_zoomed(window, cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Focus and zoom panel
-        panel.update(cx, |panel, cx| {
-            cx.focus_self();
-            panel.set_zoomed(true, cx)
+        panel.update_in(cx, |panel, window, cx| {
+            cx.focus_self(window);
+            panel.set_zoomed(true, window, cx)
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(cx));
-            assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(panel.is_zoomed(window, cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Transfer focus to the center closes the dock
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(cx));
-            assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(panel.is_zoomed(window, cx));
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Transferring focus back to the panel keeps it zoomed
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(cx));
-            assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(panel.is_zoomed(window, cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Close the dock while it is zoomed
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_dock(DockPosition::Right, cx)
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx)
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(cx));
+            assert!(panel.is_zoomed(window, cx));
             assert!(workspace.zoomed.is_none());
-            assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Opening the dock, when it's zoomed, retains focus
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_dock(DockPosition::Right, cx)
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx)
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(cx));
+            assert!(panel.is_zoomed(window, cx));
             assert!(workspace.zoomed.is_some());
-            assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Unzoom and close the panel, zoom the active pane.
-        panel.update(cx, |panel, cx| panel.set_zoomed(false, cx));
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_dock(DockPosition::Right, cx)
+        panel.update_in(cx, |panel, window, cx| panel.set_zoomed(false, window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx)
         });
-        pane.update(cx, |pane, cx| pane.toggle_zoom(&Default::default(), cx));
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_zoom(&Default::default(), window, cx)
+        });
 
         // Opening a dock unzooms the pane.
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_dock(DockPosition::Right, cx)
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx)
         });
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let pane = pane.read(cx);
             assert!(!pane.is_zoomed());
-            assert!(!pane.focus_handle(cx).is_focused(cx));
+            assert!(!pane.focus_handle(cx).is_focused(window));
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(workspace.zoomed.is_none());
         });
@@ -7342,7 +7787,8 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // Let's arrange the panes like this:
         //
@@ -7354,61 +7800,99 @@ mod tests {
         // |        bottom         |
         // +-----------------------+
 
-        let top_item = cx.new_view(|cx| {
+        let top_item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "top.txt", cx)])
         });
-        let bottom_item = cx.new_view(|cx| {
+        let bottom_item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "bottom.txt", cx)])
         });
-        let left_item = cx.new_view(|cx| {
+        let left_item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(3, "left.txt", cx)])
         });
-        let right_item = cx.new_view(|cx| {
+        let right_item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(4, "right.txt", cx)])
         });
-        let center_item = cx.new_view(|cx| {
+        let center_item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(5, "center.txt", cx)])
         });
 
-        let top_pane_id = workspace.update(cx, |workspace, cx| {
+        let top_pane_id = workspace.update_in(cx, |workspace, window, cx| {
             let top_pane_id = workspace.active_pane().entity_id();
-            workspace.add_item_to_active_pane(Box::new(top_item.clone()), None, false, cx);
-            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Down, cx);
+            workspace.add_item_to_active_pane(Box::new(top_item.clone()), None, false, window, cx);
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Down,
+                window,
+                cx,
+            );
             top_pane_id
         });
-        let bottom_pane_id = workspace.update(cx, |workspace, cx| {
+        let bottom_pane_id = workspace.update_in(cx, |workspace, window, cx| {
             let bottom_pane_id = workspace.active_pane().entity_id();
-            workspace.add_item_to_active_pane(Box::new(bottom_item.clone()), None, false, cx);
-            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Up, cx);
+            workspace.add_item_to_active_pane(
+                Box::new(bottom_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Up,
+                window,
+                cx,
+            );
             bottom_pane_id
         });
-        let left_pane_id = workspace.update(cx, |workspace, cx| {
+        let left_pane_id = workspace.update_in(cx, |workspace, window, cx| {
             let left_pane_id = workspace.active_pane().entity_id();
-            workspace.add_item_to_active_pane(Box::new(left_item.clone()), None, false, cx);
-            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+            workspace.add_item_to_active_pane(Box::new(left_item.clone()), None, false, window, cx);
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
             left_pane_id
         });
-        let right_pane_id = workspace.update(cx, |workspace, cx| {
+        let right_pane_id = workspace.update_in(cx, |workspace, window, cx| {
             let right_pane_id = workspace.active_pane().entity_id();
-            workspace.add_item_to_active_pane(Box::new(right_item.clone()), None, false, cx);
-            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Left, cx);
+            workspace.add_item_to_active_pane(
+                Box::new(right_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Left,
+                window,
+                cx,
+            );
             right_pane_id
         });
-        let center_pane_id = workspace.update(cx, |workspace, cx| {
+        let center_pane_id = workspace.update_in(cx, |workspace, window, cx| {
             let center_pane_id = workspace.active_pane().entity_id();
-            workspace.add_item_to_active_pane(Box::new(center_item.clone()), None, false, cx);
+            workspace.add_item_to_active_pane(
+                Box::new(center_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
             center_pane_id
         });
         cx.executor().run_until_parked();
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert_eq!(center_pane_id, workspace.active_pane().entity_id());
 
             // Join into next from center pane into right
-            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+            workspace.join_pane_into_next(workspace.active_pane().clone(), window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let active_pane = workspace.active_pane();
             assert_eq!(right_pane_id, active_pane.entity_id());
             assert_eq!(2, active_pane.read(cx).items_len());
@@ -7418,10 +7902,10 @@ mod tests {
             assert!(item_ids_in_pane.contains(&right_item.item_id()));
 
             // Join into next from right pane into bottom
-            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+            workspace.join_pane_into_next(workspace.active_pane().clone(), window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let active_pane = workspace.active_pane();
             assert_eq!(bottom_pane_id, active_pane.entity_id());
             assert_eq!(3, active_pane.read(cx).items_len());
@@ -7432,10 +7916,10 @@ mod tests {
             assert!(item_ids_in_pane.contains(&bottom_item.item_id()));
 
             // Join into next from bottom pane into left
-            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+            workspace.join_pane_into_next(workspace.active_pane().clone(), window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let active_pane = workspace.active_pane();
             assert_eq!(left_pane_id, active_pane.entity_id());
             assert_eq!(4, active_pane.read(cx).items_len());
@@ -7447,10 +7931,10 @@ mod tests {
             assert!(item_ids_in_pane.contains(&left_item.item_id()));
 
             // Join into next from left pane into top
-            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+            workspace.join_pane_into_next(workspace.active_pane().clone(), window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let active_pane = workspace.active_pane();
             assert_eq!(top_pane_id, active_pane.entity_id());
             assert_eq!(5, active_pane.read(cx).items_len());
@@ -7463,7 +7947,7 @@ mod tests {
             assert!(item_ids_in_pane.contains(&top_item.item_id()));
 
             // Single pane left: no-op
-            workspace.join_pane_into_next(workspace.active_pane().clone(), cx)
+            workspace.join_pane_into_next(workspace.active_pane().clone(), window, cx)
         });
 
         workspace.update(cx, |workspace, _cx| {
@@ -7474,26 +7958,30 @@ mod tests {
 
     fn add_an_item_to_active_pane(
         cx: &mut VisualTestContext,
-        workspace: &View<Workspace>,
+        workspace: &Entity<Workspace>,
         item_id: u64,
-    ) -> View<TestItem> {
-        let item = cx.new_view(|cx| {
+    ) -> Entity<TestItem> {
+        let item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(
                 item_id,
                 "item{item_id}.txt",
                 cx,
             )])
         });
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, false, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, false, window, cx);
         });
         return item;
     }
 
-    fn split_pane(cx: &mut VisualTestContext, workspace: &View<Workspace>) -> View<Pane> {
-        return workspace.update(cx, |workspace, cx| {
-            let new_pane =
-                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+    fn split_pane(cx: &mut VisualTestContext, workspace: &Entity<Workspace>) -> Entity<Pane> {
+        return workspace.update_in(cx, |workspace, window, cx| {
+            let new_pane = workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
             new_pane
         });
     }
@@ -7503,7 +7991,8 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         add_an_item_to_active_pane(cx, &workspace, 1);
         split_pane(cx, &workspace);
@@ -7528,8 +8017,8 @@ mod tests {
             assert_eq!(active_item.item_id(), last_item.item_id());
         });
 
-        workspace.update(cx, |workspace, cx| {
-            workspace.join_all_panes(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.join_all_panes(window, cx);
         });
 
         workspace.update(cx, |workspace, cx| {
@@ -7549,15 +8038,15 @@ mod tests {
     struct TestModal(FocusHandle);
 
     impl TestModal {
-        fn new(cx: &mut ViewContext<Self>) -> Self {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
             Self(cx.focus_handle())
         }
     }
 
     impl EventEmitter<DismissEvent> for TestModal {}
 
-    impl FocusableView for TestModal {
-        fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    impl Focusable for TestModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
             self.0.clone()
         }
     }
@@ -7565,7 +8054,11 @@ mod tests {
     impl ModalView for TestModal {}
 
     impl Render for TestModal {
-        fn render(&mut self, _cx: &mut ViewContext<TestModal>) -> impl IntoElement {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<TestModal>,
+        ) -> impl IntoElement {
             div().track_focus(&self.0)
         }
     }
@@ -7576,15 +8069,16 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
-            let panel_1 = cx.new_view(|cx| TestPanel::new(DockPosition::Left, cx));
-            workspace.add_panel(panel_1.clone(), cx);
-            workspace.toggle_dock(DockPosition::Left, cx);
-            let panel_2 = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
-            workspace.add_panel(panel_2.clone(), cx);
-            workspace.toggle_dock(DockPosition::Right, cx);
+        let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
+            let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(panel_1.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+            let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            workspace.add_panel(panel_2.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
 
             let left_dock = workspace.left_dock();
             assert_eq!(
@@ -7592,12 +8086,12 @@ mod tests {
                 panel_1.panel_id()
             );
             assert_eq!(
-                left_dock.read(cx).active_panel_size(cx).unwrap(),
-                panel_1.size(cx)
+                left_dock.read(cx).active_panel_size(window, cx).unwrap(),
+                panel_1.size(window, cx)
             );
 
             left_dock.update(cx, |left_dock, cx| {
-                left_dock.resize_active_panel(Some(px(1337.)), cx)
+                left_dock.resize_active_panel(Some(px(1337.)), window, cx)
             });
             assert_eq!(
                 workspace
@@ -7613,11 +8107,11 @@ mod tests {
         });
 
         // Move panel_1 to the right
-        panel_1.update(cx, |panel_1, cx| {
-            panel_1.set_position(DockPosition::Right, cx)
+        panel_1.update_in(cx, |panel_1, window, cx| {
+            panel_1.set_position(DockPosition::Right, window, cx)
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             // Since panel_1 was visible on the left, it should now be visible now that it's been moved to the right.
             // Since it was the only panel on the left, the left dock should now be closed.
             assert!(!workspace.left_dock().read(cx).is_open());
@@ -7628,12 +8122,12 @@ mod tests {
                 panel_1.panel_id()
             );
             assert_eq!(
-                right_dock.read(cx).active_panel_size(cx).unwrap(),
+                right_dock.read(cx).active_panel_size(window, cx).unwrap(),
                 px(1337.)
             );
 
             // Now we move panel_2 to the left
-            panel_2.set_position(DockPosition::Left, cx);
+            panel_2.set_position(DockPosition::Left, window, cx);
         });
 
         workspace.update(cx, |workspace, cx| {
@@ -7653,11 +8147,11 @@ mod tests {
         });
 
         // Move panel_1 back to the left
-        panel_1.update(cx, |panel_1, cx| {
-            panel_1.set_position(DockPosition::Left, cx)
+        panel_1.update_in(cx, |panel_1, window, cx| {
+            panel_1.set_position(DockPosition::Left, window, cx)
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             // Since panel_1 was visible on the right, we open the left dock and make panel_1 active.
             let left_dock = workspace.left_dock();
             assert!(left_dock.read(cx).is_open());
@@ -7665,41 +8159,46 @@ mod tests {
                 left_dock.read(cx).visible_panel().unwrap().panel_id(),
                 panel_1.panel_id()
             );
-            assert_eq!(left_dock.read(cx).active_panel_size(cx).unwrap(), px(1337.));
+            assert_eq!(
+                left_dock.read(cx).active_panel_size(window, cx).unwrap(),
+                px(1337.)
+            );
             // And the right dock should be closed as it no longer has any panels.
             assert!(!workspace.right_dock().read(cx).is_open());
 
             // Now we move panel_1 to the bottom
-            panel_1.set_position(DockPosition::Bottom, cx);
+            panel_1.set_position(DockPosition::Bottom, window, cx);
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             // Since panel_1 was visible on the left, we close the left dock.
             assert!(!workspace.left_dock().read(cx).is_open());
             // The bottom dock is sized based on the panel's default size,
             // since the panel orientation changed from vertical to horizontal.
             let bottom_dock = workspace.bottom_dock();
             assert_eq!(
-                bottom_dock.read(cx).active_panel_size(cx).unwrap(),
-                panel_1.size(cx),
+                bottom_dock.read(cx).active_panel_size(window, cx).unwrap(),
+                panel_1.size(window, cx),
             );
             // Close bottom dock and move panel_1 back to the left.
-            bottom_dock.update(cx, |bottom_dock, cx| bottom_dock.set_open(false, cx));
-            panel_1.set_position(DockPosition::Left, cx);
+            bottom_dock.update(cx, |bottom_dock, cx| {
+                bottom_dock.set_open(false, window, cx)
+            });
+            panel_1.set_position(DockPosition::Left, window, cx);
         });
 
         // Emit activated event on panel 1
         panel_1.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
 
         // Now the left dock is open and panel_1 is active and focused.
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let left_dock = workspace.left_dock();
             assert!(left_dock.read(cx).is_open());
             assert_eq!(
                 left_dock.read(cx).visible_panel().unwrap().panel_id(),
                 panel_1.panel_id(),
             );
-            assert!(panel_1.focus_handle(cx).is_focused(cx));
+            assert!(panel_1.focus_handle(cx).is_focused(window));
         });
 
         // Emit closed event on panel 2, which is not active
@@ -7723,7 +8222,9 @@ mod tests {
         });
 
         // Move panel to another dock while it is zoomed
-        panel_1.update(cx, |panel, cx| panel.set_position(DockPosition::Right, cx));
+        panel_1.update_in(cx, |panel, window, cx| {
+            panel.set_position(DockPosition::Right, window, cx)
+        });
         workspace.update(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.to_any().downgrade()));
 
@@ -7737,12 +8238,12 @@ mod tests {
         let focus_other_view = {
             let workspace = workspace.clone();
             move |cx: &mut VisualTestContext| {
-                workspace.update(cx, |workspace, cx| {
+                workspace.update_in(cx, |workspace, window, cx| {
                     if let Some(_) = workspace.active_modal::<TestModal>(cx) {
-                        workspace.toggle_modal(cx, TestModal::new);
-                        workspace.toggle_modal(cx, TestModal::new);
+                        workspace.toggle_modal(window, cx, TestModal::new);
+                        workspace.toggle_modal(window, cx, TestModal::new);
                     } else {
-                        workspace.toggle_modal(cx, TestModal::new);
+                        workspace.toggle_modal(window, cx, TestModal::new);
                     }
                 })
             }
@@ -7757,7 +8258,9 @@ mod tests {
         });
 
         // If focus is transferred elsewhere in the workspace, the panel is no longer zoomed.
-        workspace.update(cx, |_, cx| cx.focus_self());
+        workspace.update_in(cx, |_workspace, window, cx| {
+            cx.focus_self(window);
+        });
         workspace.update(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, None);
             assert_eq!(workspace.zoomed_position, None);
@@ -7801,22 +8304,23 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_view(|cx| {
+        let dirty_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_view(|cx| {
+        let dirty_regular_buffer_2 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let dirty_multi_buffer_with_both = cx.new_view(|cx| {
+        let dirty_multi_buffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -7827,13 +8331,14 @@ mod tests {
                 ])
         });
         let multi_buffer_with_both_files_id = dirty_multi_buffer_with_both.item_id();
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item(
                 pane.clone(),
                 Box::new(dirty_regular_buffer.clone()),
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
             workspace.add_item(
@@ -7842,6 +8347,7 @@ mod tests {
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
             workspace.add_item(
@@ -7850,12 +8356,13 @@ mod tests {
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
         });
 
-        pane.update(cx, |pane, cx| {
-            pane.activate_item(2, true, true, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(2, true, true, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
                 multi_buffer_with_both_files_id,
@@ -7863,28 +8370,26 @@ mod tests {
             );
         });
         let close_all_but_multi_buffer_task = pane
-            .update(cx, |pane, cx| {
+            .update_in(cx, |pane, window, cx| {
                 pane.close_inactive_items(
                     &CloseInactiveItems {
                         save_intent: Some(SaveIntent::Save),
                         close_pinned: true,
                     },
+                    window,
                     cx,
                 )
             })
             .expect("should have inactive files to close");
         cx.background_executor.run_until_parked();
-        assert!(
-            !cx.has_pending_prompt(),
-            "Multi buffer still has the unsaved buffer inside, so no save prompt should be shown"
-        );
+        assert!(!cx.has_pending_prompt());
         close_all_but_multi_buffer_task
             .await
             .expect("Closing all buffers but the multi buffer failed");
         pane.update(cx, |pane, cx| {
-            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_regular_buffer.read(cx).save_count, 1);
             assert_eq!(dirty_multi_buffer_with_both.read(cx).save_count, 0);
-            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
+            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 1);
             assert_eq!(pane.items_len(), 1);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
@@ -7897,12 +8402,18 @@ mod tests {
             );
         });
 
+        dirty_regular_buffer.update(cx, |buffer, cx| {
+            buffer.project_items[0].update(cx, |pi, _| pi.is_dirty = true)
+        });
+
         let close_multi_buffer_task = pane
-            .update(cx, |pane, cx| {
+            .update_in(cx, |pane, window, cx| {
                 pane.close_active_item(
                     &CloseActiveItem {
                         save_intent: Some(SaveIntent::Close),
+                        close_pinned: false,
                     },
+                    window,
                     cx,
                 )
             })
@@ -7912,7 +8423,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Dirty multi buffer should prompt a save dialog"
         );
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Save");
         cx.background_executor.run_until_parked();
         close_multi_buffer_task
             .await
@@ -7934,108 +8445,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_no_save_prompt_when_dirty_singleton_buffer_closed_with_a_multi_buffer_containing_it_present_in_the_pane(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
-
-        let dirty_regular_buffer = cx.new_view(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_label("1.txt")
-                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
-        });
-        let dirty_regular_buffer_2 = cx.new_view(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_label("2.txt")
-                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
-        });
-        let clear_regular_buffer = cx.new_view(|cx| {
-            TestItem::new(cx)
-                .with_label("3.txt")
-                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
-        });
-
-        let dirty_multi_buffer_with_both = cx.new_view(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_singleton(false)
-                .with_label("Fake Project Search")
-                .with_project_items(&[
-                    dirty_regular_buffer.read(cx).project_items[0].clone(),
-                    dirty_regular_buffer_2.read(cx).project_items[0].clone(),
-                    clear_regular_buffer.read(cx).project_items[0].clone(),
-                ])
-        });
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item(
-                pane.clone(),
-                Box::new(dirty_regular_buffer.clone()),
-                None,
-                false,
-                false,
-                cx,
-            );
-            workspace.add_item(
-                pane.clone(),
-                Box::new(dirty_multi_buffer_with_both.clone()),
-                None,
-                false,
-                false,
-                cx,
-            );
-        });
-
-        pane.update(cx, |pane, cx| {
-            pane.activate_item(0, true, true, cx);
-            assert_eq!(
-                pane.active_item().unwrap().item_id(),
-                dirty_regular_buffer.item_id(),
-                "Should select the dirty singleton buffer in the pane"
-            );
-        });
-        let close_singleton_buffer_task = pane
-            .update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
-            })
-            .expect("should have active singleton buffer to close");
-        cx.background_executor.run_until_parked();
-        assert!(
-            !cx.has_pending_prompt(),
-            "Multi buffer is still in the pane and has the unsaved buffer inside, so no save prompt should be shown"
-        );
-
-        close_singleton_buffer_task
-            .await
-            .expect("Should not fail closing the singleton buffer");
-        pane.update(cx, |pane, cx| {
-            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
-            assert_eq!(
-                dirty_multi_buffer_with_both.read(cx).save_count,
-                0,
-                "Multi buffer itself should not be saved"
-            );
-            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
-            assert_eq!(
-                pane.items_len(),
-                1,
-                "A dirty multi buffer should be present in the pane"
-            );
-            assert_eq!(
-                pane.active_item().unwrap().item_id(),
-                dirty_multi_buffer_with_both.item_id(),
-                "Should activate the only remaining item in the pane"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_save_prompt_when_dirty_multi_buffer_closed_with_some_of_its_dirty_items_not_present_in_the_pane(
         cx: &mut TestAppContext,
     ) {
@@ -8043,28 +8452,29 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_view(|cx| {
+        let dirty_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_view(|cx| {
+        let dirty_regular_buffer_2 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_view(|cx| {
+        let clear_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer_with_both = cx.new_view(|cx| {
+        let dirty_multi_buffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8076,13 +8486,14 @@ mod tests {
                 ])
         });
         let multi_buffer_with_both_files_id = dirty_multi_buffer_with_both.item_id();
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item(
                 pane.clone(),
                 Box::new(dirty_regular_buffer.clone()),
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
             workspace.add_item(
@@ -8091,12 +8502,13 @@ mod tests {
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
         });
 
-        pane.update(cx, |pane, cx| {
-            pane.activate_item(1, true, true, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, true, true, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
                 multi_buffer_with_both_files_id,
@@ -8104,8 +8516,15 @@ mod tests {
             );
         });
         let _close_multi_buffer_task = pane
-            .update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            .update_in(cx, |pane, window, cx| {
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    window,
+                    cx,
+                )
             })
             .expect("should have active multi buffer to close");
         cx.background_executor.run_until_parked();
@@ -8123,28 +8542,29 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_view(|cx| {
+        let dirty_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_view(|cx| {
+        let dirty_regular_buffer_2 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_view(|cx| {
+        let clear_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer = cx.new_view(|cx| {
+        let dirty_multi_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8155,13 +8575,14 @@ mod tests {
                     clear_regular_buffer.read(cx).project_items[0].clone(),
                 ])
         });
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item(
                 pane.clone(),
                 Box::new(dirty_regular_buffer.clone()),
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
             workspace.add_item(
@@ -8170,6 +8591,7 @@ mod tests {
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
             workspace.add_item(
@@ -8178,12 +8600,13 @@ mod tests {
                 None,
                 false,
                 false,
+                window,
                 cx,
             );
         });
 
-        pane.update(cx, |pane, cx| {
-            pane.activate_item(2, true, true, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(2, true, true, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
                 dirty_multi_buffer.item_id(),
@@ -8191,8 +8614,15 @@ mod tests {
             );
         });
         let close_multi_buffer_task = pane
-            .update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            .update_in(cx, |pane, window, cx| {
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    window,
+                    cx,
+                )
             })
             .expect("should have active multi buffer to close");
         cx.background_executor.run_until_parked();
@@ -8228,19 +8658,20 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
-        let panel = workspace.update(cx, |workspace, cx| {
-            let panel = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
-            workspace.add_panel(panel.clone(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            workspace.add_panel(panel.clone(), window, cx);
 
             workspace
                 .right_dock()
-                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+                .update(cx, |right_dock, cx| right_dock.set_open(true, window, cx));
 
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
 
             panel
         });
@@ -8274,8 +8705,8 @@ mod tests {
         // Remove focus from the panel, ensuring that, if the panel is not
         // focused, the `MoveFocusedPanelToNextPosition` action does not update
         // the panel's position, so the panel is still in the right dock.
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
         cx.dispatch_action(MoveFocusedPanelToNextPosition);
@@ -8286,7 +8717,6 @@ mod tests {
     }
 
     mod register_project_item_tests {
-        use gpui::Context as _;
 
         use super::*;
 
@@ -8299,22 +8729,22 @@ mod tests {
 
         impl project::ProjectItem for TestPngItem {
             fn try_open(
-                _project: &Model<Project>,
+                _project: &Entity<Project>,
                 path: &ProjectPath,
-                cx: &mut AppContext,
-            ) -> Option<Task<gpui::Result<Model<Self>>>> {
+                cx: &mut App,
+            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
-                    Some(cx.spawn(|mut cx| async move { cx.new_model(|_| TestPngItem {}) }))
+                    Some(cx.spawn(|mut cx| async move { cx.new(|_| TestPngItem {}) }))
                 } else {
                     None
                 }
             }
 
-            fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+            fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
                 None
             }
 
-            fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            fn project_path(&self, _: &App) -> Option<ProjectPath> {
                 None
             }
 
@@ -8327,14 +8757,18 @@ mod tests {
             type Event = ();
         }
         impl EventEmitter<()> for TestPngItemView {}
-        impl FocusableView for TestPngItemView {
-            fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        impl Focusable for TestPngItemView {
+            fn focus_handle(&self, _cx: &App) -> FocusHandle {
                 self.focus_handle.clone()
             }
         }
 
         impl Render for TestPngItemView {
-            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
                 Empty
             }
         }
@@ -8343,9 +8777,10 @@ mod tests {
             type Item = TestPngItem;
 
             fn for_project_item(
-                _project: Model<Project>,
-                _item: Model<Self::Item>,
-                cx: &mut ViewContext<Self>,
+                _project: Entity<Project>,
+                _item: Entity<Self::Item>,
+                _: &mut Window,
+                cx: &mut Context<Self>,
             ) -> Self
             where
                 Self: Sized,
@@ -8365,22 +8800,22 @@ mod tests {
 
         impl project::ProjectItem for TestIpynbItem {
             fn try_open(
-                _project: &Model<Project>,
+                _project: &Entity<Project>,
                 path: &ProjectPath,
-                cx: &mut AppContext,
-            ) -> Option<Task<gpui::Result<Model<Self>>>> {
+                cx: &mut App,
+            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
-                    Some(cx.spawn(|mut cx| async move { cx.new_model(|_| TestIpynbItem {}) }))
+                    Some(cx.spawn(|mut cx| async move { cx.new(|_| TestIpynbItem {}) }))
                 } else {
                     None
                 }
             }
 
-            fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+            fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
                 None
             }
 
-            fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            fn project_path(&self, _: &App) -> Option<ProjectPath> {
                 None
             }
 
@@ -8393,14 +8828,18 @@ mod tests {
             type Event = ();
         }
         impl EventEmitter<()> for TestIpynbItemView {}
-        impl FocusableView for TestIpynbItemView {
-            fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        impl Focusable for TestIpynbItemView {
+            fn focus_handle(&self, _cx: &App) -> FocusHandle {
                 self.focus_handle.clone()
             }
         }
 
         impl Render for TestIpynbItemView {
-            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
                 Empty
             }
         }
@@ -8409,9 +8848,10 @@ mod tests {
             type Item = TestIpynbItem;
 
             fn for_project_item(
-                _project: Model<Project>,
-                _item: Model<Self::Item>,
-                cx: &mut ViewContext<Self>,
+                _project: Entity<Project>,
+                _item: Entity<Self::Item>,
+                _: &mut Window,
+                cx: &mut Context<Self>,
             ) -> Self
             where
                 Self: Sized,
@@ -8431,14 +8871,18 @@ mod tests {
         }
 
         impl EventEmitter<()> for TestAlternatePngItemView {}
-        impl FocusableView for TestAlternatePngItemView {
-            fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        impl Focusable for TestAlternatePngItemView {
+            fn focus_handle(&self, _cx: &App) -> FocusHandle {
                 self.focus_handle.clone()
             }
         }
 
         impl Render for TestAlternatePngItemView {
-            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
                 Empty
             }
         }
@@ -8447,9 +8891,10 @@ mod tests {
             type Item = TestPngItem;
 
             fn for_project_item(
-                _project: Model<Project>,
-                _item: Model<Self::Item>,
-                cx: &mut ViewContext<Self>,
+                _project: Entity<Project>,
+                _item: Entity<Self::Item>,
+                _: &mut Window,
+                cx: &mut Context<Self>,
             ) -> Self
             where
                 Self: Sized,
@@ -8481,16 +8926,17 @@ mod tests {
             .await;
 
             let project = Project::test(fs, ["root1".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
             let worktree_id = project.update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             });
 
             let handle = workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "one.png");
-                    workspace.open_path(project_path, None, true, cx)
+                    workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
                 .unwrap();
@@ -8502,9 +8948,9 @@ mod tests {
             );
 
             let handle = workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "two.ipynb");
-                    workspace.open_path(project_path, None, true, cx)
+                    workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
                 .unwrap();
@@ -8515,9 +8961,9 @@ mod tests {
             );
 
             let handle = workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "three.txt");
-                    workspace.open_path(project_path, None, true, cx)
+                    workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
             assert!(handle.is_err());
@@ -8542,18 +8988,17 @@ mod tests {
                 }),
             )
             .await;
-
             let project = Project::test(fs, ["root1".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
             let worktree_id = project.update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             });
 
             let handle = workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "one.png");
-                    workspace.open_path(project_path, None, true, cx)
+                    workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
                 .unwrap();
@@ -8565,9 +9010,9 @@ mod tests {
             );
 
             let handle = workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "three.txt");
-                    workspace.open_path(project_path, None, true, cx)
+                    workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
             assert!(handle.is_err());
@@ -8585,7 +9030,7 @@ mod tests {
         });
     }
 
-    fn dirty_project_item(id: u64, path: &str, cx: &mut AppContext) -> Model<TestProjectItem> {
+    fn dirty_project_item(id: u64, path: &str, cx: &mut App) -> Entity<TestProjectItem> {
         let item = TestProjectItem::new(id, path, cx);
         item.update(cx, |item, _| {
             item.is_dirty = true;

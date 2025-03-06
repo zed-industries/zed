@@ -1,5 +1,7 @@
 use editor::Editor;
-use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView};
+use gpui::{
+    div, Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window,
+};
 use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
@@ -8,7 +10,7 @@ use crate::{LanguageSelector, Toggle};
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<LanguageName>>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakEntity<Workspace>,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -21,7 +23,7 @@ impl ActiveBufferLanguage {
         }
     }
 
-    fn update_language(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    fn update_language(&mut self, editor: Entity<Editor>, _: &mut Window, cx: &mut Context<Self>) {
         self.active_language = Some(None);
 
         let editor = editor.read(cx);
@@ -36,7 +38,7 @@ impl ActiveBufferLanguage {
 }
 
 impl Render for ActiveBufferLanguage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()
@@ -47,14 +49,16 @@ impl Render for ActiveBufferLanguage {
             el.child(
                 Button::new("change-language", active_language_text)
                     .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
-                                LanguageSelector::toggle(workspace, cx)
+                                LanguageSelector::toggle(workspace, window, cx)
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::for_action("Select Language", &Toggle, cx)),
+                    .tooltip(|window, cx| {
+                        Tooltip::for_action("Select Language", &Toggle, window, cx)
+                    }),
             )
         })
     }
@@ -64,11 +68,13 @@ impl StatusItemView for ActiveBufferLanguage {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
-            self._observe_active_editor = Some(cx.observe(&editor, Self::update_language));
-            self.update_language(editor, cx);
+            self._observe_active_editor =
+                Some(cx.observe_in(&editor, window, Self::update_language));
+            self.update_language(editor, window, cx);
         } else {
             self.active_language = None;
             self._observe_active_editor = None;

@@ -1,6 +1,5 @@
 use crate::{
-    AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
-    WindowContext,
+    AbsoluteLength, App, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style, Window,
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -12,8 +11,9 @@ use taffy::{
     TaffyTree, TraversePartialTree as _,
 };
 
-type NodeMeasureFn =
-    Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>>;
+type NodeMeasureFn = Box<
+    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>,
+>;
 
 struct NodeContext {
     measure: NodeMeasureFn,
@@ -71,7 +71,7 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
+        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
@@ -140,7 +140,8 @@ impl TaffyLayoutEngine {
         &mut self,
         id: LayoutId,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);
@@ -184,7 +185,8 @@ impl TaffyLayoutEngine {
                         height: known_dimensions.height.map(Pixels),
                     };
 
-                    (node_context.measure)(known_dimensions, available_space.into(), cx).into()
+                    (node_context.measure)(known_dimensions, available_space.into(), window, cx)
+                        .into()
                 },
             )
             .expect(EXPECT_MESSAGE);

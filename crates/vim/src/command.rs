@@ -7,9 +7,8 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{
-    actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
-};
+use gpui::{actions, impl_internal_actions, Action, App, AppContext as _, Context, Global, Window};
+use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -40,7 +39,7 @@ use crate::{
     object::Object,
     state::Mode,
     visual::VisualDeleteLine,
-    Vim,
+    ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -66,6 +65,95 @@ pub struct WithCount {
     action: WrappedAction,
 }
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub enum VimOption {
+    Wrap(bool),
+    Number(bool),
+    RelativeNumber(bool),
+}
+
+impl VimOption {
+    fn possible_commands(query: &str) -> Vec<CommandInterceptResult> {
+        let mut prefix_of_options = Vec::new();
+        let mut options = query.split(" ").collect::<Vec<_>>();
+        let prefix = options.pop().unwrap_or_default();
+        for option in options {
+            if let Some(opt) = Self::from(option) {
+                prefix_of_options.push(opt)
+            } else {
+                return vec![];
+            }
+        }
+
+        Self::possibilities(&prefix)
+            .map(|possible| {
+                let mut options = prefix_of_options.clone();
+                options.push(possible);
+
+                CommandInterceptResult {
+                    string: format!(
+                        "set {}",
+                        options.iter().map(|opt| opt.to_string()).join(" ")
+                    ),
+                    action: VimSet { options }.boxed_clone(),
+                    positions: vec![],
+                }
+            })
+            .collect()
+    }
+
+    fn possibilities(query: &str) -> impl Iterator<Item = Self> + '_ {
+        [
+            (None, VimOption::Wrap(true)),
+            (None, VimOption::Wrap(false)),
+            (None, VimOption::Number(true)),
+            (None, VimOption::Number(false)),
+            (None, VimOption::RelativeNumber(true)),
+            (None, VimOption::RelativeNumber(false)),
+            (Some("rnu"), VimOption::RelativeNumber(true)),
+            (Some("nornu"), VimOption::RelativeNumber(false)),
+        ]
+        .into_iter()
+        .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
+        .map(|(_, option)| option)
+    }
+
+    fn from(option: &str) -> Option<Self> {
+        match option {
+            "wrap" => Some(Self::Wrap(true)),
+            "nowrap" => Some(Self::Wrap(false)),
+
+            "number" => Some(Self::Number(true)),
+            "nu" => Some(Self::Number(true)),
+            "nonumber" => Some(Self::Number(false)),
+            "nonu" => Some(Self::Number(false)),
+
+            "relativenumber" => Some(Self::RelativeNumber(true)),
+            "rnu" => Some(Self::RelativeNumber(true)),
+            "norelativenumber" => Some(Self::RelativeNumber(false)),
+            "nornu" => Some(Self::RelativeNumber(false)),
+
+            _ => None,
+        }
+    }
+
+    fn to_string(&self) -> &'static str {
+        match self {
+            VimOption::Wrap(true) => "wrap",
+            VimOption::Wrap(false) => "nowrap",
+            VimOption::Number(true) => "number",
+            VimOption::Number(false) => "nonumber",
+            VimOption::RelativeNumber(true) => "relativenumber",
+            VimOption::RelativeNumber(false) => "norelativenumber",
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub struct VimSet {
+    options: Vec<VimOption>,
+}
+
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
@@ -78,7 +166,8 @@ impl_internal_actions!(
         WithRange,
         WithCount,
         OnMatchingLines,
-        ShellExec
+        ShellExec,
+        VimSet,
     ]
 );
 
@@ -101,27 +190,47 @@ impl Deref for WrappedAction {
     }
 }
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    Vim::action(editor, cx, |vim, _: &VisualCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
+    Vim::action(editor, cx, |vim, action: &VimSet, window, cx| {
+        for option in action.options.iter() {
+            vim.update_editor(window, cx, |_, editor, _, cx| match option {
+                VimOption::Wrap(true) => {
+                    editor
+                        .set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+                }
+                VimOption::Wrap(false) => {
+                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                }
+                VimOption::Number(enabled) => {
+                    editor.set_show_line_numbers(*enabled, cx);
+                }
+                VimOption::RelativeNumber(enabled) => {
+                    editor.set_relative_line_number(Some(*enabled), cx);
+                }
+            });
+        }
+    });
+    Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
+            command_palette::CommandPalette::toggle(workspace, "'<,'>", window, cx);
         })
     });
 
-    Vim::action(editor, cx, |vim, _: &ShellCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
+    Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>!", cx);
+            command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
         })
     });
 
-    Vim::action(editor, cx, |vim, _: &CountCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
+    Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -131,35 +240,40 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             ".".to_string()
         };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, &n, cx);
+            command_palette::CommandPalette::toggle(workspace, &n, window, cx);
         })
     });
 
-    Vim::action(editor, cx, |vim, action: &GoToLine, cx| {
-        vim.switch_mode(Mode::Normal, false, cx);
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            action.range.head().buffer_row(vim, editor, cx)
+    Vim::action(editor, cx, |vim, action: &GoToLine, window, cx| {
+        vim.switch_mode(Mode::Normal, false, window, cx);
+        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let buffer_row = action.range.head().buffer_row(vim, editor, window, cx)?;
+            let current = editor.selections.newest::<Point>(cx);
+            let target = snapshot
+                .buffer_snapshot
+                .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.select_ranges([target..target]);
+            });
+
+            anyhow::Ok(())
         });
-        let buffer_row = match result {
-            None => return,
-            Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
-                    return;
-                };
-                workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
-                });
+        if let Some(e @ Err(_)) = result {
+            let Some(workspace) = vim.workspace(window) else {
                 return;
-            }
-            Some(Ok(result)) => result,
-        };
-        vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
+            };
+            workspace.update(cx, |workspace, cx| {
+                e.notify_err(workspace, cx);
+            });
+            return;
+        }
     });
 
-    Vim::action(editor, cx, |vim, action: &YankCommand, cx| {
-        vim.update_editor(cx, |vim, editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
+    Vim::action(editor, cx, |vim, action: &YankCommand, window, cx| {
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
                 let end = if range.end < snapshot.buffer_snapshot.max_row() {
                     Point::new(range.end.0 + 1, 0)
                 } else {
@@ -176,21 +290,21 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         });
     });
 
-    Vim::action(editor, cx, |_, action: &WithCount, cx| {
+    Vim::action(editor, cx, |_, action: &WithCount, window, cx| {
         for _ in 0..action.count {
-            cx.dispatch_action(action.action.boxed_clone())
+            window.dispatch_action(action.action.boxed_clone(), cx)
         }
     });
 
-    Vim::action(editor, cx, |vim, action: &WithRange, cx| {
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            action.range.buffer_range(vim, editor, cx)
+    Vim::action(editor, cx, |vim, action: &WithRange, window, cx| {
+        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
+            action.range.buffer_range(vim, editor, window, cx)
         });
 
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
+                let Some(workspace) = vim.workspace(window) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -202,24 +316,24 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         };
 
         let previous_selections = vim
-            .update_editor(cx, |_, editor, cx| {
+            .update_editor(window, cx, |_, editor, window, cx| {
                 let selections = action.restore_selection.then(|| {
                     editor
                         .selections
                         .disjoint_anchor_ranges()
                         .collect::<Vec<_>>()
                 });
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
                 });
                 selections
             })
             .flatten();
-        cx.dispatch_action(action.action.boxed_clone());
-        cx.defer(move |vim, cx| {
-            vim.update_editor(cx, |_, editor, cx| {
-                editor.change_selections(None, cx, |s| {
+        window.dispatch_action(action.action.boxed_clone(), cx);
+        cx.defer_in(window, move |vim, window, cx| {
+            vim.update_editor(window, cx, |_, editor, window, cx| {
+                editor.change_selections(None, window, cx, |s| {
                     if let Some(previous_selections) = previous_selections {
                         s.select_ranges(previous_selections);
                     } else {
@@ -232,12 +346,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         });
     });
 
-    Vim::action(editor, cx, |vim, action: &OnMatchingLines, cx| {
-        action.run(vim, cx)
+    Vim::action(editor, cx, |vim, action: &OnMatchingLines, window, cx| {
+        action.run(vim, window, cx)
     });
 
-    Vim::action(editor, cx, |vim, action: &ShellExec, cx| {
-        action.run(vim, cx)
+    Vim::action(editor, cx, |vim, action: &ShellExec, window, cx| {
+        action.run(vim, window, cx)
     })
 }
 
@@ -301,7 +415,7 @@ impl VimCommand {
         &self,
         mut query: &str,
         range: &Option<CommandRange>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Box<dyn Action>> {
         let has_bang = query.ends_with('!');
         if has_bang {
@@ -458,11 +572,27 @@ impl Position {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Result<MultiBufferRow> {
-        let snapshot = editor.snapshot(cx);
+        let snapshot = editor.snapshot(window, cx);
         let target = match self {
-            Position::Line { row, offset } => row.saturating_add_signed(offset.saturating_sub(1)),
+            Position::Line { row, offset } => {
+                if let Some(anchor) = editor.active_excerpt(cx).and_then(|(_, buffer, _)| {
+                    editor.buffer().read(cx).buffer_point_to_anchor(
+                        &buffer,
+                        Point::new(row.saturating_sub(1), 0),
+                        cx,
+                    )
+                }) {
+                    anchor
+                        .to_point(&snapshot.buffer_snapshot)
+                        .row
+                        .saturating_add_signed(*offset)
+                } else {
+                    row.saturating_add_signed(offset.saturating_sub(1))
+                }
+            }
             Position::Mark { name, offset } => {
                 let Some(mark) = vim.marks.get(&name.to_string()).and_then(|vec| vec.last()) else {
                     return Err(anyhow!("mark {} not set", name));
@@ -504,11 +634,12 @@ impl CommandRange {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Result<Range<MultiBufferRow>> {
-        let start = self.start.buffer_row(vim, editor, cx)?;
+        let start = self.start.buffer_row(vim, editor, window, cx)?;
         let end = if let Some(end) = self.end.as_ref() {
-            end.buffer_row(vim, editor, cx)?
+            end.buffer_row(vim, editor, window, cx)?
         } else {
             start
         };
@@ -532,7 +663,7 @@ impl CommandRange {
     }
 }
 
-fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
+fn generate_commands(_: &App) -> Vec<VimCommand> {
     vec![
         VimCommand::new(
             ("w", "rite"),
@@ -547,37 +678,45 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("q", "uit"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("wq", ""),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Save),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("x", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("ex", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("up", "date"),
@@ -637,14 +776,16 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("bd", "elete"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("bp", "revious"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("bp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -653,12 +794,13 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
         VimCommand::new(("tabnew", ""), workspace::NewFile),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("tabp", "revious"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("tabN", "ext"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(
             ("tabc", "lose"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         ),
         VimCommand::new(
@@ -685,10 +827,12 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
         VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).range(wrap_count),
-        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("cp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("cN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
+        VimCommand::new(("lp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("lN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
@@ -697,8 +841,9 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("foldc", "lose"), editor::actions::Fold)
             .bang(editor::actions::FoldRecursive)
             .range(act_on_range),
-        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(act_on_range),
-        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(act_on_range),
+        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleSelectedDiffHunks)
+            .range(act_on_range),
+        VimCommand::str(("rev", "ert"), "git::Restore").range(act_on_range),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
         VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {
             Some(
@@ -708,6 +853,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
                 .boxed_clone(),
             )
         }),
+        VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -737,7 +883,7 @@ struct VimCommands(Vec<VimCommand>);
 unsafe impl Sync for VimCommands {}
 impl Global for VimCommands {}
 
-fn commands(cx: &AppContext) -> &Vec<VimCommand> {
+fn commands(cx: &App) -> &Vec<VimCommand> {
     static COMMANDS: OnceLock<VimCommands> = OnceLock::new();
     &COMMANDS
         .get_or_init(|| VimCommands(generate_commands(cx)))
@@ -776,7 +922,7 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
     })
 }
 
-pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandInterceptResult> {
+pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptResult> {
     // NOTE: We also need to support passing arguments to commands like :w
     // (ideally with filename autocompletion).
     while input.starts_with(':') {
@@ -802,6 +948,8 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
             }
             .boxed_clone(),
         )
+    } else if query.starts_with("se ") || query.starts_with("set ") {
+        return VimOption::possible_commands(query.split_once(" ").unwrap().1);
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -854,11 +1002,11 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
     if let Some(action) = action {
         let string = input.to_string();
         let positions = generate_positions(&string, &(range_prefix + query));
-        return Some(CommandInterceptResult {
+        return vec![CommandInterceptResult {
             action,
             string,
             positions,
-        });
+        }];
     }
 
     for command in commands(cx).iter() {
@@ -869,14 +1017,14 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
             }
             let positions = generate_positions(&string, &(range_prefix + query));
 
-            return Some(CommandInterceptResult {
+            return vec![CommandInterceptResult {
                 action,
                 string,
                 positions,
-            });
+            }];
         }
     }
-    None
+    return Vec::default();
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -918,7 +1066,7 @@ impl OnMatchingLines {
         mut chars: Peekable<Chars>,
         invert: bool,
         range: CommandRange,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Self> {
         let delimiter = chars.next().filter(|c| {
             !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
@@ -950,7 +1098,12 @@ impl OnMatchingLines {
 
         let command: String = chars.collect();
 
-        let action = WrappedAction(command_interceptor(&command, cx)?.action);
+        let action = WrappedAction(
+            command_interceptor(&command, cx)
+                .first()?
+                .action
+                .boxed_clone(),
+        );
 
         Some(Self {
             range,
@@ -960,15 +1113,15 @@ impl OnMatchingLines {
         })
     }
 
-    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            self.range.buffer_range(vim, editor, cx)
+    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
+        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
+            self.range.buffer_range(vim, editor, window, cx)
         });
 
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
+                let Some(workspace) = vim.workspace(window) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -985,7 +1138,7 @@ impl OnMatchingLines {
         let mut regexes = match Regex::new(&self.search) {
             Ok(regex) => vec![(regex, !self.invert)],
             e @ Err(_) => {
-                let Some(workspace) = vim.workspace(cx) else {
+                let Some(workspace) = vim.workspace(window) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -1007,15 +1160,16 @@ impl OnMatchingLines {
             regexes.push((regex, !inner.invert))
         }
 
-        if let Some(pane) = vim.pane(cx) {
+        if let Some(pane) = vim.pane(window, cx) {
             pane.update(cx, |pane, cx| {
                 if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
                 {
                     search_bar.update(cx, |search_bar, cx| {
-                        if search_bar.show(cx) {
+                        if search_bar.show(window, cx) {
                             let _ = search_bar.search(
                                 &last_pattern,
                                 Some(SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE),
+                                window,
                                 cx,
                             );
                         }
@@ -1024,18 +1178,17 @@ impl OnMatchingLines {
             });
         };
 
-        vim.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        vim.update_editor(window, cx, |_, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let mut row = range.start.0;
 
             let point_range = Point::new(range.start.0, 0)
                 ..snapshot
                     .buffer_snapshot
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
-            cx.spawn(|editor, mut cx| async move {
+            cx.spawn_in(window, |editor, mut cx| async move {
                 let new_selections = cx
-                    .background_executor()
-                    .spawn(async move {
+                    .background_spawn(async move {
                         let mut line = String::new();
                         let mut new_selections = Vec::new();
                         let chunks = snapshot
@@ -1067,15 +1220,15 @@ impl OnMatchingLines {
                     return;
                 }
                 editor
-                    .update(&mut cx, |editor, cx| {
-                        editor.start_transaction_at(Instant::now(), cx);
-                        editor.change_selections(None, cx, |s| {
+                    .update_in(&mut cx, |editor, window, cx| {
+                        editor.start_transaction_at(Instant::now(), window, cx);
+                        editor.change_selections(None, window, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
                         });
-                        cx.dispatch_action(action);
-                        cx.defer(move |editor, cx| {
+                        window.dispatch_action(action, cx);
+                        cx.defer_in(window, move |editor, window, cx| {
                             let newest = editor.selections.newest::<Point>(cx).clone();
-                            editor.change_selections(None, cx, |s| {
+                            editor.change_selections(None, window, cx, |s| {
                                 s.select(vec![newest]);
                             });
                             editor.end_transaction_at(Instant::now(), cx);
@@ -1096,17 +1249,22 @@ pub struct ShellExec {
 }
 
 impl Vim {
-    pub fn cancel_running_command(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn cancel_running_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.running_command.take().is_some() {
-            self.update_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, _| {
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.transact(window, cx, |editor, _window, _cx| {
                     editor.clear_row_highlights::<ShellExec>();
                 })
             });
         }
     }
 
-    fn prepare_shell_command(&mut self, command: &str, cx: &mut ViewContext<Self>) -> String {
+    fn prepare_shell_command(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         let mut ret = String::new();
         // N.B. non-standard escaping rules:
         // * !echo % => "echo README.md"
@@ -1124,7 +1282,7 @@ impl Vim {
             }
             match c {
                 '%' => {
-                    self.update_editor(cx, |_, editor, cx| {
+                    self.update_editor(window, cx, |_, editor, _window, cx| {
                         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
                             if let Some(file) = buffer.read(cx).file() {
                                 if let Some(local) = file.as_local() {
@@ -1152,21 +1310,22 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Vim>,
+        window: &mut Window,
+        cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
-        let command = self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let command = self.update_editor(window, cx, |_, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
-            let text_layout_details = editor.text_layout_details(cx);
+            let text_layout_details = editor.text_layout_details(window);
             let mut range = motion
                 .range(&snapshot, start.clone(), times, false, &text_layout_details)
                 .unwrap_or(start.range());
             if range.start != start.start {
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([
                         range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
                     ]);
@@ -1183,7 +1342,7 @@ impl Vim {
         });
         if let Some(command) = command {
             workspace.update(cx, |workspace, cx| {
-                command_palette::CommandPalette::toggle(workspace, &command, cx);
+                command_palette::CommandPalette::toggle(workspace, &command, window, cx);
             });
         }
     }
@@ -1192,20 +1351,21 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
-        cx: &mut ViewContext<Vim>,
+        window: &mut Window,
+        cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
-        let command = self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let command = self.update_editor(window, cx, |_, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
             let range = object
                 .range(&snapshot, start.clone(), around)
                 .unwrap_or(start.range());
             if range.start != start.start {
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([
                         range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
                     ]);
@@ -1219,7 +1379,7 @@ impl Vim {
         });
         if let Some(command) = command {
             workspace.update(cx, |workspace, cx| {
-                command_palette::CommandPalette::toggle(workspace, &command, cx);
+                command_palette::CommandPalette::toggle(workspace, &command, window, cx);
             });
         }
     }
@@ -1244,13 +1404,13 @@ impl ShellExec {
         )
     }
 
-    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
-        let Some(workspace) = vim.workspace(cx) else {
+    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
 
         let project = workspace.read(cx).project().clone();
-        let command = vim.prepare_shell_command(&self.command, cx);
+        let command = vim.prepare_shell_command(&self.command, window, cx);
 
         if self.range.is_none() && !self.is_read {
             workspace.update(cx, |workspace, cx| {
@@ -1260,11 +1420,11 @@ impl ShellExec {
                 cx.emit(workspace::Event::SpawnTask {
                     action: Box::new(SpawnInTerminal {
                         id: TaskId("vim".to_string()),
-                        full_label: self.command.clone(),
-                        label: self.command.clone(),
+                        full_label: command.clone(),
+                        label: command.clone(),
                         command: command.clone(),
                         args: Vec::new(),
-                        command_label: self.command.clone(),
+                        command_label: command.clone(),
                         cwd,
                         env: HashMap::default(),
                         use_new_terminal: true,
@@ -1275,6 +1435,7 @@ impl ShellExec {
                         shell,
                         show_summary: false,
                         show_command: false,
+                        show_rerun: false,
                     }),
                 });
             });
@@ -1284,10 +1445,10 @@ impl ShellExec {
         let mut input_snapshot = None;
         let mut input_range = None;
         let mut needs_newline_prefix = false;
-        vim.update_editor(cx, |vim, editor, cx| {
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let range = if let Some(range) = self.range.clone() {
-                let Some(range) = range.buffer_range(vim, editor, cx).log_err() else {
+                let Some(range) = range.buffer_range(vim, editor, window, cx).log_err() else {
                     return;
                 };
                 Point::new(range.start.0, 0)
@@ -1343,10 +1504,10 @@ impl ShellExec {
         };
         let is_read = self.is_read;
 
-        let task = cx.spawn(|vim, mut cx| async move {
+        let task = cx.spawn_in(window, |vim, mut cx| async move {
             let Some(mut running) = process.spawn().log_err() else {
-                vim.update(&mut cx, |vim, cx| {
-                    vim.cancel_running_command(cx);
+                vim.update_in(&mut cx, |vim, window, cx| {
+                    vim.cancel_running_command(window, cx);
                 })
                 .log_err();
                 return;
@@ -1355,27 +1516,25 @@ impl ShellExec {
             if let Some(mut stdin) = running.stdin.take() {
                 if let Some(snapshot) = input_snapshot {
                     let range = range.clone();
-                    cx.background_executor()
-                        .spawn(async move {
-                            for chunk in snapshot.text_for_range(range) {
-                                if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
-                                    return;
-                                }
+                    cx.background_spawn(async move {
+                        for chunk in snapshot.text_for_range(range) {
+                            if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                                return;
                             }
-                            stdin.flush().log_err();
-                        })
-                        .detach();
+                        }
+                        stdin.flush().log_err();
+                    })
+                    .detach();
                 }
             };
 
             let output = cx
-                .background_executor()
-                .spawn(async move { running.wait_with_output() })
+                .background_spawn(async move { running.wait_with_output() })
                 .await;
 
             let Some(output) = output.log_err() else {
-                vim.update(&mut cx, |vim, cx| {
-                    vim.cancel_running_command(cx);
+                vim.update_in(&mut cx, |vim, window, cx| {
+                    vim.cancel_running_command(window, cx);
                 })
                 .log_err();
                 return;
@@ -1390,12 +1549,12 @@ impl ShellExec {
                 text.push('\n');
             }
 
-            vim.update(&mut cx, |vim, cx| {
-                vim.update_editor(cx, |_, editor, cx| {
-                    editor.transact(cx, |editor, cx| {
+            vim.update_in(&mut cx, |vim, window, cx| {
+                vim.update_editor(window, cx, |_, editor, window, cx| {
+                    editor.transact(window, cx, |editor, window, cx| {
                         editor.edit([(range.clone(), text)], cx);
                         let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                             let point = if is_read {
                                 let point = range.end.to_point(&snapshot);
                                 Point::new(point.row.saturating_sub(1), 0)
@@ -1407,7 +1566,7 @@ impl ShellExec {
                         })
                     })
                 });
-                vim.cancel_running_command(cx);
+                vim.cancel_running_command(window, cx);
             })
             .log_err();
         });
@@ -1424,9 +1583,9 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Editor;
-    use gpui::TestAppContext;
+    use gpui::{Context, TestAppContext};
     use indoc::indoc;
-    use ui::ViewContext;
+    use util::path;
     use workspace::Workspace;
 
     #[gpui::test]
@@ -1488,7 +1647,8 @@ mod test {
             dd
             dd
             ˇcc"});
-        cx.simulate_shared_keystrokes("k : s / dd / ee enter").await;
+        cx.simulate_shared_keystrokes("k : s / d d / e e enter")
+            .await;
         cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd
@@ -1523,28 +1683,26 @@ mod test {
     #[gpui::test]
     async fn test_command_write(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        let path = Path::new("/root/dir/file.rs");
-        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        let path = Path::new(path!("/root/dir/file.rs"));
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
 
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
 
-        assert_eq!(fs.load(path).await.unwrap(), "@\n");
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@\n");
 
         fs.as_fake().insert_file(path, b"oops\n".to_vec()).await;
 
         // conflict!
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
-        assert!(cx.has_pending_prompt());
-        // "Cancel"
-        cx.simulate_prompt_answer(0);
-        assert_eq!(fs.load(path).await.unwrap(), "oops\n");
+        cx.simulate_prompt_answer("Cancel");
+
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
-        // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
-        assert_eq!(fs.load(path).await.unwrap(), "@@\n");
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");
     }
 
     #[gpui::test]
@@ -1552,13 +1710,13 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.simulate_keystrokes(": q enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.simulate_keystrokes(": q a enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 0));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 0));
     }
 
     #[gpui::test]
@@ -1620,7 +1778,7 @@ mod test {
         workspace: &mut Workspace,
         expected_path: &str,
         expected_text: &str,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 
@@ -1636,7 +1794,7 @@ mod test {
         let file_path = file.as_local().unwrap().abs_path(cx);
 
         assert_eq!(text, expected_text);
-        assert_eq!(file_path.to_str().unwrap(), expected_path);
+        assert_eq!(file_path, Path::new(expected_path));
     }
 
     #[gpui::test]
@@ -1644,17 +1802,23 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         // Assert base state, that we're in /root/dir/file.rs
-        cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
         });
 
         // Insert a new file
-        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
-            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "This is file2.rs".as_bytes().to_vec(),
+            )
             .await;
         fs.as_fake()
-            .insert_file("/root/dir/file3.rs", "go to file3".as_bytes().to_vec())
+            .insert_file(
+                path!("/root/dir/file3.rs"),
+                "go to file3".as_bytes().to_vec(),
+            )
             .await;
 
         // Put the path to the second file into the currently open buffer
@@ -1664,13 +1828,19 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have two items
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
-        cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(
+                workspace,
+                path!("/root/dir/file2.rs"),
+                "This is file2.rs",
+                cx,
+            );
         });
 
         // Update editor to point to `file2.rs`
-        cx.editor = cx.workspace(|workspace, cx| workspace.active_item_as::<Editor>(cx).unwrap());
+        cx.editor =
+            cx.workspace(|workspace, _, cx| workspace.active_item_as::<Editor>(cx).unwrap());
 
         // Put the path to the third file into the currently open buffer,
         // but remove its suffix, because we want that lookup to happen automatically.
@@ -1680,9 +1850,9 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have three items
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 3));
-        cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file3.rs"), "go to file3", cx);
         });
     }
 

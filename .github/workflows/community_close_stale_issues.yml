@@ -9,7 +9,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@28ca1036281a5e5922ead5184a1bbf96e5fc984e # v9
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           stale-issue-message: >
@@ -19,11 +19,7 @@ jobs:
 
             Thanks for your help!
           close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please open a new issue with a link to this issue."
-          # We will increase `days-before-stale` to 365 on or after Jan 24th,
-          # 2024. This date marks one year since migrating issues from
-          # 'community' to 'zed' repository. The migration added activity to all
-          # issues, preventing 365 days from working until then.
-          days-before-stale: 180
+          days-before-stale: 120
           days-before-close: 7
           any-of-issue-labels: "bug,panic / crash"
           operations-per-run: 1000

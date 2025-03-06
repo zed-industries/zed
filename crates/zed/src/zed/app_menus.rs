@@ -53,7 +53,16 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("New", workspace::NewFile),
                 MenuItem::action("New Window", workspace::NewWindow),
                 MenuItem::separator(),
-                MenuItem::action("Open…", workspace::Open),
+                #[cfg(not(target_os = "macos"))]
+                MenuItem::action("Open File...", workspace::OpenFiles),
+                MenuItem::action(
+                    if cfg!(not(target_os = "macos")) {
+                        "Open Folder..."
+                    } else {
+                        "Open…"
+                    },
+                    workspace::Open,
+                ),
                 MenuItem::action(
                     "Open Recent...",
                     zed_actions::OpenRecent {
@@ -67,7 +76,10 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Save All", workspace::SaveAll { save_intent: None }),
                 MenuItem::action(
                     "Close Editor",
-                    workspace::CloseActiveItem { save_intent: None },
+                    workspace::CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: true,
+                    },
                 ),
                 MenuItem::action("Close Window", workspace::CloseWindow),
             ],
@@ -119,9 +131,18 @@ pub fn app_menus() -> Vec<Menu> {
         Menu {
             name: "View".into(),
             items: vec![
-                MenuItem::action("Zoom In", zed_actions::IncreaseBufferFontSize),
-                MenuItem::action("Zoom Out", zed_actions::DecreaseBufferFontSize),
-                MenuItem::action("Reset Zoom", zed_actions::ResetBufferFontSize),
+                MenuItem::action(
+                    "Zoom In",
+                    zed_actions::IncreaseBufferFontSize { persist: true },
+                ),
+                MenuItem::action(
+                    "Zoom Out",
+                    zed_actions::DecreaseBufferFontSize { persist: true },
+                ),
+                MenuItem::action(
+                    "Reset Zoom",
+                    zed_actions::ResetBufferFontSize { persist: true },
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
                 MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
@@ -168,7 +189,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Find All References", editor::actions::FindAllReferences),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic),
-                MenuItem::action("Previous Problem", editor::actions::GoToPrevDiagnostic),
+                MenuItem::action("Previous Problem", editor::actions::GoToPreviousDiagnostic),
             ],
         },
         Menu {

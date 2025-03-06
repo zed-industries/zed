@@ -11,12 +11,12 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model, Render,
-    Subscription, Task, Transformation,
+    percentage, svg, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription,
+    Task, Transformation,
 };
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use settings::SettingsStore;
@@ -25,6 +25,7 @@ use strum::IntoEnumIterator;
 use ui::prelude::*;
 
 use super::anthropic::count_anthropic_tokens;
+use super::google::count_google_tokens;
 use super::open_ai::count_open_ai_tokens;
 
 const PROVIDER_ID: &str = "copilot_chat";
@@ -34,7 +35,7 @@ const PROVIDER_NAME: &str = "GitHub Copilot Chat";
 pub struct CopilotChatSettings {}
 
 pub struct CopilotChatLanguageModelProvider {
-    state: Model<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -43,7 +44,7 @@ pub struct State {
 }
 
 impl State {
-    fn is_authenticated(&self, cx: &AppContext) -> bool {
+    fn is_authenticated(&self, cx: &App) -> bool {
         CopilotChat::global(cx)
             .map(|m| m.read(cx).is_authenticated())
             .unwrap_or(false)
@@ -51,8 +52,8 @@ impl State {
 }
 
 impl CopilotChatLanguageModelProvider {
-    pub fn new(cx: &mut AppContext) -> Self {
-        let state = cx.new_model(|cx| {
+    pub fn new(cx: &mut App) -> Self {
+        let state = cx.new(|cx| {
             let _copilot_chat_subscription = CopilotChat::global(cx)
                 .map(|copilot_chat| cx.observe(&copilot_chat, |_, _, cx| cx.notify()));
             State {
@@ -70,7 +71,7 @@ impl CopilotChatLanguageModelProvider {
 impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -88,7 +89,15 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         IconName::Copilot
     }
 
-    fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = CopilotChatModel::default();
+        Some(Arc::new(CopilotChatLanguageModel {
+            model,
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>)
+    }
+
+    fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
             .map(|model| {
                 Arc::new(CopilotChatLanguageModel {
@@ -99,38 +108,40 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, cx: &AppContext) -> bool {
+    fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated(cx)
     }
 
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        let result = if self.is_authenticated(cx) {
-            Ok(())
-        } else if let Some(copilot) = Copilot::global(cx) {
-            let error_msg = match copilot.read(cx).status() {
-                Status::Disabled => anyhow::anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."),
-                Status::Error(e) => anyhow::anyhow!(format!("Received the following error while signing into Copilot: {e}")),
-                Status::Starting { task: _ } => anyhow::anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
-                Status::Unauthorized => anyhow::anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
-                Status::Authorized => return Task::ready(Ok(())),
-                Status::SignedOut => anyhow::anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
-                Status::SigningIn { prompt: _ } => anyhow::anyhow!("Still signing into Copilot..."),
-            };
-            Err(error_msg)
-        } else {
-            Err(anyhow::anyhow!(
-                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
-            ))
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated(cx) {
+            return Task::ready(Ok(()));
         };
-        Task::ready(result)
+
+        let Some(copilot) = Copilot::global(cx) else {
+            return Task::ready( Err(anyhow!(
+                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
+            ).into()));
+        };
+
+        let err = match copilot.read(cx).status() {
+            Status::Authorized => return Task::ready(Ok(())),
+            Status::Disabled => anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."),
+            Status::Error(err) => anyhow!(format!("Received the following error while signing into Copilot: {err}")),
+            Status::Starting { task: _ } => anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
+            Status::Unauthorized => anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
+            Status::SignedOut => anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
+            Status::SigningIn { prompt: _ } => anyhow!("Still signing into Copilot..."),
+        };
+
+        Task::ready(Err(err.into()))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
         let state = self.state.clone();
-        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new(|cx| ConfigurationView::new(state, cx)).into()
     }
 
-    fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow!(
             "Signing out of GitHub Copilot Chat is currently not supported."
         )))
@@ -170,17 +181,23 @@ impl LanguageModel for CopilotChatLanguageModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         match self.model {
             CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
+            CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
+            CopilotChatModel::Gemini20Flash => count_google_tokens(request, cx),
             _ => {
                 let model = match self.model {
                     CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 | CopilotChatModel::O1Mini => open_ai::Model::Four,
-                    CopilotChatModel::Claude3_5Sonnet => unreachable!(),
+                    CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
+                    CopilotChatModel::Claude3_5Sonnet
+                    | CopilotChatModel::Claude3_7Sonnet
+                    | CopilotChatModel::Gemini20Flash => {
+                        unreachable!()
+                    }
                 };
                 count_open_ai_tokens(request, model, cx)
             }
@@ -190,7 +207,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
@@ -266,7 +283,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         _name: String,
         _description: String,
         _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
     }
@@ -294,12 +311,12 @@ impl CopilotChatLanguageModel {
 
 struct ConfigurationView {
     copilot_status: Option<copilot::Status>,
-    state: Model<State>,
+    state: Entity<State>,
     _subscription: Option<Subscription>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
         let copilot = Copilot::global(cx);
 
         Self {
@@ -316,7 +333,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()
@@ -327,7 +344,7 @@ impl Render for ConfigurationView {
             let loading_icon = svg()
                 .size_8()
                 .path(IconName::ArrowCircle.path())
-                .text_color(cx.text_style().color)
+                .text_color(window.text_style().color)
                 .with_animation(
                     "icon_circle_arrow",
                     Animation::new(Duration::from_secs(2)).repeat(),
@@ -378,7 +395,9 @@ impl Render for ConfigurationView {
                                         .icon_size(IconSize::Medium)
                                         .style(ui::ButtonStyle::Filled)
                                         .full_width()
-                                        .on_click(|_, cx| copilot::initiate_sign_in(cx)),
+                                        .on_click(|_, window, cx| {
+                                            copilot::initiate_sign_in(window, cx)
+                                        }),
                                 )
                                 .child(
                                     div().flex().w_full().items_center().child(

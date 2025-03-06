@@ -1,24 +1,23 @@
-use anyhow::Context;
+use anyhow::Context as _;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter};
 use lsp::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
     local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{
+    proto::{self, FromProto, ToProto},
+    AnyProtoClient, TypedEnvelope,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
     SettingsSources, SettingsStore,
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 use task::{TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
@@ -41,6 +40,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Configuration for Diagnostics-related features.
+    #[serde(default)]
+    pub diagnostics: DiagnosticsSettings,
+
     /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
@@ -60,11 +63,11 @@ pub struct ProjectSettings {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
-    /// The path to the node binary
+    /// The path to the Node binary.
     pub path: Option<String>,
-    ///  The path to the npm binary Zed should use (defaults to .path/../npm)
+    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
     pub npm_path: Option<String>,
-    /// If disabled, zed will download its own copy of node.
+    /// If disabled, Zed will download its own copy of Node.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
 }
@@ -77,6 +80,77 @@ pub enum DirenvSettings {
     /// Load direnv configuration directly using `direnv export json`
     #[default]
     Direct,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct DiagnosticsSettings {
+    /// Whether or not to include warning diagnostics
+    #[serde(default = "true_value")]
+    pub include_warnings: bool,
+
+    /// Settings for showing inline diagnostics
+    #[serde(default)]
+    pub inline: InlineDiagnosticsSettings,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct InlineDiagnosticsSettings {
+    /// Whether or not to show inline diagnostics
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub enabled: bool,
+    /// Whether to only show the inline diaganostics after a delay after the
+    /// last editor event.
+    ///
+    /// Default: 150
+    #[serde(default = "default_inline_diagnostics_debounce_ms")]
+    pub update_debounce_ms: u64,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline diagnostic in units of columns.
+    ///
+    /// Default: 4
+    #[serde(default = "default_inline_diagnostics_padding")]
+    pub padding: u32,
+    /// The minimum column to display inline diagnostics. This setting can be
+    /// used to horizontally align inline diagnostics at some position. Lines
+    /// longer than this value will still push diagnostics further to the right.
+    ///
+    /// Default: 0
+    #[serde(default)]
+    pub min_column: u32,
+
+    #[serde(default)]
+    pub max_severity: Option<DiagnosticSeverity>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Info,
+    Hint,
+}
+
+impl Default for InlineDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            update_debounce_ms: default_inline_diagnostics_debounce_ms(),
+            padding: default_inline_diagnostics_padding(),
+            min_column: 0,
+            max_severity: None,
+        }
+    }
+}
+
+fn default_inline_diagnostics_debounce_ms() -> u64 {
+    150
+}
+
+fn default_inline_diagnostics_padding() -> u32 {
+    4
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -94,6 +168,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// How hunks are displayed visually in the editor.
+    ///
+    /// Default: transparent
+    pub hunk_style: Option<GitHunkStyleSetting>,
 }
 
 impl GitSettings {
@@ -128,6 +206,16 @@ impl GitSettings {
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum GitHunkStyleSetting {
+    /// Show unstaged hunks with a transparent background
+    #[default]
+    Transparent,
+    /// Show unstaged hunks with a pattern background
+    Pattern,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum GitGutterSetting {
     /// Show git gutter in tracked files.
     #[default]
@@ -157,16 +245,12 @@ pub struct InlineBlameSettings {
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
-    #[serde(default = "false_value")]
+    #[serde(default)]
     pub show_commit_summary: bool,
 }
 
 const fn true_value() -> bool {
     true
-}
-
-const fn false_value() -> bool {
-    false
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -208,10 +292,7 @@ impl Settings for ProjectSettings {
 
     type FileContent = Self;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
     }
 }
@@ -231,9 +312,9 @@ impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
 pub struct SettingsObserver {
     mode: SettingsObserverMode,
     downstream_client: Option<AnyProtoClient>,
-    worktree_store: Model<WorktreeStore>,
+    worktree_store: Entity<WorktreeStore>,
     project_id: u64,
-    task_store: Model<TaskStore>,
+    task_store: Entity<TaskStore>,
 }
 
 /// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
@@ -243,14 +324,14 @@ pub struct SettingsObserver {
 /// upstream.
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
-        client.add_model_message_handler(Self::handle_update_worktree_settings);
+        client.add_entity_message_handler(Self::handle_update_worktree_settings);
     }
 
     pub fn new_local(
         fs: Arc<dyn Fs>,
-        worktree_store: Model<WorktreeStore>,
-        task_store: Model<TaskStore>,
-        cx: &mut ModelContext<Self>,
+        worktree_store: Entity<WorktreeStore>,
+        task_store: Entity<TaskStore>,
+        cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
@@ -265,9 +346,9 @@ impl SettingsObserver {
     }
 
     pub fn new_remote(
-        worktree_store: Model<WorktreeStore>,
-        task_store: Model<TaskStore>,
-        _: &mut ModelContext<Self>,
+        worktree_store: Entity<WorktreeStore>,
+        task_store: Entity<TaskStore>,
+        _: &mut Context<Self>,
     ) -> Self {
         Self {
             worktree_store,
@@ -282,7 +363,7 @@ impl SettingsObserver {
         &mut self,
         project_id: u64,
         downstream_client: AnyProtoClient,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.project_id = project_id;
         self.downstream_client = Some(downstream_client.clone());
@@ -295,7 +376,7 @@ impl SettingsObserver {
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path: path.to_string_lossy().into(),
+                        path: path.to_proto(),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
@@ -308,7 +389,7 @@ impl SettingsObserver {
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path: path.to_string_lossy().into(),
+                        path: path.to_proto(),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Editorconfig).into(),
@@ -319,14 +400,14 @@ impl SettingsObserver {
         }
     }
 
-    pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
+    pub fn unshared(&mut self, _: &mut Context<Self>) {
         self.downstream_client = None;
     }
 
     async fn handle_update_worktree_settings(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<()> {
         let kind = match envelope.payload.kind {
             Some(kind) => proto::LocalSettingsKind::from_i32(kind)
@@ -346,7 +427,7 @@ impl SettingsObserver {
             this.update_settings(
                 worktree,
                 [(
-                    PathBuf::from(&envelope.payload.path).into(),
+                    Arc::<Path>::from_proto(envelope.payload.path.clone()),
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
@@ -358,9 +439,9 @@ impl SettingsObserver {
 
     fn on_worktree_store_event(
         &mut self,
-        _: Model<WorktreeStore>,
+        _: Entity<WorktreeStore>,
         event: &WorktreeStoreEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
             cx.subscribe(worktree, |this, worktree, event, cx| {
@@ -374,9 +455,9 @@ impl SettingsObserver {
 
     fn update_local_worktree_settings(
         &mut self,
-        worktree: &Model<Worktree>,
+        worktree: &Entity<Worktree>,
         changes: &UpdatedEntriesSet,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let SettingsObserverMode::Local(fs) = &self.mode else {
             return;
@@ -496,9 +577,9 @@ impl SettingsObserver {
 
     fn update_settings(
         &mut self,
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         settings_contents: impl IntoIterator<Item = (Arc<Path>, LocalSettingsKind, Option<String>)>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
@@ -554,7 +635,7 @@ impl SettingsObserver {
                     .send(proto::UpdateWorktreeSettings {
                         project_id: self.project_id,
                         worktree_id: remote_worktree_id.to_proto(),
-                        path: directory.to_string_lossy().into_owned(),
+                        path: directory.to_proto(),
                         content: file_content,
                         kind: Some(local_settings_kind_to_proto(kind).into()),
                     })

@@ -3,15 +3,15 @@ use crate::{
     LanguageModelProviderState,
 };
 use collections::BTreeMap;
-use gpui::{prelude::*, AppContext, EventEmitter, Global, Model, ModelContext};
+use gpui::{prelude::*, App, Context, Entity, EventEmitter, Global};
 use std::sync::Arc;
 
-pub fn init(cx: &mut AppContext) {
-    let registry = cx.new_model(|_cx| LanguageModelRegistry::default());
+pub fn init(cx: &mut App) {
+    let registry = cx.new(|_cx| LanguageModelRegistry::default());
     cx.set_global(GlobalLanguageModelRegistry(registry));
 }
 
-struct GlobalLanguageModelRegistry(Model<LanguageModelRegistry>);
+struct GlobalLanguageModelRegistry(Entity<LanguageModelRegistry>);
 
 impl Global for GlobalLanguageModelRegistry {}
 
@@ -37,18 +37,18 @@ pub enum Event {
 impl EventEmitter<Event> for LanguageModelRegistry {}
 
 impl LanguageModelRegistry {
-    pub fn global(cx: &AppContext) -> Model<Self> {
+    pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalLanguageModelRegistry>().0.clone()
     }
 
-    pub fn read_global(cx: &AppContext) -> &Self {
+    pub fn read_global(cx: &App) -> &Self {
         cx.global::<GlobalLanguageModelRegistry>().0.read(cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut AppContext) -> crate::fake_provider::FakeLanguageModelProvider {
+    pub fn test(cx: &mut App) -> crate::fake_provider::FakeLanguageModelProvider {
         let fake_provider = crate::fake_provider::FakeLanguageModelProvider;
-        let registry = cx.new_model(|cx| {
+        let registry = cx.new(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
             let model = fake_provider.provided_models(cx)[0].clone();
@@ -62,7 +62,7 @@ impl LanguageModelRegistry {
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
         &mut self,
         provider: T,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let id = provider.id();
 
@@ -77,11 +77,7 @@ impl LanguageModelRegistry {
         cx.emit(Event::AddedProvider(id));
     }
 
-    pub fn unregister_provider(
-        &mut self,
-        id: LanguageModelProviderId,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn unregister_provider(&mut self, id: LanguageModelProviderId, cx: &mut Context<Self>) {
         if self.providers.remove(&id).is_some() {
             cx.emit(Event::RemovedProvider(id));
         }
@@ -105,7 +101,7 @@ impl LanguageModelRegistry {
 
     pub fn available_models<'a>(
         &'a self,
-        cx: &'a AppContext,
+        cx: &'a App,
     ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
@@ -120,7 +116,7 @@ impl LanguageModelRegistry {
         &mut self,
         provider: &LanguageModelProviderId,
         model_id: &LanguageModelId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(provider) = self.provider(provider) else {
             return;
@@ -135,7 +131,7 @@ impl LanguageModelRegistry {
     pub fn set_active_provider(
         &mut self,
         provider: Option<Arc<dyn LanguageModelProvider>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.active_model = provider.map(|provider| ActiveModel {
             provider,
@@ -147,7 +143,7 @@ impl LanguageModelRegistry {
     pub fn set_active_model(
         &mut self,
         model: Option<Arc<dyn LanguageModel>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(model) = model {
             let provider_id = model.provider_id();
@@ -179,7 +175,7 @@ impl LanguageModelRegistry {
     pub fn select_inline_alternative_models(
         &mut self,
         alternatives: impl IntoIterator<Item = (LanguageModelProviderId, LanguageModelId)>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut selected_alternatives = Vec::new();
 
@@ -212,8 +208,8 @@ mod tests {
     use crate::fake_provider::FakeLanguageModelProvider;
 
     #[gpui::test]
-    fn test_register_providers(cx: &mut AppContext) {
-        let registry = cx.new_model(|_| LanguageModelRegistry::default());
+    fn test_register_providers(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
 
         registry.update(cx, |registry, cx| {
             registry.register_provider(FakeLanguageModelProvider, cx);

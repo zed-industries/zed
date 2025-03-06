@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use futures::io::BufReader;
 use futures::AsyncReadExt;
 use http_client::{AsyncBody, HttpClient, Request as HttpRequest};

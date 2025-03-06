@@ -12,6 +12,7 @@ env:
 jobs:
   style:
     name: Check formatting and Clippy lints
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - test

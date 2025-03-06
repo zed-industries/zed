@@ -16,4 +16,4 @@ doctest = false
 [dependencies]
 sqlez.workspace = true
 sqlformat.workspace = true
-syn = "1.0"
+syn.workspace = true

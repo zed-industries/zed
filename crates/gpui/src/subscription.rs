@@ -163,10 +163,27 @@ impl Subscription {
     }
 
     /// Detaches the subscription from this handle. The callback will
-    /// continue to be invoked until the views or models it has been
+    /// continue to be invoked until the entities it has been
     /// subscribed to are dropped
     pub fn detach(mut self) {
         self.unsubscribe.take();
+    }
+
+    /// Joins two subscriptions into a single subscription. Detach will
+    /// detach both interior subscriptions.
+    pub fn join(mut subscription_a: Self, mut subscription_b: Self) -> Self {
+        let a_unsubscribe = subscription_a.unsubscribe.take();
+        let b_unsubscribe = subscription_b.unsubscribe.take();
+        Self {
+            unsubscribe: Some(Box::new(move || {
+                if let Some(self_unsubscribe) = a_unsubscribe {
+                    self_unsubscribe();
+                }
+                if let Some(other_unsubscribe) = b_unsubscribe {
+                    other_unsubscribe();
+                }
+            })),
+        }
     }
 }
 

@@ -33,15 +33,3 @@ pub struct PerformCompletionParams {
     pub model: String,
     pub provider_request: Box<serde_json::value::RawValue>,
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PredictEditsParams {
-    pub outline: Option<String>,
-    pub input_events: String,
-    pub input_excerpt: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PredictEditsResponse {
-    pub output_excerpt: String,
-}

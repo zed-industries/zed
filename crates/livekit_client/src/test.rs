@@ -1,16 +1,20 @@
 pub mod participant;
 pub mod publication;
 pub mod track;
+
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub mod webrtc;
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use self::id::*;
 use self::{participant::*, publication::*, track::*};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use gpui::BackgroundExecutor;
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use livekit::options::TrackPublishOptions;
-use livekit_server::{proto, token};
+use livekit_api::{proto, token};
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
 use std::sync::{
@@ -18,6 +22,7 @@ use std::sync::{
     Arc, Weak,
 };
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub use livekit::{id, options, ConnectionState, DisconnectReason, RoomOptions};
 
 static SERVERS: Mutex<BTreeMap<String, Arc<TestServer>>> = Mutex::new(BTreeMap::new());
@@ -26,10 +31,12 @@ pub struct TestServer {
     pub url: String,
     pub api_key: String,
     pub secret_key: String,
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     rooms: Mutex<HashMap<String, TestServerRoom>>,
     executor: BackgroundExecutor,
 }
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl TestServer {
     pub fn create(
         url: String,
@@ -100,7 +107,7 @@ impl TestServer {
     async fn join_room(&self, token: String, client_room: Room) -> Result<ParticipantIdentity> {
         self.executor.simulate_random_delay().await;
 
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -167,7 +174,7 @@ impl TestServer {
     async fn leave_room(&self, token: String) -> Result<()> {
         self.executor.simulate_random_delay().await;
 
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -188,7 +195,7 @@ impl TestServer {
         &self,
         token: String,
     ) -> Result<HashMap<ParticipantIdentity, RemoteParticipant>> {
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let local_identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap().to_string();
 
@@ -281,7 +288,7 @@ impl TestServer {
     ) -> Result<TrackSid> {
         self.executor.simulate_random_delay().await;
 
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
 
@@ -347,7 +354,7 @@ impl TestServer {
     ) -> Result<TrackSid> {
         self.executor.simulate_random_delay().await;
 
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
 
@@ -412,7 +419,7 @@ impl TestServer {
     }
 
     fn set_track_muted(&self, token: &str, track_sid: &TrackSid, muted: bool) -> Result<()> {
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let mut server_rooms = self.rooms.lock();
@@ -466,7 +473,7 @@ impl TestServer {
     }
 
     fn is_track_muted(&self, token: &str, track_sid: &TrackSid) -> Option<bool> {
-        let claims = livekit_server::token::validate(&token, &self.secret_key).ok()?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -481,7 +488,7 @@ impl TestServer {
     }
 
     fn video_tracks(&self, token: String) -> Result<Vec<RemoteVideoTrack>> {
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
 
@@ -504,7 +511,7 @@ impl TestServer {
     }
 
     fn audio_tracks(&self, token: String) -> Result<Vec<RemoteAudioTrack>> {
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
 
@@ -527,6 +534,7 @@ impl TestServer {
     }
 }
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 #[derive(Default, Debug)]
 struct TestServerRoom {
     client_rooms: HashMap<ParticipantIdentity, Room>,
@@ -535,6 +543,7 @@ struct TestServerRoom {
     participant_permissions: HashMap<ParticipantIdentity, proto::ParticipantPermission>,
 }
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 #[derive(Debug)]
 struct TestServerVideoTrack {
     sid: TrackSid,
@@ -542,6 +551,7 @@ struct TestServerVideoTrack {
     // frames_rx: async_broadcast::Receiver<Frame>,
 }
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 #[derive(Debug)]
 struct TestServerAudioTrack {
     sid: TrackSid,
@@ -580,6 +590,7 @@ pub enum RoomEvent {
     TrackSubscriptionFailed {
         participant: RemoteParticipant,
         error: String,
+        #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
         track_sid: TrackSid,
     },
     TrackPublished {
@@ -615,10 +626,12 @@ pub enum RoomEvent {
     ActiveSpeakersChanged {
         speakers: Vec<Participant>,
     },
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     ConnectionStateChanged(ConnectionState),
     Connected {
         participants_with_tracks: Vec<(RemoteParticipant, Vec<RemoteTrackPublication>)>,
     },
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     Disconnected {
         reason: DisconnectReason,
     },
@@ -626,8 +639,9 @@ pub enum RoomEvent {
     Reconnected,
 }
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 #[async_trait]
-impl livekit_server::api::Client for TestApiClient {
+impl livekit_api::Client for TestApiClient {
     fn url(&self) -> &str {
         &self.url
     }
@@ -656,7 +670,7 @@ impl livekit_server::api::Client for TestApiClient {
         &self,
         room: String,
         identity: String,
-        permission: livekit_server::proto::ParticipantPermission,
+        permission: livekit_api::proto::ParticipantPermission,
     ) -> Result<()> {
         let server = TestServer::get(&self.url)?;
         server
@@ -689,8 +703,11 @@ impl livekit_server::api::Client for TestApiClient {
 struct RoomState {
     url: String,
     token: String,
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     local_identity: ParticipantIdentity,
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     connection_state: ConnectionState,
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     paused_audio_tracks: HashSet<TrackSid>,
     updates_tx: mpsc::Sender<RoomEvent>,
 }
@@ -701,6 +718,7 @@ pub struct Room(Arc<Mutex<RoomState>>);
 #[derive(Clone, Debug)]
 pub(crate) struct WeakRoom(Weak<Mutex<RoomState>>);
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl std::fmt::Debug for RoomState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Room")
@@ -713,6 +731,17 @@ impl std::fmt::Debug for RoomState {
     }
 }
 
+#[cfg(all(target_os = "windows", target_env = "gnu"))]
+impl std::fmt::Debug for RoomState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Room")
+            .field("url", &self.url)
+            .field("token", &self.token)
+            .finish()
+    }
+}
+
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl Room {
     fn downgrade(&self) -> WeakRoom {
         WeakRoom(Arc::downgrade(&self.0))
@@ -774,6 +803,7 @@ impl Room {
     }
 }
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl Drop for RoomState {
     fn drop(&mut self) {
         if self.connection_state == ConnectionState::Connected {

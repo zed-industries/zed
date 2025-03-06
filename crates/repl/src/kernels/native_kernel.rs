@@ -5,7 +5,7 @@ use futures::{
     stream::{SelectAll, StreamExt},
     AsyncBufReadExt as _, SinkExt as _,
 };
-use gpui::{EntityId, Task, View, WindowContext};
+use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
     connection_info::{ConnectionInfo, Transport},
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
@@ -114,10 +114,11 @@ impl NativeRunningKernel {
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         // todo: convert to weak view
-        session: View<Session>,
-        cx: &mut WindowContext,
+        session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
-        cx.spawn(|cx| async move {
+        window.spawn(cx, |cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
 
@@ -179,8 +180,8 @@ impl NativeRunningKernel {
                 |mut cx| async move {
                     while let Some(message) = messages_rx.next().await {
                         session
-                            .update(&mut cx, |session, cx| {
-                                session.route(&message, cx);
+                            .update_in(&mut cx, |session, window, cx| {
+                                session.route(&message, window, cx);
                             })
                             .ok();
                     }
@@ -196,8 +197,8 @@ impl NativeRunningKernel {
                 |mut cx| async move {
                     while let Ok(message) = iopub_socket.read().await {
                         session
-                            .update(&mut cx, |session, cx| {
-                                session.route(&message, cx);
+                            .update_in(&mut cx, |session, window, cx| {
+                                session.route(&message, window, cx);
                             })
                             .ok();
                     }
@@ -210,7 +211,7 @@ impl NativeRunningKernel {
                 futures::channel::mpsc::channel(100);
             let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
 
-            let routing_task = cx.background_executor().spawn({
+            let routing_task = cx.background_spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
                         match message.content {
@@ -228,7 +229,7 @@ impl NativeRunningKernel {
                 }
             });
 
-            let shell_task = cx.background_executor().spawn({
+            let shell_task = cx.background_spawn({
                 async move {
                     while let Some(message) = shell_request_rx.next().await {
                         shell_socket.send(message).await.ok();
@@ -239,7 +240,7 @@ impl NativeRunningKernel {
                 }
             });
 
-            let control_task = cx.background_executor().spawn({
+            let control_task = cx.background_spawn({
                 async move {
                     while let Some(message) = control_request_rx.next().await {
                         control_socket.send(message).await.ok();
@@ -347,7 +348,7 @@ impl RunningKernel for NativeRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self, _cx: &mut WindowContext) -> Task<anyhow::Result<()>> {
+    fn force_shutdown(&mut self, _window: &mut Window, _cx: &mut App) -> Task<anyhow::Result<()>> {
         self._process_status_task.take();
         self.request_tx.close_channel();
 

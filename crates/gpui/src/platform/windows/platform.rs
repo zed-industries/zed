@@ -7,7 +7,7 @@ use std::{
 };
 
 use ::util::{paths::SanitizedPath, ResultExt};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -167,7 +167,7 @@ impl WindowsPlatform {
 
     #[inline]
     fn run_foreground_task(&self) {
-        if let Ok(runnable) = self.main_receiver.try_recv() {
+        for runnable in self.main_receiver.drain() {
             runnable.run();
         }
     }
@@ -756,21 +756,20 @@ fn should_auto_hide_scrollbars() -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ClipboardItem, Platform, WindowsPlatform};
+    use crate::{read_from_clipboard, write_to_clipboard, ClipboardItem};
 
     #[test]
     fn test_clipboard() {
-        let platform = WindowsPlatform::new();
-        let item = ClipboardItem::new_string("你好".to_string());
-        platform.write_to_clipboard(item.clone());
-        assert_eq!(platform.read_from_clipboard(), Some(item));
+        let item = ClipboardItem::new_string("你好，我是张小白".to_string());
+        write_to_clipboard(item.clone());
+        assert_eq!(read_from_clipboard(), Some(item));
 
         let item = ClipboardItem::new_string("12345".to_string());
-        platform.write_to_clipboard(item.clone());
-        assert_eq!(platform.read_from_clipboard(), Some(item));
+        write_to_clipboard(item.clone());
+        assert_eq!(read_from_clipboard(), Some(item));
 
         let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
-        platform.write_to_clipboard(item.clone());
-        assert_eq!(platform.read_from_clipboard(), Some(item));
+        write_to_clipboard(item.clone());
+        assert_eq!(read_from_clipboard(), Some(item));
     }
 }

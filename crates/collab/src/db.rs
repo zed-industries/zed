@@ -6,10 +6,11 @@ pub mod tests;
 
 use crate::{executor::Executor, Error, Result};
 use anyhow::anyhow;
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use rand::{prelude::StdRng, Rng, SeedableRng};
+use rpc::ExtensionProvides;
 use rpc::{
     proto::{self},
     ConnectionId, ExtensionMetadata,
@@ -781,6 +782,7 @@ pub struct NewExtensionVersion {
     pub repository: String,
     pub schema_version: i32,
     pub wasm_api_version: Option<String>,
+    pub provides: BTreeSet<ExtensionProvides>,
     pub published_at: PrimitiveDateTime,
 }
 

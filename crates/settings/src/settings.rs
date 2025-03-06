@@ -5,7 +5,7 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
-use gpui::AppContext;
+use gpui::App;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
@@ -13,7 +13,9 @@ use util::asset_str;
 pub use editable_setting_control::*;
 pub use json_schema::*;
 pub use key_equivalents::*;
-pub use keymap_file::{KeymapFile, KeymapFileLoadResult};
+pub use keymap_file::{
+    KeyBindingValidator, KeyBindingValidatorRegistration, KeymapFile, KeymapFileLoadResult,
+};
 pub use settings_file::*;
 pub use settings_store::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
@@ -60,7 +62,7 @@ impl fmt::Display for WorktreeId {
 #[exclude = "*.DS_Store"]
 pub struct SettingsAssets;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     let mut settings = SettingsStore::new(cx);
     settings
         .set_default_settings(&default_settings(), cx)

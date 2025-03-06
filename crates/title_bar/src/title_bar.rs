@@ -9,7 +9,9 @@ mod stories;
 use crate::application_menu::ApplicationMenu;
 
 #[cfg(not(target_os = "macos"))]
-use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+use crate::application_menu::{
+    ActivateDirection, ActivateMenuLeft, ActivateMenuRight, OpenApplicationMenu,
+};
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
@@ -17,9 +19,9 @@ use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
-    actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
-    Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
+    InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
 };
 use project::Project;
 use rpc::proto;
@@ -34,6 +36,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zeta::ZedPredictBanner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -41,7 +44,7 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(
     collab,
@@ -54,42 +57,59 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
-        workspace.set_titlebar_item(item.into(), cx);
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        workspace.set_titlebar_item(item.into(), window, cx);
 
         #[cfg(not(target_os = "macos"))]
-        workspace.register_action(|workspace, action: &OpenApplicationMenu, cx| {
+        workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
             if let Some(titlebar) = workspace
                 .titlebar_item()
                 .and_then(|item| item.downcast::<TitleBar>().ok())
             {
                 titlebar.update(cx, |titlebar, cx| {
                     if let Some(ref menu) = titlebar.application_menu {
-                        menu.update(cx, |menu, cx| menu.open_menu(action, cx));
+                        menu.update(cx, |menu, cx| menu.open_menu(action, window, cx));
                     }
                 });
             }
         });
 
         #[cfg(not(target_os = "macos"))]
-        workspace.register_action(
-            |workspace, action: &NavigateApplicationMenuInDirection, cx| {
-                if let Some(titlebar) = workspace
-                    .titlebar_item()
-                    .and_then(|item| item.downcast::<TitleBar>().ok())
-                {
-                    titlebar.update(cx, |titlebar, cx| {
-                        if let Some(ref menu) = titlebar.application_menu {
-                            menu.update(cx, |menu, cx| {
-                                menu.navigate_menus_in_direction(action, cx)
-                            });
-                        }
-                    });
-                }
-            },
-        );
+        workspace.register_action(|workspace, _: &ActivateMenuRight, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Right, window, cx)
+                        });
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, _: &ActivateMenuLeft, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Left, window, cx)
+                        });
+                    }
+                });
+            }
+        });
     })
     .detach();
 }
@@ -98,23 +118,24 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
-    project: Model<Project>,
-    user_store: Model<UserStore>,
+    project: Entity<Project>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakEntity<Workspace>,
     should_move: bool,
-    application_menu: Option<View<ApplicationMenu>>,
+    application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
+    zed_predict_banner: Entity<ZedPredictBanner>,
 }
 
 impl Render for TitleBar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
-        let height = Self::height(cx);
-        let supported_controls = cx.window_controls();
-        let decorations = cx.window_decorations();
+        let height = Self::height(window);
+        let supported_controls = window.window_controls();
+        let decorations = window.window_decorations();
         let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            if cx.is_window_active() && !self.should_move {
+            if window.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
             } else {
                 cx.theme().colors().title_bar_inactive_background
@@ -128,7 +149,7 @@ impl Render for TitleBar {
             .w_full()
             .h(height)
             .map(|this| {
-                if cx.is_fullscreen() {
+                if window.is_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
                     this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
@@ -157,13 +178,14 @@ impl Render for TitleBar {
                     .id("titlebar-content")
                     .flex()
                     .flex_row()
+                    .items_center()
                     .justify_between()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
                     .when(self.platform_style != PlatformStyle::Windows, |this| {
-                        this.on_click(|event, cx| {
+                        this.on_click(|event, window, _| {
                             if event.up.click_count == 2 {
-                                cx.zoom_window();
+                                window.zoom_window();
                             }
                         })
                     })
@@ -184,15 +206,16 @@ impl Render for TitleBar {
                                             .children(self.render_project_branch(cx))
                                     })
                             })
-                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
-                    .child(self.render_collaborator_list(cx))
+                    .child(self.render_collaborator_list(window, cx))
+                    .child(self.zed_predict_banner.clone())
                     .child(
                         h_flex()
                             .gap_1()
                             .pr_1()
-                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                            .children(self.render_call_controls(cx))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .children(self.render_call_controls(window, cx))
                             .map(|el| {
                                 let status = self.client.status();
                                 let status = &*status.borrow();
@@ -206,44 +229,47 @@ impl Render for TitleBar {
                             }),
                     ),
             )
-            .when(!cx.is_fullscreen(), |title_bar| match self.platform_style {
-                PlatformStyle::Mac => title_bar,
-                PlatformStyle::Linux => {
-                    if matches!(decorations, Decorations::Client { .. }) {
-                        title_bar
-                            .child(platform_linux::LinuxWindowControls::new(close_action))
-                            .when(supported_controls.window_menu, |titlebar| {
-                                titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
-                                    cx.show_window_menu(ev.position)
+            .when(!window.is_fullscreen(), |title_bar| {
+                match self.platform_style {
+                    PlatformStyle::Mac => title_bar,
+                    PlatformStyle::Linux => {
+                        if matches!(decorations, Decorations::Client { .. }) {
+                            title_bar
+                                .child(platform_linux::LinuxWindowControls::new(close_action))
+                                .when(supported_controls.window_menu, |titlebar| {
+                                    titlebar.on_mouse_down(
+                                        gpui::MouseButton::Right,
+                                        move |ev, window, _| window.show_window_menu(ev.position),
+                                    )
                                 })
-                            })
-                            .on_mouse_move(cx.listener(move |this, _ev, cx| {
-                                if this.should_move {
+                                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
+                                    if this.should_move {
+                                        this.should_move = false;
+                                        window.start_window_move();
+                                    }
+                                }))
+                                .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
                                     this.should_move = false;
-                                    cx.start_window_move();
-                                }
-                            }))
-                            .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
-                                this.should_move = false;
-                            }))
-                            .on_mouse_up(
-                                gpui::MouseButton::Left,
-                                cx.listener(move |this, _ev, _cx| {
-                                    this.should_move = false;
-                                }),
-                            )
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(move |this, _ev, _cx| {
-                                    this.should_move = true;
-                                }),
-                            )
-                    } else {
-                        title_bar
+                                }))
+                                .on_mouse_up(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _ev, _window, _cx| {
+                                        this.should_move = false;
+                                    }),
+                                )
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _ev, _window, _cx| {
+                                        this.should_move = true;
+                                    }),
+                                )
+                        } else {
+                            title_bar
+                        }
                     }
-                }
-                PlatformStyle::Windows => {
-                    title_bar.child(platform_windows::WindowsWindowControls::new(height))
+                    PlatformStyle::Windows => {
+                        title_bar.child(platform_windows::WindowsWindowControls::new(height))
+                    }
                 }
             })
     }
@@ -253,7 +279,8 @@ impl TitleBar {
     pub fn new(
         id: impl Into<ElementId>,
         workspace: &Workspace,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
@@ -264,13 +291,13 @@ impl TitleBar {
         let application_menu = match platform_style {
             PlatformStyle::Mac => {
                 if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
-                    Some(cx.new_view(ApplicationMenu::new))
+                    Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
                 } else {
                     None
                 }
             }
             PlatformStyle::Linux | PlatformStyle::Windows => {
-                Some(cx.new_view(ApplicationMenu::new))
+                Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
             }
         };
 
@@ -282,8 +309,10 @@ impl TitleBar {
         );
         subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
-        subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
+        subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
+
+        let zed_predict_banner = cx.new(ZedPredictBanner::new);
 
         Self {
             platform_style,
@@ -296,16 +325,17 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
+            zed_predict_banner,
         }
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn height(cx: &mut WindowContext) -> Pixels {
-        (1.75 * cx.rem_size()).max(px(34.))
+    pub fn height(window: &mut Window) -> Pixels {
+        (1.75 * window.rem_size()).max(px(34.))
     }
 
     #[cfg(target_os = "windows")]
-    pub fn height(_cx: &mut WindowContext) -> Pixels {
+    pub fn height(_window: &mut Window) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
     }
@@ -316,7 +346,7 @@ impl TitleBar {
         self
     }
 
-    fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    fn render_ssh_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let options = self.project.read(cx).ssh_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
@@ -371,20 +401,26 @@ impl TitleBar {
                         .child(
                             Label::new(nickname.clone())
                                 .size(LabelSize::Small)
-                                .text_ellipsis(),
+                                .truncate(),
                         ),
                 )
-                .tooltip(move |cx| {
-                    Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
+                .tooltip(move |window, cx| {
+                    Tooltip::with_meta(
+                        "Remote Project",
+                        Some(&OpenRemote),
+                        meta.clone(),
+                        window,
+                        cx,
+                    )
                 })
-                .on_click(|_, cx| {
-                    cx.dispatch_action(OpenRemote.boxed_clone());
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(OpenRemote.boxed_clone(), cx);
                 })
                 .into_any_element(),
         )
     }
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.project.read(cx).is_via_ssh() {
             return self.render_ssh_project_host(cx);
         }
@@ -412,21 +448,16 @@ impl TitleBar {
                 .color(Color::Player(participant_index.0))
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |cx| {
-                    Tooltip::text(
-                        format!(
-                            "{} is sharing this project. Click to follow.",
-                            host_user.github_login.clone()
-                        ),
-                        cx,
-                    )
-                })
+                .tooltip(Tooltip::text(format!(
+                    "{} is sharing this project. Click to follow.",
+                    host_user.github_login.clone()
+                )))
                 .on_click({
                     let host_peer_id = host.peer_id;
-                    cx.listener(move |this, _, cx| {
+                    cx.listener(move |this, _, window, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                workspace.follow(host_peer_id, cx);
+                                workspace.follow(host_peer_id, window, cx);
                             })
                             .log_err();
                     })
@@ -435,7 +466,7 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -455,26 +486,28 @@ impl TitleBar {
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
             .label_size(LabelSize::Small)
-            .tooltip(move |cx| {
+            .tooltip(move |window, cx| {
                 Tooltip::for_action(
                     "Recent Projects",
                     &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
+                    window,
                     cx,
                 )
             })
-            .on_click(cx.listener(move |_, _, cx| {
-                cx.dispatch_action(
+            .on_click(cx.listener(move |_, _, window, cx| {
+                window.dispatch_action(
                     OpenRecent {
                         create_new_window: false,
                     }
                     .boxed_clone(),
+                    cx,
                 );
             }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -488,30 +521,32 @@ impl TitleBar {
         let branch_name = entry
             .as_ref()
             .and_then(|entry| entry.branch())
+            .map(|branch| branch.name.clone())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)
                 .color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&zed_actions::branches::OpenRecent),
+                        Some(&zed_actions::git::Branch),
                         "Local branches only",
+                        window,
                         cx,
                     )
                 })
-                .on_click(move |_, cx| {
+                .on_click(move |_, window, cx| {
                     let _ = workspace.update(cx, |_this, cx| {
-                        cx.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone());
+                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 }),
         )
     }
 
-    fn window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
-        if cx.is_window_active() {
+    fn window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.is_window_active() {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
                 .detach_and_log_err(cx);
@@ -522,16 +557,16 @@ impl TitleBar {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.update_active_view_for_followers(cx);
+                workspace.update_active_view_for_followers(window, cx);
             })
             .ok();
     }
 
-    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn active_call_changed(&mut self, cx: &mut Context<Self>) {
         cx.notify();
     }
 
-    fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
+    fn share_project(&mut self, _: &ShareProject, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -539,7 +574,7 @@ impl TitleBar {
             .detach_and_log_err(cx);
     }
 
-    fn unshare_project(&mut self, _: &UnshareProject, cx: &mut ViewContext<Self>) {
+    fn unshare_project(&mut self, _: &UnshareProject, _: &mut Window, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -550,7 +585,7 @@ impl TitleBar {
     fn render_connection_status(
         &self,
         status: &client::Status,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         match status {
             client::Status::ConnectionError
@@ -561,7 +596,7 @@ impl TitleBar {
                 div()
                     .id("disconnected")
                     .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
-                    .tooltip(|cx| Tooltip::text("Disconnected", cx))
+                    .tooltip(Tooltip::text("Disconnected"))
                     .into_any_element(),
             ),
             client::Status::UpgradeRequired => {
@@ -579,14 +614,14 @@ impl TitleBar {
                 Some(
                     Button::new("connection-status", label)
                         .label_size(LabelSize::Small)
-                        .on_click(|_, cx| {
+                        .on_click(|_, window, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
                                     workspace::reload(&Default::default(), cx);
                                     return;
                                 }
                             }
-                            auto_update::check(&Default::default(), cx);
+                            auto_update::check(&Default::default(), window, cx);
                         })
                         .into_any_element(),
                 )
@@ -595,29 +630,30 @@ impl TitleBar {
         }
     }
 
-    pub fn render_sign_in_button(&mut self, _: &mut ViewContext<Self>) -> Button {
+    pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
         Button::new("sign_in", "Sign in")
             .label_size(LabelSize::Small)
-            .on_click(move |_, cx| {
+            .on_click(move |_, window, cx| {
                 let client = client.clone();
-                cx.spawn(move |mut cx| async move {
-                    client
-                        .authenticate_and_connect(true, &cx)
-                        .await
-                        .notify_async_err(&mut cx);
-                })
-                .detach();
+                window
+                    .spawn(cx, move |mut cx| async move {
+                        client
+                            .authenticate_and_connect(true, &cx)
+                            .await
+                            .notify_async_err(&mut cx);
+                    })
+                    .detach();
             })
     }
 
-    pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
-                .menu(move |cx| {
-                    ContextMenu::build(cx, |menu, cx| {
+                .menu(move |window, cx| {
+                    ContextMenu::build(window, cx, |menu, _, cx| {
                         menu.when(cx.has_flag::<ZedPro>(), |menu| {
                             menu.action(
                                 format!(
@@ -638,6 +674,10 @@ impl TitleBar {
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
                         )
+                        .action(
+                            "Icon Themes…",
+                            zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
+                        )
                         .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
                         .link(
@@ -651,7 +691,7 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
+                .trigger_with_tooltip(
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex()
@@ -667,19 +707,23 @@ impl TitleBar {
                                         .color(Color::Muted),
                                 ),
                         )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        .style(ButtonStyle::Subtle),
+                    Tooltip::text("Toggle User Menu"),
                 )
                 .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
-                .menu(|cx| {
-                    ContextMenu::build(cx, |menu, _| {
+                .menu(|window, cx| {
+                    ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action(
+                                "Icon Themes…",
+                                zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action("Extensions", zed_actions::Extensions.boxed_clone())
                             .separator()
@@ -693,17 +737,9 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
-                    ButtonLike::new("user-menu")
-                        .child(
-                            h_flex().gap_0p5().child(
-                                Icon::new(IconName::ChevronDown)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                        )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                .trigger_with_tooltip(
+                    IconButton::new("user-menu", IconName::ChevronDown).icon_size(IconSize::Small),
+                    Tooltip::text("Toggle User Menu"),
                 )
         }
     }

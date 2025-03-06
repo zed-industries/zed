@@ -2,23 +2,30 @@ use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{UseSystemClipboard, Vim, VimSettings};
+use crate::{ToggleRegistersView, UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor};
 use gpui::{
-    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, View, WeakView,
+    Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, HighlightStyle,
+    StyledText, Task, TextStyle, WeakEntity,
 };
 use language::Point;
-use schemars::JsonSchema;
+use picker::{Picker, PickerDelegate};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
-use ui::{SharedString, ViewContext};
+use theme::ThemeSettings;
+use ui::{
+    h_flex, rems, ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement,
+    SharedString, Styled, StyledTypography, Window,
+};
 use workspace::searchable::Direction;
+use workspace::Workspace;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     Normal,
     Insert,
@@ -46,9 +53,8 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
-            Mode::Normal | Mode::Insert | Mode::Replace => false,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
-            Mode::HelixNormal => false,
+            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
+            Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
 }
@@ -59,7 +65,7 @@ impl Default for Mode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
     Change,
     Delete,
@@ -81,7 +87,7 @@ pub enum Operator {
         first_char: Option<char>,
     },
     AddSurrounds {
-        #[serde(skip)]
+        // Typically no need to configure this as `SendKeystrokes` can be used - see #23088.
         target: Option<SurroundsType>,
     },
     ChangeSurrounds {
@@ -110,6 +116,8 @@ pub enum Operator {
     RecordRegister,
     ReplayRegister,
     ToggleComments,
+    ReplaceWithRegister,
+    Exchange,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -199,15 +207,15 @@ pub struct VimGlobals {
     pub registers: HashMap<char, Register>,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
 
-    pub focused_vim: Option<WeakView<Vim>>,
+    pub focused_vim: Option<WeakEntity<Vim>>,
 }
 impl Global for VimGlobals {}
 
 impl VimGlobals {
-    pub(crate) fn register(cx: &mut AppContext) {
+    pub(crate) fn register(cx: &mut App) {
         cx.set_global(VimGlobals::default());
 
-        cx.observe_keystrokes(|event, cx| {
+        cx.observe_keystrokes(|event, _, cx| {
             let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) else {
                 return;
             };
@@ -215,8 +223,14 @@ impl VimGlobals {
         })
         .detach();
 
+        cx.observe_new(|workspace: &mut Workspace, window, _| {
+            RegistersView::register(workspace, window);
+        })
+        .detach();
+
         cx.observe_global::<SettingsStore>(move |cx| {
             if Vim::enabled(cx) {
+                KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
@@ -224,6 +238,7 @@ impl VimGlobals {
                     interceptor.set(Box::new(command_interceptor));
                 });
             } else {
+                KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
                 CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
                     interceptor.clear();
@@ -242,7 +257,7 @@ impl VimGlobals {
         register: Option<char>,
         is_yank: bool,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         if let Some(register) = register {
             let lower = register.to_lowercase().next().unwrap_or(register);
@@ -313,10 +328,10 @@ impl VimGlobals {
     }
 
     pub(crate) fn read_register(
-        &mut self,
+        &self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut App,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
@@ -361,7 +376,7 @@ impl VimGlobals {
         }
     }
 
-    fn system_clipboard_is_newer(&self, cx: &ViewContext<Editor>) -> bool {
+    fn system_clipboard_is_newer(&self, cx: &App) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
                 Some(last_state.as_ref()) != item.text().as_deref()
@@ -418,19 +433,19 @@ impl VimGlobals {
         }
     }
 
-    pub fn focused_vim(&self) -> Option<View<Vim>> {
+    pub fn focused_vim(&self) -> Option<Entity<Vim>> {
         self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
     }
 }
 
 impl Vim {
-    pub fn globals(cx: &mut AppContext) -> &mut VimGlobals {
+    pub fn globals(cx: &mut App) -> &mut VimGlobals {
         cx.global_mut::<VimGlobals>()
     }
 
     pub fn update_globals<C, R>(cx: &mut C, f: impl FnOnce(&mut VimGlobals, &mut C) -> R) -> R
     where
-        C: BorrowMut<AppContext>,
+        C: BorrowMut<App>,
     {
         cx.update_global(f)
     }
@@ -464,7 +479,6 @@ impl Clone for ReplayableAction {
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
-    pub initial_query: String,
 
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
@@ -498,6 +512,8 @@ impl Operator {
             Operator::AutoIndent => "eq",
             Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
+            Operator::ReplaceWithRegister => "gr",
+            Operator::Exchange => "cx",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
@@ -550,10 +566,236 @@ impl Operator {
             | Operator::ShellCommand
             | Operator::Lowercase
             | Operator::Uppercase
+            | Operator::ReplaceWithRegister
+            | Operator::Exchange
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase
             | Operator::ToggleComments => false,
         }
+    }
+
+    pub fn starts_dot_recording(&self) -> bool {
+        match self {
+            Operator::Change
+            | Operator::Delete
+            | Operator::Replace
+            | Operator::Indent
+            | Operator::Outdent
+            | Operator::AutoIndent
+            | Operator::Lowercase
+            | Operator::Uppercase
+            | Operator::OppositeCase
+            | Operator::ToggleComments
+            | Operator::ReplaceWithRegister
+            | Operator::Rewrap
+            | Operator::ShellCommand
+            | Operator::AddSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None }
+            | Operator::DeleteSurrounds
+            | Operator::Exchange => true,
+            Operator::Yank
+            | Operator::Object { .. }
+            | Operator::FindForward { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Sneak { .. }
+            | Operator::SneakBackward { .. }
+            | Operator::Mark
+            | Operator::Digraph { .. }
+            | Operator::Literal { .. }
+            | Operator::AddSurrounds { .. }
+            | Operator::ChangeSurrounds { .. }
+            | Operator::Jump { .. }
+            | Operator::Register
+            | Operator::RecordRegister
+            | Operator::ReplayRegister => false,
+        }
+    }
+}
+
+struct RegisterMatch {
+    name: char,
+    contents: SharedString,
+}
+
+pub struct RegistersViewDelegate {
+    selected_index: usize,
+    matches: Vec<RegisterMatch>,
+}
+
+impl PickerDelegate for RegistersViewDelegate {
+    type ListItem = Div;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        Arc::default()
+    }
+
+    fn update_matches(
+        &mut self,
+        _: String,
+        _: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> gpui::Task<()> {
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _: bool, _: &mut Window, _: &mut Context<Picker<Self>>) {}
+
+    fn dismissed(&mut self, _: &mut Window, _: &mut Context<Picker<Self>>) {}
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let register_match = self
+            .matches
+            .get(ix)
+            .expect("Invalid matches state: no element for index {ix}");
+
+        let mut output = String::new();
+        let mut runs = Vec::new();
+        output.push('"');
+        output.push(register_match.name);
+        runs.push((
+            0..output.len(),
+            HighlightStyle::color(cx.theme().colors().text_accent),
+        ));
+        output.push(' ');
+        output.push(' ');
+        let mut base = output.len();
+        for (ix, c) in register_match.contents.char_indices() {
+            if ix > 100 {
+                break;
+            }
+            let replace = match c {
+                '\t' => Some("\\t".to_string()),
+                '\n' => Some("\\n".to_string()),
+                '\r' => Some("\\r".to_string()),
+                c if is_invisible(c) => {
+                    if c <= '\x1f' {
+                        replacement(c).map(|s| s.to_string())
+                    } else {
+                        Some(format!("\\u{:04X}", c as u32))
+                    }
+                }
+                _ => None,
+            };
+            let Some(replace) = replace else {
+                output.push(c);
+                continue;
+            };
+            output.push_str(&replace);
+            runs.push((
+                base + ix..base + ix + replace.len(),
+                HighlightStyle::color(cx.theme().colors().text_muted),
+            ));
+            base += replace.len() - c.len_utf8();
+        }
+
+        let theme = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().editor_foreground,
+            font_family: theme.buffer_font.family.clone(),
+            font_features: theme.buffer_font.features.clone(),
+            font_fallbacks: theme.buffer_font.fallbacks.clone(),
+            font_size: theme.buffer_font_size(cx).into(),
+            line_height: (theme.line_height() * theme.buffer_font_size(cx)).into(),
+            font_weight: theme.buffer_font.weight,
+            font_style: theme.buffer_font.style,
+            ..Default::default()
+        };
+
+        Some(
+            h_flex()
+                .when(selected, |el| el.bg(cx.theme().colors().element_selected))
+                .font_buffer(cx)
+                .text_buffer(cx)
+                .h(theme.buffer_font_size(cx) * theme.line_height())
+                .px_2()
+                .gap_1()
+                .child(StyledText::new(output).with_default_highlights(&text_style, runs)),
+        )
+    }
+}
+
+pub struct RegistersView {}
+
+impl RegistersView {
+    fn register(workspace: &mut Workspace, _window: Option<&mut Window>) {
+        workspace.register_action(|workspace, _: &ToggleRegistersView, window, cx| {
+            Self::toggle(workspace, window, cx);
+        });
+    }
+
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+        let editor = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx));
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            RegistersView::new(editor, window, cx)
+        });
+    }
+
+    fn new(
+        editor: Option<Entity<Editor>>,
+        window: &mut Window,
+        cx: &mut Context<Picker<RegistersViewDelegate>>,
+    ) -> Picker<RegistersViewDelegate> {
+        let mut matches = Vec::default();
+        cx.update_global(|globals: &mut VimGlobals, cx| {
+            for name in ['"', '+', '*'] {
+                if let Some(register) = globals.read_register(Some(name), None, cx) {
+                    matches.push(RegisterMatch {
+                        name,
+                        contents: register.text.clone(),
+                    })
+                }
+            }
+            if let Some(editor) = editor {
+                let register = editor.update(cx, |editor, cx| {
+                    globals.read_register(Some('%'), Some(editor), cx)
+                });
+                if let Some(register) = register {
+                    matches.push(RegisterMatch {
+                        name: '%',
+                        contents: register.text.clone(),
+                    })
+                }
+            }
+            for (name, register) in globals.registers.iter() {
+                if ['"', '+', '*', '%'].contains(name) {
+                    continue;
+                };
+                matches.push(RegisterMatch {
+                    name: *name,
+                    contents: register.text.clone(),
+                })
+            }
+        });
+        matches.sort_by(|a, b| a.name.cmp(&b.name));
+        let delegate = RegistersViewDelegate {
+            selected_index: 0,
+            matches,
+        };
+
+        Picker::nonsearchable_uniform_list(delegate, window, cx)
+            .width(rems(36.))
+            .modal(true)
     }
 }

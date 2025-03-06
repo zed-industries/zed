@@ -3,7 +3,7 @@ name = "anthropic"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 
 [features]
 default = []

@@ -9,7 +9,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use futures::AsyncReadExt;
-use gpui::{Task, WeakView};
+use gpui::{Task, WeakEntity};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{BufferSnapshot, LspAdapterDelegate};
@@ -124,8 +124,9 @@ impl SlashCommand for FetchSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -135,9 +136,10 @@ impl SlashCommand for FetchSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
@@ -149,7 +151,7 @@ impl SlashCommand for FetchSlashCommand {
         let http_client = workspace.read(cx).client().http_client();
         let url = argument.to_string();
 
-        let text = cx.background_executor().spawn({
+        let text = cx.background_spawn({
             let url = url.clone();
             async move { Self::build_message(http_client, &url).await }
         });

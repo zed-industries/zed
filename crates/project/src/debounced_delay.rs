@@ -1,5 +1,5 @@
 use futures::{channel::oneshot, FutureExt};
-use gpui::{ModelContext, Task};
+use gpui::{Context, Task};
 use std::{marker::PhantomData, time::Duration};
 
 pub struct DebouncedDelay<E: 'static> {
@@ -23,9 +23,9 @@ impl<E: 'static> DebouncedDelay<E> {
         }
     }
 
-    pub fn fire_new<F>(&mut self, delay: Duration, cx: &mut ModelContext<E>, func: F)
+    pub fn fire_new<F>(&mut self, delay: Duration, cx: &mut Context<E>, func: F)
     where
-        F: 'static + Send + FnOnce(&mut E, &mut ModelContext<E>) -> Task<()>,
+        F: 'static + Send + FnOnce(&mut E, &mut Context<E>) -> Task<()>,
     {
         if let Some(channel) = self.cancel_channel.take() {
             _ = channel.send(());
@@ -35,7 +35,7 @@ impl<E: 'static> DebouncedDelay<E> {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn(move |model, mut cx| async move {
+        self.task = Some(cx.spawn(move |entity, mut cx| async move {
             let mut timer = cx.background_executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -46,7 +46,7 @@ impl<E: 'static> DebouncedDelay<E> {
                 _ = timer => {}
             }
 
-            if let Ok(task) = model.update(&mut cx, |project, cx| (func)(project, cx)) {
+            if let Ok(task) = entity.update(&mut cx, |project, cx| (func)(project, cx)) {
                 task.await;
             }
         }));

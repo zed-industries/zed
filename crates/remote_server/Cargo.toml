@@ -36,6 +36,7 @@ futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 http_client.workspace = true
 language.workspace = true
 language_extension.workspace = true
@@ -76,7 +77,7 @@ node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features=["test-support"] }
-
+unindent.workspace = true
 serde_json.workspace = true
 
 [build-dependencies]

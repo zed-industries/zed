@@ -173,7 +173,7 @@ struct ActionData {
 /// This type must be public so that our macros can build it in other crates.
 /// But this is an implementation detail and should not be used directly.
 #[doc(hidden)]
-pub type MacroActionBuilder = fn() -> MacroActionData;
+pub struct MacroActionBuilder(pub fn() -> MacroActionData);
 
 /// This type must be public so that our macros can build it in other crates.
 /// But this is an implementation detail and should not be used directly.
@@ -186,17 +186,13 @@ pub struct MacroActionData {
     pub json_schema: fn(&mut schemars::gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
 }
 
-/// This constant must be public to be accessible from other crates.
-/// But its existence is an implementation detail and should not be used directly.
-#[doc(hidden)]
-#[linkme::distributed_slice]
-pub static __GPUI_ACTIONS: [MacroActionBuilder];
+inventory::collect!(MacroActionBuilder);
 
 impl ActionRegistry {
     /// Load all registered actions into the registry.
     pub(crate) fn load_actions(&mut self) {
-        for builder in __GPUI_ACTIONS {
-            let action = builder();
+        for builder in inventory::iter::<MacroActionBuilder> {
+            let action = builder.0();
             self.insert_action(action);
         }
     }
@@ -402,6 +398,8 @@ macro_rules! action_with_deprecated_aliases {
 
 /// Registers the action and implements the Action trait for any struct that implements Clone,
 /// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
+///
+/// Similar to `actions!`, but accepts structs with fields.
 ///
 /// Fields and variants that don't make sense for user configuration should be annotated with
 /// #[serde(skip)].

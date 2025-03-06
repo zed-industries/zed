@@ -11,7 +11,7 @@ mod session;
 use std::{sync::Arc, time::Duration};
 
 use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
-use gpui::{AppContext, PlatformDispatcher};
+use gpui::{App, PlatformDispatcher};
 use project::Fs;
 pub use runtimelib::ExecutionState;
 use settings::Settings as _;
@@ -27,7 +27,7 @@ pub use crate::session::Session;
 
 pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
 
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
     ::editor::init_settings(cx);
@@ -35,7 +35,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     ReplStore::init(fs, cx);
 }
 
-fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
+fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     struct ZedDispatcher {
         dispatcher: Arc<dyn PlatformDispatcher>,
     }

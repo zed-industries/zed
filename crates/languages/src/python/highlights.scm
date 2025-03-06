@@ -1,4 +1,6 @@
 ; Identifier naming conventions; these "soft conventions" should stay at the top of the file as they're often overridden
+(identifier) @variable
+(attribute attribute: (identifier) @property)
 
 ; CamelCase for classes
 ((identifier) @type.class
@@ -8,7 +10,6 @@
 ((identifier) @constant
   (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
 
-(attribute attribute: (identifier) @property)
 (type (identifier) @type)
 (generic_type (identifier) @type)
 (comment) @comment
@@ -60,6 +61,8 @@
         (identifier) @function.arguments) ; Typed parameters
       (default_parameter
         name: (identifier) @function.arguments) ; Default parameters
+      (typed_default_parameter
+        name: (identifier) @function.arguments) ; Typed default parameters
   ]))
 
 ; Keyword arguments
@@ -95,9 +98,12 @@
 ; Literals
 
 [
-  (none)
   (true)
   (false)
+] @boolean
+
+[
+  (none)
   (ellipsis)
 ] @constant.builtin
 
@@ -115,6 +121,12 @@
 ]
 
 [
+  "."
+  ","
+  ":"
+] @punctuation.delimiter
+
+[
   "("
   ")"
   "["
@@ -128,33 +140,39 @@
   "}" @punctuation.special) @embedded
 
 ; Docstrings.
+(module
+  .(expression_statement (string) @string.doc)+)
+
+(class_definition
+  body: (block .(expression_statement (string) @string.doc)+))
+
 (function_definition
   "async"?
   "def"
   name: (_)
   (parameters)?
-  body: (block . (expression_statement (string) @string.doc)))
+  body: (block .(expression_statement (string) @string.doc)+))
 
 (class_definition
   body: (block
     . (comment) @comment*
-    . (expression_statement (string) @string.doc)))
+    . (expression_statement (string) @string.doc)+))
 
 (module
   . (comment) @comment*
-  . (expression_statement (string) @string.doc))
+  . (expression_statement (string) @string.doc)+)
 
 (module
   [
     (expression_statement (assignment))
     (type_alias_statement)
   ]
-  . (expression_statement (string) @string.doc))
+  . (expression_statement (string) @string.doc)+)
 
 (class_definition
   body: (block
     (expression_statement (assignment))
-    . (expression_statement (string) @string.doc)))
+    . (expression_statement (string) @string.doc)+))
 
 (class_definition
   body: (block
@@ -163,7 +181,7 @@
       (#eq? @function.method.constructor "__init__")
       body: (block
         (expression_statement (assignment))
-        . (expression_statement (string) @string.doc)))))
+        . (expression_statement (string) @string.doc)+))))
 
 
 [
@@ -181,6 +199,7 @@
   "&"
   "%"
   "%="
+  "@"
   "^"
   "+"
   "->"

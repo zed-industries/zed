@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{rgb, App, KeyBinding, Length, StyleRefinement, View, WindowOptions};
+use gpui::{rgb, Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -19,7 +19,7 @@ wow so cool
 pub fn main() {
     env_logger::init();
 
-    App::new().with_assets(Assets).run(|cx| {
+    Application::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         language::init(cx);
@@ -35,8 +35,8 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        let _ = cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|cx| {
+        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
+            cx.new(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Mono".into(),
@@ -83,10 +83,10 @@ pub fn main() {
                         selection.fade_out(0.7);
                         selection
                     },
-                    break_style: Default::default(),
                     heading: Default::default(),
+                    ..Default::default()
                 };
-                let markdown = cx.new_view(|cx| {
+                let markdown = cx.new(|cx| {
                     Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)
                 });
 
@@ -96,11 +96,11 @@ pub fn main() {
     });
 }
 struct HelloWorld {
-    markdown: View<Markdown>,
+    markdown: Entity<Markdown>,
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .bg(rgb(0x2e7d32))

@@ -1,4 +1,4 @@
-use gpui::{AnyElement, FontWeight, View, WindowContext};
+use gpui::{AnyElement, App, Entity, FontWeight, Window};
 use ui::{h_flex, prelude::*, v_flex, Label};
 
 use crate::outputs::plain::TerminalOutput;
@@ -7,14 +7,14 @@ use crate::outputs::plain::TerminalOutput;
 pub struct ErrorView {
     pub ename: String,
     pub evalue: String,
-    pub traceback: View<TerminalOutput>,
+    pub traceback: Entity<TerminalOutput>,
 }
 
 impl ErrorView {
-    pub fn render(&self, cx: &mut WindowContext) -> Option<AnyElement> {
+    pub fn render(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let theme = cx.theme();
 
-        let padding = cx.line_height() / 2.;
+        let padding = window.line_height() / 2.;
 
         Some(
             v_flex()

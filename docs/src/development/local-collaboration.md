@@ -6,6 +6,8 @@ First, make sure you've installed Zed's backend dependencies for your platform:
 - [Linux](./linux.md#backend-dependencies)
 - [Windows](./windows.md#backend-dependencies)
 
+Note that `collab` can be compiled only with MSVC toolchain on Windows
+
 ## Database setup
 
 Before you can run the `collab` server locally, you'll need to set up a `zed` Postgres database.
@@ -48,13 +50,19 @@ Ensure that Postgres is configured and running, then run Zed's collaboration ser
 ```sh
 foreman start
 # OR
+docker compose up
+```
+
+Alternatively, if you're not testing voice and screenshare, you can just run `collab`, and not the `livekit` dev server:
+
+```sh
 cargo run -p collab -- serve all
 ```
 
 In a new terminal, run two or more instances of Zed.
 
 ```sh
-script/zed-local -2
+script/zed-local -3
 ```
 
 This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.

@@ -76,7 +76,7 @@ impl Settings for GitPanelSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }

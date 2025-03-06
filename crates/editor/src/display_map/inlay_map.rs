@@ -1,7 +1,9 @@
 use crate::{HighlightStyles, InlayId};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{
+    Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset,
+};
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
@@ -67,11 +69,11 @@ impl Inlay {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         match self {
             Transform::Isomorphic(summary) => TransformSummary {
-                input: summary.clone(),
-                output: summary.clone(),
+                input: *summary,
+                output: *summary,
             },
             Transform::Inlay(inlay) => TransformSummary {
                 input: TextSummary::default(),
@@ -213,7 +215,7 @@ pub struct InlayChunks<'a> {
     snapshot: &'a InlaySnapshot,
 }
 
-impl<'a> InlayChunks<'a> {
+impl InlayChunks<'_> {
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right, &());
 
@@ -339,7 +341,7 @@ impl<'a> Iterator for InlayChunks<'a> {
     }
 }
 
-impl<'a> InlayBufferRows<'a> {
+impl InlayBufferRows<'_> {
     pub fn seek(&mut self, row: u32) {
         let inlay_point = InlayPoint::new(row, 0);
         self.transforms.seek(&inlay_point, Bias::Left, &());
@@ -361,15 +363,15 @@ impl<'a> InlayBufferRows<'a> {
     }
 }
 
-impl<'a> Iterator for InlayBufferRows<'a> {
-    type Item = Option<u32>;
+impl Iterator for InlayBufferRows<'_> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         let buffer_row = if self.inlay_row == 0 {
             self.buffer_rows.next().unwrap()
         } else {
             match self.transforms.item()? {
-                Transform::Inlay(_) => None,
+                Transform::Inlay(_) => Default::default(),
                 Transform::Isomorphic(_) => self.buffer_rows.next().unwrap(),
             }
         };
@@ -448,7 +450,7 @@ impl InlayMap {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
                     if cursor.end(&()).0 == buffer_edit.old.start {
-                        push_isomorphic(&mut new_transforms, transform.clone());
+                        push_isomorphic(&mut new_transforms, *transform);
                         cursor.next(&());
                     }
                 }
@@ -543,7 +545,7 @@ impl InlayMap {
 
     pub fn splice(
         &mut self,
-        to_remove: Vec<InlayId>,
+        to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
@@ -651,7 +653,7 @@ impl InlayMap {
         }
         log::info!("removing inlays: {:?}", to_remove);
 
-        let (snapshot, edits) = self.splice(to_remove, to_insert);
+        let (snapshot, edits) = self.splice(&to_remove, to_insert);
         (snapshot, edits)
     }
 }
@@ -892,7 +894,7 @@ impl InlaySnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.transforms.summary().output.clone()
+        self.transforms.summary().output
     }
 
     pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> TextSummary {
@@ -945,7 +947,7 @@ impl InlaySnapshot {
         summary
     }
 
-    pub fn buffer_rows(&self, row: u32) -> InlayBufferRows<'_> {
+    pub fn row_infos(&self, row: u32) -> InlayBufferRows<'_> {
         let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
@@ -967,7 +969,7 @@ impl InlaySnapshot {
         InlayBufferRows {
             transforms: cursor,
             inlay_row: inlay_point.row(),
-            buffer_rows: self.buffer.buffer_rows(buffer_row),
+            buffer_rows: self.buffer.row_infos(buffer_row),
             max_buffer_row,
         }
     }
@@ -1068,7 +1070,7 @@ mod tests {
         hover_links::InlayHighlight,
         InlayId, MultiBuffer,
     };
-    use gpui::{AppContext, HighlightStyle};
+    use gpui::{App, HighlightStyle};
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1161,7 +1163,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_basic_inlays(cx: &mut AppContext) {
+    fn test_basic_inlays(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
@@ -1169,7 +1171,7 @@ mod tests {
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            Vec::new(),
+            &[],
             vec![Inlay {
                 id: InlayId::Hint(post_inc(&mut next_inlay_id)),
                 position: buffer.read(cx).snapshot(cx).anchor_after(3),
@@ -1245,7 +1247,7 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            Vec::new(),
+            &[],
             vec![
                 Inlay {
                     id: InlayId::Hint(post_inc(&mut next_inlay_id)),
@@ -1442,21 +1444,25 @@ mod tests {
 
         // The inlays can be manually removed.
         let (inlay_snapshot, _) = inlay_map.splice(
-            inlay_map.inlays.iter().map(|inlay| inlay.id).collect(),
+            &inlay_map
+                .inlays
+                .iter()
+                .map(|inlay| inlay.id)
+                .collect::<Vec<InlayId>>(),
             Vec::new(),
         );
         assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
     }
 
     #[gpui::test]
-    fn test_inlay_buffer_rows(cx: &mut AppContext) {
+    fn test_inlay_buffer_rows(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            Vec::new(),
+            &[],
             vec![
                 Inlay {
                     id: InlayId::Hint(post_inc(&mut next_inlay_id)),
@@ -1477,13 +1483,16 @@ mod tests {
         );
         assert_eq!(inlay_snapshot.text(), "|123|\nabc\n|456|def\n|567|\n\nghi");
         assert_eq!(
-            inlay_snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            inlay_snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
             vec![Some(0), None, Some(1), None, None, Some(2)]
         );
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_inlays(cx: &mut AppContext, mut rng: StdRng) {
+    fn test_random_inlays(cx: &mut App, mut rng: StdRng) {
         init_test(cx);
 
         let operations = env::var("OPERATIONS")
@@ -1548,7 +1557,7 @@ mod tests {
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
-            let expected_buffer_rows = inlay_snapshot.buffer_rows(0).collect::<Vec<_>>();
+            let expected_buffer_rows = inlay_snapshot.row_infos(0).collect::<Vec<_>>();
             assert_eq!(
                 expected_buffer_rows.len() as u32,
                 expected_text.max_point().row + 1
@@ -1556,7 +1565,7 @@ mod tests {
             for row_start in 0..expected_buffer_rows.len() {
                 assert_eq!(
                     inlay_snapshot
-                        .buffer_rows(row_start as u32)
+                        .row_infos(row_start as u32)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[row_start..],
                     "incorrect buffer rows starting at {}",
@@ -1787,7 +1796,7 @@ mod tests {
         }
     }
 
-    fn init_test(cx: &mut AppContext) {
+    fn init_test(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);

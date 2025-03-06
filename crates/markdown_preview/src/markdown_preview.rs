@@ -1,4 +1,4 @@
-use gpui::{actions, AppContext};
+use gpui::{actions, App};
 use workspace::Workspace;
 
 pub mod markdown_elements;
@@ -8,9 +8,12 @@ pub mod markdown_renderer;
 
 actions!(markdown, [OpenPreview, OpenPreviewToTheSide]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        markdown_preview_view::MarkdownPreviewView::register(workspace, cx);
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+        markdown_preview_view::MarkdownPreviewView::register(workspace, window, cx);
     })
     .detach();
 }

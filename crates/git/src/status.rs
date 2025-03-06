@@ -62,6 +62,13 @@ impl FileStatus {
         })
     }
 
+    pub const fn index(index_status: StatusCode) -> Self {
+        FileStatus::Tracked(TrackedStatus {
+            worktree_status: StatusCode::Unmodified,
+            index_status,
+        })
+    }
+
     /// Generate a FileStatus Code from a byte pair, as described in
     /// https://git-scm.com/docs/git-status#_output
     ///
@@ -126,6 +133,14 @@ impl FileStatus {
         }
     }
 
+    pub fn has_changes(&self) -> bool {
+        self.is_modified()
+            || self.is_created()
+            || self.is_deleted()
+            || self.is_untracked()
+            || self.is_conflicted()
+    }
+
     pub fn is_modified(self) -> bool {
         match self {
             FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
@@ -142,6 +157,7 @@ impl FileStatus {
                 (StatusCode::Added, _) | (_, StatusCode::Added) => true,
                 _ => false,
             },
+            FileStatus::Untracked => true,
             _ => false,
         }
     }
@@ -454,6 +470,26 @@ impl GitStatus {
             })
             .collect::<Vec<_>>();
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
+        // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
+        // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
+        // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.
+        entries.dedup_by(|(a, a_status), (b, b_status)| {
+            const INDEX_DELETED: FileStatus = FileStatus::index(StatusCode::Deleted);
+            if a.ne(&b) {
+                return false;
+            }
+            match (*a_status, *b_status) {
+                (INDEX_DELETED, FileStatus::Untracked) | (FileStatus::Untracked, INDEX_DELETED) => {
+                    *b_status = TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Added,
+                    }
+                    .into();
+                }
+                _ => panic!("Unexpected duplicated status entries: {a_status:?} and {b_status:?}"),
+            }
+            true
+        });
         Ok(Self {
             entries: entries.into(),
         })

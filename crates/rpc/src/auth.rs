@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use base64::prelude::*;
 use rand::{thread_rng, Rng as _};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey};

@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
-use gpui::{actions, AsyncAppContext};
+use gpui::{actions, AsyncApp};
 use std::path::{Path, PathBuf};
 use util::ResultExt;
 
 actions!(cli, [Install, RegisterZedScheme]);
 
-pub async fn install_cli(cx: &AsyncAppContext) -> Result<PathBuf> {
+pub async fn install_cli(cx: &AsyncApp) -> Result<PathBuf> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
     let link_path = Path::new("/usr/local/bin/zed");
     let bin_dir_path = link_path.parent().unwrap();

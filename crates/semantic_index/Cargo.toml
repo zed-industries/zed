@@ -42,11 +42,12 @@ serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
 smol.workspace = true
+streaming-iterator.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
-ui. workspace = true
+ui.workspace = true
 unindent.workspace = true
-util. workspace = true
+util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 

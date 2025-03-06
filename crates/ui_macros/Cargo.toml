@@ -13,7 +13,8 @@ path = "src/ui_macros.rs"
 proc-macro = true
 
 [dependencies]
-proc-macro2 = "1.0.66"
-quote = "1.0.9"
-syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 convert_case.workspace = true
+linkme.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true

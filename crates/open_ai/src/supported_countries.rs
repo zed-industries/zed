@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 /// Returns whether the given country code is supported by OpenAI.
 ///
-/// https://platform.openai.com/docs/supported-countries
+/// <https://platform.openai.com/docs/supported-countries>
 pub fn is_supported_country(country_code: &str) -> bool {
     SUPPORTED_COUNTRIES.contains(&country_code)
 }

@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   bump_patch_version:
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:

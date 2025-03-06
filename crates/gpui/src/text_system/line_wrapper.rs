@@ -117,7 +117,7 @@ impl LineWrapper {
         let mut char_indices = line.char_indices();
         let mut truncate_ix = 0;
         for (ix, c) in char_indices {
-            if width + ellipsis_width <= truncate_width {
+            if width + ellipsis_width < truncate_width {
                 truncate_ix = ix;
             }
 
@@ -543,14 +543,6 @@ mod tests {
                 background_color: None,
             };
 
-            impl TextRun {
-                fn with_len(&self, len: usize) -> Self {
-                    let mut this = self.clone();
-                    this.len = len;
-                    this
-                }
-            }
-
             let text = "aa bbb cccc ddddd eeee".into();
             let lines = text_system
                 .shape_text(
@@ -564,6 +556,7 @@ mod tests {
                         normal.with_len(7),
                     ],
                     Some(px(72.)),
+                    None,
                 )
                 .unwrap();
 

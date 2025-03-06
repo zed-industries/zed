@@ -33,7 +33,7 @@ pub struct WindowControlStyle {
 }
 
 impl WindowControlStyle {
-    pub fn default(cx: &WindowContext) -> Self {
+    pub fn default(cx: &mut App) -> Self {
         let colors = cx.theme().colors();
 
         Self {
@@ -82,7 +82,7 @@ pub struct WindowControl {
 }
 
 impl WindowControl {
-    pub fn new(id: impl Into<ElementId>, icon: WindowControlType, cx: &WindowContext) -> Self {
+    pub fn new(id: impl Into<ElementId>, icon: WindowControlType, cx: &mut App) -> Self {
         let style = WindowControlStyle::default(cx);
 
         Self {
@@ -97,7 +97,7 @@ impl WindowControl {
         id: impl Into<ElementId>,
         icon: WindowControlType,
         close_action: Box<dyn Action>,
-        cx: &WindowContext,
+        cx: &mut App,
     ) -> Self {
         let style = WindowControlStyle::default(cx);
 
@@ -125,7 +125,7 @@ impl WindowControl {
 }
 
 impl RenderOnce for WindowControl {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let icon = svg()
             .size_4()
             .flex_none()
@@ -145,18 +145,19 @@ impl RenderOnce for WindowControl {
             .hover(|this| this.bg(self.style.background_hover))
             .active(|this| this.bg(self.style.background_hover))
             .child(icon)
-            .on_mouse_move(|_, cx| cx.stop_propagation())
-            .on_click(move |_, cx| {
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, cx| {
                 cx.stop_propagation();
                 match self.icon {
-                    WindowControlType::Minimize => cx.minimize_window(),
-                    WindowControlType::Restore => cx.zoom_window(),
-                    WindowControlType::Maximize => cx.zoom_window(),
-                    WindowControlType::Close => cx.dispatch_action(
+                    WindowControlType::Minimize => window.minimize_window(),
+                    WindowControlType::Restore => window.zoom_window(),
+                    WindowControlType::Maximize => window.zoom_window(),
+                    WindowControlType::Close => window.dispatch_action(
                         self.close_action
                             .as_ref()
                             .expect("Use WindowControl::new_close() for close control.")
                             .boxed_clone(),
+                        cx,
                     ),
                 }
             })

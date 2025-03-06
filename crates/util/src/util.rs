@@ -28,6 +28,8 @@ use unicase::UniCase;
 use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use util_macros::{separator, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -38,6 +40,50 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        concat!("C:", util::separator!($path))
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        $path
     };
 }
 
@@ -286,7 +332,7 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 if let Some(target) = target.get_mut(&key) {
                     merge_json_value_into(value, target);
                 } else {
-                    target.insert(key.clone(), value);
+                    target.insert(key, value);
                 }
             }
         }
@@ -314,7 +360,7 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
             if let Some(target) = target_object.get_mut(&key) {
                 merge_non_null_json_value_into(value, target);
             } else if !value.is_null() {
-                target_object.insert(key.clone(), value);
+                target_object.insert(key, value);
             }
         }
     } else if !source.is_null() {
@@ -377,6 +423,7 @@ pub trait ResultExt<E> {
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
+    fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
     fn anyhow(self) -> anyhow::Result<Self::Ok>
     where
         E: Into<anyhow::Error>;
@@ -390,13 +437,7 @@ where
 
     #[track_caller]
     fn log_err(self) -> Option<T> {
-        match self {
-            Ok(value) => Some(value),
-            Err(error) => {
-                log_error_with_caller(*Location::caller(), error, log::Level::Error);
-                None
-            }
-        }
+        self.log_with_level(log::Level::Error)
     }
 
     #[track_caller]
@@ -409,10 +450,15 @@ where
 
     #[track_caller]
     fn warn_on_err(self) -> Option<T> {
+        self.log_with_level(log::Level::Warn)
+    }
+
+    #[track_caller]
+    fn log_with_level(self, level: log::Level) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+                log_error_with_caller(*Location::caller(), error, level);
                 None
             }
         }
@@ -735,9 +781,31 @@ impl Ord for NumericPrefixWithSuffix<'_> {
     }
 }
 
-impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
+impl PartialOrd for NumericPrefixWithSuffix<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Capitalizes the first character of a string.
+///
+/// This function takes a string slice as input and returns a new `String` with the first character
+/// capitalized.
+///
+/// # Examples
+///
+/// ```
+/// use util::capitalize;
+///
+/// assert_eq!(capitalize("hello"), "Hello");
+/// assert_eq!(capitalize("WORLD"), "WORLD");
+/// assert_eq!(capitalize(""), "");
+/// ```
+pub fn capitalize(str: &str) -> String {
+    let mut chars = str.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 

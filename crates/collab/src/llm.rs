@@ -21,15 +21,12 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::TokenUsage;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
-use futures::{FutureExt, Stream, StreamExt as _};
+use futures::{Stream, StreamExt as _};
 use reqwest_client::ReqwestClient;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
-use rpc::{
-    ListModelsResponse, PredictEditsParams, PredictEditsResponse,
-    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
-};
+use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
 use serde_json::json;
 use std::{
     pin::Pin,
@@ -42,6 +39,8 @@ use util::ResultExt;
 
 pub use token::*;
 
+const ACTIVE_USER_COUNT_CACHE_DURATION: Duration = Duration::seconds(30);
+
 pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
@@ -51,8 +50,6 @@ pub struct LlmState {
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
 }
-
-const ACTIVE_USER_COUNT_CACHE_DURATION: Duration = Duration::seconds(30);
 
 impl LlmState {
     pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
@@ -120,7 +117,6 @@ pub fn routes() -> Router<(), Body> {
     Router::new()
         .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
-        .route("/predict_edits", post(predict_edits))
         .layer(middleware::from_fn(validate_api_token))
 }
 
@@ -260,6 +256,7 @@ async fn perform_completion(
             // so that users can use the new version, without having to update Zed.
             request.model = match model.as_str() {
                 "claude-3-5-sonnet" => anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                "claude-3-7-sonnet" => anthropic::Model::Claude3_7Sonnet.id().to_string(),
                 "claude-3-opus" => anthropic::Model::Claude3Opus.id().to_string(),
                 "claude-3-haiku" => anthropic::Model::Claude3Haiku.id().to_string(),
                 "claude-3-sonnet" => anthropic::Model::Claude3Sonnet.id().to_string(),
@@ -434,134 +431,6 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
-async fn predict_edits(
-    Extension(state): Extension<Arc<LlmState>>,
-    Extension(claims): Extension<LlmTokenClaims>,
-    _country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
-    Json(params): Json<PredictEditsParams>,
-) -> Result<impl IntoResponse> {
-    if !claims.is_staff && !claims.has_predict_edits_feature_flag {
-        return Err(Error::http(
-            StatusCode::FORBIDDEN,
-            "no access to Zed's edit prediction feature".to_string(),
-        ));
-    }
-
-    let api_url = state
-        .config
-        .prediction_api_url
-        .as_ref()
-        .context("no PREDICTION_API_URL configured on the server")?;
-    let api_key = state
-        .config
-        .prediction_api_key
-        .as_ref()
-        .context("no PREDICTION_API_KEY configured on the server")?;
-    let model = state
-        .config
-        .prediction_model
-        .as_ref()
-        .context("no PREDICTION_MODEL configured on the server")?;
-
-    let outline_prefix = params
-        .outline
-        .as_ref()
-        .map(|outline| format!("### Outline for current file:\n{}\n", outline))
-        .unwrap_or_default();
-
-    let prompt = include_str!("./llm/prediction_prompt.md")
-        .replace("<outline>", &outline_prefix)
-        .replace("<events>", &params.input_events)
-        .replace("<excerpt>", &params.input_excerpt);
-
-    let request_start = std::time::Instant::now();
-    let timeout = state
-        .executor
-        .sleep(std::time::Duration::from_secs(2))
-        .fuse();
-    let response = fireworks::complete(
-        &state.http_client,
-        api_url,
-        api_key,
-        fireworks::CompletionRequest {
-            model: model.to_string(),
-            prompt: prompt.clone(),
-            max_tokens: 2048,
-            temperature: 0.,
-            prediction: Some(fireworks::Prediction::Content {
-                content: params.input_excerpt,
-            }),
-            rewrite_speculation: Some(true),
-        },
-    )
-    .fuse();
-    futures::pin_mut!(timeout);
-    futures::pin_mut!(response);
-
-    futures::select! {
-        _ = timeout => {
-            state.executor.spawn_detached({
-                let kinesis_client = state.kinesis_client.clone();
-                let kinesis_stream = state.config.kinesis_stream.clone();
-                let model = model.clone();
-                async move {
-                    SnowflakeRow::new(
-                        "Fireworks Completion Timeout",
-                        claims.metrics_id,
-                        claims.is_staff,
-                        claims.system_id.clone(),
-                        json!({
-                            "model": model.to_string(),
-                            "prompt": prompt,
-                        }),
-                    )
-                    .write(&kinesis_client, &kinesis_stream)
-                    .await
-                    .log_err();
-                }
-            });
-            Err(anyhow!("request timed out"))?
-        },
-        response = response => {
-            let duration = request_start.elapsed();
-
-            let mut response = response?;
-            let choice = response
-                .completion
-                .choices
-                .pop()
-                .context("no output from completion response")?;
-
-            state.executor.spawn_detached({
-                let kinesis_client = state.kinesis_client.clone();
-                let kinesis_stream = state.config.kinesis_stream.clone();
-                let model = model.clone();
-                async move {
-                    SnowflakeRow::new(
-                        "Fireworks Completion Requested",
-                        claims.metrics_id,
-                        claims.is_staff,
-                        claims.system_id.clone(),
-                        json!({
-                            "model": model.to_string(),
-                            "headers": response.headers,
-                            "usage": response.completion.usage,
-                            "duration": duration.as_secs_f64(),
-                        }),
-                    )
-                    .write(&kinesis_client, &kinesis_stream)
-                    .await
-                    .log_err();
-                }
-            });
-
-            Ok(Json(PredictEditsResponse {
-                output_excerpt: choice.text,
-            }))
-        },
-    }
-}
-
 /// The maximum monthly spending an individual user can reach on the free tier
 /// before they have to pay.
 pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(10);
@@ -582,19 +451,15 @@ async fn check_usage_limit(
         return Ok(());
     }
 
+    let user_id = UserId::from_proto(claims.user_id);
     let model = state.db.model(provider, model_name)?;
-    let usage = state
-        .db
-        .get_usage(
-            UserId::from_proto(claims.user_id),
-            provider,
-            model_name,
-            Utc::now(),
-        )
-        .await?;
     let free_tier = claims.free_tier_monthly_spending_limit();
 
-    if usage.spending_this_month >= free_tier {
+    let spending_this_month = state
+        .db
+        .get_user_spending_for_month(user_id, Utc::now())
+        .await?;
+    if spending_this_month >= free_tier {
         if !claims.has_llm_subscription {
             return Err(Error::http(
                 StatusCode::PAYMENT_REQUIRED,
@@ -602,7 +467,8 @@ async fn check_usage_limit(
             ));
         }
 
-        if (usage.spending_this_month - free_tier) >= Cents(claims.max_monthly_spend_in_cents) {
+        let monthly_spend = spending_this_month.saturating_sub(free_tier);
+        if monthly_spend >= Cents(claims.max_monthly_spend_in_cents) {
             return Err(Error::Http(
                 StatusCode::FORBIDDEN,
                 "Maximum spending limit reached for this month.".to_string(),
@@ -626,6 +492,11 @@ async fn check_usage_limit(
     let per_user_max_tokens_per_minute =
         model.max_tokens_per_minute as usize / users_in_recent_minutes;
     let per_user_max_tokens_per_day = model.max_tokens_per_day as usize / users_in_recent_days;
+
+    let usage = state
+        .db
+        .get_usage(user_id, provider, model_name, Utc::now())
+        .await?;
 
     let checks = [
         (

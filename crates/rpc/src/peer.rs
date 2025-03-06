@@ -5,7 +5,7 @@ use super::{
     },
     Connection,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},

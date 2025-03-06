@@ -13,9 +13,6 @@ pub fn register_action_macro(ident: TokenStream) -> TokenStream {
 }
 
 pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
-    let static_slice_name =
-        format_ident!("__GPUI_ACTIONS_{}", type_name.to_string().to_uppercase());
-
     let action_builder_fn_name = format_ident!(
         "__gpui_actions_builder_{}",
         type_name.to_string().to_lowercase()
@@ -38,10 +35,10 @@ pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
                         json_schema: <#type_name as gpui::Action>::action_json_schema,
                     }
                 }
-                #[doc(hidden)]
-                #[gpui::private::linkme::distributed_slice(gpui::__GPUI_ACTIONS)]
-                #[linkme(crate = gpui::private::linkme)]
-                static #static_slice_name: gpui::MacroActionBuilder = #action_builder_fn_name;
+
+                gpui::private::inventory::submit! {
+                    gpui::MacroActionBuilder(#action_builder_fn_name)
+                }
             }
         }
 

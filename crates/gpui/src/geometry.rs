@@ -13,7 +13,7 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Neg, Sub},
 };
 
-use crate::{AppContext, DisplayId};
+use crate::{App, DisplayId};
 
 /// Axis in a 2D cartesian space.
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -217,6 +217,19 @@ impl Point<Pixels> {
     }
 }
 
+impl<T> Point<T>
+where
+    T: Sub<T, Output = T> + Debug + Clone + Default,
+{
+    /// Get the position of this point, relative to the given origin
+    pub fn relative_to(&self, origin: &Point<T>) -> Point<T> {
+        point(
+            self.x.clone() - origin.x.clone(),
+            self.y.clone() - origin.y.clone(),
+        )
+    }
+}
+
 impl<T, Rhs> Mul<Rhs> for Point<T>
 where
     T: Mul<Rhs, Output = T> + Clone + Default + Debug,
@@ -374,6 +387,13 @@ pub struct Size<T: Clone + Default + Debug> {
     pub width: T,
     /// The height component of the size.
     pub height: T,
+}
+
+impl<T: Clone + Default + Debug> Size<T> {
+    /// Create a new Size, a synonym for [`size`]
+    pub fn new(width: T, height: T) -> Self {
+        size(width, height)
+    }
 }
 
 /// Constructs a new `Size<T>` with the provided width and height.
@@ -725,7 +745,7 @@ pub fn bounds<T: Clone + Default + Debug>(origin: Point<T>, size: Size<T>) -> Bo
 
 impl Bounds<Pixels> {
     /// Generate a centered bounds for the given display or primary display if none is provided
-    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &AppContext) -> Self {
+    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &App) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
@@ -739,7 +759,7 @@ impl Bounds<Pixels> {
     }
 
     /// Generate maximized bounds for the given display or primary display if none is provided
-    pub fn maximized(display_id: Option<DisplayId>, cx: &AppContext) -> Self {
+    pub fn maximized(display_id: Option<DisplayId>, cx: &App) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
@@ -1453,6 +1473,17 @@ where
             origin: self.origin,
             size: self.size.map(f),
         }
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Add<T, Output = T> + PartialOrd + Clone + Default + Debug + Sub<T, Output = T>,
+{
+    /// Convert a point to the coordinate space defined by this Bounds
+    pub fn localize(&self, point: &Point<T>) -> Option<Point<T>> {
+        self.contains(point)
+            .then(|| point.relative_to(&self.origin))
     }
 }
 
@@ -2500,6 +2531,8 @@ impl Pixels {
     pub const ZERO: Pixels = Pixels(0.0);
     /// The maximum value that can be represented by `Pixels`.
     pub const MAX: Pixels = Pixels(f32::MAX);
+    /// The minimum value that can be represented by `Pixels`.
+    pub const MIN: Pixels = Pixels(f32::MIN);
 
     /// Floors the `Pixels` value to the nearest whole number.
     ///
@@ -2844,7 +2877,7 @@ impl From<ScaledPixels> for u32 {
     }
 }
 
-/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`WindowContext::set_rem_size`][set_rem_size].
+/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`Window::set_rem_size`][set_rem_size].
 ///
 /// Rems are used for defining lengths that are scalable and consistent across different UI elements.
 /// The value of `1rem` is typically equal to the font-size of the root element (often the `<html>` element in browsers),
@@ -2853,7 +2886,7 @@ impl From<ScaledPixels> for u32 {
 ///
 /// For example, if the root element's font-size is `16px`, then `1rem` equals `16px`. A length of `2rems` would then be `32px`.
 ///
-/// [set_rem_size]: crate::WindowContext::set_rem_size
+/// [set_rem_size]: crate::Window::set_rem_size
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg, PartialEq)]
 pub struct Rems(pub f32);
 
@@ -2940,6 +2973,22 @@ impl AbsoluteLength {
         match self {
             AbsoluteLength::Pixels(pixels) => *pixels,
             AbsoluteLength::Rems(rems) => rems.to_pixels(rem_size),
+        }
+    }
+
+    /// Converts an `AbsoluteLength` to `Rems` based on a given `rem_size`.
+    ///
+    /// # Arguments
+    ///
+    /// * `rem_size` - The size of one rem in pixels.
+    ///
+    /// # Returns
+    ///
+    /// Returns the `AbsoluteLength` as `Pixels`.
+    pub fn to_rems(&self, rem_size: Pixels) -> Rems {
+        match self {
+            AbsoluteLength::Pixels(pixels) => Rems(pixels.0 / rem_size.0),
+            AbsoluteLength::Rems(rems) => *rems,
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::App;
 use parking_lot::Mutex;
 
 use crate::{Tool, ToolRegistry};
@@ -23,7 +23,7 @@ struct WorkingSetState {
 }
 
 impl ToolWorkingSet {
-    pub fn tool(&self, name: &str, cx: &AppContext) -> Option<Arc<dyn Tool>> {
+    pub fn tool(&self, name: &str, cx: &App) -> Option<Arc<dyn Tool>> {
         self.state
             .lock()
             .context_server_tools_by_name
@@ -32,7 +32,7 @@ impl ToolWorkingSet {
             .or_else(|| ToolRegistry::global(cx).tool(name))
     }
 
-    pub fn tools(&self, cx: &AppContext) -> Vec<Arc<dyn Tool>> {
+    pub fn tools(&self, cx: &App) -> Vec<Arc<dyn Tool>> {
         let mut tools = ToolRegistry::global(cx).tools();
         tools.extend(
             self.state

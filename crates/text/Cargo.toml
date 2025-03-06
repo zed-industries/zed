@@ -13,7 +13,7 @@ path = "src/text.rs"
 doctest = false
 
 [features]
-test-support = ["rand"]
+test-support = ["rand", "util/test-support"]
 
 [dependencies]
 anyhow.workspace = true
