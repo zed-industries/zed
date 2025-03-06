@@ -339,3 +339,11 @@ pub(crate) fn enabled_in_any_buffer(
 
     return found_enabled;
 }
+
+pub(crate) fn refresh_enabled_in_any_buffer(
+    editor: &mut Editor,
+    multi_buffer: &Entity<MultiBuffer>,
+    cx: &mut Context<Editor>,
+) {
+    editor.jsx_tag_auto_close_enabled_in_any_buffer = enabled_in_any_buffer(multi_buffer, cx);
+}
