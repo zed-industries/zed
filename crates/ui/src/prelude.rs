@@ -12,6 +12,7 @@ pub use component::{
 };
 pub use ui_macros::IntoComponent;
 
+pub use crate::animation::{AnimationDirection, AnimationDuration, DefaultAnimations};
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};
 pub use crate::traits::clickable::*;
 pub use crate::traits::disableable::*;

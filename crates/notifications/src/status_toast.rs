@@ -1,9 +1,6 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use gpui::{
-    pulsating_between, Animation, AnimationExt, ClickEvent, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement,
-};
+use gpui::{ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement};
 use ui::prelude::*;
 use workspace::ToastView;
 
