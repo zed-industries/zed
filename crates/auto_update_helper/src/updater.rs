@@ -6,7 +6,7 @@ use windows::Win32::{
     UI::WindowsAndMessaging::PostMessageW,
 };
 
-use crate::WM_JOB_UPDATED;
+use crate::windows_impl::WM_JOB_UPDATED;
 
 #[derive(Debug, PartialEq, Eq)]
 enum UpdateStatus {
