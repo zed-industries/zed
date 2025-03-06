@@ -1,9 +1,15 @@
+use std::time::Duration;
+
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
+use gpui::{
+    percentage, Animation, AnimationExt, AppContext, DismissEvent, Entity, EventEmitter, Focusable,
+    Styled, Transformation,
+};
 use ui::{
-    div, rems, v_flex, ActiveTheme, App, Context, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, StyledExt, Window,
+    div, h_flex, rems, v_flex, ActiveTheme, App, Color, Context, DynamicSpacing, Headline,
+    HeadlineSize, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelSize,
+    ParentElement, Render, SharedString, StyledExt, StyledTypography, Window,
 };
 use workspace::ModalView;
 
@@ -62,19 +68,38 @@ impl AskPassModal {
 impl Render for AskPassModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(24.))
-            .elevation_2(cx)
-            .key_context("AskPass")
+            .key_context("PasswordPrompt")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
-            .child(self.operation.clone())
-            .child(self.prompt.clone())
+            .elevation_2(cx)
+            .size_full()
+            .child(
+                h_flex()
+                    .px(DynamicSpacing::Base12.rems(cx))
+                    .pt(DynamicSpacing::Base08.rems(cx))
+                    .pb(DynamicSpacing::Base04.rems(cx))
+                    .rounded_t_md()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(h_flex().gap_1().overflow_x_hidden().child(
+                        div().max_w_96().overflow_x_hidden().text_ellipsis().child(
+                            Headline::new(self.operation.clone()).size(HeadlineSize::XSmall),
+                        ),
+                    )),
+            )
             .child(
                 div()
-                    .border_b_1()
+                    .text_buffer(cx)
+                    .font_buffer(cx)
+                    .py_2()
+                    .px_3()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .px_2()
-                    .py_1()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(self.prompt.clone())
                     .child(self.editor.clone()),
             )
     }
