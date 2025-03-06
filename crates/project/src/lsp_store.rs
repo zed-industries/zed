@@ -1503,6 +1503,7 @@ impl LocalLspStore {
             let mut edits = None;
             for range in lsp_ranges {
                 if let Some(mut edit) = language_server
+                    // TODO kb check if any of these `.request::<lsp` needs capabilities before
                     .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                         text_document: text_document.clone(),
                         range,

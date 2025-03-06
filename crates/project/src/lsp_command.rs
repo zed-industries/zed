@@ -2218,10 +2218,10 @@ impl LspCommand for GetCodeActions {
     async fn response_from_lsp(
         self,
         actions: Option<lsp::CodeActionResponse>,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
         server_id: LanguageServerId,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
         let requested_kinds_set = if let Some(kinds) = self.kinds {
             Some(kinds.into_iter().collect::<HashSet<_>>())
@@ -2229,12 +2229,46 @@ impl LspCommand for GetCodeActions {
             None
         };
 
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .expect("TODO lb")
+        })?;
+
+        // TODO kb rewrite later
+        let no_commands = Vec::new();
+        let server_capabilities = language_server.capabilities();
+        let available_commands = server_capabilities
+            .execute_command_provider
+            .as_ref()
+            .map(|options| &options.commands)
+            .unwrap_or(&no_commands)
+            .as_slice();
+        // let can_run =
+        //     available_commands.map_or(false, |commands| commands.contains(&command.command));
+
         Ok(actions
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry else {
-                    return None;
+                let lsp_action = match entry {
+                    lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
+                        if let Some(command) = lsp_action.command.as_ref() {
+                            if !available_commands.contains(&command.command) {
+                                return None;
+                            }
+                        }
+                        lsp_action
+                    }
+                    lsp::CodeActionOrCommand::Command(command) => {
+                        if !available_commands.contains(&command.command) {
+                            return None;
+                        } else {
+                            // TODO kb have an enum for commands, use them onwards
+                            return None;
+                        }
+                    }
                 };
 
                 if let Some((requested_kinds, kind)) =
