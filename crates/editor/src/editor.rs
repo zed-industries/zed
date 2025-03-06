@@ -6550,7 +6550,7 @@ impl Editor {
             .pl_1()
             .pr(padding_right)
             .gap_1()
-            .rounded(px(6.))
+            .rounded_md()
             .border_1()
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
