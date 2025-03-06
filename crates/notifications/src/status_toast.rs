@@ -1,6 +1,9 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use gpui::{ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement};
+use gpui::{
+    pulsating_between, Animation, AnimationExt, ClickEvent, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement,
+};
 use ui::prelude::*;
 use workspace::ToastView;
 
@@ -106,6 +109,7 @@ impl StatusToast {
 impl Render for StatusToast {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
+            .id("status-toast")
             .elevation_3(cx)
             .gap_2()
             .py_1p5()

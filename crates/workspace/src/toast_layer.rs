@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
+use gpui::{
+    AnimationExt as _, AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task,
+};
 use ui::prelude::*;
 
 const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(3000);
@@ -185,7 +187,7 @@ impl Render for ToastLayer {
                 .id("toast-layer-container")
                 .absolute()
                 .w_full()
-                .bottom_10()
+                .bottom(px(0.))
                 .flex()
                 .flex_col()
                 .items_center()
@@ -209,6 +211,18 @@ impl Render for ToastLayer {
                             cx.stop_propagation();
                         })
                         .child(active_toast.toast.view()),
+                )
+                .with_animation(
+                    "up-in-animation",
+                    ui::animation::in_from_bottom(200.),
+                    |this, delta| {
+                        let start_opacity = 0.4;
+                        let start_pos = 0.0;
+                        let end_pos = 40.0;
+
+                        this.opacity(start_opacity + delta * (1.0 - start_opacity))
+                            .bottom(px(start_pos + delta * (end_pos - start_pos)))
+                    },
                 ),
         )
     }
