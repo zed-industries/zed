@@ -2248,7 +2248,6 @@ impl Editor {
                 EditorEvent::SelectionsChanged { local: true } => {
                     let other_selections = other.read(cx).selections.disjoint.to_vec();
                     if other_selections.is_empty() {
-                        eprintln!("no selections");
                         return;
                     }
                     this.selections.change_with(cx, |selections| {
