@@ -329,7 +329,7 @@ impl LocalMode {
                 cx.background_executor().clone(),
             )
             .await?;
-
+        dbg!(&capabilities);
         let mut raw = adapter.request_args(&this.config);
         merge_json_value_into(
             this.config.initialize_args.clone().unwrap_or(json!({})),
@@ -369,6 +369,10 @@ impl LocalMode {
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.request_interceptor.request()
+        }
         let request = Arc::new(request);
 
         let request_clone = request.clone();
@@ -490,7 +494,6 @@ trait CacheableCommand: 'static + Send + Sync {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool;
     fn dyn_hash(&self, hasher: &mut dyn Hasher);
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-    fn cacheable_command_id(&self) -> TypeId;
 }
 
 impl<T> CacheableCommand for T
@@ -511,10 +514,6 @@ where
     }
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
-    }
-
-    fn cacheable_command_id(&self) -> TypeId {
-        T::command_id()
     }
 }
 
@@ -777,7 +776,7 @@ impl Session {
             .values_mut()
             .for_each(|thread| thread.stack_frame_ids.clear());
 
-        self.invalidate_command_type(TypeId::of::<dap_command::GenericCommand>());
+        self.invalidate_generic();
         cx.emit(SessionEvent::Stopped);
         cx.notify();
     }
@@ -798,7 +797,7 @@ impl Session {
                     self.thread_states
                         .thread_continued(ThreadId(event.thread_id));
                 }
-                self.invalidate_command_type(TypeId::of::<dap_command::GenericCommand>());
+                self.invalidate_generic();
             }
             Events::Exited(_event) => {}
             Events::Terminated(_) => {
@@ -868,11 +867,14 @@ impl Session {
             );
         }
 
-        if !self.thread_states.any_stopped_thread() {
+        if !self.thread_states.any_stopped_thread() && request.type_id() != TypeId::of::<T>() {
             return;
         }
 
-        let request_map = self.requests.entry(T::command_id()).or_default();
+        let request_map = self
+            .requests
+            .entry(std::any::TypeId::of::<T>())
+            .or_default();
 
         if let Entry::Vacant(vacant) = request_map.entry(request.into()) {
             let command = vacant.key().0.clone().as_any_arc().downcast::<T>().unwrap();
@@ -936,24 +938,22 @@ impl Session {
         )
     }
 
-    fn invalidate_command_type(&mut self, key: TypeId) {
-        self.requests
-            .entry(key)
-            .and_modify(|request_map| request_map.clear());
+    fn invalidate_command_type<Command: DapCommand>(&mut self) {
+        self.requests.remove(&std::any::TypeId::of::<Command>());
+    }
+
+    fn invalidate_generic(&mut self) {
+        self.invalidate_command_type::<ModulesCommand>();
+        self.invalidate_command_type::<StackTraceCommand>();
+        self.invalidate_command_type::<LoadedSourcesCommand>();
     }
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
         self.requests
-            .entry(key.0.cacheable_command_id())
+            .entry(key.0.as_any().type_id())
             .and_modify(|request_map| {
                 request_map.remove(&key);
             });
-    }
-
-    /// This function should be called after changing state not before
-    fn invalidate(&mut self, cx: &mut Context<Self>) {
-        self.requests.clear();
-        cx.notify();
     }
 
     pub fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {
@@ -969,7 +969,7 @@ impl Session {
                     .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
                     .collect();
 
-                this.invalidate_command_type(StackTraceCommand::command_id());
+                this.invalidate_command_type::<StackTraceCommand>();
                 cx.notify();
             },
             cx,
@@ -1288,7 +1288,7 @@ impl Session {
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
         if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped
-            && self.requests.contains_key(&ThreadsCommand::command_id())
+            && self.requests.contains_key(&ThreadsCommand.type_id())
         {
             self.fetch(
                 super::dap_command::StackTraceCommand {
@@ -1313,9 +1313,7 @@ impl Session {
                             .map(|frame| (frame.id, StackFrame::from(frame))),
                     );
 
-                    this.invalidate_command_type(ScopesCommand::command_id());
-                    this.invalidate_command_type(VariablesCommand::command_id());
-
+                    this.invalidate_generic();
                     cx.emit(SessionEvent::StackTrace);
                     cx.notify();
                 },
@@ -1337,10 +1335,10 @@ impl Session {
     }
 
     pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
-        if self.requests.contains_key(&ThreadsCommand::command_id())
+        if self.requests.contains_key(&TypeId::of::<ThreadsCommand>())
             && self
                 .requests
-                .contains_key(&dap_command::StackTraceCommand::command_id())
+                .contains_key(&TypeId::of::<StackTraceCommand>())
         {
             self.fetch(
                 ScopesCommand { stack_frame_id },
@@ -1420,7 +1418,7 @@ impl Session {
                     variables_reference,
                 },
                 move |this, _response, cx| {
-                    this.invalidate_command_type(VariablesCommand::command_id());
+                    this.invalidate_command_type::<VariablesCommand>();
                     cx.notify();
                 },
                 cx,
@@ -1458,7 +1456,7 @@ impl Session {
                 });
 
                 // TODO(debugger): only invalidate variables & scopes
-                this.invalidate_command_type(ScopesCommand::command_id());
+                this.invalidate_command_type::<ScopesCommand>();
                 cx.notify();
             },
             cx,
