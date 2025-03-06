@@ -1,20 +1,44 @@
 use util::ResultExt;
 
+/// Represents an edit action to be performed on a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum EditAction {
+pub enum EditAction {
+    /// Replace specific content in a file with new content
     Replace {
         file_path: String,
         old: String,
         new: String,
     },
-    Write {
-        file_path: String,
-        content: String,
-    },
+    /// Write content to a file (create or overwrite)
+    Write { file_path: String, content: String },
 }
 
+/// Parses edit actions from an LLM response.
+///
+/// A response might include many edit actions with the following format:
+///
+/// Replace content:
+///
+/// src/main.rs
+/// ```
+/// <<<<<<< SEARCH
+/// fn original() {}
+/// =======
+/// fn replacement() {}
+/// >>>>>>> REPLACE
+/// ```
+///
+/// Write new content:
+///
+/// src/main.rs
+/// ```
+/// <<<<<<< SEARCH
+/// =======
+/// fn new_function() {}
+/// >>>>>>> REPLACE
+/// ```
 #[derive(Debug)]
-struct EditActionParser {
+pub struct EditActionParser {
     pre_fence_line: Vec<u8>,
     marker_ix: usize,
     old_bytes: Vec<u8>,
@@ -39,7 +63,8 @@ enum State {
 }
 
 impl EditActionParser {
-    fn new() -> Self {
+    /// Creates a new `EditActionParser`
+    pub fn new() -> Self {
         Self {
             pre_fence_line: Vec::new(),
             marker_ix: 0,
@@ -49,7 +74,13 @@ impl EditActionParser {
         }
     }
 
-    fn parse_chunk(&mut self, input: &str) -> Vec<EditAction> {
+    /// Processes a chunk of input text and returns any completed edit actions.
+    ///
+    /// This method can be called repeatedly with fragments of input. The parser
+    /// maintains its state between calls, allowing you to process streaming input
+    /// as it becomes available. Actions are only returned once they are fully parsed.
+    ///
+    pub fn parse_chunk(&mut self, input: &str) -> Vec<EditAction> {
         use State::*;
 
         let mut actions = vec![];
