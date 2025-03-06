@@ -3,6 +3,7 @@ use crate::branch_picker;
 use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
+use crate::repository_selector::deduplicated_repository_entries;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -3562,7 +3563,10 @@ impl RenderOnce for PanelRepoFooter {
 
         let single_repo = project
             .as_ref()
-            .map(|project| project.read(cx).all_repositories(cx).len() == 1)
+            .map(|project| {
+                deduplicated_repository_entries(project.read(cx).git_store().read(cx), cx).len()
+                    == 1
+            })
             .unwrap_or(true);
 
         let repo_selector = PopoverMenu::new("repository-switcher")

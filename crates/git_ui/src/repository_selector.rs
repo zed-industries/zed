@@ -52,8 +52,12 @@ impl RepositorySelector {
     }
 }
 
-fn deduplicated_repository_entries(git_store: &GitStore, cx: &App) -> Vec<Entity<Repository>> {
+pub(crate) fn deduplicated_repository_entries(
+    git_store: &GitStore,
+    cx: &App,
+) -> Vec<Entity<Repository>> {
     let mut repository_entries = git_store.all_repositories();
+    repository_entries.retain(|entry| !entry.read(cx).is_from_single_file_worktree);
     repository_entries.sort_by_key(|repo| {
         let repo = repo.read(cx);
         (
@@ -61,7 +65,6 @@ fn deduplicated_repository_entries(git_store: &GitStore, cx: &App) -> Vec<Entity
             repo.worktree_abs_path.clone(),
         )
     });
-    repository_entries.dedup_by_key(|repo| repo.read(cx).dot_git_abs_path.clone());
     repository_entries
 }
 
