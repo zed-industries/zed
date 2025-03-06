@@ -275,10 +275,10 @@ impl ComponentPreview {
 
     fn render_scope_header(
         &self,
-        ix: usize,
+        _ix: usize,
         title: SharedString,
-        window: &Window,
-        cx: &App,
+        _window: &Window,
+        _cx: &App,
     ) -> impl IntoElement {
         h_flex()
             .w_full()
@@ -290,7 +290,7 @@ impl ComponentPreview {
 
     fn render_preview(
         &self,
-        ix: usize,
+        _ix: usize,
         component: &ComponentMetadata,
         window: &mut Window,
         cx: &mut App,
@@ -359,9 +359,9 @@ impl ComponentPreview {
 }
 
 impl Render for ComponentPreview {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let sidebar_entries = self.scope_ordered_entries();
-        let weak_workspace = self.workspace.clone();
+        // let weak_workspace = self.workspace.clone();
 
         h_flex()
             .id("component-preview")

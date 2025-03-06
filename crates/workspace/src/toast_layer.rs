@@ -85,7 +85,7 @@ impl ToastLayer {
         cx.notify();
     }
 
-    pub fn hide_toast(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub fn hide_toast(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> bool {
         cx.notify();
 
         true
@@ -107,7 +107,7 @@ impl ToastLayer {
     pub fn start_dismiss_timer(
         &mut self,
         duration: Duration,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.clear_dismiss_timer(cx);
@@ -147,7 +147,7 @@ impl ToastLayer {
 }
 
 impl Render for ToastLayer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let Some(active_toast) = &self.active_toast else {
             return div();
         };

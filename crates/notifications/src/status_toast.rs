@@ -1,10 +1,5 @@
-use std::time::Duration;
-
-use gpui::{
-    percentage, Animation, AnimationExt, DismissEvent, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Transformation,
-};
-use ui::{prelude::*, AnyIcon};
+use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, IntoElement};
+use ui::prelude::*;
 use workspace::ToastView;
 
 #[derive(IntoComponent)]
@@ -52,7 +47,7 @@ impl StatusToast {
 }
 
 impl Render for StatusToast {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // let has_icon = &self.icon.is_some();
 
         h_flex()
@@ -75,8 +70,8 @@ impl Render for StatusToast {
 
 impl ToastView for StatusToast {}
 impl Focusable for StatusToast {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        todo!()
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
