@@ -173,7 +173,6 @@ members = [
     "extensions/glsl",
     "extensions/haskell",
     "extensions/html",
-    "extensions/lua",
     "extensions/perplexity",
     "extensions/proto",
     "extensions/purescript",
