@@ -8782,9 +8782,7 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .on_any_mouse_down(|_, _, cx| {
-            cx.stop_propagation();
-        })
+        .occlude()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
