@@ -318,7 +318,6 @@ pub(crate) fn refresh_enabled_in_any_buffer(
     cx: &Context<Editor>,
 ) {
     editor.jsx_tag_auto_close_enabled_in_any_buffer = {
-        let multi_buffer = multi_buffer;
         let multi_buffer = multi_buffer.read(cx);
         let mut found_enabled = false;
         multi_buffer.for_each_buffer(|buffer| {
