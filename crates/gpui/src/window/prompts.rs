@@ -79,8 +79,7 @@ pub fn fallback_prompt_renderer(
     window: &mut Window,
     cx: &mut App,
 ) -> RenderablePromptHandle {
-    let renderer =
-        cx.new(|cx| FallbackPromptRenderer::new(level, message, detail, actions, window, cx));
+    let renderer = cx.new(|cx| FallbackPromptRenderer::new(level, message, detail, actions, cx));
 
     handle.with_view(renderer, window, cx)
 }
@@ -101,7 +100,6 @@ impl FallbackPromptRenderer {
         message: &str,
         detail: Option<&str>,
         actions: &[&str],
-        window: &mut Window,
         cx: &mut App,
     ) -> Self {
         let mut actions: Vec<_> = actions
