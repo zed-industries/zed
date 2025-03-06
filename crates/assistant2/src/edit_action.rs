@@ -264,7 +264,6 @@ fn collect_until_marker(
         nl_marker
     };
 
-    // this can't be a method because we'd need to have two mutable references on self
     match match_marker(byte, marker, marker_ix) {
         MarkerMatch::Complete => true,
         MarkerMatch::Partial => false,
@@ -272,6 +271,13 @@ fn collect_until_marker(
             if *marker_ix > 0 {
                 buf.extend_from_slice(&marker[..*marker_ix]);
                 *marker_ix = 0;
+
+                // The beginning of marker might match current byte
+                match match_marker(byte, marker, marker_ix) {
+                    MarkerMatch::Complete => return true,
+                    MarkerMatch::Partial => return false,
+                    MarkerMatch::None => { /* no match, keep collecting */ }
+                }
             }
 
             buf.push(byte);
@@ -658,5 +664,90 @@ fn new_utils_func() {}
 
         // The parser should continue after an error
         assert_eq!(parser.state, State::Default);
+    }
+
+    const SYSTEM_PROMPT: &str = include_str!("./edits/system_prompt.md");
+
+    #[test]
+    fn test_parse_examples_in_system_prompt() {
+        let mut parser = EditActionParser::new();
+        let actions = parser.parse_chunk(SYSTEM_PROMPT);
+        assert_examples_in_system_prompt(&actions, parser.errors());
+    }
+
+    #[test]
+    fn test_random_chunking_of_system_prompt() {
+        use rand::Rng;
+
+        // Run the test multiple times with different random chunks
+        for _ in 0..5 {
+            let mut parser = EditActionParser::new();
+            let mut remaining = SYSTEM_PROMPT;
+            let mut actions = Vec::with_capacity(5);
+
+            while !remaining.is_empty() {
+                let mut rng = rand::thread_rng();
+                let chunk_size = rng.gen_range(1..=std::cmp::min(remaining.len(), 100));
+
+                let (chunk, rest) = remaining.split_at(chunk_size);
+
+                actions.extend(parser.parse_chunk(chunk));
+                remaining = rest;
+            }
+
+            assert_examples_in_system_prompt(&actions, parser.errors());
+        }
+    }
+
+    fn assert_examples_in_system_prompt(actions: &[EditAction], errors: &[(usize, ParseError)]) {
+        assert_eq!(actions.len(), 5);
+
+        assert_eq!(
+            actions[0],
+            EditAction::Replace {
+                file_path: "mathweb/flask/app.py".to_string(),
+                old: "from flask import Flask".to_string(),
+                new: "import math\nfrom flask import Flask".to_string(),
+            }
+        );
+
+        assert_eq!(
+                    actions[1],
+                    EditAction::Replace {
+                        file_path: "mathweb/flask/app.py".to_string(),
+                        old: "def factorial(n):\n    \"compute factorial\"\n\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n".to_string(),
+                        new: "".to_string(),
+                    }
+                );
+
+        assert_eq!(
+            actions[2],
+            EditAction::Replace {
+                file_path: "mathweb/flask/app.py".to_string(),
+                old: "    return str(factorial(n))".to_string(),
+                new: "    return str(math.factorial(n))".to_string(),
+            }
+        );
+
+        assert_eq!(
+            actions[3],
+            EditAction::Write {
+                file_path: "hello.py".to_string(),
+                content: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")"
+                    .to_string(),
+            }
+        );
+
+        assert_eq!(
+            actions[4],
+            EditAction::Replace {
+                file_path: "main.py".to_string(),
+                old: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")".to_string(),
+                new: "from hello import hello".to_string(),
+            }
+        );
+
+        // Ensure we have no parsing errors
+        assert!(errors.is_empty(), "Parsing errors found: {:?}", errors);
     }
 }
