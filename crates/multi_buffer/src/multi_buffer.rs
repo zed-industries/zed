@@ -250,6 +250,7 @@ impl DiffState {
                     }
                 }
                 BufferDiffEvent::LanguageChanged => this.buffer_diff_language_changed(diff, cx),
+                _ => {}
             }),
             diff,
         }

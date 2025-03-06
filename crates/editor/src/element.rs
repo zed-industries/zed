@@ -77,7 +77,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{debug_panic, maybe, RangeExt, ResultExt};
+use util::{debug_panic, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -2676,24 +2676,21 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Div {
-        let file_status = maybe!({
-            let project = self.editor.read(cx).project.as_ref()?.read(cx);
-            let (repo, path) =
-                project.repository_and_path_for_buffer_id(for_excerpt.buffer_id, cx)?;
-            let status = repo.read(cx).repository_entry.status_for_path(&path)?;
-            Some(status.status)
-        })
-        .filter(|_| {
-            self.editor
-                .read(cx)
-                .buffer
-                .read(cx)
-                .all_diff_hunks_expanded()
-        });
-
-        let include_root = self
-            .editor
+        let editor = self.editor.read(cx);
+        let file_status = editor
+            .buffer
             .read(cx)
+            .all_diff_hunks_expanded()
+            .then(|| {
+                editor
+                    .project
+                    .as_ref()?
+                    .read(cx)
+                    .status_for_buffer_id(for_excerpt.buffer_id, cx)
+            })
+            .flatten();
+
+        let include_root = editor
             .project
             .as_ref()
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
@@ -2705,7 +2702,7 @@ impl EditorElement {
         let parent_path = path.as_ref().and_then(|path| {
             Some(path.parent()?.to_string_lossy().to_string() + std::path::MAIN_SEPARATOR_STR)
         });
-        let focus_handle = self.editor.focus_handle(cx);
+        let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
 
         div()
@@ -2778,8 +2775,7 @@ impl EditorElement {
                         )
                     })
                     .children(
-                        self.editor
-                            .read(cx)
+                        editor
                             .addons
                             .values()
                             .filter_map(|addon| {
@@ -8822,12 +8818,11 @@ fn diff_hunk_controls(
                 })
                 .on_click({
                     let editor = editor.clone();
-                    move |_event, window, cx| {
+                    move |_event, _window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 true,
-                                &[hunk_range.start..hunk_range.start],
-                                window,
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
                             );
                         });
@@ -8850,12 +8845,11 @@ fn diff_hunk_controls(
                 })
                 .on_click({
                     let editor = editor.clone();
-                    move |_event, window, cx| {
+                    move |_event, _window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 false,
-                                &[hunk_range.start..hunk_range.start],
-                                window,
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
                             );
                         });
