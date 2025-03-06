@@ -133,10 +133,16 @@ impl FallbackPromptRenderer {
         if event.keystroke.should_match(&Keystroke {
             key: "up".to_string(),
             ..Keystroke::default()
+        }) || event.keystroke.should_match(&Keystroke {
+            key: "k".to_string(),
+            ..Keystroke::default()
         }) {
             self.highlight_previous(window, cx);
         } else if event.keystroke.should_match(&Keystroke {
             key: "down".to_string(),
+            ..Keystroke::default()
+        }) || event.keystroke.should_match(&Keystroke {
+            key: "j".to_string(),
             ..Keystroke::default()
         }) {
             self.highlight_next(window, cx);
@@ -284,8 +290,8 @@ impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
 
 impl Focusable for FallbackPromptRenderer {
     fn focus_handle(&self, _: &crate::App) -> FocusHandle {
-        if self.actions.len() > 0 {
-            self.actions.first().unwrap().1.clone()
+        if let Some((_, handle)) = self.actions.first() {
+            handle.clone()
         } else {
             self.focus.clone()
         }
