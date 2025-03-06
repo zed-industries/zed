@@ -1,4 +1,4 @@
-use crate::commit::CommitDetails;
+use crate::repository::CommitDetails;
 use anyhow::{anyhow, Result};
 use std::{path::Path, process::Stdio, sync::Arc};
 

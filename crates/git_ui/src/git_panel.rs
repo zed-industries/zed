@@ -17,10 +17,9 @@ use editor::{
     ShowScrollbar,
 };
 use futures::StreamExt as _;
-use git::commit::{CommitDetails, CommitSummary};
 use git::repository::{
-    Branch, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
-    UpstreamTrackingStatus,
+    Branch, CommitDetails, CommitSummary, PushOptions, Remote, RemoteCommandOutput, ResetMode,
+    Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};

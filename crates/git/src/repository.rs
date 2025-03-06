@@ -1,4 +1,3 @@
-use crate::commit::{CommitDetails, CommitSummary};
 use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, commit_history::CommitHistory, status::GitStatus};
@@ -101,6 +100,24 @@ impl RemoteCommandOutput {
 pub struct UpstreamTrackingStatus {
     pub ahead: u32,
     pub behind: u32,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct CommitSummary {
+    pub sha: SharedString,
+    pub subject: SharedString,
+    /// This is a unix timestamp
+    pub commit_timestamp: i64,
+    pub has_parent: bool,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct CommitDetails {
+    pub sha: SharedString,
+    pub message: SharedString,
+    pub commit_timestamp: i64,
+    pub committer_email: SharedString,
+    pub committer_name: SharedString,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -445,7 +462,6 @@ impl GitRepository for RealGitRepository {
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-
         GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
     }
 
