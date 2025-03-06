@@ -197,20 +197,6 @@ pub struct DeleteToPreviousWordStart {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoToHunk {
-    #[serde(default)]
-    pub center_cursor: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoToPreviousHunk {
-    #[serde(default)]
-    pub center_cursor: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct FoldAtLevel(pub u32);
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -240,8 +226,6 @@ impl_actions!(
         ExpandExcerptsDown,
         ExpandExcerptsUp,
         FoldAt,
-        GoToHunk,
-        GoToPreviousHunk,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -323,6 +307,8 @@ gpui::actions!(
         GoToDefinition,
         GoToDefinitionSplit,
         GoToDiagnostic,
+        GoToHunk,
+        GoToPreviousHunk,
         GoToImplementation,
         GoToImplementationSplit,
         GoToPreviousDiagnostic,

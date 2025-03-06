@@ -32,15 +32,17 @@ use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
-    relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
-    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    Hsla, InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, Window,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
+    point, px, quad, relative, size, solid_background, svg, transparent_black, Action, AnyElement,
+    App, AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner,
+    Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
+    Focusable as _, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
+    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
+    TextStyleRefinement, Window,
 };
+use inline_completion::Direction;
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -54,7 +56,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
     RowInfo,
 };
-use project::project_settings::{self, GitGutterSetting, ProjectSettings};
+use project::project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -75,7 +77,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{debug_panic, maybe, RangeExt, ResultExt};
+use util::{debug_panic, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -2016,7 +2018,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -2092,7 +2094,7 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_pixel_position,
                         gutter_hitbox,
-                        rows_with_hunk_bounds,
+                        display_hunks,
                         window,
                         cx,
                     );
@@ -2110,7 +2112,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -2135,7 +2137,7 @@ impl EditorElement {
             gutter_dimensions,
             scroll_pixel_position,
             gutter_hitbox,
-            rows_with_hunk_bounds,
+            display_hunks,
             window,
             cx,
         );
@@ -2674,24 +2676,21 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Div {
-        let file_status = maybe!({
-            let project = self.editor.read(cx).project.as_ref()?.read(cx);
-            let (repo, path) =
-                project.repository_and_path_for_buffer_id(for_excerpt.buffer_id, cx)?;
-            let status = repo.read(cx).repository_entry.status_for_path(&path)?;
-            Some(status.status)
-        })
-        .filter(|_| {
-            self.editor
-                .read(cx)
-                .buffer
-                .read(cx)
-                .all_diff_hunks_expanded()
-        });
-
-        let include_root = self
-            .editor
+        let editor = self.editor.read(cx);
+        let file_status = editor
+            .buffer
             .read(cx)
+            .all_diff_hunks_expanded()
+            .then(|| {
+                editor
+                    .project
+                    .as_ref()?
+                    .read(cx)
+                    .status_for_buffer_id(for_excerpt.buffer_id, cx)
+            })
+            .flatten();
+
+        let include_root = editor
             .project
             .as_ref()
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
@@ -2703,7 +2702,7 @@ impl EditorElement {
         let parent_path = path.as_ref().and_then(|path| {
             Some(path.parent()?.to_string_lossy().to_string() + std::path::MAIN_SEPARATOR_STR)
         });
-        let focus_handle = self.editor.focus_handle(cx);
+        let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
 
         div()
@@ -2776,8 +2775,7 @@ impl EditorElement {
                         )
                     })
                     .children(
-                        self.editor
-                            .read(cx)
+                        editor
                             .addons
                             .values()
                             .filter_map(|addon| {
@@ -4346,7 +4344,7 @@ impl EditorElement {
         }
     }
 
-    fn paint_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+    fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         let is_light = cx.theme().appearance().is_light();
 
         if layout.display_hunks.is_empty() {
@@ -4416,10 +4414,19 @@ impl EditorElement {
                         background_color =
                             background_color.opacity(if is_light { 0.2 } else { 0.32 });
                     }
+
+                    // Flatten the background color with the editor color to prevent
+                    // elements below transparent hunks from showing through
+                    let flattened_background_color = cx
+                        .theme()
+                        .colors()
+                        .editor_background
+                        .blend(background_color);
+
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
-                        background_color,
+                        flattened_background_color,
                         Edges::default(),
                         transparent_black(),
                     ));
@@ -4547,7 +4554,7 @@ impl EditorElement {
                 )
             });
         if show_git_gutter {
-            Self::paint_diff_hunks(layout, window, cx)
+            Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -4685,7 +4692,7 @@ impl EditorElement {
             .read(cx)
             .buffer
             .read(cx)
-            .settings_at(0, cx)
+            .language_settings(cx)
             .show_whitespaces;
 
         for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
@@ -5678,7 +5685,7 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_pixel_position: gpui::Point<Pixels>,
     gutter_hitbox: &Hitbox,
-    rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+    display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -5690,9 +5697,23 @@ fn prepaint_gutter_button(
     let indicator_size = button.layout_as_root(available_space, window, cx);
 
     let blame_width = gutter_dimensions.git_blame_entries_width;
-    let gutter_width = rows_with_hunk_bounds
-        .get(&row)
-        .map(|bounds| bounds.size.width);
+    let gutter_width = display_hunks
+        .binary_search_by(|(hunk, _)| match hunk {
+            DisplayDiffHunk::Folded { display_row } => display_row.cmp(&row),
+            DisplayDiffHunk::Unfolded {
+                display_row_range, ..
+            } => {
+                if display_row_range.end <= row {
+                    Ordering::Less
+                } else if display_row_range.start > row {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            }
+        })
+        .ok()
+        .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
     let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
     let mut x = left_offset;
@@ -6711,14 +6732,15 @@ impl Element for EditorElement {
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     let is_light = cx.theme().appearance().is_light();
+                    let use_pattern = ProjectSettings::get_global(cx)
+                        .git
+                        .hunk_style
+                        .map_or(false, |style| matches!(style, GitHunkStyleSetting::Pattern));
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
-
-                        let staged_opacity = if is_light { 0.14 } else { 0.10 };
-                        let unstaged_opacity = 0.04;
 
                         let background_color = match diff_status.kind {
                             DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
@@ -6730,15 +6752,34 @@ impl Element for EditorElement {
                                 continue;
                             }
                         };
-                        let background_color = if diff_status.has_secondary_hunk() {
-                            background_color.opacity(unstaged_opacity)
+
+                        let unstaged = diff_status.has_secondary_hunk();
+                        let hunk_opacity = if is_light { 0.16 } else { 0.12 };
+
+                        let staged_background =
+                            solid_background(background_color.opacity(hunk_opacity));
+                        let unstaged_background = if use_pattern {
+                            pattern_slash(
+                                background_color.opacity(hunk_opacity),
+                                window.rem_size().0 * 1.125, // ~18 by default
+                            )
                         } else {
-                            background_color.opacity(staged_opacity)
+                            solid_background(background_color.opacity(if is_light {
+                                0.08
+                            } else {
+                                0.04
+                            }))
+                        };
+
+                        let background = if unstaged {
+                            unstaged_background
+                        } else {
+                            staged_background
                         };
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
-                            .or_insert(background_color.into());
+                            .or_insert(background);
                     }
 
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
@@ -7188,27 +7229,6 @@ impl Element for EditorElement {
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-                    let rows_with_hunk_bounds = display_hunks
-                        .iter()
-                        .filter_map(|(hunk, hitbox)| Some((hunk, hitbox.as_ref()?.bounds)))
-                        .fold(
-                            HashMap::default(),
-                            |mut rows_with_hunk_bounds, (hunk, bounds)| {
-                                match hunk {
-                                    DisplayDiffHunk::Folded { display_row } => {
-                                        rows_with_hunk_bounds.insert(*display_row, bounds);
-                                    }
-                                    DisplayDiffHunk::Unfolded {
-                                        display_row_range, ..
-                                    } => {
-                                        for display_row in display_row_range.iter_rows() {
-                                            rows_with_hunk_bounds.insert(display_row, bounds);
-                                        }
-                                    }
-                                }
-                                rows_with_hunk_bounds
-                            },
-                        );
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let newest_selection_point =
@@ -7258,7 +7278,7 @@ impl Element for EditorElement {
                                                     scroll_pixel_position,
                                                     &gutter_dimensions,
                                                     &gutter_hitbox,
-                                                    &rows_with_hunk_bounds,
+                                                    &display_hunks,
                                                     window,
                                                     cx,
                                                 );
@@ -7286,7 +7306,7 @@ impl Element for EditorElement {
                             scroll_pixel_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &rows_with_hunk_bounds,
+                            &display_hunks,
                             &snapshot,
                             window,
                             cx,
@@ -8798,12 +8818,11 @@ fn diff_hunk_controls(
                 })
                 .on_click({
                     let editor = editor.clone();
-                    move |_event, window, cx| {
+                    move |_event, _window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 true,
-                                &[hunk_range.start..hunk_range.start],
-                                window,
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
                             );
                         });
@@ -8826,12 +8845,11 @@ fn diff_hunk_controls(
                 })
                 .on_click({
                     let editor = editor.clone();
-                    move |_event, window, cx| {
+                    move |_event, _window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.stage_or_unstage_diff_hunks(
                                 false,
-                                &[hunk_range.start..hunk_range.start],
-                                window,
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
                             );
                         });
@@ -8876,7 +8894,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Next Hunk",
-                                    &GoToHunk::default(),
+                                    &GoToHunk,
                                     &focus_handle,
                                     window,
                                     cx,
@@ -8891,7 +8909,11 @@ fn diff_hunk_controls(
                                     let position =
                                         hunk_range.end.to_point(&snapshot.buffer_snapshot);
                                     editor.go_to_hunk_after_or_before_position(
-                                        &snapshot, position, true, true, window, cx,
+                                        &snapshot,
+                                        position,
+                                        Direction::Next,
+                                        window,
+                                        cx,
                                     );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
@@ -8908,7 +8930,7 @@ fn diff_hunk_controls(
                             move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
-                                    &GoToPreviousHunk::default(),
+                                    &GoToPreviousHunk,
                                     &focus_handle,
                                     window,
                                     cx,
@@ -8923,7 +8945,11 @@ fn diff_hunk_controls(
                                     let point =
                                         hunk_range.start.to_point(&snapshot.buffer_snapshot);
                                     editor.go_to_hunk_after_or_before_position(
-                                        &snapshot, point, false, true, window, cx,
+                                        &snapshot,
+                                        point,
+                                        Direction::Prev,
+                                        window,
+                                        cx,
                                     );
                                     editor.expand_selected_diff_hunks(cx);
                                 });
