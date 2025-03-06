@@ -25,6 +25,8 @@ use sum_tree::MapSeekTarget;
 use util::command::{new_smol_command, new_std_command};
 use util::ResultExt;
 
+pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
     pub is_head: bool,
@@ -740,7 +742,7 @@ fn run_remote_command(
             result = ask_pass.run().fuse() => {
                 match result {
                     AskPassResult::CancelledByUser => {
-                        Err(anyhow!("Operation cancelled by user"))?
+                        Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                     }
                     AskPassResult::Timedout => {
                         Err(anyhow!("Connecting to host timed out"))?

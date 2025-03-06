@@ -9,7 +9,6 @@ use anyhow::{anyhow, Context as _, Result};
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;
 use gpui::impl_actions;
-use repository::PushOptions;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
@@ -32,11 +31,6 @@ pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
 pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
 
 #[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct Push {
-    pub options: Option<PushOptions>,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
 pub struct StageAndNext {
     pub whole_excerpt: bool,
 }
@@ -46,7 +40,7 @@ pub struct UnstageAndNext {
     pub whole_excerpt: bool,
 }
 
-impl_actions!(git, [Push, StageAndNext, UnstageAndNext]);
+impl_actions!(git, [StageAndNext, UnstageAndNext]);
 
 actions!(
     git,
@@ -62,6 +56,8 @@ actions!(
         RestoreTrackedFiles,
         TrashUntrackedFiles,
         Uncommit,
+        Push,
+        ForcePush,
         Pull,
         Fetch,
         Commit,

@@ -1,15 +1,10 @@
-use std::time::Duration;
-
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{
-    percentage, Animation, AnimationExt, AppContext, DismissEvent, Entity, EventEmitter, Focusable,
-    Styled, Transformation,
-};
+use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
 use ui::{
-    div, h_flex, rems, v_flex, ActiveTheme, App, Color, Context, DynamicSpacing, Headline,
-    HeadlineSize, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelSize,
-    ParentElement, Render, SharedString, StyledExt, StyledTypography, Window,
+    div, h_flex, v_flex, ActiveTheme, App, Context, DynamicSpacing, Headline, HeadlineSize, Icon,
+    IconName, IconSize, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    StyledExt, StyledTypography, Window,
 };
 use workspace::ModalView;
 
@@ -73,6 +68,7 @@ impl Render for AskPassModal {
             .on_action(cx.listener(Self::confirm))
             .elevation_2(cx)
             .size_full()
+            .font_buffer(cx)
             .child(
                 h_flex()
                     .px(DynamicSpacing::Base12.rems(cx))
@@ -91,7 +87,6 @@ impl Render for AskPassModal {
             .child(
                 div()
                     .text_buffer(cx)
-                    .font_buffer(cx)
                     .py_2()
                     .px_3()
                     .bg(cx.theme().colors().editor_background)
