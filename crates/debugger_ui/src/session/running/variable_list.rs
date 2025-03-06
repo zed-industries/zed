@@ -161,8 +161,11 @@ impl VariableList {
                 }));
             }
         }
+        if self.entries.len() != entries.len() {
+            self.list.reset(entries.len());
+        }
+
         self.entries = entries;
-        self.list.reset(self.entries.len());
         cx.notify();
     }
 
@@ -448,8 +451,8 @@ impl Render for VariableList {
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
-            .size_full()
             .overflow_y_scroll()
+            .size_full()
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))

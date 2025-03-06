@@ -339,7 +339,7 @@ impl Render for RunningState {
                             )),
                     )
                     .when(*active_thread_item == ThreadItem::Variables, |this| {
-                        this.size_full().child(self.variable_list.clone())
+                        this.child(self.variable_list.clone())
                     })
                     .when(*active_thread_item == ThreadItem::Modules, |this| {
                         this.size_full().child(self.module_list.clone())
