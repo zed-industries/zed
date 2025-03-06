@@ -368,10 +368,6 @@ impl LocalMode {
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.request_interceptor.request()
-        }
         let request = Arc::new(request);
 
         let request_clone = request.clone();

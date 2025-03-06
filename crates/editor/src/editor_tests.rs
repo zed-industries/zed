@@ -28,7 +28,7 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::BreakpointKind,
+    debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
     FakeFs,
 };
@@ -16592,18 +16592,18 @@ async fn assert_highlighted_edits(
 
 #[track_caller]
 fn assert_breakpoint(
-    breakpoints: &BTreeMap<ProjectPath, collections::HashSet<Breakpoint>>,
-    project_path: &ProjectPath,
+    breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+    path: &Arc<Path>,
     expected: Vec<(u32, BreakpointKind)>,
 ) {
     if expected.len() == 0usize {
-        assert!(!breakpoints.contains_key(project_path));
+        assert!(!breakpoints.contains_key(path));
     } else {
         let mut breakpoint = breakpoints
-            .get(project_path)
+            .get(path)
             .unwrap()
             .into_iter()
-            .map(|breakpoint| (breakpoint.cached_position, breakpoint.kind.clone()))
+            .map(|breakpoint| (breakpoint.position, breakpoint.kind.clone()))
             .collect::<Vec<_>>();
 
         breakpoint.sort_by_key(|(cached_position, _)| *cached_position);
@@ -16618,7 +16618,7 @@ fn add_log_breakpoint_at_cursor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    let (anchor, kind) = editor
+    let (anchor, bp) = editor
         .breakpoint_at_cursor_head(window, cx)
         .unwrap_or_else(|| {
             let cursor_position: Point = editor.selections.newest(cx).head();
@@ -16627,17 +16627,17 @@ fn add_log_breakpoint_at_cursor(
                 .snapshot(window, cx)
                 .display_snapshot
                 .buffer_snapshot
-                .breakpoint_anchor(Point::new(cursor_position.row, 0))
+                .anchor_before(Point::new(cursor_position.row, 0))
                 .text_anchor;
 
             let kind = BreakpointKind::Standard;
 
-            (breakpoint_position, kind)
+            (breakpoint_position, Breakpoint { kind })
         });
 
     editor.edit_breakpoint_at_anchor(
         anchor,
-        kind,
+        bp.kind,
         BreakpointEditAction::EditLogMessage(log_message.into()),
         cx,
     );
@@ -16690,7 +16690,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
         Editor::new(
             EditorMode::Full,
             MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project),
+            Some(project.clone()),
             true,
             window,
             cx,
@@ -16698,6 +16698,12 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     });
 
     let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
 
     // assert we can add breakpoint on the first line
     editor.update_in(cx, |editor, window, cx| {
@@ -16708,20 +16714,18 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_eq!(1, breakpoints.len());
     assert_breakpoint(
         &breakpoints,
-        &project_path,
+        &abs_path,
         vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
     );
 
@@ -16732,22 +16736,16 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_eq!(1, breakpoints.len());
-    assert_breakpoint(
-        &breakpoints,
-        &project_path,
-        vec![(3, BreakpointKind::Standard)],
-    );
+    assert_breakpoint(&breakpoints, &abs_path, vec![(3, BreakpointKind::Standard)]);
 
     editor.update_in(cx, |editor, window, cx| {
         editor.move_to_end(&MoveToEnd, window, cx);
@@ -16756,18 +16754,16 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_eq!(0, breakpoints.len());
-    assert_breakpoint(&breakpoints, &project_path, vec![]);
+    assert_breakpoint(&breakpoints, &abs_path, vec![]);
 }
 
 #[gpui::test]
@@ -16805,7 +16801,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         Editor::new(
             EditorMode::Full,
             MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project),
+            Some(project.clone()),
             true,
             window,
             cx,
@@ -16813,6 +16809,12 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
     });
 
     let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
 
     editor.update_in(cx, |editor, window, cx| {
         add_log_breakpoint_at_cursor(editor, "hello world", window, cx);
@@ -16820,19 +16822,17 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_breakpoint(
         &breakpoints,
-        &project_path,
+        &abs_path,
         vec![(0, BreakpointKind::Log("hello world".into()))],
     );
 
@@ -16843,17 +16843,15 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
-    assert_breakpoint(&breakpoints, &project_path, vec![]);
+    assert_breakpoint(&breakpoints, &abs_path, vec![]);
 
     editor.update_in(cx, |editor, window, cx| {
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
@@ -16865,19 +16863,17 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_breakpoint(
         &breakpoints,
-        &project_path,
+        &abs_path,
         vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
     );
 
@@ -16887,19 +16883,17 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_breakpoint(
         &breakpoints,
-        &project_path,
+        &abs_path,
         vec![
             (0, BreakpointKind::Standard),
             (3, BreakpointKind::Log("hello world".into())),
@@ -16912,19 +16906,17 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let breakpoints = editor.update(cx, |editor, cx| {
         editor
-            .project
+            .breakpoint_store()
             .as_ref()
             .unwrap()
             .read(cx)
-            .breakpoint_store()
-            .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_breakpoint(
         &breakpoints,
-        &project_path,
+        &abs_path,
         vec![
             (0, BreakpointKind::Standard),
             (3, BreakpointKind::Log("hello Earth !!".into())),
