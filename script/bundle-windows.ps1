@@ -195,11 +195,11 @@ function BuildInstaller {
     }
 }
 
-# CheckEnvironmentVariables
-# BuildZedAndItsFriends
-# MakeAppx
-# SignZedAndItsFriends
-# CollectFiles
+CheckEnvironmentVariables
+BuildZedAndItsFriends
+MakeAppx
+SignZedAndItsFriends
+CollectFiles
 BuildInstaller
 
 # TODO: upload_to_blob_store
