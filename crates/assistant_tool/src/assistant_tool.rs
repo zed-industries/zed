@@ -4,7 +4,16 @@ mod tool_working_set;
 use std::sync::Arc;
 
 use anyhow::Result;
+use gpui::AnyElement;
+use gpui::IntoElement;
 use gpui::{App, Task, WeakEntity, Window};
+use language::Language;
+use ui::div;
+use ui::Label;
+use ui::LabelCommon;
+use ui::LabelSize;
+use ui::ParentElement;
+use ui::SharedString;
 use workspace::Workspace;
 
 pub use crate::tool_registry::*;
@@ -36,4 +45,47 @@ pub trait Tool: 'static + Send + Sync {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<String>>;
+
+    /// Renders the tool's input when the user expands it.
+    fn render_input(
+        self: Arc<Self>,
+        input: serde_json::Value,
+        _lua_language: Option<Arc<Language>>,
+        _cx: &mut App,
+    ) -> AnyElement {
+        default_render_input(input)
+    }
+
+    /// Renders the tool's output when the user expands it.
+    fn render_output(self: Arc<Self>, output: SharedString, _cx: &mut App) -> AnyElement {
+        default_render_output(output)
+    }
+
+    /// Renders the tool's error message when the user expands it.
+    fn render_error(self: Arc<Self>, err: SharedString, _cx: &mut App) -> AnyElement {
+        default_render_error(err)
+    }
+}
+
+pub fn default_render_input(input: serde_json::Value) -> AnyElement {
+    div()
+        .child(Label::new("Input:").size(LabelSize::Small))
+        .child(Label::new(
+            serde_json::to_string_pretty(&input).unwrap_or_default(),
+        ))
+        .into_any_element()
+}
+
+pub fn default_render_output(output: SharedString) -> AnyElement {
+    div()
+        .child(Label::new("Result:").size(LabelSize::Small))
+        .child(Label::new(output))
+        .into_any_element()
+}
+
+pub fn default_render_error(err: SharedString) -> AnyElement {
+    div()
+        .child(Label::new("Error:").size(LabelSize::Small))
+        .child(Label::new(err))
+        .into_any_element()
 }

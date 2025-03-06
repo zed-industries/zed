@@ -1,17 +1,25 @@
 use anyhow::anyhow;
 use assistant_tool::{Tool, ToolRegistry};
 use collections::HashMap;
-use gpui::{App, AppContext as _, Global, Task, WeakEntity, Window};
+use gpui::{
+    AnyElement, App, AppContext as _, Global, HighlightStyle, StyledText, Task, WeakEntity, Window,
+};
+use language::Language;
 use mlua::{Function, Lua, MultiValue, Result, UserData, UserDataMethods};
 use parking_lot::Mutex;
+use rich_text::{self, Highlight};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
+use std::ops::Range;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
+use theme::ThemeSettings;
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub fn init(cx: &App) {
@@ -20,19 +28,15 @@ pub fn init(cx: &App) {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ScriptingToolInput {
-    pub lua_script: String,
+struct ScriptingToolInput {
+    lua_script: String,
 }
 
 pub struct ScriptingTool;
 
-impl ScriptingTool {
-    pub const NAME: &str = "lua-interpreter";
-}
-
 impl Tool for ScriptingTool {
     fn name(&self) -> String {
-        Self::NAME.into()
+        "lua-interpreter".to_string()
     }
 
     fn description(&self) -> String {
@@ -94,8 +98,74 @@ string being a match that was found within the file)."#.into()
                 .printed_lines
                 .join("\n");
 
-            Ok(format!("The script output the following:\n{output}"))
+            if output.is_empty() {
+                Ok("(The script had no output.)".to_string())
+            } else {
+                Ok(output.to_string())
+            }
         })
+    }
+
+    fn render_input(
+        self: Arc<Self>,
+        input: serde_json::Value,
+        lua_language: Option<Arc<Language>>,
+        cx: &mut App,
+    ) -> AnyElement {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let theme = cx.theme();
+
+        if let Ok(input) = serde_json::from_value::<ScriptingToolInput>(input.clone()) {
+            let label;
+
+            // Use Lua syntax highlighting, if available
+            if let Some(lua_language) = &lua_language.clone() {
+                let mut highlights = Vec::new();
+                let mut buf = String::new();
+
+                rich_text::render_code(&mut buf, &mut highlights, &input.lua_script, lua_language);
+
+                let gpui_highlights: Vec<(Range<usize>, HighlightStyle)> = highlights
+                    .iter()
+                    .map(|(range, highlight)| {
+                        let style = match highlight {
+                            Highlight::Code => Default::default(),
+                            Highlight::Id(id) => id.style(theme.syntax()).unwrap_or_default(),
+                            Highlight::InlineCode(_link) => Default::default(), // Links won't come up
+                            Highlight::Highlight(highlight) => *highlight,
+
+                            _ => HighlightStyle::default(),
+                        };
+                        (range.clone(), style)
+                    })
+                    .collect();
+                label = StyledText::new(buf)
+                    .with_highlights(gpui_highlights)
+                    .into_any_element();
+            } else {
+                label = Label::new(&input.lua_script).into_any_element();
+            };
+
+            div()
+                .when(lua_language.is_some(), |this| {
+                    this.bg(theme.colors().editor_background)
+                })
+                .font_family(theme_settings.buffer_font.family.clone())
+                .child(label)
+                .into_any_element()
+        } else {
+            // Fallback to JSON if lua_language is unavailable
+            Label::new(serde_json::to_string_pretty(&input).unwrap_or_default()).into_any_element()
+        }
+    }
+
+    fn render_output(self: Arc<Self>, output: SharedString, cx: &mut App) -> AnyElement {
+        let theme_settings = ThemeSettings::get_global(cx);
+
+        div()
+            .font_family(theme_settings.buffer_font.family.clone())
+            .child(output)
+            .into_any_element()
     }
 }
 

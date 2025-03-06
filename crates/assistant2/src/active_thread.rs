@@ -1,19 +1,15 @@
-use assistant_tool::ToolWorkingSet;
+use assistant_tool::{ToolRegistry, ToolWorkingSet};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, HighlightStyle, Length, ListAlignment, ListOffset, ListState,
-    StyleRefinement, StyledText, Subscription, Task, TextStyleRefinement, UnderlineStyle,
-    WeakEntity,
+    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
+    Task, TextStyleRefinement, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
-use rich_text::{self, Highlight};
-use scripting_tool::{ScriptingTool, ScriptingToolInput};
 use settings::Settings as _;
-use std::ops::Range;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
@@ -87,19 +83,12 @@ impl ActiveThread {
         // Initialize the Lua language in the background, for syntax highlighting.
         let language_registry = this.language_registry.clone();
         cx.spawn(|this, mut cx| async move {
-            match language_registry.language_for_name("Lua").await {
-                Ok(lua_language) => {
-                    this.update(&mut cx, |this, _| {
-                        this.lua_language = Some(lua_language);
-                    })?;
-                }
-                Err(err) => {
-                    log::warn!(
-                        "Failed to load Lua language for syntax highlighting: {}",
-                        err
-                    );
-                }
+            if let Ok(lua_language) = language_registry.language_for_name("Lua").await {
+                this.update(&mut cx, |this, _| {
+                    this.lua_language = Some(lua_language);
+                })?;
             }
+
             Ok::<_, anyhow::Error>(())
         })
         .detach();
@@ -685,7 +674,7 @@ impl ActiveThread {
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_scripting_tool = tool_use.name == ScriptingTool::NAME;
+        let tool = ToolRegistry::global(cx).tool(&tool_use.name);
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
@@ -752,123 +741,15 @@ impl ActiveThread {
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
                                     .bg(cx.theme().colors().editor_background)
-                                    .child(Label::new("Input:").size(LabelSize::Small))
-                                    .child(if is_scripting_tool {
-                                        let theme_settings = ThemeSettings::get_global(cx);
-                                        let buffer_font_size = TextSize::Small.rems(cx);
-
-                                        // Special handling for lua-interpreter tool
-                                        if let Ok(input) =
-                                            serde_json::from_value::<ScriptingToolInput>(
-                                                serde_json::to_value(&tool_use.input)
-                                                    .unwrap_or_default(),
-                                            )
-                                        {
-                                            // Try to get Lua language for syntax highlighting
-                                            if let Some(lua_language) = &self.lua_language {
-                                                let mut buf = String::new();
-                                                let mut highlights = Vec::new();
-                                                let theme = cx.theme();
-                                                let code_background =
-                                                    theme.colors().surface_background;
-
-                                                // Render with syntax highlighting
-                                                rich_text::render_code(
-                                                    &mut buf,
-                                                    &mut highlights,
-                                                    &input.lua_script,
-                                                    lua_language,
-                                                );
-
-                                                let gpui_highlights: Vec<(
-                                                    Range<usize>,
-                                                    HighlightStyle,
-                                                )> = highlights
-                                                    .iter()
-                                                    .map(|(range, highlight)| {
-                                                        let style = match highlight {
-                                                            // Map your Highlight variants to appropriate HighlightStyle
-                                                            // You'll need to customize this mapping based on your Highlight enum
-                                                            Highlight::Code => HighlightStyle {
-                                                                background_color: Some(
-                                                                    code_background,
-                                                                ),
-                                                                ..Default::default()
-                                                            },
-                                                            Highlight::Id(id) => HighlightStyle {
-                                                                background_color: Some(
-                                                                    code_background,
-                                                                ),
-                                                                ..id.style(theme.syntax())
-                                                                    .unwrap_or_default()
-                                                            },
-                                                            Highlight::InlineCode(link) => {
-                                                                if *link {
-                                                                    HighlightStyle {
-                                                                        background_color: Some(
-                                                                            code_background,
-                                                                        ),
-                                                                        underline: Some(
-                                                                            UnderlineStyle {
-                                                                                thickness: 1.0
-                                                                                    .into(),
-                                                                                ..Default::default()
-                                                                            },
-                                                                        ),
-                                                                        ..Default::default()
-                                                                    }
-                                                                } else {
-                                                                    HighlightStyle {
-                                                                        background_color: Some(
-                                                                            code_background,
-                                                                        ),
-                                                                        ..Default::default()
-                                                                    }
-                                                                }
-                                                            }
-                                                            Highlight::Highlight(highlight) => {
-                                                                *highlight
-                                                            }
-
-                                                            _ => HighlightStyle::default(),
-                                                        };
-                                                        (range.clone(), style)
-                                                    })
-                                                    .collect();
-
-                                                div()
-                                                    .font_family(
-                                                        theme_settings.buffer_font.family.clone(),
-                                                    )
-                                                    .text_size(buffer_font_size)
-                                                    .child(
-                                                        StyledText::new(buf)
-                                                            .with_highlights(gpui_highlights),
-                                                    )
-                                                    .into_any_element()
-                                            } else {
-                                                // Fallback to JSON if lua_script field not found
-                                                Label::new(
-                                                    serde_json::to_string_pretty(&tool_use.input)
-                                                        .unwrap_or_default(),
-                                                )
-                                                .into_any_element()
-                                            }
-                                        } else {
-                                            // Fallback to JSON if input parsing fails
-                                            Label::new(
-                                                serde_json::to_string_pretty(&tool_use.input)
-                                                    .unwrap_or_default(),
-                                            )
-                                            .into_any_element()
+                                    .child(match tool.clone() {
+                                        Some(tool) => tool.render_input(
+                                            tool_use.input,
+                                            self.lua_language.clone(),
+                                            cx,
+                                        ),
+                                        None => {
+                                            assistant_tool::default_render_input(tool_use.input)
                                         }
-                                    } else {
-                                        // Default rendering for other tools
-                                        Label::new(
-                                            serde_json::to_string_pretty(&tool_use.input)
-                                                .unwrap_or_default(),
-                                        )
-                                        .into_any_element()
                                     }),
                             )
                             .map(|parent| match tool_use.status {
@@ -878,16 +759,16 @@ impl ActiveThread {
                                         .py_1()
                                         .px_2p5()
                                         .bg(cx.theme().colors().editor_background)
-                                        .child(Label::new("Result:").size(LabelSize::Small))
-                                        .child(Label::new(output)),
+                                        .child(match tool {
+                                            Some(tool) => tool.render_output(output, cx),
+                                            None => assistant_tool::default_render_output(output),
+                                        }),
                                 ),
                                 ToolUseStatus::Error(err) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Error:"))
-                                        .child(Label::new(err)),
+                                    v_flex().gap_0p5().py_1().px_2p5().child(match tool {
+                                        Some(tool) => tool.render_error(err, cx),
+                                        None => assistant_tool::default_render_output(err),
+                                    }),
                                 ),
                                 ToolUseStatus::Pending | ToolUseStatus::Running => parent,
                             }),
