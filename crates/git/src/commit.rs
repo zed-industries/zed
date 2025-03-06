@@ -1,7 +1,26 @@
 use crate::Oid;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
+use gpui::SharedString;
 use std::path::Path;
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct CommitSummary {
+    pub sha: SharedString,
+    pub subject: SharedString,
+    /// This is a unix timestamp
+    pub commit_timestamp: i64,
+    pub has_parent: bool,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct CommitDetails {
+    pub sha: SharedString,
+    pub message: SharedString,
+    pub commit_timestamp: i64,
+    pub committer_email: SharedString,
+    pub committer_name: SharedString,
+}
 
 pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
     if shas.is_empty() {

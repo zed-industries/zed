@@ -13,8 +13,9 @@ use futures::{
     StreamExt as _,
 };
 use git::{
+    commit::CommitDetails;
     repository::{
-        Branch, CommitDetails, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
+        Branch, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
         ResetMode,
     },
     status::FileStatus,

@@ -1,6 +1,7 @@
+use crate::commit::{CommitDetails, CommitSummary};
 use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
-use crate::{blame::Blame, status::GitStatus};
+use crate::{blame::Blame, commit_history::CommitHistory, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
 use askpass::{AskPassResult, AskPassSession};
 use collections::{HashMap, HashSet};
@@ -102,24 +103,6 @@ pub struct UpstreamTrackingStatus {
     pub behind: u32,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct CommitSummary {
-    pub sha: SharedString,
-    pub subject: SharedString,
-    /// This is a unix timestamp
-    pub commit_timestamp: i64,
-    pub has_parent: bool,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct CommitDetails {
-    pub sha: SharedString,
-    pub message: SharedString,
-    pub commit_timestamp: i64,
-    pub committer_email: SharedString,
-    pub committer_name: SharedString,
-}
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
     pub name: SharedString,
@@ -161,6 +144,8 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the list of git statuses, sorted by path
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
+
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Arc<Vec<CommitDetails>>>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -460,7 +445,19 @@ impl GitRepository for RealGitRepository {
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
+
         GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
+    }
+
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Arc<Vec<CommitDetails>>> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        CommitHistory::list(&self.git_binary_path, &working_directory, skip, limit)
     }
 
     fn branch_exits(&self, name: &str) -> Result<bool> {
@@ -955,6 +952,10 @@ impl GitRepository for FakeGitRepository {
         Ok(GitStatus {
             entries: entries.into(),
         })
+    }
+
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Arc<Vec<CommitDetails>>> {
+        Ok(Arc::new(Vec::new()))
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {

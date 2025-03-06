@@ -20,6 +20,7 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
+    commit::CommitSummary,
     repository::{Branch, GitRepository, RepoPath, UpstreamTrackingStatus},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
@@ -378,7 +379,7 @@ pub fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                     .unwrap_or(git::repository::UpstreamTracking::Gone),
             }),
         most_recent_commit: proto.most_recent_commit.as_ref().map(|commit| {
-            git::repository::CommitSummary {
+            git::commit::CommitSummary {
                 sha: commit.sha.to_string().into(),
                 subject: commit.subject.to_string().into(),
                 commit_timestamp: commit.commit_timestamp,
