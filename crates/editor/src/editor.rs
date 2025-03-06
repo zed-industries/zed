@@ -2247,6 +2247,9 @@ impl Editor {
             cx.subscribe(&other, |this, other, other_evt, cx| match other_evt {
                 EditorEvent::SelectionsChanged { local: true } => {
                     let other_selections = other.read(cx).selections.disjoint.to_vec();
+                    if other_selections.is_empty() {
+                        return;
+                    }
                     this.selections.change_with(cx, |selections| {
                         selections.select_anchors(other_selections);
                     });
@@ -2258,6 +2261,9 @@ impl Editor {
             cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| match this_evt {
                 EditorEvent::SelectionsChanged { local: true } => {
                     let these_selections = this.selections.disjoint.to_vec();
+                    if these_selections.is_empty() {
+                        return;
+                    }
                     other.update(cx, |other_editor, cx| {
                         other_editor.selections.change_with(cx, |selections| {
                             selections.select_anchors(these_selections);
