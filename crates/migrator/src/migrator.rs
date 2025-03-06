@@ -309,14 +309,17 @@ mod tests {
     }
 
     #[test]
-    fn test_string_to_array_replace() {
+    fn test_incremental_migrations() {
+        // Here string transforms to array internally. Then, that array transforms back to string.
         assert_migrate_keymap(
             r#"
                 [
                     {
                         "bindings": {
-                            "ctrl-q": "editor::GoToHunk",
-                            "ctrl-w": "editor::GoToPrevHunk"
+                            "ctrl-q": "editor::GoToHunk", // should remain same
+                            "ctrl-w": "editor::GoToPrevHunk", // should rename
+                            "ctrl-q": ["editor::GoToHunk", { "center_cursor": true }], // should transform
+                            "ctrl-w": ["editor::GoToPreviousHunk", { "center_cursor": true }] // should transform
                         }
                     }
                 ]
@@ -326,8 +329,10 @@ mod tests {
                 [
                     {
                         "bindings": {
-                            "ctrl-q": ["editor::GoToHunk", { "center_cursor": true }],
-                            "ctrl-w": ["editor::GoToPreviousHunk", { "center_cursor": true }]
+                            "ctrl-q": "editor::GoToHunk", // should remain same
+                            "ctrl-w": "editor::GoToPreviousHunk", // should rename
+                            "ctrl-q": "editor::GoToHunk", // should transform
+                            "ctrl-w": "editor::GoToPreviousHunk" // should transform
                         }
                     }
                 ]
