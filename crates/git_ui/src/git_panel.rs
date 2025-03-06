@@ -726,12 +726,18 @@ impl GitPanel {
             };
 
             if entry.worktree_path.starts_with("..") {
-                self.workspace.update(cx, |workspace, cx| {
-                    let path;
-                    workspace
-                        .open_path(path, None, false, window, cx)
-                        .detach_and_log_err(cx);
-                });
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace
+                            .open_abs_path(
+                                entry.abs_path.clone(),
+                                true, /* FIXME */
+                                window,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                    })
+                    .ok();
             } else {
                 self.workspace
                     .update(cx, |workspace, cx| {
