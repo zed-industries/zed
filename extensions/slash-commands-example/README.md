@@ -14,13 +14,79 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Setup
 
+### Option 1: Setup from copied directory
+
+```sh
+# Create the extension directory in your Zed config
+mkdir -p ~/.config/zed/extensions/slash-commands-example
+cp -R /path/to/zed/extensions/slash-commands-example/* ~/.config/zed/extensions/slash-commands-example/
+
+# Edit the Cargo.toml file to make it standalone (removing workspace references)
+cd ~/.config/zed/extensions/slash-commands-example/
+```
+
+Update the Cargo.toml file to make it standalone by replacing:
+
+```toml
+[package]
+name = "slash_commands_example"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/slash_commands_example.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.1.0"
+```
+
+with:
+
+```toml
+[package]
+name = "slash_commands_example"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+path = "src/slash_commands_example.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.1.0"
+```
+
+### Option 2: Setup as a new standalone project
+
 ```sh
 git clone https://github.com/zed-industries/zed.git
 cp -RL zed/extensions/slash-commands-example .
 
 cd slash-commands-example/
 
-sed -i '' '/\[lints]/,/^$/s/^workspace/#&/' Cargo.toml
+# Update Cargo.toml to make it standalone
+cat > Cargo.toml << EOF
+[package]
+name = "slash_commands_example"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+path = "src/slash_commands_example.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.1.0"
+EOF
+
 curl -O https://raw.githubusercontent.com/rust-lang/rust/master/LICENSE-APACHE
 echo "# Zed Slash Commands Example Extension" > README.md
 echo "Cargo.lock" > .gitignore
@@ -40,7 +106,7 @@ zed $_
 
 1. Open the command palette (`cmd-shift-p` or `ctrl-shift-p`).
 2. Launch `zed: install dev extension`
-3. Select the `slash-commands-example` folder created above
+3. Select the extension folder created above
 
 ## Test
 
@@ -50,7 +116,7 @@ Open the assistant and type `/echo` and `/pick-one` at the beginning of a line.
 
 Open the `extensions.toml` file and set the `id`, `name`, `description`, `authors` and `repository` fields.
 
-Rename `slash-commands-example.rs` you'll also have to update `Cargo.toml
+Rename `slash-commands-example.rs` you'll also have to update `Cargo.toml`
 
 ## Rebuild
 
