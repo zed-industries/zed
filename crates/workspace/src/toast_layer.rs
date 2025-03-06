@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::{animation::DefaultAnimations, prelude::*};
 
-const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(3000);
+const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(2400);
 const MINIMUM_RESUME_DURATION: Duration = Duration::from_millis(800);
 
 pub trait ToastView: ManagedView {}
