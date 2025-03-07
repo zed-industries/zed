@@ -138,6 +138,7 @@ impl ProjectDiff {
                 window,
                 cx,
             );
+            diff_display_editor.disable_inline_diagnostics();
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
                 workspace: workspace.downgrade(),
