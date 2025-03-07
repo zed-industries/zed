@@ -82,7 +82,7 @@ impl From<Rgba> for u32 {
 
 struct RgbaVisitor;
 
-impl<'de> Visitor<'de> for RgbaVisitor {
+impl Visitor<'_> for RgbaVisitor {
     type Value = Rgba;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -180,7 +180,7 @@ impl TryFrom<&'_ str> for Rgba {
                 /// Duplicates a given hex digit.
                 /// E.g., `0xf` -> `0xff`.
                 const fn duplicate(value: u8) -> u8 {
-                    value << 4 | value
+                    (value << 4) | value
                 }
 
                 (duplicate(r), duplicate(g), duplicate(b), duplicate(a))
@@ -634,7 +634,7 @@ impl Display for ColorSpace {
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
@@ -644,6 +644,28 @@ pub struct Background {
     pub(crate) colors: [LinearColorStop; 2],
     /// Padding for alignment for repr(C) layout.
     pad: u32,
+}
+
+impl std::fmt::Debug for Background {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.tag {
+            BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
+            BackgroundTag::LinearGradient => {
+                write!(
+                    f,
+                    "LinearGradient({}, {:?}, {:?})",
+                    self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+                )
+            }
+            BackgroundTag::PatternSlash => {
+                write!(
+                    f,
+                    "PatternSlash({:?}, {})",
+                    self.solid, self.gradient_angle_or_pattern_height
+                )
+            }
+        }
+    }
 }
 
 impl Eq for Background {}
@@ -666,6 +688,14 @@ pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
         gradient_angle_or_pattern_height: thickness,
+        ..Default::default()
+    }
+}
+
+/// Creates a solid background color.
+pub fn solid_background(color: impl Into<Hsla>) -> Background {
+    Background {
+        solid: color.into(),
         ..Default::default()
     }
 }

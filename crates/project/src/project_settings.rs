@@ -168,6 +168,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// How hunks are displayed visually in the editor.
+    ///
+    /// Default: transparent
+    pub hunk_style: Option<GitHunkStyleSetting>,
 }
 
 impl GitSettings {
@@ -198,6 +202,25 @@ impl GitSettings {
             _ => false,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHunkStyleSetting {
+    /// Show unstaged hunks with a transparent background
+    #[default]
+    Transparent,
+    /// Show unstaged hunks with a pattern background
+    Pattern,
+    /// Show unstaged hunks with a border background
+    Border,
+
+    /// Show staged hunks with a pattern background
+    StagedPattern,
+    /// Show staged hunks with a pattern background
+    StagedTransparent,
+    /// Show staged hunks with a pattern background
+    StagedBorder,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]

@@ -33,9 +33,9 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_prev(
+    pub fn select_previous(
         &mut self,
-        _: &menu::SelectPrev,
+        _: &menu::SelectPrevious,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -166,7 +166,7 @@ impl Render for ThreadHistory {
             .overflow_y_scroll()
             .size_full()
             .p_1()
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
@@ -254,18 +254,28 @@ impl RenderOnce for PastThread {
         );
 
         ListItem::new(SharedString::from(self.thread.id.to_string()))
-            .outlined()
+            .rounded()
             .toggle_state(self.selected)
-            .start_slot(
-                Icon::new(IconName::MessageCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
             .spacing(ListItemSpacing::Sparse)
-            .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
+            .start_slot(
+                div()
+                    .max_w_4_5()
+                    .child(Label::new(summary).size(LabelSize::Small).truncate()),
+            )
             .end_slot(
                 h_flex()
                     .gap_1p5()
+                    .child(
+                        Label::new("Thread")
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    )
+                    .child(
+                        div()
+                            .size(px(3.))
+                            .rounded_full()
+                            .bg(cx.theme().colors().text_disabled),
+                    )
                     .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
@@ -340,18 +350,28 @@ impl RenderOnce for PastContext {
         ListItem::new(SharedString::from(
             self.context.path.to_string_lossy().to_string(),
         ))
-        .outlined()
+        .rounded()
         .toggle_state(self.selected)
-        .start_slot(
-            Icon::new(IconName::Code)
-                .size(IconSize::Small)
-                .color(Color::Muted),
-        )
         .spacing(ListItemSpacing::Sparse)
-        .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
+        .start_slot(
+            div()
+                .max_w_4_5()
+                .child(Label::new(summary).size(LabelSize::Small).truncate()),
+        )
         .end_slot(
             h_flex()
                 .gap_1p5()
+                .child(
+                    Label::new("Prompt Editor")
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    div()
+                        .size(px(3.))
+                        .rounded_full()
+                        .bg(cx.theme().colors().text_disabled),
+                )
                 .child(
                     Label::new(context_timestamp)
                         .color(Color::Muted)

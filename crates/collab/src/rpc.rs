@@ -308,7 +308,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
-            .add_request_handler(forward_read_only_project_request::<proto::GitBranches>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(
@@ -328,6 +328,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
             .add_request_handler(forward_mutating_project_request::<proto::ReloadBuffers>)
+            .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeActionKind>)
             .add_request_handler(forward_mutating_project_request::<proto::FormatBuffers>)
             .add_request_handler(forward_mutating_project_request::<proto::CreateProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::RenameProjectEntry>)
@@ -392,9 +393,6 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OpenContext>)
             .add_request_handler(forward_mutating_project_request::<proto::CreateContext>)
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
-            .add_request_handler(forward_mutating_project_request::<proto::Push>)
-            .add_request_handler(forward_mutating_project_request::<proto::Pull>)
-            .add_request_handler(forward_mutating_project_request::<proto::Fetch>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
@@ -404,6 +402,10 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
+            .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
             .add_request_handler({
@@ -975,7 +977,7 @@ impl Server {
     }
 }
 
-impl<'a> Deref for ConnectionPoolGuard<'a> {
+impl Deref for ConnectionPoolGuard<'_> {
     type Target = ConnectionPool;
 
     fn deref(&self) -> &Self::Target {
@@ -983,13 +985,13 @@ impl<'a> Deref for ConnectionPoolGuard<'a> {
     }
 }
 
-impl<'a> DerefMut for ConnectionPoolGuard<'a> {
+impl DerefMut for ConnectionPoolGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.guard
     }
 }
 
-impl<'a> Drop for ConnectionPoolGuard<'a> {
+impl Drop for ConnectionPoolGuard<'_> {
     fn drop(&mut self) {
         #[cfg(test)]
         self.check_invariants();

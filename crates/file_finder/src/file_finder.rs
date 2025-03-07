@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
+#[cfg(test)]
+mod open_path_prompt_tests;
 
 pub mod file_finder_settings;
 mod new_path_prompt;
@@ -40,11 +42,11 @@ use ui::{
 };
 use util::{maybe, paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, SplitDirection,
-    Workspace,
+    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, OpenOptions,
+    OpenVisible, SplitDirection, Workspace,
 };
 
-actions!(file_finder, [SelectPrev, ToggleMenu]);
+actions!(file_finder, [SelectPrevious, ToggleMenu]);
 
 impl ModalView for FileFinder {
     fn on_before_dismiss(
@@ -199,9 +201,14 @@ impl FileFinder {
         }
     }
 
-    fn handle_select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_select_prev(
+        &mut self,
+        _: &SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.init_modifiers = Some(window.modifiers());
-        window.dispatch_action(Box::new(menu::SelectPrev), cx);
+        window.dispatch_action(Box::new(menu::SelectPrevious), cx);
     }
 
     fn handle_toggle_menu(&mut self, _: &ToggleMenu, window: &mut Window, cx: &mut Context<Self>) {
@@ -1232,7 +1239,10 @@ impl PickerDelegate for FileFinderDelegate {
                                         } else {
                                             workspace.open_abs_path(
                                                 abs_path.to_path_buf(),
-                                                false,
+                                                OpenOptions {
+                                                    visible: Some(OpenVisible::None),
+                                                    ..Default::default()
+                                                },
                                                 window,
                                                 cx,
                                             )
@@ -1451,9 +1461,9 @@ impl<'a> PathComponentSlice<'a> {
                     matches.next();
                 }
                 if is_first_normal || is_last || !is_normal || contains_match {
-                    if !longest
+                    if longest
                         .as_ref()
-                        .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                        .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
                     {
                         longest = Some(cur);
                     }
@@ -1462,9 +1472,9 @@ impl<'a> PathComponentSlice<'a> {
                     cur.end = i + 1;
                 }
             }
-            if !longest
+            if longest
                 .as_ref()
-                .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
             {
                 longest = Some(cur);
             }

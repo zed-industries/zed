@@ -252,8 +252,10 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     v_flex()
                         .child(
                             LabelLike::new().child(
-                                StyledText::new(label)
-                                    .with_highlights(&window.text_style().clone(), highlights),
+                                StyledText::new(label).with_default_highlights(
+                                    &window.text_style().clone(),
+                                    highlights,
+                                ),
                             ),
                         )
                         .child(Label::new(path).color(Color::Muted)),

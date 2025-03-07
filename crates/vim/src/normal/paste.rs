@@ -81,32 +81,32 @@ impl Vim {
                     }
                 }
 
-                let first_selection_start_column =
+                let first_selection_indent_column =
                     clipboard_selections.as_ref().and_then(|zed_selections| {
                         zed_selections
                             .first()
-                            .map(|selection| selection.start_column)
+                            .map(|selection| selection.first_line_indent)
                     });
                 let before = action.before || vim.mode == Mode::VisualLine;
 
                 let mut edits = Vec::new();
                 let mut new_selections = Vec::new();
-                let mut original_start_columns = Vec::new();
+                let mut original_indent_columns = Vec::new();
                 let mut start_offset = 0;
 
                 for (ix, (selection, preserve)) in selections_to_process.iter().enumerate() {
-                    let (mut to_insert, original_start_column) =
+                    let (mut to_insert, original_indent_column) =
                         if let Some(clipboard_selections) = &clipboard_selections {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 let text = text[start_offset..end_offset].to_string();
                                 start_offset = end_offset + 1;
-                                (text, Some(clipboard_selection.start_column))
+                                (text, Some(clipboard_selection.first_line_indent))
                             } else {
-                                ("".to_string(), first_selection_start_column)
+                                ("".to_string(), first_selection_indent_column)
                             }
                         } else {
-                            (text.to_string(), first_selection_start_column)
+                            (text.to_string(), first_selection_indent_column)
                         };
                     let line_mode = to_insert.ends_with('\n');
                     let is_multiline = to_insert.contains('\n');
@@ -152,7 +152,7 @@ impl Vim {
                         new_selections.push((anchor, line_mode, is_multiline));
                     }
                     edits.push((point_range, to_insert.repeat(count)));
-                    original_start_columns.extend(original_start_column);
+                    original_indent_columns.push(original_indent_column);
                 }
 
                 let cursor_offset = editor.selections.last::<usize>(cx).head();
@@ -160,10 +160,10 @@ impl Vim {
                     .buffer()
                     .read(cx)
                     .snapshot(cx)
-                    .settings_at(cursor_offset, cx)
+                    .language_settings_at(cursor_offset, cx)
                     .auto_indent_on_paste
                 {
-                    editor.edit_with_block_indent(edits, original_start_columns, cx);
+                    editor.edit_with_block_indent(edits, original_indent_columns, cx);
                 } else {
                     editor.edit(edits, cx);
                 }

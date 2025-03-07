@@ -6,11 +6,11 @@ use gpui::{
 };
 use language::Buffer;
 use language::CodeLabel;
-use lsp::LanguageServerId;
 use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
+use project::CompletionSource;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{
@@ -233,11 +233,9 @@ impl CompletionsMenu {
                     runs: Default::default(),
                     filter_range: Default::default(),
                 },
-                server_id: LanguageServerId(usize::MAX),
                 documentation: None,
-                lsp_completion: Default::default(),
                 confirm: None,
-                resolved: true,
+                source: CompletionSource::Custom,
             })
             .collect();
 
@@ -500,7 +498,12 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
-                                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                                    if completion
+                                        .source
+                                        .lsp_completion()
+                                        .and_then(|lsp_completion| lsp_completion.deprecated)
+                                        .unwrap_or(false)
+                                    {
                                         highlight.strikethrough = Some(StrikethroughStyle {
                                             thickness: 1.0.into(),
                                             ..Default::default()
@@ -514,7 +517,7 @@ impl CompletionsMenu {
                         );
 
                         let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_highlights(&style.text, highlights);
+                            .with_default_highlights(&style.text, highlights);
                         let documentation_label = if let Some(
                             CompletionDocumentation::SingleLine(text),
                         ) = documentation
@@ -534,7 +537,7 @@ impl CompletionsMenu {
                         };
                         let color_swatch = completion
                             .color()
-                            .map(|color| div().size_4().bg(color).rounded_sm());
+                            .map(|color| div().size_4().bg(color).rounded_xs());
 
                         div().min_w(px(280.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
@@ -708,7 +711,10 @@ impl CompletionsMenu {
 
                 let completion = &completions[mat.candidate_id];
                 let sort_key = completion.sort_key();
-                let sort_text = completion.lsp_completion.sort_text.as_deref();
+                let sort_text = completion
+                    .source
+                    .lsp_completion()
+                    .and_then(|lsp_completion| lsp_completion.sort_text.as_deref());
                 let score = Reverse(OrderedFloat(mat.score));
 
                 if mat.score >= 0.2 {
@@ -851,7 +857,7 @@ impl CodeActionsItem {
 
     pub fn label(&self) -> String {
         match self {
-            Self::CodeAction { action, .. } => action.lsp_action.title.clone(),
+            Self::CodeAction { action, .. } => action.lsp_action.title().to_owned(),
             Self::Task(_, task) => task.resolved_label.clone(),
         }
     }
@@ -984,7 +990,7 @@ impl CodeActionsMenu {
                                             .overflow_hidden()
                                             .child(
                                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                                action.lsp_action.title.replace("\n", ""),
+                                                action.lsp_action.title().replace("\n", ""),
                                             )
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1029,7 +1035,7 @@ impl CodeActionsMenu {
                 .max_by_key(|(_, action)| match action {
                     CodeActionsItem::Task(_, task) => task.resolved_label.chars().count(),
                     CodeActionsItem::CodeAction { action, .. } => {
-                        action.lsp_action.title.chars().count()
+                        action.lsp_action.title().chars().count()
                     }
                 })
                 .map(|(ix, _)| ix),

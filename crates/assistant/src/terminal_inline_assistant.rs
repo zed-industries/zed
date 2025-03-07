@@ -20,7 +20,7 @@ use language_model::{
     LanguageModelRequestMessage, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -506,7 +506,7 @@ struct PromptEditor {
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = &self.codegen.read(cx).status;
         let buttons = match status {
             CodegenStatus::Idle => {
@@ -643,7 +643,7 @@ impl Render for PromptEditor {
                     .gap_2()
                     .child(LanguageModelSelectorPopoverMenu::new(
                         self.language_model_selector.clone(),
-                        IconButton::new("context", IconName::SettingsAlt)
+                        IconButton::new("change-model", IconName::SettingsAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted),
@@ -1073,7 +1073,10 @@ pub enum CodegenEvent {
 
 impl EventEmitter<CodegenEvent> for Codegen {}
 
+#[cfg(not(target_os = "windows"))]
 const CLEAR_INPUT: &str = "\x15";
+#[cfg(target_os = "windows")]
+const CLEAR_INPUT: &str = "\x03";
 const CARRIAGE_RETURN: &str = "\x0d";
 
 struct TerminalTransaction {

@@ -1,11 +1,11 @@
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod logger;
 mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
-use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
@@ -13,7 +13,6 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
-use env_logger::Builder;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
@@ -24,11 +23,11 @@ use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
-use log::LevelFilter;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
+use logger::{init_logger, init_stdout_logger};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
@@ -36,11 +35,9 @@ use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{watch_config_file, Settings, SettingsStore};
-use simplelog::ConfigBuilder;
 use std::{
     env,
-    fs::OpenOptions,
-    io::{self, IsTerminal, Write},
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
     sync::Arc,
@@ -49,7 +46,6 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use time::UtcOffset;
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
@@ -173,6 +169,17 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    let args = Args::parse();
+
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
     menu::init();
     zed_actions::init();
 
@@ -182,7 +189,11 @@ fn main() {
         return;
     }
 
-    init_logger();
+    if stdout_is_a_pty() {
+        init_stdout_logger();
+    } else {
+        init_logger();
+    }
 
     log::info!("========== starting zed ==========");
 
@@ -206,26 +217,27 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check =
-        if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-            false
-        } else {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            {
-                crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
-            }
+    let failed_single_instance_check = if *db::ZED_STATELESS
+        || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
+    {
+        false
+    } else {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
+        }
 
-            #[cfg(target_os = "windows")]
-            {
-                !crate::zed::windows_only_instance::check_single_instance()
-            }
+        #[cfg(target_os = "windows")]
+        {
+            !crate::zed::windows_only_instance::check_single_instance(open_listener.clone(), &args)
+        }
 
-            #[cfg(target_os = "macos")]
-            {
-                use zed::mac_only_instance::*;
-                ensure_only_instance() != IsOnlyInstance::Yes
-            }
-        };
+        #[cfg(target_os = "macos")]
+        {
+            use zed::mac_only_instance::*;
+            ensure_only_instance() != IsOnlyInstance::Yes
+        }
+    };
     if failed_single_instance_check {
         println!("zed is already running");
         return;
@@ -314,6 +326,7 @@ fn main() {
             .or_else(read_proxy_from_env);
         let http = {
             let _guard = Tokio::handle(cx).enter();
+
             ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
                 .expect("could not start HTTP client")
         };
@@ -463,6 +476,7 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
+        scripting_tool::init(cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,
@@ -493,9 +507,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);
-        git_ui::git_panel::init(cx);
         outline_panel::init(cx);
-        component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -574,7 +586,6 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let args = Args::parse();
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
@@ -608,6 +619,9 @@ fn main() {
         }
 
         let app_state = app_state.clone();
+
+        component_preview::init(app_state.clone(), cx);
+
         cx.spawn(move |cx| async move {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
@@ -627,6 +641,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
             .detach();
+        return;
+    }
+
+    if let Some(action_index) = request.dock_menu_action {
+        cx.perform_dock_menu_action(action_index);
         return;
     }
 
@@ -918,82 +937,6 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
-fn init_logger() {
-    if stdout_is_a_pty() {
-        init_stdout_logger();
-    } else {
-        let level = LevelFilter::Info;
-
-        // Prevent log file from becoming too large.
-        const KIB: u64 = 1024;
-        const MIB: u64 = 1024 * KIB;
-        const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(paths::log_file())
-            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
-        {
-            let _ = std::fs::rename(paths::log_file(), paths::old_log_file());
-        }
-
-        match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(paths::log_file())
-        {
-            Ok(log_file) => {
-                let mut config_builder = ConfigBuilder::new();
-
-                config_builder.set_time_format_rfc3339();
-                let local_offset = chrono::Local::now().offset().fix().local_minus_utc();
-                if let Ok(offset) = UtcOffset::from_whole_seconds(local_offset) {
-                    config_builder.set_time_offset(offset);
-                }
-
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                {
-                    config_builder.add_filter_ignore_str("zbus");
-                    config_builder.add_filter_ignore_str("blade_graphics::hal::resource");
-                    config_builder.add_filter_ignore_str("naga::back::spv::writer");
-                }
-
-                let config = config_builder.build();
-                simplelog::WriteLogger::init(level, config, log_file)
-                    .expect("could not initialize logger");
-            }
-            Err(err) => {
-                init_stdout_logger();
-                log::error!(
-                    "could not open log file, defaulting to stdout logging: {}",
-                    err
-                );
-            }
-        }
-    }
-}
-
-fn init_stdout_logger() {
-    Builder::new()
-        .parse_default_env()
-        .format(|buf, record| {
-            use env_logger::fmt::style::{AnsiColor, Style};
-
-            let subtle = Style::new().fg_color(Some(AnsiColor::BrightBlack.into()));
-            write!(buf, "{subtle}[{subtle:#}")?;
-            write!(
-                buf,
-                "{} ",
-                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
-            )?;
-            let level_style = buf.default_level_style(record.level());
-            write!(buf, "{level_style}{:<5}{level_style:#}", record.level())?;
-            if let Some(path) = record.module_path() {
-                write!(buf, " {path}")?;
-            }
-            write!(buf, "{subtle}]{subtle:#}")?;
-            writeln!(buf, " {}", record.args())
-        })
-        .init();
-}
-
 fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
@@ -1012,6 +955,18 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
+    #[arg(long)]
+    #[cfg(target_os = "windows")]
+    #[arg(hide = true)]
+    foreground: bool,
+
+    /// The dock action to perform. This is used on Windows only.
+    #[arg(long)]
+    #[cfg(target_os = "windows")]
+    #[arg(hide = true)]
+    dock_action: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -1078,7 +1033,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
     let extension_store = ExtensionStore::global(cx);
     let theme_registry = ThemeRegistry::global(cx);
     let theme_settings = ThemeSettings::get_global(cx);
-    let appearance = cx.window_appearance().into();
+    let appearance = SystemAppearance::global(cx).0;
 
     if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
         let theme_name = theme_selection.theme(appearance);

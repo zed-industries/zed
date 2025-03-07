@@ -973,7 +973,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 h_flex()
                     .gap_2()
                     .px_1()
-                    .rounded_md()
+                    .rounded_sm()
                     .bg(color.surface_background.opacity(0.5))
                     .map(|stack| {
                         stack.child(
@@ -995,7 +995,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                         h_flex()
                             .gap_1()
                             .child(
-                                StyledText::new(message.clone()).with_highlights(
+                                StyledText::new(message.clone()).with_default_highlights(
                                     &cx.window.text_style(),
                                     code_ranges
                                         .iter()
