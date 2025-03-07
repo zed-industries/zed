@@ -343,46 +343,45 @@ impl GitPanel {
         )
         .detach();
 
-            let scrollbar_state =
-                ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
+        let scrollbar_state =
+            ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
 
-            let mut git_panel = Self {
-                pending_remote_operations: Default::default(),
-                remote_operation_id: 0,
-                active_repository,
-                commit_editor,
-                conflicted_count: 0,
-                conflicted_staged_count: 0,
-                current_modifiers: window.modifiers(),
-                add_coauthors: true,
-                generate_commit_message_task: None,
-                entries: Vec::new(),
-                focus_handle: cx.focus_handle(),
-                fs,
-                hide_scrollbar_task: None,
-                new_count: 0,
-                new_staged_count: 0,
-                pending: Vec::new(),
-                pending_commit: None,
-                pending_serialization: Task::ready(None),
-                project,
-                scroll_handle,
-                scrollbar_state,
-                selected_entry: None,
-                marked_entries: Vec::new(),
-                show_scrollbar: false,
-                tracked_count: 0,
-                tracked_staged_count: 0,
-                update_visible_entries_task: Task::ready(()),
-                width: Some(px(360.)),
-                context_menu: None,
-                workspace,
-                modal_open: false,
-            };
-            git_panel.schedule_update(false, window, cx);
-            git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
-            git_panel
-        })
+        let mut git_panel = Self {
+            pending_remote_operations: Default::default(),
+            remote_operation_id: 0,
+            active_repository,
+            commit_editor,
+            conflicted_count: 0,
+            conflicted_staged_count: 0,
+            current_modifiers: window.modifiers(),
+            add_coauthors: true,
+            generate_commit_message_task: None,
+            entries: Vec::new(),
+            focus_handle: cx.focus_handle(),
+            fs,
+            hide_scrollbar_task: None,
+            new_count: 0,
+            new_staged_count: 0,
+            pending: Vec::new(),
+            pending_commit: None,
+            pending_serialization: Task::ready(None),
+            project,
+            scroll_handle,
+            scrollbar_state,
+            selected_entry: None,
+            marked_entries: Vec::new(),
+            show_scrollbar: false,
+            tracked_count: 0,
+            tracked_staged_count: 0,
+            update_visible_entries_task: Task::ready(()),
+            width: None,
+            context_menu: None,
+            workspace,
+            modal_open: false,
+        };
+        git_panel.schedule_update(false, window, cx);
+        git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
+        git_panel
     }
 
     pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
