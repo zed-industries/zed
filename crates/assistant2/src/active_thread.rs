@@ -1,3 +1,4 @@
+use std::path::{self, Path, PathBuf};
 use std::sync::Arc;
 
 use assistant_tool::ToolWorkingSet;
@@ -11,12 +12,14 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
+use project::ProjectPath;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
 use workspace::Workspace;
 
+use crate::edit_action::EditAction;
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
@@ -337,6 +340,59 @@ impl ActiveThread {
                         });
                     }
                 }
+            }
+            ThreadEvent::MessageEditsParsed(message_id, edits) => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        // todo! [hack] figure out actual worktree id
+                        let Some(worktree_id) = workspace
+                            .project()
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .next()
+                            .map(|w| w.read(cx).id())
+                        else {
+                            return;
+                        };
+
+                        workspace.project().update(cx, |project, cx| {
+                            for edit in edits {
+                                let path: Arc<Path> = PathBuf::from(edit.file_path()).into();
+
+                                let open_buffer_task = project.open_buffer((worktree_id, path), cx);
+
+                                // todo! az
+                                let edit = edit.clone();
+
+                                cx.spawn(|this, mut cx| async move {
+                                    let Some(buffer) = open_buffer_task.await.log_err() else {
+                                        return;
+                                    };
+
+                                    buffer
+                                        .update(&mut cx, |buffer, cx| {
+                                            match edit {
+                                                EditAction::Replace { old, new, .. } => {
+                                                    // todo! az search first and replace in transaction
+                                                    let replaced =
+                                                        buffer.text().replace(&old, &new);
+                                                    buffer.set_text(replaced, cx);
+                                                }
+                                                EditAction::Write { content, .. } => {
+                                                    buffer.set_text(content.clone(), cx);
+                                                }
+                                            }
+                                        })
+                                        .log_err();
+
+                                    // todo! save
+                                    // todo! open multi buffer
+                                })
+                                .detach();
+                            }
+                        });
+                    })
+                    .ok();
             }
         }
     }

@@ -15,8 +15,10 @@ use language_model::{
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
+use workspace::Workspace;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
+use crate::edit_action::{EditAction, EditActionParser};
 use crate::thread_store::SavedThread;
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
 
@@ -66,6 +68,7 @@ pub struct Message {
     pub id: MessageId,
     pub role: Role,
     pub text: String,
+    pub edits: Vec<EditAction>,
 }
 
 /// A thread of conversation with the LLM.
@@ -129,6 +132,8 @@ impl Thread {
                     id: message.id,
                     role: message.role,
                     text: message.text,
+                    // todo! az restore
+                    edits: vec![],
                 })
                 .collect(),
             next_message_id,
@@ -238,6 +243,8 @@ impl Thread {
             id,
             role,
             text: text.into(),
+            // todo! az prealloc based on number of code blocks?
+            edits: Vec::new(),
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -315,7 +322,7 @@ impl Thread {
                 .collect();
         }
 
-        self.stream_completion(request, model, cx);
+        self.stream_completion(request, model, request_kind.is_edits(), cx);
     }
 
     pub fn to_completion_request(
@@ -418,6 +425,7 @@ impl Thread {
         &mut self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
+        is_edits_request: bool,
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
@@ -428,19 +436,44 @@ impl Thread {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
 
+                let mut edits_parser = EditActionParser::new();
+
                 while let Some(event) = events.next().await {
                     let event = event?;
 
                     thread.update(&mut cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                thread.insert_message(Role::Assistant, String::new(), cx);
+                                // todo! break edit requests into its own function?
+                                if !is_edits_request {
+                                    thread.insert_message(Role::Assistant, String::new(), cx);
+                                }
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 if let Some(last_message) = thread.messages.last_mut() {
+                                    // todo! break edit requests into its own function?
+                                    if is_edits_request {
+
+                                        let new_edits = edits_parser
+                                            .parse_chunk(&chunk, &mut last_message.edits);
+
+                                        for edit in new_edits {
+                                            println!("\n\nGot new edit!");
+                                            println!("{:#?}", edit);
+                                        }
+
+                                        if !new_edits.is_empty() {
+                                            cx.emit(ThreadEvent::MessageEditsParsed(
+                                                last_message.id,
+                                                // todo! az should we just pass the start index instead of copying?
+                                                new_edits.to_vec(),
+                                            ));
+                                        }
+                                    }
+
                                     if last_message.role == Role::Assistant {
                                         last_message.text.push_str(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
@@ -633,6 +666,7 @@ pub enum ThreadEvent {
     ShowError(ThreadError),
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
+    MessageEditsParsed(MessageId, Vec<EditAction>),
     MessageAdded(MessageId),
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
