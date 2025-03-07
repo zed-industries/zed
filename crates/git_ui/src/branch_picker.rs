@@ -9,13 +9,10 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::git::{GitRepo, Repository};
-use project::{Project, ProjectPath};
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{
-    prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TriggerablePopover,
-};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -378,9 +375,7 @@ impl PickerDelegate for BranchListDelegate {
         let shortened_branch_name =
             util::truncate_and_trailoff(&hit.name(), self.branch_name_trailoff_after);
 
-        let repo = self
-            .project
-            .update(cx, |project, cx| project.active_repository(cx));
+        let repo = self.repo.clone();
 
         let branch_name = match hit {
             BranchEntry::Branch(branch) => Some(branch.string.as_str()),
@@ -430,7 +425,7 @@ impl PickerDelegate for BranchListDelegate {
                                     OffsetDateTime::now_utc(),
                                     time_format::TimestampFormat::Relative,
                                 );
-                                (commit.sha.clone(), formatted_time, commit_message)
+                                (commit.short_sha(), formatted_time, commit_message)
                             })
                             .unwrap_or_else(|| {
                                 (
@@ -447,9 +442,11 @@ impl PickerDelegate for BranchListDelegate {
                                         .w_full()
                                         .gap_2()
                                         .justify_between()
-                                        .child(div().max_w_80().child(
-                                            Label::new(shortened_branch_name).text_ellipsis(),
-                                        ))
+                                        .child(
+                                            div()
+                                                .max_w_80()
+                                                .child(Label::new(shortened_branch_name).truncate()),
+                                        )
                                         .child(
                                             h_flex()
                                                 .gap_2()
@@ -480,8 +477,8 @@ impl PickerDelegate for BranchListDelegate {
                                                 .to_string(),
                                         )
                                         .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .text_ellipsis(),
+                                        .truncate()
+                                        .color(Color::Muted),
                                     ),
                                 ),
                         )
