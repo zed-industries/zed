@@ -280,6 +280,7 @@ pub enum Event {
     Reshared,
     Rejoined,
     RefreshInlayHints,
+    RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
@@ -517,6 +518,8 @@ pub enum LspAction {
     Action(Box<lsp::CodeAction>),
     /// A command data to run as an action.
     Command(lsp::Command),
+    /// A code lens data to run as an action.
+    CodeLens(lsp::CodeLens),
 }
 
 impl LspAction {
@@ -524,6 +527,11 @@ impl LspAction {
         match self {
             Self::Action(action) => &action.title,
             Self::Command(command) => &command.title,
+            Self::CodeLens(lens) => lens
+                .command
+                .as_ref()
+                .map(|command| &command.title)
+                .expect("TODO kb"),
         }
     }
 
@@ -531,6 +539,7 @@ impl LspAction {
         match self {
             Self::Action(action) => action.kind.clone(),
             Self::Command(_) => Some(lsp::CodeActionKind::new("command")),
+            Self::CodeLens(_) => Some(lsp::CodeActionKind::new("code lens")),
         }
     }
 
@@ -538,6 +547,7 @@ impl LspAction {
         match self {
             Self::Action(action) => action.edit.as_ref(),
             Self::Command(_) => None,
+            Self::CodeLens(_) => None,
         }
     }
 
@@ -545,6 +555,7 @@ impl LspAction {
         match self {
             Self::Action(action) => action.command.as_ref(),
             Self::Command(command) => Some(command),
+            Self::CodeLens(lens) => lens.command.as_ref(),
         }
     }
 }
@@ -2474,6 +2485,7 @@ impl Project {
                 };
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
+            LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
