@@ -6667,33 +6667,19 @@ impl LspStore {
                     cx,
                 );
             }
-            lsp::WorkDoneProgress::Report(report) => {
-                if self.on_lsp_work_progress(
-                    language_server_id,
-                    token.clone(),
-                    LanguageServerProgress {
-                        title: None,
-                        is_disk_based_diagnostics_progress,
-                        is_cancellable: report.cancellable.unwrap_or(false),
-                        message: report.message.clone(),
-                        percentage: report.percentage.map(|p| p as usize),
-                        last_update_at: cx.background_executor().now(),
-                    },
-                    cx,
-                ) {
-                    cx.emit(LspStoreEvent::LanguageServerUpdate {
-                        language_server_id,
-                        message: proto::update_language_server::Variant::WorkProgress(
-                            proto::LspWorkProgress {
-                                token,
-                                message: report.message,
-                                percentage: report.percentage,
-                                is_cancellable: report.cancellable,
-                            },
-                        ),
-                    })
-                }
-            }
+            lsp::WorkDoneProgress::Report(report) => self.on_lsp_work_progress(
+                language_server_id,
+                token,
+                LanguageServerProgress {
+                    title: None,
+                    is_disk_based_diagnostics_progress,
+                    is_cancellable: report.cancellable.unwrap_or(false),
+                    message: report.message,
+                    percentage: report.percentage.map(|p| p as usize),
+                    last_update_at: cx.background_executor().now(),
+                },
+                cx,
+            ),
             lsp::WorkDoneProgress::End(_) => {
                 language_server_status.progress_tokens.remove(&token);
                 self.on_lsp_work_end(language_server_id, token.clone(), cx);
@@ -6733,13 +6719,13 @@ impl LspStore {
         token: String,
         progress: LanguageServerProgress,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) {
+        let mut did_update = false;
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            match status.pending_work.entry(token) {
+            match status.pending_work.entry(token.clone()) {
                 btree_map::Entry::Vacant(entry) => {
-                    entry.insert(progress);
-                    cx.notify();
-                    return true;
+                    entry.insert(progress.clone());
+                    did_update = true;
                 }
                 btree_map::Entry::Occupied(mut entry) => {
                     let entry = entry.get_mut();
@@ -6748,7 +6734,7 @@ impl LspStore {
                     {
                         entry.last_update_at = progress.last_update_at;
                         if progress.message.is_some() {
-                            entry.message = progress.message;
+                            entry.message = progress.message.clone();
                         }
                         if progress.percentage.is_some() {
                             entry.percentage = progress.percentage;
@@ -6756,14 +6742,25 @@ impl LspStore {
                         if progress.is_cancellable != entry.is_cancellable {
                             entry.is_cancellable = progress.is_cancellable;
                         }
-                        cx.notify();
-                        return true;
+                        did_update = true;
                     }
                 }
             }
         }
 
-        false
+        if did_update {
+            cx.emit(LspStoreEvent::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkProgress(
+                    proto::LspWorkProgress {
+                        token,
+                        message: progress.message,
+                        percentage: progress.percentage.map(|p| p as u32),
+                        is_cancellable: Some(progress.is_cancellable),
+                    },
+                ),
+            })
+        }
     }
 
     fn on_lsp_work_end(
