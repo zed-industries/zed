@@ -297,13 +297,7 @@ impl ActiveThread {
                 });
             }
             ThreadEvent::ToolFinished { .. } => {
-                let all_tools_finished = self
-                    .thread
-                    .read(cx)
-                    .pending_tool_uses()
-                    .into_iter()
-                    .all(|tool_use| tool_use.status.is_error());
-                if all_tools_finished {
+                if self.thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         self.thread.update(cx, |thread, cx| {
