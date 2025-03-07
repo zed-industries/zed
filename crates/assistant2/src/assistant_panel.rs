@@ -170,8 +170,8 @@ impl AssistantPanel {
 
         Self {
             active_view: ActiveView::Thread,
-            workspace: workspace.clone(),
-            project,
+            workspace,
+            project: project.clone(),
             fs: fs.clone(),
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
@@ -179,7 +179,7 @@ impl AssistantPanel {
                 ActiveThread::new(
                     thread.clone(),
                     thread_store.clone(),
-                    workspace,
+                    project.downgrade(),
                     language_registry,
                     tools.clone(),
                     window,
@@ -246,7 +246,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
-                self.workspace.clone(),
+                self.project.downgrade(),
                 self.language_registry.clone(),
                 self.tools.clone(),
                 window,
@@ -381,7 +381,7 @@ impl AssistantPanel {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
-                        this.workspace.clone(),
+                        this.project.downgrade(),
                         this.language_registry.clone(),
                         this.tools.clone(),
                         window,

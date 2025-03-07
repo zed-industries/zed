@@ -17,6 +17,6 @@ collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
 parking_lot.workspace = true
+project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-workspace.workspace = true

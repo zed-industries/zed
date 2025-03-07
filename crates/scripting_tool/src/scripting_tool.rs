@@ -1,13 +1,13 @@
 mod session;
 
+use project::Project;
 pub(crate) use session::*;
 
 use assistant_tool::{Tool, ToolRegistry};
-use gpui::{App, AppContext as _, Task, WeakEntity, Window};
+use gpui::{App, AppContext as _, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
-use workspace::Workspace;
 
 pub fn init(cx: &App) {
     let registry = ToolRegistry::global(cx);
@@ -38,17 +38,15 @@ impl Tool for ScriptingTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        workspace: WeakEntity<Workspace>,
-        _window: &mut Window,
+        project: WeakEntity<Project>,
         cx: &mut App,
     ) -> Task<anyhow::Result<String>> {
         let input = match serde_json::from_value::<ScriptingToolInput>(input) {
             Err(err) => return Task::ready(Err(err.into())),
             Ok(input) => input,
         };
-        let Ok(project) = workspace.read_with(cx, |workspace, _cx| workspace.project().clone())
-        else {
-            return Task::ready(Err(anyhow::anyhow!("No project found")));
+        let Some(project) = project.upgrade() else {
+            return Task::ready(Err(anyhow::anyhow!("project dropped")));
         };
 
         let session = cx.new(|cx| Session::new(project, cx));

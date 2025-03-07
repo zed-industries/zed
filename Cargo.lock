@@ -658,9 +658,9 @@ dependencies = [
  "derive_more",
  "gpui",
  "parking_lot",
+ "project",
  "serde",
  "serde_json",
- "workspace",
 ]
 
 [[package]]
@@ -675,7 +675,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "workspace",
 ]
 
 [[package]]
@@ -3140,7 +3139,6 @@ dependencies = [
  "smol",
  "url",
  "util",
- "workspace",
 ]
 
 [[package]]
@@ -11930,7 +11928,6 @@ dependencies = [
  "serde_json",
  "settings",
  "util",
- "workspace",
 ]
 
 [[package]]
