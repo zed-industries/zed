@@ -316,7 +316,6 @@ pub(crate) struct Vim {
     operator_stack: Vec<Operator>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
-    pub(crate) special_marks: HashMap<String, Vec<Anchor>>,
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
     pub(crate) change_list: Vec<Vec<Anchor>>,
     pub(crate) change_list_position: Option<usize>,
@@ -364,7 +363,6 @@ impl Vim {
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
-            special_marks: HashMap::default(),
             stored_visual_mode: None,
             change_list: Vec::new(),
             change_list_position: None,
@@ -800,7 +798,7 @@ impl Vim {
         &mut self,
         name: String,
         anchors: Vec<Anchor>,
-        buffer_entity: &Entity<Buffer>,
+        buffer_entity: &Entity<MultiBuffer>,
         workspace_id: WorkspaceId,
         cx: &mut App,
     ) {
@@ -815,15 +813,28 @@ impl Vim {
         });
     }
 
+    fn set_local_mark(
+        &mut self,
+        name: String,
+        anchors: Vec<Anchor>,
+        editor: &mut Editor,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = editor.workspace() else {
+            return;
+        };
+        let Some(workspace_id) = workspace.read(cx).database_id() else {
+            return;
+        };
+        self.set_mark(name, anchors, editor.buffer(), workspace_id, cx);
+    }
+
     fn get_local_mark(
         &self,
         name: String,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<Anchor>> {
-        if let Some(anchors) = self.special_marks.get(&name) {
-            return Some(anchors.clone());
-        }
         VimGlobals::update_global(cx, |globals, cx| {
             let workspace_id = self.workspace(window)?.read(cx).database_id()?;
             globals.marks.get_mut(&workspace_id)?.update(cx, |ms, cx| {
@@ -842,9 +853,6 @@ impl Vim {
         multi_buffer: &Entity<MultiBuffer>,
         cx: &mut App,
     ) -> Option<Vec<Anchor>> {
-        if let Some(anchors) = self.special_marks.get(&name) {
-            return Some(anchors.clone());
-        }
         VimGlobals::update_global(cx, |globals, cx| {
             let workspace_id = self.workspace(window)?.read(cx).database_id()?;
             globals
@@ -1647,7 +1655,7 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::Mark) => self.create_mark(text, false, window, cx),
+            Some(Operator::Mark) => self.create_mark(text, window, cx),
             Some(Operator::RecordRegister) => {
                 self.record_register(text.chars().next().unwrap(), window, cx)
             }

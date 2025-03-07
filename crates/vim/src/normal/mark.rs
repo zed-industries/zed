@@ -1,16 +1,14 @@
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Ok;
-use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint, Editor,
 };
-use gpui::{Context, Entity, UpdateGlobal, Window};
-use language::{Buffer, SelectionGoal};
-use text::BufferId;
+use gpui::{Context, UpdateGlobal, Window};
+use language::SelectionGoal;
 
 use crate::{
     motion::{self, Motion},
@@ -19,47 +17,35 @@ use crate::{
 };
 
 impl Vim {
-    pub fn create_mark(
-        &mut self,
-        text: Arc<str>,
-        tail: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn create_mark(&mut self, text: Arc<str>, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let anchors = editor
                 .selections
                 .disjoint_anchors()
                 .iter()
-                .map(|s| if tail { s.tail() } else { s.head() })
+                .map(|s| s.head())
                 .collect::<Vec<_>>();
-            if text.starts_with(|c: char| c == '^') {
-                vim.special_marks.insert(text.to_string(), anchors);
-                return;
-            }
             if let Some(workspace) = vim.workspace(window) {
                 if let Some(id) = workspace.read(cx).database_id() {
-                    let multi_buffer = editor.buffer();
-                    let multi_buffer = multi_buffer.read(cx);
-                    if let Some(buffer) = multi_buffer.as_singleton() {
-                        vim.set_mark(text.to_string(), anchors, &buffer, id, cx);
-                    } else {
-                        let mut map = HashMap::<BufferId, Vec<Anchor>>::default();
-                        for anchor in anchors {
-                            if let Some(buffer_id) = anchor.buffer_id {
-                                map.entry(buffer_id).or_default().push(anchor);
-                            }
-                        }
-                        let mut list: Vec<(Entity<Buffer>, Vec<Anchor>)> = Vec::new();
-                        for (buffer_id, anchors) in map {
-                            if let Some(buffer) = multi_buffer.buffer(buffer_id) {
-                                list.push((buffer, anchors));
-                            }
-                        }
-                        for (buffer, anchors) in list {
-                            vim.set_mark(text.to_string().clone(), anchors, &buffer, id, cx);
-                        }
-                    }
+                    vim.set_mark(text.to_string(), anchors, editor.buffer(), id, cx);
+                    // if let Some(buffer) = multi_buffer.as_singleton() {
+                    // } else {
+                    //     let mut map = HashMap::<BufferId, Vec<Anchor>>::default();
+                    //     for anchor in anchors {
+                    //         if let Some(buffer_id) = anchor.buffer_id {
+                    //             map.entry(buffer_id).or_default().push(anchor);
+                    //         }
+                    //     }
+                    //     let mut list: Vec<(Entity<Buffer>, Vec<Anchor>)> = Vec::new();
+                    //     for (buffer_id, anchors) in map {
+                    //         if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                    //             list.push((buffer, anchors));
+                    //         }
+                    //     }
+                    //     for (buffer, anchors) in list {
+                    //         vim.set_mark(text.to_string().clone(), anchors, &buffer, id, cx);
+                    //     }
+                    // }
                 }
             }
         });
@@ -98,8 +84,8 @@ impl Vim {
                 );
                 reversed.push(selection.reversed)
             }
-            vim.special_marks.insert("<".to_string(), starts);
-            vim.special_marks.insert(">".to_string(), ends);
+            vim.set_local_mark("<".to_string(), starts, editor, cx);
+            vim.set_local_mark(">".to_string(), ends, editor, cx);
         });
 
         self.stored_visual_mode.replace((mode, reversed));
@@ -130,7 +116,6 @@ impl Vim {
                     .collect::<Vec<Anchor>>()
             }),
             "." => self.change_list.last().cloned(),
-            "^" | "[" | "]" | "<" | ">" => self.special_marks.get(&text.to_string()).cloned(),
             m if m.starts_with(|c: char| c.is_digit(10)) => {
                 if let Some(either) = self.get_global_mark_identifier(text.to_string(), window, cx)
                 {

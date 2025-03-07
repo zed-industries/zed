@@ -107,14 +107,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let Some((stored_mode, reversed)) = vim.stored_visual_mode.take() else {
             return;
         };
-        let Some((start, end)) = vim.special_marks.get("<").zip(vim.special_marks.get(">")) else {
+        let Some((start, end)) = vim
+            .get_local_mark("<".to_string(), window, cx)
+            .zip(vim.get_local_mark(">".to_string(), window, cx))
+        else {
             return;
         };
         let ranges = start
             .iter()
             .zip(end)
             .zip(reversed)
-            .map(|((start, end), reversed)| (*start, *end, reversed))
+            .map(|((start, end), reversed)| (*start, end, reversed))
             .collect::<Vec<_>>();
 
         if vim.mode.is_visual() {

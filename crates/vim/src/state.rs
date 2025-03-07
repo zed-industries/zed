@@ -588,76 +588,77 @@ impl MarksState {
     pub fn set_mark(
         &mut self,
         name: String,
-        buffer_handle: &Entity<Buffer>,
+        buffer_handle: &Entity<MultiBuffer>,
         anchors: Vec<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = buffer_handle
-            .read(cx)
-            .file()
-            .map(|file| file.path().clone())
-        else {
-            // If the buffer has no associated file we will treat it as a buffer mark
-            // This also means we will not save it to the database
-            let buffer_id = buffer_handle.read(cx).remote_id();
-            let marks_collection =
-                self.buffer_marks
-                    .entry(buffer_id)
-                    .or_insert_with(|| MarksCollection::Loaded {
-                        marks: HashMap::<String, Vec<text::Anchor>>::default(),
-                        buffer: buffer_handle.downgrade(),
-                    });
-            marks_collection.add_mark_by_anchors(name.clone(), anchors);
-            if name.starts_with(|c: char| c.is_uppercase())
-                || name.starts_with(|c: char| c.is_digit(10))
-            {
-                self.global_buffer_marks.insert(name.clone(), buffer_id);
+        if let Some(buffer_handle) = buffer_handle.read(cx).as_singleton() {
+            let Some(path) = buffer_handle
+                .read(cx)
+                .file()
+                .map(|file| file.path().clone())
+            else {
+                // If the buffer has no associated file we will treat it as a buffer mark
+                // This also means we will not save it to the database
+                let buffer_id = buffer_handle.read(cx).remote_id();
+                let marks_collection =
+                    self.buffer_marks
+                        .entry(buffer_id)
+                        .or_insert_with(|| MarksCollection::Loaded {
+                            marks: HashMap::<String, Vec<text::Anchor>>::default(),
+                            buffer: buffer_handle.downgrade(),
+                        });
+                marks_collection.add_mark_by_anchors(name.clone(), anchors);
+                if name.starts_with(|c: char| c.is_uppercase())
+                    || name.starts_with(|c: char| c.is_digit(10))
+                {
+                    self.global_buffer_marks.insert(name.clone(), buffer_id);
+                }
+                return;
+            };
+            if name.starts_with(|c: char| c.is_digit(10)) {
+                self.global_marks.insert(name.clone(), path.clone());
+                cx.background_executor()
+                    .spawn(DB.set_global_mark_path(
+                        self.workspace_id,
+                        name.clone(),
+                        path.as_os_str().as_encoded_bytes().to_vec(),
+                    ))
+                    .detach_and_log_err(cx);
+                return;
             }
-            return;
-        };
-        if name.starts_with(|c: char| c.is_digit(10)) {
-            self.global_marks.insert(name.clone(), path.clone());
+
+            let marks_collection = self.marks.entry(path.clone()).or_insert_with(|| {
+                MarksCollection::Unloaded(HashMap::<String, Vec<Point>>::default())
+            });
+
+            marks_collection.load(&buffer_handle, cx);
+
+            if name.starts_with(|c: char| c.is_uppercase()) {
+                self.global_marks.insert(name.clone(), path.clone());
+                cx.background_executor()
+                    .spawn(DB.set_global_mark_path(
+                        self.workspace_id,
+                        name.clone(),
+                        path.as_os_str().as_encoded_bytes().to_vec(),
+                    ))
+                    .detach_and_log_err(cx);
+            }
+            marks_collection.add_mark_by_anchors(name.clone(), anchors);
+
+            let Some(value) = marks_collection.get_json(name.clone(), cx) else {
+                return;
+            };
+
             cx.background_executor()
-                .spawn(DB.set_global_mark_path(
+                .spawn(DB.set_mark(
                     self.workspace_id,
-                    name.clone(),
+                    name,
                     path.as_os_str().as_encoded_bytes().to_vec(),
+                    value,
                 ))
                 .detach_and_log_err(cx);
-            return;
         }
-
-        let marks_collection = self
-            .marks
-            .entry(path.clone())
-            .or_insert_with(|| MarksCollection::Unloaded(HashMap::<String, Vec<Point>>::default()));
-
-        marks_collection.load(buffer_handle, cx);
-
-        if name.starts_with(|c: char| c.is_uppercase()) {
-            self.global_marks.insert(name.clone(), path.clone());
-            cx.background_executor()
-                .spawn(DB.set_global_mark_path(
-                    self.workspace_id,
-                    name.clone(),
-                    path.as_os_str().as_encoded_bytes().to_vec(),
-                ))
-                .detach_and_log_err(cx);
-        }
-        marks_collection.add_mark_by_anchors(name.clone(), anchors);
-
-        let Some(value) = marks_collection.get_json(name.clone(), cx) else {
-            return;
-        };
-
-        cx.background_executor()
-            .spawn(DB.set_mark(
-                self.workspace_id,
-                name,
-                path.as_os_str().as_encoded_bytes().to_vec(),
-                value,
-            ))
-            .detach_and_log_err(cx);
     }
 
     pub fn get_path_for_mark(&self, name: String) -> Option<Arc<Path>> {

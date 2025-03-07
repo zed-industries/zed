@@ -340,7 +340,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let Some(marks) = vim.special_marks.get("^") else {
+            let Some(marks) = vim.get_local_mark("^".to_string(), window, cx) else {
                 return;
             };
 

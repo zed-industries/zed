@@ -127,19 +127,23 @@ impl Vim {
         cx: &mut Context<Editor>,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
-        self.special_marks.insert(
+        self.set_local_mark(
             "[".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_before(s.start))
                 .collect(),
+            editor,
+            cx,
         );
-        self.special_marks.insert(
+        self.set_local_mark(
             "]".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_after(s.end))
                 .collect(),
+            editor,
+            cx,
         );
 
         let mut text = String::new();
