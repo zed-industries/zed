@@ -12,7 +12,6 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
-use dap::OutputEventCategory;
 use dap::{
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
@@ -20,6 +19,7 @@ use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SourceBreakpoint,
     StackFrameId, SteppingGranularity, StoppedEvent, VariableReference,
 };
+use dap::{DebugAdapterKind, OutputEventCategory};
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::Shared, FutureExt};
@@ -167,64 +167,89 @@ impl LocalMode {
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
-            let (adapter, binary) = Self::get_adapter_binary(&config, delegate, &mut cx).await?;
-
-            let (initialized_tx, initialized_rx) = oneshot::channel();
-            let mut initialized_tx = Some(initialized_tx);
-            let message_handler = Box::new(move |message, _cx: &mut App| {
-                let Message::Event(event) = &message else {
-                    messages_tx.unbounded_send(message).ok();
-                    return;
-                };
-                if let Events::Initialized(_) = **event {
-                    if let Some(tx) = initialized_tx.take() {
-                        tx.send(()).ok();
-                    }
-                } else {
-                    messages_tx.unbounded_send(message).ok();
-                }
-            });
-
-            let client = Arc::new(
-                if let Some(client) = parent_session
-                    .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-                    .flatten()
-                {
-                    client
-                        .reconnect(session_id, binary, message_handler, cx.clone())
-                        .await?
-                } else {
-                    DebugAdapterClient::start(session_id, binary, message_handler, cx.clone())
-                        .await?
-                },
-            );
+            let (session, adapter, initialized_rx) = Self::internal_new(
+                session_id,
+                parent_session,
+                breakpoint_store,
+                config,
+                delegate,
+                messages_tx,
+                &mut cx,
+            )
+            .await?;
 
             #[cfg(any(test, feature = "test-support"))]
             {
-                client
-                    .on_request::<dap::requests::Initialize, _>(move |_, _| {
-                        Ok(dap::Capabilities {
-                            supports_step_back: Some(false),
-                            ..Default::default()
-                        })
-                    })
+                let DebugAdapterKind::Fake(caps) = session.config.kind.clone() else {
+                    panic!("Only fake debug adapter configs should be used in tests");
+                };
+
+                session
+                    .client
+                    .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
                     .await;
 
-                client
+                session
+                    .client
                     .on_request::<dap::requests::Launch, _>(move |_, _| Ok(()))
                     .await;
 
-                client.fake_event(Events::Initialized(None)).await;
+                session.client.fake_event(Events::Initialized(None)).await;
             }
-
-            let session = Self {
-                client,
-                config,
-                breakpoint_store: breakpoint_store.clone(),
-            };
 
             Self::initialize(session, adapter, initialized_rx, &mut cx).await
         })
+    }
+
+    async fn internal_new(
+        session_id: SessionId,
+        parent_session: Option<Entity<Session>>,
+        breakpoint_store: Entity<BreakpointStore>,
+        config: DebugAdapterConfig,
+        delegate: DapAdapterDelegate,
+        messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
+        cx: &mut AsyncApp,
+    ) -> Result<(Self, Arc<dyn DebugAdapter>, oneshot::Receiver<()>)> {
+        let (adapter, binary) = Self::get_adapter_binary(&config, delegate, cx).await?;
+
+        let (initialized_tx, initialized_rx) = oneshot::channel();
+        let mut initialized_tx = Some(initialized_tx);
+        let message_handler = Box::new(move |message, _cx: &mut App| {
+            let Message::Event(event) = &message else {
+                messages_tx.unbounded_send(message).ok();
+                return;
+            };
+            if let Events::Initialized(_) = **event {
+                if let Some(tx) = initialized_tx.take() {
+                    tx.send(()).ok();
+                }
+            } else {
+                messages_tx.unbounded_send(message).ok();
+            }
+        });
+
+        let client = Arc::new(
+            if let Some(client) = parent_session
+                .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
+                .flatten()
+            {
+                client
+                    .reconnect(session_id, binary, message_handler, cx.clone())
+                    .await?
+            } else {
+                DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?
+            },
+        );
+
+        Ok((
+            Self {
+                client,
+                config,
+                breakpoint_store: breakpoint_store.clone(),
+            },
+            adapter.clone(),
+            initialized_rx,
+        ))
     }
 
     fn send_breakpoints(
@@ -329,6 +354,7 @@ impl LocalMode {
                 cx.background_executor().clone(),
             )
             .await?;
+
         let mut raw = adapter.request_args(&this.config);
         merge_json_value_into(
             this.config.initialize_args.clone().unwrap_or(json!({})),
@@ -504,9 +530,11 @@ where
             .downcast_ref::<Self>()
             .map_or(false, |rhs| self == rhs)
     }
+
     fn dyn_hash(&self, mut hasher: &mut dyn Hasher) {
         T::hash(self, &mut hasher);
     }
+
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
@@ -831,8 +859,24 @@ impl Session {
                 cx.notify();
             }
             Events::Breakpoint(_) => {}
-            Events::Module(_) => {
-                self.invalidate_state(&ModulesCommand.into());
+            Events::Module(event) => {
+                match event.reason {
+                    dap::ModuleEventReason::New => {
+                        self.modules.push(event.module);
+                    }
+                    dap::ModuleEventReason::Changed => {
+                        self.modules
+                            .iter_mut()
+                            .find(|other| event.module.id == other.id)
+                            .map(|module| *module = event.module);
+                    }
+                    dap::ModuleEventReason::Removed => {
+                        self.modules.retain(|other| event.module.id != other.id);
+                    }
+                }
+
+                // todo(debugger): We should only send the invalidate command to downstream clients.
+                // self.invalidate_state(&ModulesCommand.into());
             }
             Events::LoadedSource(_) => {
                 self.invalidate_state(&LoadedSourcesCommand.into());
@@ -865,7 +909,9 @@ impl Session {
             );
         }
 
-        if !self.thread_states.any_stopped_thread() && request.type_id() != TypeId::of::<T>() {
+        if !self.thread_states.any_stopped_thread()
+            && request.type_id() != TypeId::of::<ThreadsCommand>()
+        {
             return;
         }
 
@@ -907,6 +953,10 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
         if !T::is_supported(&capabilities) {
+            log::warn!(
+                "Attempted to send a DAP request that isn't supported: {:?}",
+                request
+            );
             return Task::ready(None);
         }
         let request = mode.request_dap(session_id, request, cx);

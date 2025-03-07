@@ -52,7 +52,7 @@ pub struct BreakpointStore {
 }
 
 impl BreakpointStore {
-    pub(crate) fn init(client: &AnyProtoClient) {
+    pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_toggle_breakpoint);
         client.add_entity_message_handler(Self::handle_breakpoints_for_file);
     }

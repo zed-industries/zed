@@ -1407,7 +1407,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             breakpoints: {
-                let mut map = HashMap::default();
+                let mut map = collections::BTreeMap::default();
                 map.insert(
                     Arc::from(worktree),
                     vec![

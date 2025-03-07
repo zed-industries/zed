@@ -41,7 +41,7 @@ pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Arc<dyn DebugAdapt
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         DebugAdapterKind::Gdb => Ok(Arc::new(GdbDebugAdapter::new())),
         #[cfg(any(test, feature = "test-support"))]
-        DebugAdapterKind::Fake => Ok(Arc::new(dap::adapters::FakeAdapter::new())),
+        DebugAdapterKind::Fake(_) => Ok(Arc::new(dap::adapters::FakeAdapter::new())),
         #[cfg(not(any(test, feature = "test-support")))]
         #[allow(unreachable_patterns)]
         _ => unreachable!("Fake variant only exists with test-support feature"),

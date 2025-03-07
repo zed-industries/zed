@@ -78,7 +78,8 @@ pub enum DebugAdapterKind {
     Gdb,
     /// Used for integration tests
     #[cfg(any(test, feature = "test-support"))]
-    Fake,
+    #[serde(skip)]
+    Fake(dap_types::Capabilities),
 }
 
 impl DebugAdapterKind {
@@ -94,7 +95,7 @@ impl DebugAdapterKind {
             Self::Gdb => "GDB",
             Self::Go(_) => "Go",
             #[cfg(any(test, feature = "test-support"))]
-            Self::Fake => "Fake",
+            Self::Fake(_) => "Fake",
         }
     }
 }

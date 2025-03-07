@@ -46,7 +46,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(), cx)
+        project.start_debug_session(dap::test_config(None), cx)
     });
 
     let (session, client) = task.await.unwrap();
@@ -267,7 +267,7 @@ async fn test_fetch_variables_for_multiple_scopes(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(), cx)
+        project.start_debug_session(dap::test_config(None), cx)
     });
 
     let (session, client) = task.await.unwrap();
@@ -533,7 +533,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(), cx)
+        project.start_debug_session(dap::test_config(None), cx)
     });
 
     let (session, client) = task.await.unwrap();
@@ -1143,7 +1143,7 @@ async fn test_it_only_fetches_scopes_and_variables_for_the_first_stack_frame(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(), cx)
+        project.start_debug_session(dap::test_config(None), cx)
     });
 
     let (session, client) = task.await.unwrap();
@@ -1379,7 +1379,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(), cx)
+        project.start_debug_session(dap::test_config(None), cx)
     });
 
     let (session, client) = task.await.unwrap();

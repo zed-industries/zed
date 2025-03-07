@@ -50,7 +50,7 @@ pub enum DebugPanelItemEvent {
     Stopped { go_to_stack_frame: bool },
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ThreadItem {
     Console,
     LoadedSource,
