@@ -4034,7 +4034,7 @@ mod tests {
         .await;
 
         fs.set_status_for_repo_via_git_operation(
-            Path::new("/root/zed/.git"),
+            Path::new(path!("/root/zed/.git")),
             &[
                 (
                     Path::new("crates/gpui/gpui.rs"),
@@ -4086,14 +4086,14 @@ mod tests {
                     header: Section::Tracked
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: "/root/zed/crates/gpui/gpui.rs".into(),
+                    abs_path: path!("/root/zed/crates/gpui/gpui.rs").into(),
                     repo_path: "crates/gpui/gpui.rs".into(),
                     worktree_path: Path::new("gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     is_staged: Some(false),
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: "/root/zed/crates/util/util.rs".into(),
+                    abs_path: path!("/root/zed/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
                     worktree_path: Path::new("../util/util.rs").into(),
                     status: StatusCode::Modified.worktree(),
@@ -4118,8 +4118,8 @@ mod tests {
         pretty_assertions::assert_eq!(
             worktree_roots,
             vec![
-                Path::new("/root/zed/crates/gpui").into(),
-                Path::new("/root/zed/crates/util/util.rs").into(),
+                Path::new(path!("/root/zed/crates/gpui")).into(),
+                Path::new(path!("/root/zed/crates/util/util.rs")).into(),
             ]
         );
 
@@ -4132,14 +4132,15 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 filtered_entries,
-                [Path::new("/root/zed/crates/gpui").into()]
+                [Path::new(path!("/root/zed/crates/gpui")).into()]
             );
             // But we can select it artificially here.
             git_store
                 .all_repositories()
                 .into_iter()
                 .find(|repo| {
-                    &*repo.read(cx).worktree_abs_path == Path::new("/root/zed/crates/util/util.rs")
+                    &*repo.read(cx).worktree_abs_path
+                        == Path::new(path!("/root/zed/crates/util/util.rs"))
                 })
                 .unwrap()
         });
@@ -4159,14 +4160,14 @@ mod tests {
                     header: Section::Tracked
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: "/root/zed/crates/gpui/gpui.rs".into(),
+                    abs_path: path!("/root/zed/crates/gpui/gpui.rs").into(),
                     repo_path: "crates/gpui/gpui.rs".into(),
                     worktree_path: Path::new("../../gpui/gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     is_staged: Some(false),
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: "/root/zed/crates/util/util.rs".into(),
+                    abs_path: path!("/root/zed/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
                     worktree_path: Path::new("util.rs").into(),
                     status: StatusCode::Modified.worktree(),
