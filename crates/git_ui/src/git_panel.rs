@@ -2158,7 +2158,7 @@ impl GitPanel {
             if pending
                 .entries
                 .iter()
-                .any(|entry| entry.repo_path == entry.repo_path)
+                .any(|pending_entry| pending_entry.repo_path == entry.repo_path)
             {
                 match pending.target_status {
                     TargetStatus::Staged => return StageStatus::Staged,
