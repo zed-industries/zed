@@ -31,7 +31,7 @@ pub fn open(
     let repository = workspace.project().read(cx).active_repository(cx).clone();
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
-        BranchList::new(repository, style, 34., window, cx)
+        BranchList::new(repository, style, rems(34.), window, cx)
     })
 }
 
@@ -41,7 +41,7 @@ pub fn popover(
     cx: &mut App,
 ) -> Entity<BranchList> {
     cx.new(|cx| {
-        let list = BranchList::new(repository, BranchListStyle::Popover, 15., window, cx);
+        let list = BranchList::new(repository, BranchListStyle::Popover, rems(15.), window, cx);
         list.focus_handle(cx).focus(window);
         list
     })
@@ -54,7 +54,7 @@ enum BranchListStyle {
 }
 
 pub struct BranchList {
-    rem_width: f32,
+    width: Rems,
     pub popover_handle: PopoverMenuHandle<Self>,
     pub picker: Entity<Picker<BranchListDelegate>>,
     _subscription: Subscription,
@@ -64,7 +64,7 @@ impl BranchList {
     fn new(
         repository: Option<Entity<Repository>>,
         style: BranchListStyle,
-        rem_width: f32,
+        width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -89,7 +89,7 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = BranchListDelegate::new(repository.clone(), style, 20);
+        let delegate = BranchListDelegate::new(repository.clone(), style, (1.6 * width.0) as usize);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
@@ -98,7 +98,7 @@ impl BranchList {
 
         Self {
             picker,
-            rem_width,
+            width,
             popover_handle,
             _subscription,
         }
@@ -116,7 +116,7 @@ impl Focusable for BranchList {
 impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(self.rem_width))
+            .w(self.width)
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
