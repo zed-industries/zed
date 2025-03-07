@@ -26,8 +26,7 @@ else
 fi
 
 echo "Generating cargo licenses"
-FAIL_FLAG=""
-if [[ ! -v ALLOW_MISSING_LICENSES ]]; then FAIL_FLAG=--fail; fi
+if [ -z "${ALLOW_MISSING_LICENSES-}" ]; then FAIL_FLAG=--fail; else FAIL_FLAG=""; fi
 set -x
 cargo about generate \
     $FAIL_FLAG \

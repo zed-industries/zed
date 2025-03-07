@@ -46,7 +46,7 @@ mkShell' {
           passthru = { inherit (attrs) env; };
         })).env; # exfil `env`; it's not in drvAttrs
     in
-     # unsetting this var so we download the staticlib during the build
+    # unsetting this var so we download the staticlib during the build
     (removeAttrs baseEnvs [ "LK_CUSTOM_WEBRTC" ])
     // {
       # note: different than `$FONTCONFIG_FILE` in `build.nix` – this refers to relative paths
