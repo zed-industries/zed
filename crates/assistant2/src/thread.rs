@@ -202,6 +202,15 @@ impl Thread {
         self.tool_use.pending_tool_uses()
     }
 
+    /// Returns whether all of the tool uses have finished running.
+    pub fn all_tools_finished(&self) -> bool {
+        // If the only pending tool uses left are the ones with errors, then that means that we've finished running all
+        // of the pending tools.
+        self.pending_tool_uses()
+            .into_iter()
+            .all(|tool_use| tool_use.status.is_error())
+    }
+
     pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
         self.tool_use.tool_uses_for_message(id)
     }
