@@ -121,6 +121,7 @@ pub enum Event {
     Discarded,
     DirtyChanged,
     DiagnosticsUpdated,
+    BufferDiffChanged,
 }
 
 /// A diff hunk, representing a range of consequent lines in a multibuffer.
@@ -253,6 +254,7 @@ impl DiffState {
                     if let Some(changed_range) = changed_range.clone() {
                         this.buffer_diff_changed(diff, changed_range, cx)
                     }
+                    cx.emit(Event::BufferDiffChanged);
                 }
                 BufferDiffEvent::LanguageChanged => this.buffer_diff_language_changed(diff, cx),
                 _ => {}

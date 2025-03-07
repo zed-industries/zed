@@ -12,6 +12,7 @@ use git::{
     },
     GITIGNORE,
 };
+use git2::RepositoryInitOptions;
 use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -855,7 +856,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         "ignored-dir": {}
     }));
 
-    let tree = Worktree::local(
+    let worktree = Worktree::local(
         dir.path(),
         true,
         Arc::new(RealFs::default()),
@@ -868,32 +869,34 @@ async fn test_write_file(cx: &mut TestAppContext) {
     #[cfg(not(target_os = "macos"))]
     fs::fs_watcher::global(|_| {}).unwrap();
 
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
         .await;
-    tree.flush_fs_events(cx).await;
+    worktree.flush_fs_events(cx).await;
 
-    tree.update(cx, |tree, cx| {
-        tree.write_file(
-            Path::new("tracked-dir/file.txt"),
-            "hello".into(),
-            Default::default(),
-            cx,
-        )
-    })
-    .await
-    .unwrap();
-    tree.update(cx, |tree, cx| {
-        tree.write_file(
-            Path::new("ignored-dir/file.txt"),
-            "world".into(),
-            Default::default(),
-            cx,
-        )
-    })
-    .await
-    .unwrap();
+    worktree
+        .update(cx, |tree, cx| {
+            tree.write_file(
+                Path::new("tracked-dir/file.txt"),
+                "hello".into(),
+                Default::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    worktree
+        .update(cx, |tree, cx| {
+            tree.write_file(
+                Path::new("ignored-dir/file.txt"),
+                "world".into(),
+                Default::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
 
-    tree.read_with(cx, |tree, _| {
+    worktree.read_with(cx, |tree, _| {
         let tracked = tree.entry_for_path("tracked-dir/file.txt").unwrap();
         let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
         assert!(!tracked.is_ignored);
@@ -3349,7 +3352,7 @@ async fn test_conflicted_cherry_pick(cx: &mut TestAppContext) {
         .expect("Failed to get HEAD")
         .peel_to_commit()
         .expect("HEAD is not a commit");
-    git_checkout("refs/heads/master", &repo);
+    git_checkout("refs/heads/main", &repo);
     std::fs::write(root_path.join("project/a.txt"), "b").unwrap();
     git_add("a.txt", &repo);
     git_commit("improve letter", &repo);
@@ -3479,7 +3482,9 @@ const MODIFIED: GitSummary = GitSummary {
 
 #[track_caller]
 fn git_init(path: &Path) -> git2::Repository {
-    git2::Repository::init(path).expect("Failed to initialize git repository")
+    let mut init_opts = RepositoryInitOptions::new();
+    init_opts.initial_head("main");
+    git2::Repository::init_opts(path, &init_opts).expect("Failed to initialize git repository")
 }
 
 #[track_caller]

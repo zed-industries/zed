@@ -23,7 +23,7 @@ mod project_tests;
 mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
-pub use environment::EnvironmentErrorMessage;
+pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::Repository;
 pub mod search_history;
 mod yarn;
@@ -836,7 +836,6 @@ impl Project {
             });
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
-            cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
 
             let this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -1321,9 +1320,9 @@ impl Project {
         self.environment.read(cx).environment_errors()
     }
 
-    pub fn remove_environment_error(&mut self, cx: &mut Context<Self>, worktree_id: WorktreeId) {
-        self.environment.update(cx, |environment, _| {
-            environment.remove_environment_error(worktree_id);
+    pub fn remove_environment_error(&mut self, worktree_id: WorktreeId, cx: &mut Context<Self>) {
+        self.environment.update(cx, |environment, cx| {
+            environment.remove_environment_error(worktree_id, cx);
         });
     }
 
@@ -1714,7 +1713,6 @@ impl Project {
         };
 
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
-        cx.notify();
         Ok(())
     }
 
@@ -1730,7 +1728,6 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.send_project_updates(cx);
         });
-        cx.notify();
         cx.emit(Event::Reshared);
         Ok(())
     }
@@ -1760,13 +1757,12 @@ impl Project {
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
         cx.emit(Event::Rejoined);
-        cx.notify();
         Ok(())
     }
 
     pub fn unshare(&mut self, cx: &mut Context<Self>) -> Result<()> {
         self.unshare_internal(cx)?;
-        cx.notify();
+        cx.emit(Event::RemoteIdChanged(None));
         Ok(())
     }
 
@@ -1810,7 +1806,6 @@ impl Project {
         }
         self.disconnected_from_host_internal(cx);
         cx.emit(Event::DisconnectedFromHost);
-        cx.notify();
     }
 
     pub fn set_role(&mut self, role: proto::ChannelRole, cx: &mut Context<Self>) {
@@ -2459,15 +2454,11 @@ impl Project {
         }
     }
 
-    fn on_worktree_added(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
-        {
-            let mut remotely_created_models = self.remotely_created_models.lock();
-            if remotely_created_models.retain_count > 0 {
-                remotely_created_models.worktrees.push(worktree.clone())
-            }
+    fn on_worktree_added(&mut self, worktree: &Entity<Worktree>, _: &mut Context<Self>) {
+        let mut remotely_created_models = self.remotely_created_models.lock();
+        if remotely_created_models.retain_count > 0 {
+            remotely_created_models.worktrees.push(worktree.clone())
         }
-        cx.observe(worktree, |_, _, cx| cx.notify()).detach();
-        cx.notify();
     }
 
     fn on_worktree_released(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
@@ -2479,8 +2470,6 @@ impl Project {
                 })
                 .log_err();
         }
-
-        cx.notify();
     }
 
     fn on_buffer_event(
@@ -3714,7 +3703,6 @@ impl Project {
             cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
-            cx.notify();
         })?;
 
         Ok(())
@@ -3758,7 +3746,6 @@ impl Project {
                 old_peer_id,
                 new_peer_id,
             });
-            cx.notify();
             Ok(())
         })?
     }
@@ -3786,7 +3773,6 @@ impl Project {
             });
 
             cx.emit(Event::CollaboratorLeft(peer_id));
-            cx.notify();
             Ok(())
         })?
     }
@@ -4202,7 +4188,6 @@ impl Project {
         worktrees: Vec<proto::WorktreeMetadata>,
         cx: &mut Context<Project>,
     ) -> Result<()> {
-        cx.notify();
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
         })
