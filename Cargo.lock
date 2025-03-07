@@ -3047,6 +3047,7 @@ name = "component_preview"
 version = "0.1.0"
 dependencies = [
  "client",
+ "collections",
  "component",
  "gpui",
  "languages",
