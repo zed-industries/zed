@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 assistant_tool.workspace = true
 collections.workspace = true
+shlex.workspace = true
 futures.workspace = true
 gpui.workspace = true
 mlua.workspace = true

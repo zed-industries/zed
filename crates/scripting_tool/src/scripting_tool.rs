@@ -1,3 +1,4 @@
+mod sandboxed_shell;
 mod session;
 
 use project::Project;
