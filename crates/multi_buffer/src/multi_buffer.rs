@@ -3524,7 +3524,6 @@ impl MultiBufferSnapshot {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
             let Some(diff) = self.diffs.get(&buffer.remote_id()) else {
-                log::debug!("no diff found for {:?}", buffer.remote_id());
                 return None;
             };
             let buffer_start = buffer.anchor_before(buffer_range.start);
