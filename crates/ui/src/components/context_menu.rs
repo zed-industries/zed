@@ -362,6 +362,7 @@ impl ContextMenu {
         if !self.keep_open_on_confirm {
             cx.emit(DismissEvent);
         }
+        cx.propagate();
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
