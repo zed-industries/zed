@@ -1,3 +1,4 @@
+mod streaming_json;
 mod streaming_lua;
 
 use anyhow::anyhow;
