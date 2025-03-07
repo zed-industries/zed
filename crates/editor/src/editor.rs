@@ -259,6 +259,7 @@ impl Navigated {
 enum DisplayDiffHunk {
     Folded {
         display_row: DisplayRow,
+        status: DiffHunkStatus,
     },
     Unfolded {
         is_created_file: bool,
@@ -17276,9 +17277,11 @@ impl EditorSnapshot {
 
                 let hunk_display_start = self.point_to_display_point(hunk_start_point, Bias::Left);
                 let hunk_display_end = self.point_to_display_point(hunk_end_point, Bias::Right);
+                let status = hunk.status();
 
                 let display_hunk = if hunk_display_start.column() != 0 {
                     DisplayDiffHunk::Folded {
+                        status,
                         display_row: hunk_display_start.row(),
                     }
                 } else {
@@ -17288,7 +17291,7 @@ impl EditorSnapshot {
                     }
                     let is_created_file = hunk.is_created_file();
                     DisplayDiffHunk::Unfolded {
-                        status: hunk.status(),
+                        status,
                         diff_base_byte_range: hunk.diff_base_byte_range,
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range: Anchor::range_in_buffer(

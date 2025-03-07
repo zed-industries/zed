@@ -32,15 +32,14 @@ use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, svg, transparent_black, Action, AnyElement,
-    App, AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner,
-    Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    Focusable as _, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
-    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
-    TextStyleRefinement, Window,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
+    relative, size, solid_background, svg, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
+    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
+    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
+    Hsla, InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
+    Subscription, TextRun, TextStyleRefinement, Window,
 };
 use inline_completion::Direction;
 use itertools::Itertools;
@@ -56,7 +55,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
     RowInfo,
 };
-use project::project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings};
+use project::project_settings::{self, GitGutterSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -4412,9 +4411,22 @@ impl EditorElement {
                 if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
                     hunk_to_paint
                 {
+                    let mut border_widths = Edges::default();
+                    let mut border_color = background_color;
+                    border_color.s *= 1.2;
+                    if is_light {
+                        border_color.l /= 1.2;
+                    } else {
+                        border_color.l *= 1.2;
+                    }
+
                     if secondary_status.has_secondary_hunk() {
                         background_color =
-                            background_color.opacity(if is_light { 0.2 } else { 0.32 });
+                            background_color.opacity(if is_light { 0.5 } else { 0.7 });
+                    } else {
+                        border_widths.top = px(1.);
+                        border_widths.right = px(1.);
+                        border_widths.bottom = px(1.);
                     }
 
                     // Flatten the background color with the editor color to prevent
@@ -4429,8 +4441,8 @@ impl EditorElement {
                         hunk_bounds,
                         corner_radii,
                         flattened_background_color,
-                        Edges::default(),
-                        transparent_black(),
+                        border_widths,
+                        border_color,
                     ));
                 }
             }
@@ -4445,7 +4457,16 @@ impl EditorElement {
     ) -> Bounds<Pixels> {
         let scroll_position = snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
-        let gutter_strip_width = (0.275 * line_height).floor();
+        let status = match hunk {
+            DisplayDiffHunk::Folded { status, .. } => *status,
+            DisplayDiffHunk::Unfolded { status, .. } => *status,
+        };
+        let width_factor = if status.has_secondary_hunk() {
+            0.25
+        } else {
+            0.42
+        };
+        let gutter_strip_width = (width_factor * line_height).floor();
 
         match hunk {
             DisplayDiffHunk::Folded { display_row, .. } => {
@@ -5701,7 +5722,7 @@ fn prepaint_gutter_button(
     let blame_width = gutter_dimensions.git_blame_entries_width;
     let gutter_width = display_hunks
         .binary_search_by(|(hunk, _)| match hunk {
-            DisplayDiffHunk::Folded { display_row } => display_row.cmp(&row),
+            DisplayDiffHunk::Folded { display_row, .. } => display_row.cmp(&row),
             DisplayDiffHunk::Unfolded {
                 display_row_range, ..
             } => {
@@ -6734,10 +6755,6 @@ impl Element for EditorElement {
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     let is_light = cx.theme().appearance().is_light();
-                    let use_pattern = ProjectSettings::get_global(cx)
-                        .git
-                        .hunk_style
-                        .map_or(false, |style| matches!(style, GitHunkStyleSetting::Pattern));
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
@@ -6757,21 +6774,14 @@ impl Element for EditorElement {
 
                         let unstaged = diff_status.has_secondary_hunk();
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
-
                         let staged_background =
                             solid_background(background_color.opacity(hunk_opacity));
-                        let unstaged_background = if use_pattern {
-                            pattern_slash(
-                                background_color.opacity(hunk_opacity),
-                                window.rem_size().0 * 1.125, // ~18 by default
-                            )
-                        } else {
+                        let unstaged_background =
                             solid_background(background_color.opacity(if is_light {
-                                0.08
+                                0.12
                             } else {
-                                0.04
-                            }))
-                        };
+                                0.10
+                            }));
 
                         let background = if unstaged {
                             unstaged_background
