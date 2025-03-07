@@ -15,7 +15,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 assistant_tool.workspace = true
-full_moon.workspace = true
 gpui.workspace = true
 mlua.workspace = true
 schemars.workspace = true
