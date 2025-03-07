@@ -16901,7 +16901,7 @@ fn snippet_completions(
                     source: CompletionSource::Lsp {
                         server_id: LanguageServerId(usize::MAX),
                         resolved: true,
-                        lsp_completion: lsp::CompletionItem {
+                        lsp_completion: Box::new(lsp::CompletionItem {
                             label: snippet.prefix.first().unwrap().clone(),
                             kind: Some(CompletionItemKind::SNIPPET),
                             label_details: snippet.description.as_ref().map(|description| {
@@ -16921,7 +16921,7 @@ fn snippet_completions(
                             filter_text: Some(snippet.body.clone()),
                             sort_text: Some(char::MAX.to_string()),
                             ..lsp::CompletionItem::default()
-                        },
+                        }),
                     },
                     label: CodeLabel {
                         text: matching_prefix.clone(),

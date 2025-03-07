@@ -381,7 +381,7 @@ pub enum CompletionSource {
         /// The id of the language server that produced this completion.
         server_id: LanguageServerId,
         /// The raw completion provided by the language server.
-        lsp_completion: lsp::CompletionItem,
+        lsp_completion: Box<lsp::CompletionItem>,
         /// Whether this completion has been resolved, to ensure it happens once per completion.
         resolved: bool,
     },

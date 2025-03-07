@@ -2013,7 +2013,7 @@ impl LspCommand for GetCompletions {
                     new_text,
                     source: CompletionSource::Lsp {
                         server_id,
-                        lsp_completion,
+                        lsp_completion: Box::new(lsp_completion),
                         resolved: false,
                     },
                 }

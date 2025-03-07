@@ -4401,9 +4401,11 @@ impl LspStore {
             let mut did_resolve = false;
             if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
-                    if let Some(server_id) =
-                        completions.borrow()[completion_index].source.server_id()
-                    {
+                    let server_id = {
+                        let completion = &completions.borrow()[completion_index];
+                        completion.source.server_id()
+                    };
+                    if let Some(server_id) = server_id {
                         if Self::resolve_completion_remote(
                             project_id,
                             server_id,
@@ -4494,7 +4496,7 @@ impl LspStore {
                     if *resolved {
                         return Ok(());
                     }
-                    server.request::<lsp::request::ResolveCompletionItem>(lsp_completion.clone())
+                    server.request::<lsp::request::ResolveCompletionItem>(*lsp_completion.clone())
                 }
                 CompletionSource::Custom => return Ok(()),
             }
@@ -4532,7 +4534,7 @@ impl LspStore {
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         completion.source = CompletionSource::Lsp {
-            lsp_completion: completion_item,
+            lsp_completion: Box::new(completion_item),
             resolved: true,
             server_id: server.server_id(),
         };
@@ -8195,7 +8197,7 @@ impl LspStore {
             source: match server_id.zip(lsp_completion).zip(completion.resolved) {
                 Some(((server_id, lsp_completion), resolved)) => CompletionSource::Lsp {
                     server_id,
-                    lsp_completion,
+                    lsp_completion: Box::new(lsp_completion),
                     resolved,
                 },
                 None => CompletionSource::Custom,
@@ -8285,7 +8287,7 @@ async fn populate_labels_for_completions(
         .iter()
         .filter_map(|new_completion| {
             if let CompletionSource::Lsp { lsp_completion, .. } = &new_completion.source {
-                Some(lsp_completion.clone())
+                Some(*lsp_completion.clone())
             } else {
                 None
             }
