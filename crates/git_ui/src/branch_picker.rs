@@ -4,8 +4,8 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
     rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, Window,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::git::Repository;
@@ -103,6 +103,16 @@ impl BranchList {
             _subscription,
         }
     }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        ev: &ModifiersChangedEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker
+            .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
+    }
 }
 impl ModalView for BranchList {}
 impl EventEmitter<DismissEvent> for BranchList {}
@@ -117,6 +127,7 @@ impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .w(self.width)
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
@@ -152,6 +163,7 @@ pub struct BranchListDelegate {
     last_query: String,
     /// Max length of branch name before we truncate it and add a trailing `...`.
     branch_name_trailoff_after: usize,
+    modifiers: Modifiers,
 }
 
 impl BranchListDelegate {
@@ -168,6 +180,7 @@ impl BranchListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             branch_name_trailoff_after,
+            modifiers: Default::default(),
         }
     }
 
@@ -424,7 +437,10 @@ impl PickerDelegate for BranchListDelegate {
                                 "create-branch",
                                 format!("Create branch '{new_branch_name}'",),
                             )
-                            .toggle_state(self.selected_index == 0 && self.matches.len() == 0)
+                            .toggle_state(
+                                self.modifiers.secondary()
+                                    || (self.selected_index == 0 && self.matches.len() == 0),
+                            )
                             .tooltip(Tooltip::for_action_title(
                                 "Create branch",
                                 &menu::SecondaryConfirm,
