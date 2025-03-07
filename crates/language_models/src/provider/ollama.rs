@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
-use language_model::LanguageModelCompletionEvent;
+use language_model::{AuthenticateError, LanguageModelCompletionEvent};
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
@@ -95,12 +95,13 @@ impl State {
         self.fetch_model_task.replace(task);
     }
 
-    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            self.fetch_models(cx)
+            return Task::ready(Ok(()));
         }
+
+        let fetch_models_task = self.fetch_models(cx);
+        cx.spawn(|_this, _cx| async move { Ok(fetch_models_task.await?) })
     }
 }
 
@@ -156,6 +157,10 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         IconName::AiOllama
     }
 
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.provided_models(cx).into_iter().next()
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
 
@@ -207,7 +212,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
@@ -475,7 +480,7 @@ impl Render for ConfigurationView {
                                     div()
                                         .bg(inline_code_bg)
                                         .px_1p5()
-                                        .rounded_md()
+                                        .rounded_sm()
                                         .child(Label::new("ollama run llama3.2")),
                                 ),
                         ),

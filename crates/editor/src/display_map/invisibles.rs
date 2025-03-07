@@ -45,7 +45,7 @@ pub fn is_invisible(c: char) -> bool {
 // ASCII control characters have fancy unicode glyphs, everything else
 // is replaced by a space - unless it is used in combining characters in
 // which case we need to leave it in the string.
-pub(crate) fn replacement(c: char) -> Option<&'static str> {
+pub fn replacement(c: char) -> Option<&'static str> {
     if c <= '\x1f' {
         Some(C0_SYMBOLS[c as usize])
     } else if c == '\x7f' {

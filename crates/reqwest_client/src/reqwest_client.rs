@@ -1,9 +1,11 @@
-use std::{any::type_name, mem, pin::Pin, sync::OnceLock, task::Poll, time::Duration};
+use std::sync::{LazyLock, OnceLock};
+use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, TryStreamExt as _};
 use http_client::{http, RedirectPolicy};
+use regex::Regex;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     redirect,
@@ -12,6 +14,7 @@ use smol::future::FutureExt;
 
 const DEFAULT_CAPACITY: usize = 4096;
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+static REDACT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"key=[^&]+").unwrap());
 
 pub struct ReqwestClient {
     client: reqwest::Client,
@@ -180,6 +183,17 @@ pub fn poll_read_buf(
     Poll::Ready(Ok(n))
 }
 
+fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
+    if let Some(url) = error.url_mut() {
+        if let Some(query) = url.query() {
+            if let Cow::Owned(redacted) = REDACT_REGEX.replace_all(query, "key=REDACTED") {
+                url.set_query(Some(redacted.as_str()));
+            }
+        }
+    }
+    error
+}
+
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&http::Uri> {
         self.proxy.as_ref()
@@ -217,7 +231,10 @@ impl http_client::HttpClient for ReqwestClient {
 
         let handle = self.handle.clone();
         async move {
-            let mut response = handle.spawn(async { request.send().await }).await??;
+            let mut response = handle
+                .spawn(async { request.send().await })
+                .await?
+                .map_err(redact_error)?;
 
             let headers = mem::take(response.headers_mut());
             let mut builder = http::Response::builder()

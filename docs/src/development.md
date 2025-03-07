@@ -10,29 +10,32 @@ If you'd like to develop collaboration features, additionally see:
 
 - [Local Collaboration](./development/local-collaboration.md)
 
-## Authentication
+## Keychain access
 
-When developing Zed you will typically want to sign in to the production collab
-instance, unless you are specifically working on features that require running
-collab locally.
+Zed stores secrets in the system keychain.
 
-In order to bypass the keychain prompts that pop up when trying to sign in each
-time you run a development build of Zed, you can use the development auth
-provider.
+However, when running a development build of Zed on macOS (and perhaps other
+platforms) trying to access the keychain results in a lot of keychain prompts
+that require entering your password over and over.
 
-This will store your Zed access token in a local file on disk that can be read
-in development, bypassing the need to retrieve the credential from the system
-keychain.
+On macOS this is caused by the development build not having a stable identity.
+Even if you choose the "Always Allow" option, the OS will still prompt you for
+your password again the next time something changes in the binary.
 
-To enable the development auth provider, set this in your shell:
+This quickly becomes annoying and impedes development speed.
+
+That is why, by default, when running a development build of Zed an alternative
+credential provider is used in order to bypass the system keychain.
+
+> Note: This is **only** the case for development builds. For all non-development
+> release channels the system keychain is always used.
+
+If you need to test something out using the real system keychain in a
+development build, run Zed with the following environment variable set:
 
 ```
-ZED_DEVELOPMENT_AUTH=1
+ZED_DEVELOPMENT_USE_KEYCHAIN=1
 ```
-
-You may want to add this to your shell profile so you don't need to remember to enable it each time.
-
-> Note: This only works for development builds. It is a no-op in all non-development release channels.
 
 ## Contributor links
 

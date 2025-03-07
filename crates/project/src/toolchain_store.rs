@@ -325,16 +325,15 @@ impl LocalToolchainStore {
                 .ok()?
                 .await;
 
-            cx.background_executor()
-                .spawn(async move {
-                    let language = registry
-                        .language_for_name(language_name.as_ref())
-                        .await
-                        .ok()?;
-                    let toolchains = language.toolchain_lister()?;
-                    Some(toolchains.list(root.to_path_buf(), project_env).await)
-                })
-                .await
+            cx.background_spawn(async move {
+                let language = registry
+                    .language_for_name(language_name.as_ref())
+                    .await
+                    .ok()?;
+                let toolchains = language.toolchain_lister()?;
+                Some(toolchains.list(root.to_path_buf(), project_env).await)
+            })
+            .await
         })
     }
     pub(crate) fn active_toolchain(

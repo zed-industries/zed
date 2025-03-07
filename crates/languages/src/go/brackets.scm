@@ -2,3 +2,5 @@
 ("[" @open "]" @close)
 ("{" @open "}" @close)
 ("\"" @open "\"" @close)
+("`" @open "`" @close)
+((rune_literal) @open @close)

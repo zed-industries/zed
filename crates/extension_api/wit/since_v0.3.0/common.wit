@@ -1,0 +1,12 @@
+interface common {
+    /// A (half-open) range (`[start, end)`).
+    record range {
+        /// The start of the range (inclusive).
+        start: u32,
+        /// The end of the range (exclusive).
+        end: u32,
+    }
+
+    /// A list of environment variables.
+    type env-vars = list<tuple<string, string>>;
+}

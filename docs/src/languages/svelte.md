@@ -2,7 +2,7 @@
 
 Svelte support is available through the [Svelte extension](https://github.com/zed-extensions/svelte).
 
-- Tree Sitter: [tree-sitter-grammars/tree-sitter-svelte](https://github.com/tree-sitter-grammars/tree-sitter-svelte)
+- Tree-sitter: [tree-sitter-grammars/tree-sitter-svelte](https://github.com/tree-sitter-grammars/tree-sitter-svelte)
 - Language Server: [sveltejs/language-tools](https://github.com/sveltejs/language-tools)
 
 ## Extra theme styling configuration

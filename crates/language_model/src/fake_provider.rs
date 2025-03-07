@@ -1,6 +1,6 @@
 use crate::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest,
 };
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
@@ -46,6 +46,10 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         provider_name()
     }
 
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(Arc::new(FakeLanguageModel::default()))
+    }
+
     fn provided_models(&self, _: &App) -> Vec<Arc<dyn LanguageModel>> {
         vec![Arc::new(FakeLanguageModel::default())]
     }
@@ -54,7 +58,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         true
     }
 
-    fn authenticate(&self, _: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, _: &mut App) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 

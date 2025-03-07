@@ -201,8 +201,7 @@ impl ChatPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
-                .background_executor()
-                .spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
@@ -227,7 +226,7 @@ impl ChatPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -324,7 +323,7 @@ impl ChatPanel {
                         .my_0p5()
                         .px_0p5()
                         .gap_x_1()
-                        .rounded_md()
+                        .rounded_sm()
                         .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
                         .when(reply_to_message.is_none(), |el| {
                             el.child(
@@ -359,7 +358,7 @@ impl ChatPanel {
                 .my_0p5()
                 .px_0p5()
                 .gap_x_1()
-                .rounded_md()
+                .rounded_sm()
                 .overflow_hidden()
                 .hover(|style| style.bg(cx.theme().colors().element_background))
                 .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
@@ -477,7 +476,7 @@ impl ChatPanel {
                 div()
                     .group("")
                     .bg(background)
-                    .rounded_md()
+                    .rounded_sm()
                     .overflow_hidden()
                     .px_1p5()
                     .py_0p5()
@@ -564,7 +563,7 @@ impl ChatPanel {
                             .child(
                                 div()
                                     .px_1()
-                                    .rounded_md()
+                                    .rounded_sm()
                                     .text_ui_xs(cx)
                                     .bg(cx.theme().colors().background)
                                     .child("New messages"),
@@ -590,7 +589,7 @@ impl ChatPanel {
         div()
             .w_6()
             .bg(cx.theme().colors().element_background)
-            .hover(|style| style.bg(cx.theme().colors().element_hover).rounded_md())
+            .hover(|style| style.bg(cx.theme().colors().element_hover).rounded_sm())
             .child(child)
     }
 
@@ -605,7 +604,7 @@ impl ChatPanel {
             .absolute()
             .right_2()
             .overflow_hidden()
-            .rounded_md()
+            .rounded_sm()
             .border_color(cx.theme().colors().element_selected)
             .border_1()
             .when(!self.has_open_menu(message_id), |el| {
@@ -992,6 +991,7 @@ impl Render for ChatPanel {
                                         .key_binding(KeyBinding::for_action(
                                             &collab_panel::ToggleFocus,
                                             window,
+                                            cx,
                                         ))
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(

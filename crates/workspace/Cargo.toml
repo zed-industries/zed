@@ -63,6 +63,7 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

@@ -9,7 +9,7 @@ struct StackEntry<'a, T: Item, D> {
     position: D,
 }
 
-impl<'a, T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'a, T, D> {
+impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StackEntry")
             .field("index", &self.index)
@@ -27,7 +27,7 @@ pub struct Cursor<'a, T: Item, D> {
     at_end: bool,
 }
 
-impl<'a, T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for Cursor<'a, T, D>
+impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for Cursor<'_, T, D>
 where
     T::Summary: fmt::Debug,
 {
@@ -742,14 +742,14 @@ struct SliceSeekAggregate<T: Item> {
 
 struct SummarySeekAggregate<D>(D);
 
-impl<'a, T: Item> SeekAggregate<'a, T> for () {
+impl<T: Item> SeekAggregate<'_, T> for () {
     fn begin_leaf(&mut self) {}
     fn end_leaf(&mut self, _: &<T::Summary as Summary>::Context) {}
     fn push_item(&mut self, _: &T, _: &T::Summary, _: &<T::Summary as Summary>::Context) {}
     fn push_tree(&mut self, _: &SumTree<T>, _: &T::Summary, _: &<T::Summary as Summary>::Context) {}
 }
 
-impl<'a, T: Item> SeekAggregate<'a, T> for SliceSeekAggregate<T> {
+impl<T: Item> SeekAggregate<'_, T> for SliceSeekAggregate<T> {
     fn begin_leaf(&mut self) {}
     fn end_leaf(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.tree.append(

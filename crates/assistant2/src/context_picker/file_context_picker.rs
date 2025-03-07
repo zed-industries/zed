@@ -7,19 +7,19 @@ use std::sync::Arc;
 use editor::actions::FoldAt;
 use editor::display_map::{Crease, FoldId};
 use editor::scroll::Autoscroll;
-use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
+use editor::{Anchor, AnchorRangeExt, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AnyElement, App, DismissEvent, Empty, Entity, FocusHandle, Focusable, Stateful, Task,
-    WeakEntity,
+    AnyElement, App, AppContext, DismissEvent, Empty, Entity, FocusHandle, Focusable, Stateful,
+    Task, WeakEntity,
 };
 use multi_buffer::{MultiBufferPoint, MultiBufferRow};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use rope::Point;
 use text::SelectionGoal;
-use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, Tooltip};
+use ui::{prelude::*, ButtonLike, Disclosure, ListItem, TintColor, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -238,11 +238,11 @@ impl PickerDelegate for FileContextPickerDelegate {
             path: mat.path.clone(),
         };
 
-        let Some(editor) = self.editor.upgrade() else {
+        let Some(editor_entity) = self.editor.upgrade() else {
             return;
         };
 
-        editor.update(cx, |editor, cx| {
+        editor_entity.update(cx, |editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 // Move empty selections left by 1 column to select the `@`s, so they get overwritten when we insert.
                 {
@@ -288,8 +288,15 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                 editor.insert("\n", window, cx); // Needed to end the fold
 
+                let file_icon = FileIcons::get_icon(&Path::new(&full_path), cx)
+                    .unwrap_or_else(|| SharedString::new(""));
+
                 let placeholder = FoldPlaceholder {
-                    render: render_fold_icon_button(IconName::File, file_name.into()),
+                    render: render_fold_icon_button(
+                        file_icon,
+                        file_name.into(),
+                        editor_entity.downgrade(),
+                    ),
                     ..Default::default()
                 };
 
@@ -459,15 +466,66 @@ pub fn render_file_context_entry(
 }
 
 fn render_fold_icon_button(
-    icon: IconName,
+    icon: SharedString,
     label: SharedString,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement> {
-    Arc::new(move |fold_id, _fold_range, _window, _cx| {
+    editor: WeakEntity<Editor>,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, cx| {
+        let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor
+                    .buffer()
+                    .update(cx, |multi_buffer, cx| multi_buffer.snapshot(cx));
+
+                let is_in_pending_selection = || {
+                    editor
+                        .selections
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending_selection| {
+                            pending_selection
+                                .selection
+                                .range()
+                                .includes(&fold_range, &snapshot)
+                        })
+                };
+
+                let mut is_in_complete_selection = || {
+                    editor
+                        .selections
+                        .disjoint_in_range::<usize>(fold_range.clone(), cx)
+                        .into_iter()
+                        .any(|selection| {
+                            // This is needed to cover a corner case, if we just check for an existing
+                            // selection in the fold range, having a cursor at the start of the fold
+                            // marks it as selected. Non-empty selections don't cause this.
+                            let length = selection.end - selection.start;
+                            length > 0
+                        })
+                };
+
+                is_in_pending_selection() || is_in_complete_selection()
+            })
+        });
+
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(icon))
-            .child(Label::new(label.clone()).single_line())
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .toggle_state(is_in_text_selection)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::from_path(icon.clone())
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(label.clone())
+                            .size(LabelSize::Small)
+                            .single_line(),
+                    ),
+            )
             .into_any_element()
     })
 }

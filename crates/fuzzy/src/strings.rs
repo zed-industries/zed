@@ -4,7 +4,7 @@ use crate::{
 };
 use gpui::BackgroundExecutor;
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     cmp::{self, Ordering},
     iter,
     ops::Range,
@@ -113,14 +113,17 @@ impl Ord for StringMatch {
     }
 }
 
-pub async fn match_strings(
-    candidates: &[StringMatchCandidate],
+pub async fn match_strings<T>(
+    candidates: &[T],
     query: &str,
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
     executor: BackgroundExecutor,
-) -> Vec<StringMatch> {
+) -> Vec<StringMatch>
+where
+    T: Borrow<StringMatchCandidate> + Sync,
+{
     if candidates.is_empty() || max_results == 0 {
         return Default::default();
     }
@@ -129,10 +132,10 @@ pub async fn match_strings(
         return candidates
             .iter()
             .map(|candidate| StringMatch {
-                candidate_id: candidate.id,
+                candidate_id: candidate.borrow().id,
                 score: 0.,
                 positions: Default::default(),
-                string: candidate.string.clone(),
+                string: candidate.borrow().string.clone(),
             })
             .collect();
     }
@@ -145,7 +148,7 @@ pub async fn match_strings(
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
     let num_cpus = executor.num_cpus().min(candidates.len());
-    let segment_size = (candidates.len() + num_cpus - 1) / num_cpus;
+    let segment_size = candidates.len().div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
@@ -163,10 +166,12 @@ pub async fn match_strings(
                     matcher.match_candidates(
                         &[],
                         &[],
-                        candidates[segment_start..segment_end].iter(),
+                        candidates[segment_start..segment_end]
+                            .iter()
+                            .map(|c| c.borrow()),
                         results,
                         cancel_flag,
-                        |candidate, score, positions| StringMatch {
+                        |candidate: &&StringMatchCandidate, score, positions| StringMatch {
                             candidate_id: candidate.id,
                             score,
                             positions: positions.clone(),

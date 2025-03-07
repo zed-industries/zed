@@ -7,7 +7,6 @@ mod typed_envelope;
 pub use error::*;
 pub use typed_envelope::*;
 
-use collections::HashMap;
 pub use prost::{DecodeError, Message};
 use serde::Serialize;
 use std::{
@@ -237,6 +236,8 @@ messages!(
     (ExpandAllForProjectEntryResponse, Foreground),
     (Follow, Foreground),
     (FollowResponse, Foreground),
+    (ApplyCodeActionKind, Foreground),
+    (ApplyCodeActionKindResponse, Foreground),
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
@@ -423,7 +424,7 @@ messages!(
     (FlushBufferedMessages, Foreground),
     (LanguageServerPromptRequest, Foreground),
     (LanguageServerPromptResponse, Foreground),
-    (GitBranches, Background),
+    (GitGetBranches, Background),
     (GitBranchesResponse, Background),
     (UpdateGitBranch, Background),
     (ListToolchains, Foreground),
@@ -441,9 +442,24 @@ messages!(
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
     (GitReset, Background),
+    (GitCheckoutFiles, Background),
     (GitShow, Background),
     (GitCommitDetails, Background),
     (SetIndexText, Background),
+    (Push, Background),
+    (Fetch, Background),
+    (GetRemotes, Background),
+    (GetRemotesResponse, Background),
+    (Pull, Background),
+    (RemoteMessageResponse, Background),
+    (AskPassRequest, Background),
+    (AskPassResponse, Background),
+    (GitCreateBranch, Background),
+    (GitChangeBranch, Background),
+    (CheckForPushedCommits, Background),
+    (CheckForPushedCommitsResponse, Background),
+    (GitDiff, Background),
+    (GitDiffResponse, Background),
 );
 
 request_messages!(
@@ -467,6 +483,7 @@ request_messages!(
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
+    (ApplyCodeActionKind, ApplyCodeActionKindResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
     (GetCachedEmbeddings, GetCachedEmbeddingsResponse),
@@ -566,7 +583,7 @@ request_messages!(
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
-    (GitBranches, GitBranchesResponse),
+    (GitGetBranches, GitBranchesResponse),
     (UpdateGitBranch, Ack),
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
@@ -579,7 +596,17 @@ request_messages!(
     (RegisterBufferWithLanguageServers, Ack),
     (GitShow, GitCommitDetails),
     (GitReset, Ack),
+    (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
+    (Push, RemoteMessageResponse),
+    (Fetch, RemoteMessageResponse),
+    (GetRemotes, GetRemotesResponse),
+    (Pull, RemoteMessageResponse),
+    (AskPassRequest, AskPassResponse),
+    (GitCreateBranch, Ack),
+    (GitChangeBranch, Ack),
+    (CheckForPushedCommits, CheckForPushedCommitsResponse),
+    (GitDiff, GitDiffResponse),
 );
 
 entity_messages!(
@@ -600,6 +627,7 @@ entity_messages!(
     ExpandProjectEntry,
     ExpandAllForProjectEntry,
     FindSearchCandidates,
+    ApplyCodeActionKind,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,
@@ -664,7 +692,7 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    GitBranches,
+    GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
     ActivateToolchain,
@@ -674,7 +702,17 @@ entity_messages!(
     RegisterBufferWithLanguageServers,
     GitShow,
     GitReset,
+    GitCheckoutFiles,
     SetIndexText,
+    Push,
+    Fetch,
+    GetRemotes,
+    Pull,
+    AskPassRequest,
+    GitChangeBranch,
+    GitCreateBranch,
+    CheckForPushedCommits,
+    GitDiff,
 );
 
 entity_messages!(
@@ -730,16 +768,10 @@ pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
 
 pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
-    let mut done_files = false;
-
-    let mut repository_map = message
-        .updated_repositories
-        .into_iter()
-        .map(|repo| (repo.work_directory_id, repo))
-        .collect::<HashMap<_, _>>();
+    let mut done = false;
 
     iter::from_fn(move || {
-        if done_files {
+        if done {
             return None;
         }
 
@@ -761,27 +793,44 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             .drain(..removed_entries_chunk_size)
             .collect();
 
-        done_files = message.updated_entries.is_empty() && message.removed_entries.is_empty();
-
         let mut updated_repositories = Vec::new();
+        let mut limit = MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE;
+        while let Some(repo) = message.updated_repositories.first_mut() {
+            let updated_statuses_limit = cmp::min(repo.updated_statuses.len(), limit);
+            let removed_statuses_limit = cmp::min(repo.removed_statuses.len(), limit);
 
-        if !repository_map.is_empty() {
-            for entry in &updated_entries {
-                if let Some(repo) = repository_map.remove(&entry.id) {
-                    updated_repositories.push(repo);
-                }
+            updated_repositories.push(RepositoryEntry {
+                work_directory_id: repo.work_directory_id,
+                branch: repo.branch.clone(),
+                branch_summary: repo.branch_summary.clone(),
+                updated_statuses: repo
+                    .updated_statuses
+                    .drain(..updated_statuses_limit)
+                    .collect(),
+                removed_statuses: repo
+                    .removed_statuses
+                    .drain(..removed_statuses_limit)
+                    .collect(),
+                current_merge_conflicts: repo.current_merge_conflicts.clone(),
+            });
+            if repo.removed_statuses.is_empty() && repo.updated_statuses.is_empty() {
+                message.updated_repositories.remove(0);
+            }
+            limit = limit.saturating_sub(removed_statuses_limit + updated_statuses_limit);
+            if limit == 0 {
+                break;
             }
         }
 
-        let removed_repositories = if done_files {
+        done = message.updated_entries.is_empty()
+            && message.removed_entries.is_empty()
+            && message.updated_repositories.is_empty();
+
+        let removed_repositories = if done {
             mem::take(&mut message.removed_repositories)
         } else {
             Default::default()
         };
-
-        if done_files {
-            updated_repositories.extend(mem::take(&mut repository_map).into_values());
-        }
 
         Some(UpdateWorktree {
             project_id: message.project_id,
@@ -791,7 +840,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             updated_entries,
             removed_entries,
             scan_id: message.scan_id,
-            is_last_update: done_files && message.is_last_update,
+            is_last_update: done && message.is_last_update,
             updated_repositories,
             removed_repositories,
         })

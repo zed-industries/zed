@@ -2,7 +2,7 @@
 
 Diff support is available natively in Zed.
 
-- Tree Sitter: [zed-industries/the-mikedavis/tree-sitter-diff](https://github.com/the-mikedavis/tree-sitter-diff)
+- Tree-sitter: [zed-industries/the-mikedavis/tree-sitter-diff](https://github.com/the-mikedavis/tree-sitter-diff)
 
 ## Configuration
 

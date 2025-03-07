@@ -239,8 +239,7 @@ impl EditableSettingControl for UiFontSizeControl {
     }
 
     fn read(cx: &App) -> Self::Value {
-        let settings = ThemeSettings::get_global(cx);
-        settings.ui_font_size
+        ThemeSettings::get_global(cx).ui_font_size(cx)
     }
 
     fn apply(

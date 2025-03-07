@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::AnyElement;
 use smallvec::SmallVec;
 

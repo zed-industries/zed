@@ -135,8 +135,7 @@ impl ProjectEnvironment {
 
         cx.spawn(|this, mut cx| async move {
             let (mut shell_env, error_message) = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let worktree_abs_path = worktree_abs_path.clone();
                     async move {
                         load_worktree_shell_environment(&worktree_abs_path, &load_direnv).await
@@ -278,10 +277,12 @@ async fn load_shell_environment(
         (None, Some(message))
     }
 
-    let marker = "ZED_SHELL_START";
+    const MARKER: &str = "ZED_SHELL_START";
     let Some(shell) = std::env::var("SHELL").log_err() else {
         return message("Failed to get login environment. SHELL environment variable is not set");
     };
+    let shell_path = PathBuf::from(&shell);
+    let shell_name = shell_path.file_name().and_then(|f| f.to_str());
 
     // What we're doing here is to spawn a shell and then `cd` into
     // the project directory to get the env in there as if the user
@@ -304,22 +305,27 @@ async fn load_shell_environment(
     //
     // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
     // do that, but it does, and `exit 0` helps.
-    let additional_command = PathBuf::from(&shell)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .and_then(|shell| match shell {
-            "fish" => Some("emit fish_prompt;"),
-            _ => None,
-        });
 
-    let command = format!(
-        "cd '{}';{} printf '%s' {marker}; /usr/bin/env; exit 0;",
-        dir.display(),
-        additional_command.unwrap_or("")
-    );
+    let command = match shell_name {
+        Some("fish") => format!(
+            "cd '{}'; emit fish_prompt; printf '%s' {MARKER}; /usr/bin/env; exit 0;",
+            dir.display()
+        ),
+        _ => format!(
+            "cd '{}'; printf '%s' {MARKER}; /usr/bin/env; exit 0;",
+            dir.display()
+        ),
+    };
+
+    // csh/tcsh only supports `-l` if it's the only flag. So this won't be a login shell.
+    // Users must rely on vars from `~/.tcshrc` or `~/.cshrc` and not `.login` as a result.
+    let args = match shell_name {
+        Some("tcsh") | Some("csh") => vec!["-i", "-c", &command],
+        _ => vec!["-l", "-i", "-c", &command],
+    };
 
     let Some(output) = smol::process::Command::new(&shell)
-        .args(["-l", "-i", "-c", &command])
+        .args(&args)
         .output()
         .await
         .log_err()
@@ -333,7 +339,7 @@ async fn load_shell_environment(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let Some(env_output_start) = stdout.find(marker) else {
+    let Some(env_output_start) = stdout.find(MARKER) else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!(
             "failed to parse output of `env` command in login shell. stdout: {:?}, stderr: {:?}",
@@ -344,7 +350,7 @@ async fn load_shell_environment(
     };
 
     let mut parsed_env = HashMap::default();
-    let env_output = &stdout[env_output_start + marker.len()..];
+    let env_output = &stdout[env_output_start + MARKER.len()..];
 
     parse_env_output(env_output, |key, value| {
         parsed_env.insert(key, value);

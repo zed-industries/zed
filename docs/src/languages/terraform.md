@@ -2,7 +2,7 @@
 
 Terraform support is available through the [Terraform extension](https://github.com/zed-industries/zed/tree/main/extensions/terraform).
 
-- Tree sitter: [MichaHoffmann/tree-sitter-hcl](https://github.com/MichaHoffmann/tree-sitter-hcl)
+- Tree-sitter: [MichaHoffmann/tree-sitter-hcl](https://github.com/MichaHoffmann/tree-sitter-hcl)
 - Language Server: [hashicorp/terraform-ls](https://github.com/hashicorp/terraform-ls)
 
 ## Configuration

@@ -2,15 +2,16 @@ use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
-pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSet<SharedString>) {
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
     options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     options.remove(pulldown_cmark::Options::ENABLE_MATH);
 
     let mut events = Vec::new();
+    let mut languages = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
     for (pulldown_event, mut range) in Parser::new_ext(text, options).into_offset_iter() {
@@ -27,6 +28,11 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
                 match tag {
                     pulldown_cmark::Tag::Link { .. } => within_link = true,
                     pulldown_cmark::Tag::MetadataBlock { .. } => within_metadata = true,
+                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
+                        ref language,
+                    )) => {
+                        languages.insert(SharedString::from(language.to_string()));
+                    }
                     _ => {}
                 }
                 events.push((range, MarkdownEvent::Start(tag.into())))
@@ -102,7 +108,7 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
             pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
-    events
+    (events, languages)
 }
 
 pub fn parse_links_only(mut text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {

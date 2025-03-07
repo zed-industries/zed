@@ -174,7 +174,7 @@ impl Render for MigrationBanner {
             .bg(cx.theme().status().info_background.opacity(0.6))
             .border_1()
             .border_color(cx.theme().colors().border_variant)
-            .rounded_md()
+            .rounded_sm()
             .overflow_hidden()
             .child(
                 h_flex()
@@ -199,7 +199,7 @@ impl Render for MigrationBanner {
                                 div()
                                     .px_1()
                                     .bg(cx.theme().colors().background)
-                                    .rounded_sm()
+                                    .rounded_xs()
                                     .child(
                                         Label::new(backup_file_name)
                                             .buffer_font(cx)

@@ -102,8 +102,7 @@ impl PickerDelegate for SlashCommandDelegate {
         let all_commands = self.all_commands.clone();
         cx.spawn_in(window, |this, mut cx| async move {
             let filtered_commands = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     if query.is_empty() {
                         all_commands
                     } else {
@@ -208,24 +207,31 @@ impl PickerDelegate for SlashCommandDelegate {
                             .child(
                                 h_flex()
                                     .gap_1p5()
-                                    .child(Icon::new(info.icon).size(IconSize::XSmall))
-                                    .child(div().font_buffer(cx).child({
+                                    .child(
+                                        Icon::new(info.icon)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child({
                                         let mut label = format!("{}", info.name);
                                         if let Some(args) = info.args.as_ref().filter(|_| selected)
                                         {
                                             label.push_str(&args);
                                         }
-                                        Label::new(label).single_line().size(LabelSize::Small)
-                                    }))
+                                        Label::new(label)
+                                            .single_line()
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                    })
                                     .children(info.args.clone().filter(|_| !selected).map(
                                         |args| {
                                             div()
-                                                .font_buffer(cx)
                                                 .child(
                                                     Label::new(args)
                                                         .single_line()
                                                         .size(LabelSize::Small)
-                                                        .color(Color::Muted),
+                                                        .color(Color::Muted)
+                                                        .buffer_font(cx),
                                                 )
                                                 .visible_on_hover(format!(
                                                     "command-entry-label-{ix}"
@@ -237,7 +243,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                 Label::new(info.description.clone())
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
-                                    .text_ellipsis(),
+                                    .truncate(),
                             ),
                     ),
             ),
@@ -295,10 +301,9 @@ where
                                         .gap_1p5()
                                         .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
                                         .child(
-                                            div().font_buffer(cx).child(
-                                                Label::new("create-your-command")
-                                                    .size(LabelSize::Small),
-                                            ),
+                                            Label::new("create-your-command")
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx),
                                         ),
                                 )
                                 .child(
@@ -342,7 +347,7 @@ where
             .anchor(gpui::Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
-                y: px(-16.0),
+                y: px(-2.0),
             })
             .when_some(handle, |this, handle| this.with_handle(handle))
     }

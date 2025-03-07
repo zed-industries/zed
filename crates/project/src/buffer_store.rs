@@ -136,6 +136,15 @@ impl BufferDiffState {
         let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
     }
 
+    pub fn wait_for_recalculation(&mut self) -> Option<oneshot::Receiver<()>> {
+        if self.diff_updated_futures.is_empty() {
+            return None;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+        Some(rx)
+    }
+
     fn diff_bases_changed(
         &mut self,
         buffer: text::BufferSnapshot,
@@ -330,6 +339,7 @@ enum OpenBuffer {
 
 pub enum BufferStoreEvent {
     BufferAdded(Entity<Buffer>),
+    BufferDiffAdded(Entity<BufferDiff>),
     BufferDropped(BufferId),
     BufferChangedFilePath {
         buffer: Entity<Buffer>,
@@ -346,7 +356,7 @@ impl RemoteBufferStore {
     fn open_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Task<Result<Option<String>>> {
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let response = client
                 .request(proto::OpenUnstagedDiff {
                     project_id,
@@ -366,7 +376,7 @@ impl RemoteBufferStore {
 
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let response = client
                 .request(proto::OpenUncommittedDiff {
                     project_id,
@@ -402,9 +412,7 @@ impl RemoteBufferStore {
                 return Ok(buffer);
             }
 
-            cx.background_executor()
-                .spawn(async move { rx.await? })
-                .await
+            cx.background_spawn(async move { rx.await? }).await
         })
     }
 
@@ -818,20 +826,20 @@ impl LocalBufferStore {
                 .any(|(work_dir, _)| file.path.starts_with(work_dir))
             {
                 let snapshot = buffer.text_snapshot();
+                let has_unstaged_diff = diff_state
+                    .unstaged_diff
+                    .as_ref()
+                    .is_some_and(|diff| diff.is_upgradable());
+                let has_uncommitted_diff = diff_state
+                    .uncommitted_diff
+                    .as_ref()
+                    .is_some_and(|set| set.is_upgradable());
                 diff_state_updates.push((
                     snapshot.clone(),
                     file.path.clone(),
-                    diff_state
-                        .unstaged_diff
-                        .as_ref()
-                        .and_then(|set| set.upgrade())
-                        .is_some(),
-                    diff_state
-                        .uncommitted_diff
-                        .as_ref()
-                        .and_then(|set| set.upgrade())
-                        .is_some(),
-                ))
+                    has_unstaged_diff.then(|| diff_state.index_text.clone()),
+                    has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                ));
             }
         }
 
@@ -843,42 +851,51 @@ impl LocalBufferStore {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_changes_by_buffer = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     diff_state_updates
                         .into_iter()
                         .filter_map(
-                            |(buffer_snapshot, path, needs_staged_text, needs_committed_text)| {
+                            |(buffer_snapshot, path, current_index_text, current_head_text)| {
                                 let local_repo = snapshot.local_repo_for_path(&path)?;
                                 let relative_path = local_repo.relativize(&path).ok()?;
-                                let staged_text = if needs_staged_text {
+                                let index_text = if current_index_text.is_some() {
                                     local_repo.repo().load_index_text(&relative_path)
                                 } else {
                                     None
                                 };
-                                let committed_text = if needs_committed_text {
+                                let head_text = if current_head_text.is_some() {
                                     local_repo.repo().load_committed_text(&relative_path)
                                 } else {
                                     None
                                 };
-                                let diff_bases_change =
-                                    match (needs_staged_text, needs_committed_text) {
-                                        (true, true) => Some(if staged_text == committed_text {
-                                            DiffBasesChange::SetBoth(committed_text)
-                                        } else {
-                                            DiffBasesChange::SetEach {
-                                                index: staged_text,
-                                                head: committed_text,
-                                            }
-                                        }),
-                                        (true, false) => {
-                                            Some(DiffBasesChange::SetIndex(staged_text))
+
+                                // Avoid triggering a diff update if the base text has not changed.
+                                if let Some((current_index, current_head)) =
+                                    current_index_text.as_ref().zip(current_head_text.as_ref())
+                                {
+                                    if current_index.as_deref() == index_text.as_ref()
+                                        && current_head.as_deref() == head_text.as_ref()
+                                    {
+                                        return None;
+                                    }
+                                }
+
+                                let diff_bases_change = match (
+                                    current_index_text.is_some(),
+                                    current_head_text.is_some(),
+                                ) {
+                                    (true, true) => Some(if index_text == head_text {
+                                        DiffBasesChange::SetBoth(head_text)
+                                    } else {
+                                        DiffBasesChange::SetEach {
+                                            index: index_text,
+                                            head: head_text,
                                         }
-                                        (false, true) => {
-                                            Some(DiffBasesChange::SetHead(committed_text))
-                                        }
-                                        (false, false) => None,
-                                    };
+                                    }),
+                                    (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
+                                    (false, true) => Some(DiffBasesChange::SetHead(head_text)),
+                                    (false, false) => None,
+                                };
                                 Some((buffer_snapshot, diff_bases_change))
                             },
                         )
@@ -1129,8 +1146,7 @@ impl LocalBufferStore {
             cx.spawn(move |_, mut cx| async move {
                 let loaded = load_file.await?;
                 let text_buffer = cx
-                    .background_executor()
-                    .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
+                    .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
                 cx.insert_entity(reservation, |_| {
                     Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
@@ -1347,8 +1363,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     pub fn open_unstaged_diff(
@@ -1357,8 +1372,23 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff) = self.get_unstaged_diff(buffer_id, cx) {
-            return Task::ready(Ok(diff));
+        if let Some(OpenBuffer::Complete { diff_state, .. }) = self.opened_buffers.get(&buffer_id) {
+            if let Some(unstaged_diff) = diff_state
+                .read(cx)
+                .unstaged_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(unstaged_diff)
+                    });
+                }
+                return Task::ready(Ok(unstaged_diff));
+            }
         }
 
         let task = match self.loading_diffs.entry((buffer_id, DiffKind::Unstaged)) {
@@ -1388,8 +1418,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     pub fn open_uncommitted_diff(
@@ -1398,8 +1427,24 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff) = self.get_uncommitted_diff(buffer_id, cx) {
-            return Task::ready(Ok(diff));
+
+        if let Some(OpenBuffer::Complete { diff_state, .. }) = self.opened_buffers.get(&buffer_id) {
+            if let Some(uncommitted_diff) = diff_state
+                .read(cx)
+                .uncommitted_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(uncommitted_diff)
+                    });
+                }
+                return Task::ready(Ok(uncommitted_diff));
+            }
         }
 
         let task = match self.loading_diffs.entry((buffer_id, DiffKind::Uncommitted)) {
@@ -1409,7 +1454,7 @@ impl BufferStore {
                     BufferStoreState::Local(this) => {
                         let committed_text = this.load_committed_text(&buffer, cx);
                         let staged_text = this.load_staged_text(&buffer, cx);
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let committed_text = committed_text.await?;
                             let staged_text = staged_text.await?;
                             let diff_bases_change = if committed_text == staged_text {
@@ -1445,8 +1490,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     async fn open_diff_internal(
@@ -1479,18 +1523,20 @@ impl BufferStore {
             if let Some(OpenBuffer::Complete { diff_state, .. }) =
                 this.opened_buffers.get_mut(&buffer_id)
             {
+                let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                cx.emit(BufferStoreEvent::BufferDiffAdded(diff.clone()));
                 diff_state.update(cx, |diff_state, cx| {
                     diff_state.language = language;
                     diff_state.language_registry = language_registry;
 
-                    let diff = cx.new(|_| BufferDiff::new(&text_snapshot));
                     match kind {
                         DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                         DiffKind::Uncommitted => {
                             let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                                 diff
                             } else {
-                                let unstaged_diff = cx.new(|_| BufferDiff::new(&text_snapshot));
+                                let unstaged_diff =
+                                    cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                                 diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                                 unstaged_diff
                             };
@@ -1587,7 +1633,7 @@ impl BufferStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
@@ -1639,9 +1685,9 @@ impl BufferStore {
                     // file in the Cargo registry (presumably opened with go-to-definition
                     // from a normal Rust file). If so, we can put together a permalink
                     // using crate metadata.
-                    if !buffer
+                    if buffer
                         .language()
-                        .is_some_and(|lang| lang.name() == "Rust".into())
+                        .is_none_or(|lang| lang.name() != "Rust".into())
                     {
                         return Task::ready(Err(anyhow!("no permalink available")));
                     }
@@ -2106,24 +2152,23 @@ impl BufferStore {
                     })
                     .log_err();
 
-                cx.background_executor()
-                    .spawn(
-                        async move {
-                            let operations = operations.await;
-                            for chunk in split_operations(operations) {
-                                client
-                                    .request(proto::UpdateBuffer {
-                                        project_id,
-                                        buffer_id: buffer_id.into(),
-                                        operations: chunk,
-                                    })
-                                    .await?;
-                            }
-                            anyhow::Ok(())
+                cx.background_spawn(
+                    async move {
+                        let operations = operations.await;
+                        for chunk in split_operations(operations) {
+                            client
+                                .request(proto::UpdateBuffer {
+                                    project_id,
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                })
+                                .await?;
                         }
-                        .log_err(),
-                    )
-                    .detach();
+                        anyhow::Ok(())
+                    }
+                    .log_err(),
+                )
+                .detach();
             }
         }
         Ok(response)
@@ -2392,8 +2437,7 @@ impl BufferStore {
                 shared.diff = Some(diff.clone());
             }
         })?;
-        let staged_text =
-            diff.read_with(&cx, |diff, _| diff.base_text().map(|buffer| buffer.text()))?;
+        let staged_text = diff.read_with(&cx, |diff, _| diff.base_text_string())?;
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2423,22 +2467,25 @@ impl BufferStore {
         diff.read_with(&cx, |diff, cx| {
             use proto::open_uncommitted_diff_response::Mode;
 
-            let staged_buffer = diff
-                .secondary_diff()
-                .and_then(|diff| diff.read(cx).base_text());
+            let unstaged_diff = diff.secondary_diff();
+            let index_snapshot = unstaged_diff.and_then(|diff| {
+                let diff = diff.read(cx);
+                diff.base_text_exists().then(|| diff.base_text())
+            });
 
             let mode;
             let staged_text;
             let committed_text;
-            if let Some(committed_buffer) = diff.base_text() {
-                committed_text = Some(committed_buffer.text());
-                if let Some(staged_buffer) = staged_buffer {
-                    if staged_buffer.remote_id() == committed_buffer.remote_id() {
+            if diff.base_text_exists() {
+                let committed_snapshot = diff.base_text();
+                committed_text = Some(committed_snapshot.text());
+                if let Some(index_text) = index_snapshot {
+                    if index_text.remote_id() == committed_snapshot.remote_id() {
                         mode = Mode::IndexMatchesHead;
                         staged_text = None;
                     } else {
                         mode = Mode::IndexAndHead;
-                        staged_text = Some(staged_buffer.text());
+                        staged_text = Some(index_text.text());
                     }
                 } else {
                     mode = Mode::IndexAndHead;
@@ -2447,7 +2494,7 @@ impl BufferStore {
             } else {
                 mode = Mode::IndexAndHead;
                 committed_text = None;
-                staged_text = staged_buffer.as_ref().map(|buffer| buffer.text());
+                staged_text = index_snapshot.as_ref().map(|buffer| buffer.text());
             }
 
             proto::OpenUncommittedDiffResponse {
@@ -2558,27 +2605,26 @@ impl BufferStore {
 
             if client.send(initial_state).log_err().is_some() {
                 let client = client.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let mut chunks = split_operations(operations).peekable();
-                        while let Some(chunk) = chunks.next() {
-                            let is_last = chunks.peek().is_none();
-                            client.send(proto::CreateBufferForPeer {
-                                project_id,
-                                peer_id: Some(peer_id),
-                                variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
-                                    proto::BufferChunk {
-                                        buffer_id: buffer_id.into(),
-                                        operations: chunk,
-                                        is_last,
-                                    },
-                                )),
-                            })?;
-                        }
-                        anyhow::Ok(())
-                    })
-                    .await
-                    .log_err();
+                cx.background_spawn(async move {
+                    let mut chunks = split_operations(operations).peekable();
+                    while let Some(chunk) = chunks.next() {
+                        let is_last = chunks.peek().is_none();
+                        client.send(proto::CreateBufferForPeer {
+                            project_id,
+                            peer_id: Some(peer_id),
+                            variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
+                                proto::BufferChunk {
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                    is_last,
+                                },
+                            )),
+                        })?;
+                    }
+                    anyhow::Ok(())
+                })
+                .await
+                .log_err();
             }
             Ok(())
         })

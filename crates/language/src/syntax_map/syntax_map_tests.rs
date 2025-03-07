@@ -1134,7 +1134,7 @@ fn html_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_html::language()),
+        Some(tree_sitter_html::LANGUAGE.into()),
     )
     .with_highlights_query(
         r#"

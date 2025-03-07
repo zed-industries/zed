@@ -168,6 +168,23 @@ impl Subscription {
     pub fn detach(mut self) {
         self.unsubscribe.take();
     }
+
+    /// Joins two subscriptions into a single subscription. Detach will
+    /// detach both interior subscriptions.
+    pub fn join(mut subscription_a: Self, mut subscription_b: Self) -> Self {
+        let a_unsubscribe = subscription_a.unsubscribe.take();
+        let b_unsubscribe = subscription_b.unsubscribe.take();
+        Self {
+            unsubscribe: Some(Box::new(move || {
+                if let Some(self_unsubscribe) = a_unsubscribe {
+                    self_unsubscribe();
+                }
+                if let Some(other_unsubscribe) = b_unsubscribe {
+                    other_unsubscribe();
+                }
+            })),
+        }
+    }
 }
 
 impl Drop for Subscription {

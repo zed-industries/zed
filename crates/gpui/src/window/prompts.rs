@@ -135,7 +135,7 @@ impl Render for FallbackPromptRenderer {
                     .border_1()
                     .border_color(opaque_grey(0.2, 0.5))
                     .mt_1()
-                    .rounded_sm()
+                    .rounded_xs()
                     .cursor_pointer()
                     .text_sm()
                     .child(action.clone())

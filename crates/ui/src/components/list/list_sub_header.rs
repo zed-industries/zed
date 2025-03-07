@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use crate::prelude::*;
 use crate::{h_flex, Icon, IconName, IconSize, Label};
 

@@ -1,7 +1,6 @@
 use super::{latest, since_v0_1_0};
 use crate::wasm_host::WasmState;
 use anyhow::Result;
-use async_trait::async_trait;
 use extension::WorktreeDelegate;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
@@ -111,7 +110,6 @@ impl From<CodeLabel> for latest::CodeLabel {
     }
 }
 
-#[async_trait]
 impl HostWorktree for WasmState {
     async fn id(&mut self, delegate: Resource<Arc<dyn WorktreeDelegate>>) -> wasmtime::Result<u64> {
         latest::HostWorktree::id(self, delegate).await
@@ -153,7 +151,6 @@ impl HostWorktree for WasmState {
     }
 }
 
-#[async_trait]
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,

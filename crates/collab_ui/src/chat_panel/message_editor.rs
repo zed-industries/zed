@@ -454,8 +454,7 @@ impl MessageEditor {
         mut cx: AsyncWindowContext,
     ) {
         let (buffer, ranges) = cx
-            .background_executor()
-            .spawn(async move {
+            .background_spawn(async move {
                 let ranges = MENTIONS_SEARCH.search(&buffer, None).await;
                 (buffer, ranges)
             })
@@ -532,7 +531,7 @@ impl Render for MessageEditor {
             .px_2()
             .py_1()
             .bg(cx.theme().colors().editor_background)
-            .rounded_md()
+            .rounded_sm()
             .child(EditorElement::new(
                 &self.editor,
                 EditorStyle {

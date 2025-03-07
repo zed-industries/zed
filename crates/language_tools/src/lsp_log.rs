@@ -16,7 +16,7 @@ use std::{borrow::Cow, sync::Arc};
 use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
 use workspace::{
     item::{Item, ItemHandle},
-    searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
@@ -735,7 +735,8 @@ impl LspLogView {
 
 * Binary: {BINARY:#?}
 
-* Running in project: {PATH:?}
+* Registered workspace folders:
+{WORKSPACE_FOLDERS}
 
 * Capabilities: {CAPABILITIES}
 
@@ -743,7 +744,15 @@ impl LspLogView {
                 NAME = server.name(),
                 ID = server.server_id(),
                 BINARY = server.binary(),
-                PATH = server.root_path(),
+                WORKSPACE_FOLDERS = server
+                    .workspace_folders()
+                    .iter()
+                    .filter_map(|path| path
+                        .to_file_path()
+                        .ok()
+                        .map(|path| path.to_string_lossy().into_owned()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
                     .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
                 CONFIGURATION = serde_json::to_string_pretty(server.configuration())
@@ -1161,12 +1170,14 @@ impl SearchableItem for LspLogView {
     }
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        self.editor
-            .update(cx, |e, cx| e.active_match_index(matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.active_match_index(direction, matches, window, cx)
+        })
     }
 }
 

@@ -36,6 +36,7 @@ serde_json_lenient.workspace = true
 serde_repr.workspace = true
 settings.workspace = true
 strum.workspace = true
+thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
 

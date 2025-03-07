@@ -499,12 +499,6 @@ impl SystemNodeRuntime {
         let scratch_dir = paths::support_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
-        fs::write(scratch_dir.join("blank_user_npmrc"), [])
-            .await
-            .ok();
-        fs::write(scratch_dir.join("blank_global_npmrc"), [])
-            .await
-            .ok();
 
         let mut this = Self {
             node,
@@ -551,14 +545,6 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
-            .args([
-                "--userconfig".into(),
-                self.scratch_dir.join("blank_user_npmrc"),
-            ])
-            .args([
-                "--globalconfig".into(),
-                self.scratch_dir.join("blank_global_npmrc"),
-            ])
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;

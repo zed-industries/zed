@@ -1,7 +1,7 @@
 use gpui::{
     div, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
-    Refineable, Render, RenderablePromptHandle, Styled, TextStyleRefinement, Window,
+    Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -39,7 +39,7 @@ pub fn fallback_prompt_renderer(
                     let mut base_text_style = window.text_style();
                     base_text_style.refine(&TextStyleRefinement {
                         font_family: Some(settings.ui_font.family.clone()),
-                        font_size: Some(settings.ui_font_size.into()),
+                        font_size: Some(settings.ui_font_size(cx).into()),
                         color: Some(ui::Color::Muted.color(cx)),
                         ..Default::default()
                     });
@@ -48,7 +48,7 @@ pub fn fallback_prompt_renderer(
                         selection_background_color: { cx.theme().players().local().selection },
                         ..Default::default()
                     };
-                    Markdown::new(text.to_string(), markdown_style, None, None, window, cx)
+                    Markdown::new(SharedString::new(text), markdown_style, None, None, cx)
                 })
             }),
         }
@@ -102,7 +102,12 @@ impl FallbackPromptRenderer {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
@@ -119,7 +124,7 @@ impl Render for FallbackPromptRenderer {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .elevation_3(cx)

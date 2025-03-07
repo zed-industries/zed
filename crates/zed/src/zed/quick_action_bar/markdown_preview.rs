@@ -41,10 +41,7 @@ impl QuickActionBar {
                 Tooltip::with_meta(
                     "Preview Markdown",
                     Some(&markdown_preview::OpenPreview),
-                    format!(
-                        "{} to open in a split",
-                        text_for_keystroke(&alt_click, PlatformStyle::platform())
-                    ),
+                    format!("{} to open in a split", text_for_keystroke(&alt_click, cx)),
                     window,
                     cx,
                 )

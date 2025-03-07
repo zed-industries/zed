@@ -81,7 +81,7 @@ impl Render for TextStory {
                             "Interactive Text",
                             InteractiveText::new(
                                 "interactive",
-                                StyledText::new("Hello world, how is it going?").with_highlights(
+                                StyledText::new("Hello world, how is it going?").with_default_highlights(
                                     &window.text_style(),
                                     [
                                         (

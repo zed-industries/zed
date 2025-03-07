@@ -24,7 +24,6 @@ log.workspace = true
 lsp.workspace = true
 project.workspace = true
 rand.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme.workspace = true

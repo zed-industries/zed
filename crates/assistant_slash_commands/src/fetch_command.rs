@@ -151,7 +151,7 @@ impl SlashCommand for FetchSlashCommand {
         let http_client = workspace.read(cx).client().http_client();
         let url = argument.to_string();
 
-        let text = cx.background_executor().spawn({
+        let text = cx.background_spawn({
             let url = url.clone();
             async move { Self::build_message(http_client, &url).await }
         });

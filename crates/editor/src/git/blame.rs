@@ -4,9 +4,9 @@ use git::{
     blame::{Blame, BlameEntry},
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
 };
-use gpui::{App, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
-use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
+use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
 use project::{Project, ProjectItem};
 use smallvec::SmallVec;
@@ -195,9 +195,12 @@ impl GitBlame {
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
+        let buffer_id = self.buffer_snapshot.remote_id();
         let mut cursor = self.entries.cursor::<u32>(&());
         rows.into_iter().map(move |info| {
-            let row = info.buffer_row?;
+            let row = info
+                .buffer_row
+                .filter(|_| info.buffer_id == Some(buffer_id))?;
             cursor.seek_forward(&row, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
@@ -229,6 +232,9 @@ impl GitBlame {
     }
 
     pub fn focus(&mut self, cx: &mut Context<Self>) {
+        if self.focused {
+            return;
+        }
         self.focused = true;
         if self.changed_while_blurred {
             self.changed_while_blurred = false;
@@ -355,13 +361,11 @@ impl GitBlame {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
-        let languages = self.project.read(cx).languages().clone();
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let snapshot = snapshot.clone();
                     async move {
                         let Some(Blame {
@@ -380,7 +384,6 @@ impl GitBlame {
                             remote_url,
                             &permalinks,
                             provider_registry,
-                            &languages,
                         )
                         .await;
 
@@ -476,7 +479,6 @@ async fn parse_commit_messages(
     remote_url: Option<String>,
     deprecated_permalinks: &HashMap<Oid, Url>,
     provider_registry: Arc<GitHostingProviderRegistry>,
-    languages: &Arc<LanguageRegistry>,
 ) -> HashMap<Oid, ParsedCommitMessage> {
     let mut commit_details = HashMap::default();
 
@@ -485,8 +487,6 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let parsed_message = parse_markdown(&message, languages).await;
-
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
             Some(provider.build_commit_permalink(
                 git_remote,
@@ -518,7 +518,6 @@ async fn parse_commit_messages(
             oid,
             ParsedCommitMessage {
                 message: message.into(),
-                parsed_message,
                 permalink,
                 remote,
                 pull_request,
@@ -529,33 +528,17 @@ async fn parse_commit_messages(
     commit_details
 }
 
-async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -> ParsedMarkdown {
-    let mut parsed_message = ParsedMarkdown::default();
-
-    markdown::parse_markdown_block(
-        text,
-        Some(language_registry),
-        None,
-        &mut parsed_message.text,
-        &mut parsed_message.highlights,
-        &mut parsed_message.region_ranges,
-        &mut parsed_message.regions,
-    )
-    .await;
-
-    parsed_message
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext as _, Context};
+    use gpui::Context;
     use language::{Point, Rope};
     use project::FakeFs;
     use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
     use std::{cmp, env, ops::Range, path::Path};
+    use text::BufferId;
     use unindent::Unindent as _;
     use util::{path, RandomCharIter};
 
@@ -573,16 +556,18 @@ mod tests {
     #[track_caller]
     fn assert_blame_rows(
         blame: &mut GitBlame,
+        buffer_id: BufferId,
         rows: Range<u32>,
         expected: Vec<Option<BlameEntry>>,
         cx: &mut Context<GitBlame>,
     ) {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             blame
                 .blame_for_rows(
                     &rows
                         .map(|row| RowInfo {
                             buffer_row: Some(row),
+                            buffer_id: Some(buffer_id),
                             ..Default::default()
                         })
                         .collect::<Vec<_>>(),
@@ -715,6 +700,7 @@ mod tests {
             })
             .await
             .unwrap();
+        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id());
 
         let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
@@ -722,12 +708,13 @@ mod tests {
 
         git_blame.update(cx, |blame, cx| {
             // All lines
-            assert_eq!(
+            pretty_assertions::assert_eq!(
                 blame
                     .blame_for_rows(
                         &(0..8)
                             .map(|buffer_row| RowInfo {
                                 buffer_row: Some(buffer_row),
+                                buffer_id: Some(buffer_id),
                                 ..Default::default()
                             })
                             .collect::<Vec<_>>(),
@@ -746,12 +733,13 @@ mod tests {
                 ]
             );
             // Subset of lines
-            assert_eq!(
+            pretty_assertions::assert_eq!(
                 blame
                     .blame_for_rows(
                         &(1..4)
                             .map(|buffer_row| RowInfo {
                                 buffer_row: Some(buffer_row),
+                                buffer_id: Some(buffer_id),
                                 ..Default::default()
                             })
                             .collect::<Vec<_>>(),
@@ -765,12 +753,13 @@ mod tests {
                 ]
             );
             // Subset of lines, with some not displayed
-            assert_eq!(
+            pretty_assertions::assert_eq!(
                 blame
                     .blame_for_rows(
                         &[
                             RowInfo {
                                 buffer_row: Some(1),
+                                buffer_id: Some(buffer_id),
                                 ..Default::default()
                             },
                             Default::default(),
@@ -821,6 +810,7 @@ mod tests {
             })
             .await
             .unwrap();
+        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id());
 
         let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
@@ -831,6 +821,7 @@ mod tests {
             // lines.
             assert_blame_rows(
                 blame,
+                buffer_id,
                 0..4,
                 vec![
                     Some(blame_entry("1b1b1b", 0..4)),
@@ -849,6 +840,7 @@ mod tests {
         git_blame.update(cx, |blame, cx| {
             assert_blame_rows(
                 blame,
+                buffer_id,
                 0..2,
                 vec![None, Some(blame_entry("1b1b1b", 0..4))],
                 cx,
@@ -861,6 +853,7 @@ mod tests {
         git_blame.update(cx, |blame, cx| {
             assert_blame_rows(
                 blame,
+                buffer_id,
                 1..4,
                 vec![
                     None,
@@ -873,7 +866,13 @@ mod tests {
 
         // Before we insert a newline at the end, sanity check:
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows(blame, 3..4, vec![Some(blame_entry("1b1b1b", 0..4))], cx);
+            assert_blame_rows(
+                blame,
+                buffer_id,
+                3..4,
+                vec![Some(blame_entry("1b1b1b", 0..4))],
+                cx,
+            );
         });
         // Insert a newline at the end
         buffer.update(cx, |buffer, cx| {
@@ -883,6 +882,7 @@ mod tests {
         git_blame.update(cx, |blame, cx| {
             assert_blame_rows(
                 blame,
+                buffer_id,
                 3..5,
                 vec![Some(blame_entry("1b1b1b", 0..4)), None],
                 cx,
@@ -891,7 +891,13 @@ mod tests {
 
         // Before we insert a newline at the start, sanity check:
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows(blame, 2..3, vec![Some(blame_entry("1b1b1b", 0..4))], cx);
+            assert_blame_rows(
+                blame,
+                buffer_id,
+                2..3,
+                vec![Some(blame_entry("1b1b1b", 0..4))],
+                cx,
+            );
         });
 
         // Usage example
@@ -903,6 +909,7 @@ mod tests {
         git_blame.update(cx, |blame, cx| {
             assert_blame_rows(
                 blame,
+                buffer_id,
                 2..4,
                 vec![None, Some(blame_entry("1b1b1b", 0..4))],
                 cx,

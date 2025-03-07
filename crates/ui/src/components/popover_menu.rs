@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
@@ -178,6 +176,7 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
+    /// This method prevents the trigger button tooltip from being seen when the menu is open.
     pub fn trigger_with_tooltip<T: PopoverTrigger + ButtonCommon>(
         mut self,
         t: T,
@@ -200,26 +199,26 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
-    /// anchor defines which corner of the menu to anchor to the attachment point
-    /// (by default the cursor position, but see attach)
+    /// Defines which corner of the menu to anchor to the attachment point.
+    /// By default, it uses the cursor position. Also see the `attach` method.
     pub fn anchor(mut self, anchor: Corner) -> Self {
         self.anchor = anchor;
         self
     }
 
-    /// attach defines which corner of the handle to attach the menu's anchor to
+    /// Defines which corner of the handle to attach the menu's anchor to.
     pub fn attach(mut self, attach: Corner) -> Self {
         self.attach = Some(attach);
         self
     }
 
-    /// offset offsets the position of the content by that many pixels.
+    /// Offsets the position of the content by that many pixels.
     pub fn offset(mut self, offset: Point<Pixels>) -> Self {
         self.offset = Some(offset);
         self
     }
 
-    /// attach something upon opening the menu
+    /// Attaches something upon opening the menu.
     pub fn on_open(mut self, on_open: Rc<dyn Fn(&mut Window, &mut App)>) -> Self {
         self.on_open = Some(on_open);
         self

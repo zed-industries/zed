@@ -19,7 +19,7 @@ struct ScrollHandleState {
 impl ScrollHandleState {
     fn new(terminal: &Terminal) -> Self {
         Self {
-            line_height: terminal.last_content().size.line_height,
+            line_height: terminal.last_content().terminal_bounds.line_height,
             total_lines: terminal.total_lines(),
             viewport_lines: terminal.viewport_lines(),
             display_offset: terminal.last_content().display_offset,
@@ -69,9 +69,10 @@ impl ScrollableHandle for TerminalScrollHandle {
         let offset_delta = (point.y.0 / state.line_height.0).round() as i32;
 
         let max_offset = state.total_lines - state.viewport_lines;
-        let display_offset = ((max_offset as i32 + offset_delta) as usize).min(max_offset);
+        let display_offset = (max_offset as i32 + offset_delta).clamp(0, max_offset as i32);
 
-        self.future_display_offset.set(Some(display_offset));
+        self.future_display_offset
+            .set(Some(display_offset as usize));
     }
 
     fn viewport(&self) -> Bounds<Pixels> {

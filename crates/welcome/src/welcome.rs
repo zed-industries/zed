@@ -8,6 +8,7 @@ use gpui::{
     actions, svg, Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
 };
+use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, Tooltip};
@@ -73,6 +74,16 @@ pub struct WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let edit_prediction_provider_is_zed =
+            all_language_settings(None, cx).edit_predictions.provider
+                == EditPredictionProvider::Zed;
+
+        let edit_prediction_label = if edit_prediction_provider_is_zed {
+            "Edit Prediction Enabled"
+        } else {
+            "Try Edit Prediction"
+        };
+
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -161,17 +172,18 @@ impl Render for WelcomePage {
                                     )
                                     .child(
                                         Button::new(
-                                            "sign-in-to-copilot",
-                                            "Sign in to GitHub Copilot",
+                                            "try-zed-edit-prediction",
+                                            edit_prediction_label,
                                         )
-                                        .icon(IconName::Copilot)
+                                        .disabled(edit_prediction_provider_is_zed)
+                                        .icon(IconName::ZedPredict)
                                         .icon_size(IconSize::XSmall)
                                         .icon_color(Color::Muted)
                                         .icon_position(IconPosition::Start)
                                         .on_click(
                                             cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Copilot Signed In");
-                                                copilot::initiate_sign_in(window, cx);
+                                                telemetry::event!("Welcome Screen Try Edit Prediction clicked");
+                                                window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
                                             }),
                                         ),
                                     )
@@ -253,7 +265,7 @@ impl Render for WelcomePage {
                             ),
                     )
                     .child(
-                        v_group()
+                        v_container()
                             .gap_2()
                             .child(
                                 h_flex()

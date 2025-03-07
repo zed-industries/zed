@@ -3,7 +3,7 @@ use arrayvec::ArrayString;
 use fs::{Fs, MTime};
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use heed::{
     types::{SerdeBincode, Str},
     RoTxn,
@@ -254,7 +254,7 @@ impl SummaryIndex {
         let db_connection = self.db_connection.clone();
         let db = self.summary_db;
         let (needs_summary_tx, needs_summary_rx) = channel::bounded(512);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut might_need_summary = pin!(might_need_summary);
             while let Some(file) = might_need_summary.next().await {
                 let tx = db_connection
@@ -291,7 +291,7 @@ impl SummaryIndex {
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
         let backlog = Arc::clone(&self.backlog);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -368,7 +368,7 @@ impl SummaryIndex {
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
         let backlog = Arc::clone(&self.backlog);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -538,7 +538,7 @@ impl SummaryIndex {
             .available_models(cx)
             .find(|model| &model.id() == &summary_model_id)
         else {
-            return cx.background_executor().spawn(async move {
+            return cx.background_spawn(async move {
                 Err(anyhow!("Couldn't find the preferred summarization model ({:?}) in the language registry's available models", summary_model_id))
             });
         };
@@ -566,31 +566,30 @@ impl SummaryIndex {
         let code_len = code.len();
         cx.spawn(|cx| async move {
             let stream = model.stream_completion(request, &cx);
-            cx.background_executor()
-                .spawn(async move {
-                    let answer: String = stream
-                        .await?
-                        .filter_map(|event| async {
-                            if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
-                                Some(text)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                        .await;
+            cx.background_spawn(async move {
+                let answer: String = stream
+                    .await?
+                    .filter_map(|event| async {
+                        if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
+                            Some(text)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+                    .await;
 
-                    log::info!(
-                        "It took {:?} to summarize {:?} bytes of code.",
-                        start.elapsed(),
-                        code_len
-                    );
+                log::info!(
+                    "It took {:?} to summarize {:?} bytes of code.",
+                    start.elapsed(),
+                    code_len
+                );
 
-                    log::debug!("Summary was: {:?}", &answer);
+                log::debug!("Summary was: {:?}", &answer);
 
-                    Ok(answer)
-                })
-                .await
+                Ok(answer)
+            })
+            .await
 
             // TODO if summarization failed, put it back in the backlog!
         })
@@ -604,7 +603,7 @@ impl SummaryIndex {
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
         let summary_db = self.summary_db;
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut summaries = pin!(summaries.chunks_timeout(4096, Duration::from_secs(2)));
             while let Some(summaries) = summaries.next().await {
                 let mut txn = db_connection.write_txn()?;
@@ -650,7 +649,7 @@ impl SummaryIndex {
                 backlog.drain().collect()
             };
 
-            let task = cx.background_executor().spawn(async move {
+            let task = cx.background_spawn(async move {
                 tx.send(needs_summary).await?;
                 Ok(())
             });

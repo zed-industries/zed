@@ -22,7 +22,7 @@ test-support = [
     "async-trait",
     "collections/test-support",
     "gpui/test-support",
-    "livekit_server",
+    "livekit_api",
     "nanoid",
 ]
 
@@ -33,7 +33,7 @@ async-trait = { workspace = true, optional = true }
 collections = { workspace = true, optional = true }
 futures.workspace = true
 gpui = { workspace = true, optional = true }
-livekit_server = { workspace = true, optional = true }
+livekit_api = { workspace = true, optional = true }
 log.workspace = true
 media.workspace = true
 nanoid = { workspace = true, optional = true}
@@ -47,14 +47,14 @@ core-foundation.workspace = true
 async-trait = { workspace = true }
 collections = { workspace = true }
 gpui = { workspace = true }
-livekit_server.workspace = true
+livekit_api.workspace = true
 nanoid.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-livekit_server.workspace = true
+livekit_api.workspace = true
 nanoid.workspace = true
 sha2.workspace = true
 simplelog.workspace = true

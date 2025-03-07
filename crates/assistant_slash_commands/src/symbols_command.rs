@@ -4,7 +4,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use editor::Editor;
-use gpui::{Task, WeakEntity};
+use gpui::{AppContext as _, Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
@@ -69,7 +69,7 @@ impl SlashCommand for OutlineSlashCommand {
             let snapshot = buffer.read(cx).snapshot();
             let path = snapshot.resolve_file_path(cx, true);
 
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let outline = snapshot
                     .outline(None)
                     .context("no symbols for active tab")?;

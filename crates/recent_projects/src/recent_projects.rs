@@ -465,14 +465,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(&OpenRemote, window))
+                        .key_binding(KeyBinding::for_action(&OpenRemote, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(OpenRemote.boxed_clone(), cx)
                         }),
                 )
                 .child(
                     Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)
                         }),
@@ -671,7 +671,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        SerializedWorkspaceLocation::from_local_paths(vec!["/test/path/"]),
+                        SerializedWorkspaceLocation::from_local_paths(vec![path!("/test/path/")]),
                     )]);
                 });
             })
@@ -694,8 +694,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Dirty workspace should prompt before opening the new recent project"
         );
-        // Cancel
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
         assert!(
             !cx.has_pending_prompt(),
             "Should have no pending prompt after cancelling"

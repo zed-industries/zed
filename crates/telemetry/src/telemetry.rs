@@ -15,6 +15,8 @@ pub use telemetry_events::FlexibleEvent as Event;
 /// telemetry::event!("Keymap Changed", version = "1.0.0");
 /// telemetry::event!("Documentation Viewed", url, source = "Extension Upsell");
 /// ```
+///
+/// If you want to debug logging in development, export `RUST_LOG=telemetry=trace`
 #[macro_export]
 macro_rules! event {
     ($name:expr) => {{

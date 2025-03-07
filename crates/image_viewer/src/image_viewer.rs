@@ -4,7 +4,7 @@ mod image_viewer_settings;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use editor::items::entry_git_aware_label_color;
+use editor::{items::entry_git_aware_label_color, EditorSettings};
 use file_icons::FileIcons;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
@@ -144,8 +144,13 @@ impl Item for ImageView {
             .map(Icon::from_path)
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        let show_breadcrumb = EditorSettings::get_global(cx).toolbar.breadcrumbs;
+        if show_breadcrumb {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, _theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
@@ -252,7 +257,7 @@ impl SerializableItem for ImageView {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
 
-        Some(cx.background_executor().spawn({
+        Some(cx.background_spawn({
             async move {
                 IMAGE_VIEWER
                     .save_image_path(item_id, workspace_id, image_path)

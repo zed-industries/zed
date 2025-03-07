@@ -17,7 +17,7 @@ pub enum Timezone {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct FileToolInput {
+pub struct NowToolInput {
     /// The timezone to use for the datetime.
     timezone: Timezone,
 }
@@ -34,7 +34,7 @@ impl Tool for NowTool {
     }
 
     fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(FileToolInput);
+        let schema = schemars::schema_for!(NowToolInput);
         serde_json::to_value(&schema).unwrap()
     }
 
@@ -45,7 +45,7 @@ impl Tool for NowTool {
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<Result<String>> {
-        let input: FileToolInput = match serde_json::from_value(input) {
+        let input: NowToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };

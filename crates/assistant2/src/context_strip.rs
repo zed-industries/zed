@@ -453,6 +453,7 @@ impl Render for ContextStrip {
                                     &ToggleContextPicker,
                                     &focus_handle,
                                     window,
+                                    cx,
                                 )
                                 .map(|binding| binding.into_any_element()),
                             ),

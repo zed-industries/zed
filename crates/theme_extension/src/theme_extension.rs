@@ -24,6 +24,10 @@ struct ThemeRegistryProxy {
 }
 
 impl ExtensionThemeProxy for ThemeRegistryProxy {
+    fn set_extensions_loaded(&self) {
+        self.theme_registry.set_extensions_loaded();
+    }
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
             let themes = theme::read_user_theme(&theme_path, fs).await?;

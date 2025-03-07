@@ -40,7 +40,7 @@
     "context": "BufferSearchBar",
     "bindings": {
       "cmd-f3": "search::SelectNextMatch",
-      "cmd-shift-f3": "search::SelectPrevMatch"
+      "cmd-shift-f3": "search::SelectPreviousMatch"
     }
   },
   {

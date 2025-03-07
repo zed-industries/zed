@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::ClickEvent;
 
 use crate::{prelude::*, IconButtonShape};
@@ -77,7 +75,7 @@ impl RenderOnce for NumericStepper {
                 h_flex()
                     .gap_1()
                     .px_1()
-                    .rounded_sm()
+                    .rounded_xs()
                     .bg(cx.theme().colors().editor_background)
                     .child(
                         IconButton::new("decrement", IconName::Dash)

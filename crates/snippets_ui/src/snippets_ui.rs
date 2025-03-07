@@ -9,7 +9,7 @@ use picker::{Picker, PickerDelegate};
 use std::{borrow::Borrow, fs, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, ModalView, Workspace};
+use workspace::{notifications::NotifyResultExt, ModalView, OpenOptions, OpenVisible, Workspace};
 
 actions!(snippets, [ConfigureSnippets, OpenFolder]);
 
@@ -144,7 +144,10 @@ impl PickerDelegate for ScopeSelectorDelegate {
                         workspace
                             .open_abs_path(
                                 config_dir().join("snippets").join(scope + ".json"),
-                                false,
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
                                 window,
                                 cx,
                             )

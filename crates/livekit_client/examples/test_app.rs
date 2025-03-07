@@ -33,7 +33,7 @@ use livekit_client::{
     AudioStream, RemoteVideoTrackView, Room, RoomEvent,
 };
 
-use livekit_server::token::{self, VideoGrant};
+use livekit_api::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -302,11 +302,10 @@ impl LivekitWindow {
         if let Some(track) = self.screen_share_track.take() {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
-            cx.background_executor()
-                .spawn(async move {
-                    participant.unpublish_track(&track.sid()).await.unwrap();
-                })
-                .detach();
+            cx.background_spawn(async move {
+                participant.unpublish_track(&track.sid()).await.unwrap();
+            })
+            .detach();
             cx.notify();
         } else {
             let participant = self.room.local_participant();

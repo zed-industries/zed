@@ -311,7 +311,7 @@ impl Room {
     fn app_will_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> {
         let task = if self.status.is_online() {
             let leave = self.leave_internal(cx);
-            Some(cx.background_executor().spawn(async move {
+            Some(cx.background_spawn(async move {
                 leave.await.log_err();
             }))
         } else {
@@ -378,7 +378,7 @@ impl Room {
         self.clear_state(cx);
 
         let leave_room = self.client.request(proto::LeaveRoom {});
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             leave_room.await?;
             anyhow::Ok(())
         })
@@ -1268,7 +1268,7 @@ impl Room {
         };
 
         cx.notify();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             client
                 .request(proto::UpdateParticipantLocation {
                     room_id,
@@ -1385,9 +1385,7 @@ impl Room {
                                 live_kit.room.unpublish_track(publication);
                             } else {
                                 if live_kit.muted_by_user || live_kit.deafened {
-                                    cx.background_executor()
-                                        .spawn(publication.set_mute(true))
-                                        .detach();
+                                    cx.background_spawn(publication.set_mute(true)).detach();
                                 }
                                 live_kit.microphone_track = LocalTrack::Published {
                                     track_publication: publication,

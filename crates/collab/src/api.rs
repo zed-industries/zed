@@ -5,7 +5,6 @@ pub mod extensions;
 pub mod ips_file;
 pub mod slack;
 
-use crate::api::events::SnowflakeRow;
 use crate::{
     auth,
     db::{User, UserId},
@@ -100,7 +99,6 @@ pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
-        .route("/snowflake/events", post(write_snowflake_event))
         .merge(billing::router())
         .merge(contributors::router())
         .layer(
@@ -246,20 +244,4 @@ async fn create_access_token(
         user_id: impersonated_user_id.unwrap_or(user_id),
         encrypted_access_token,
     }))
-}
-
-/// An endpoint that writes a Snowflake event to our event stream.
-///
-/// This endpoint is exposed such that other internal services can write
-/// telemetry events without needing to talk to AWS Kinesis directly.
-async fn write_snowflake_event(
-    Extension(app): Extension<Arc<AppState>>,
-    Json(event): Json<SnowflakeRow>,
-) -> Result<()> {
-    let kinesis_client = app.kinesis_client.clone();
-    let kinesis_stream = app.config.kinesis_stream.clone();
-
-    event.write(&kinesis_client, &kinesis_stream).await?;
-
-    Ok(())
 }

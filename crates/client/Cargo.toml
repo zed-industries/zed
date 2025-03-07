@@ -22,6 +22,7 @@ async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
+credentials_provider.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true

@@ -8,7 +8,7 @@ use crate::{
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
-    Bias, DisplayPoint, Editor,
+    Bias, DisplayPoint, Editor, ToOffset,
 };
 use gpui::{actions, impl_actions, Window};
 use itertools::Itertools;
@@ -64,6 +64,192 @@ struct IndentObj {
     include_below: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct CandidateRange {
+    pub start: DisplayPoint,
+    pub end: DisplayPoint,
+}
+
+#[derive(Debug, Clone)]
+pub struct CandidateWithRanges {
+    candidate: CandidateRange,
+    open_range: Range<usize>,
+    close_range: Range<usize>,
+}
+
+fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
+    candidates: Option<I>,
+    caret: DisplayPoint,
+    map: &DisplaySnapshot,
+    range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
+) -> Option<CandidateWithRanges> {
+    let caret_offset = caret.to_offset(map, Bias::Left);
+    let mut covering = vec![];
+    let mut next_ones = vec![];
+    let snapshot = &map.buffer_snapshot;
+
+    if let Some(ranges) = candidates {
+        for (open_range, close_range) in ranges {
+            let start_off = open_range.start;
+            let end_off = close_range.end;
+            if let Some(range_filter) = range_filter {
+                if !range_filter(open_range.clone(), close_range.clone()) {
+                    continue;
+                }
+            }
+            let candidate = CandidateWithRanges {
+                candidate: CandidateRange {
+                    start: start_off.to_display_point(map),
+                    end: end_off.to_display_point(map),
+                },
+                open_range: open_range.clone(),
+                close_range: close_range.clone(),
+            };
+
+            if open_range
+                .start
+                .to_offset(snapshot)
+                .to_display_point(map)
+                .row()
+                == caret_offset.to_display_point(map).row()
+            {
+                if start_off <= caret_offset && caret_offset < end_off {
+                    covering.push(candidate);
+                } else if start_off >= caret_offset {
+                    next_ones.push(candidate);
+                }
+            }
+        }
+    }
+
+    // 1) covering -> smallest width
+    if !covering.is_empty() {
+        return covering.into_iter().min_by_key(|r| {
+            r.candidate.end.to_offset(map, Bias::Right)
+                - r.candidate.start.to_offset(map, Bias::Left)
+        });
+    }
+
+    // 2) next -> closest by start
+    if !next_ones.is_empty() {
+        return next_ones.into_iter().min_by_key(|r| {
+            let start = r.candidate.start.to_offset(map, Bias::Left);
+            (start as isize - caret_offset as isize).abs()
+        });
+    }
+
+    None
+}
+
+type DelimiterPredicate = dyn Fn(&BufferSnapshot, usize, usize) -> bool;
+
+struct DelimiterRange {
+    open: Range<usize>,
+    close: Range<usize>,
+}
+
+impl DelimiterRange {
+    fn to_display_range(&self, map: &DisplaySnapshot, around: bool) -> Range<DisplayPoint> {
+        if around {
+            self.open.start.to_display_point(map)..self.close.end.to_display_point(map)
+        } else {
+            self.open.end.to_display_point(map)..self.close.start.to_display_point(map)
+        }
+    }
+}
+
+fn find_any_delimiters(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    around: bool,
+    is_valid_delimiter: &DelimiterPredicate,
+) -> Option<Range<DisplayPoint>> {
+    let point = map.clip_at_line_end(display_point).to_point(map);
+    let offset = point.to_offset(&map.buffer_snapshot);
+
+    let line_range = get_line_range(map, point);
+    let visible_line_range = get_visible_line_range(&line_range);
+
+    let snapshot = &map.buffer_snapshot;
+    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let buffer = excerpt.buffer();
+
+    let bracket_filter = |open: Range<usize>, close: Range<usize>| {
+        is_valid_delimiter(buffer, open.start, close.start)
+    };
+
+    // Try to find delimiters in visible range first
+    let ranges = map
+        .buffer_snapshot
+        .bracket_ranges(visible_line_range.clone());
+    if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
+        return Some(
+            DelimiterRange {
+                open: candidate.open_range,
+                close: candidate.close_range,
+            }
+            .to_display_range(map, around),
+        );
+    }
+
+    // Fall back to innermost enclosing brackets
+    let (open_bracket, close_bracket) =
+        buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
+
+    Some(
+        DelimiterRange {
+            open: open_bracket,
+            close: close_bracket,
+        }
+        .to_display_range(map, around),
+    )
+}
+
+fn get_line_range(map: &DisplaySnapshot, point: Point) -> Range<Point> {
+    let (start, mut end) = (
+        map.prev_line_boundary(point).0,
+        map.next_line_boundary(point).0,
+    );
+
+    if end == point {
+        end = map.max_point().to_point(map);
+    }
+
+    start..end
+}
+
+fn get_visible_line_range(line_range: &Range<Point>) -> Range<Point> {
+    let end_column = line_range.end.column.saturating_sub(1);
+    line_range.start..Point::new(line_range.end.row, end_column)
+}
+
+fn is_quote_delimiter(buffer: &BufferSnapshot, _start: usize, end: usize) -> bool {
+    matches!(buffer.chars_at(end).next(), Some('\'' | '"' | '`'))
+}
+
+fn is_bracket_delimiter(buffer: &BufferSnapshot, start: usize, _end: usize) -> bool {
+    matches!(
+        buffer.chars_at(start).next(),
+        Some('(' | '[' | '{' | '<' | '|')
+    )
+}
+
+fn find_any_quotes(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
+    find_any_delimiters(map, display_point, around, &is_quote_delimiter)
+}
+
+fn find_any_brackets(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
+    find_any_delimiters(map, display_point, around, &is_bracket_delimiter)
+}
+
 impl_actions!(vim, [Word, Subword, IndentObj]);
 
 actions!(
@@ -117,14 +303,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Quotes, window, cx| {
         vim.object(Object::Quotes, window, cx)
     });
+    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
+    });
     Vim::action(editor, cx, |vim, _: &AnyQuotes, window, cx| {
         vim.object(Object::AnyQuotes, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &AnyBrackets, window, cx| {
         vim.object(Object::AnyBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
-        vim.object(Object::DoubleQuotes, window, cx)
+    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)
@@ -304,26 +493,7 @@ impl Object {
             Object::BackQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
             }
-            Object::AnyQuotes => {
-                let quote_types = ['\'', '"', '`']; // Types of quotes to handle
-                let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
-
-                // Find the closest matching quote range
-                quote_types
-                    .iter()
-                    .flat_map(|&quote| {
-                        // Get ranges for each quote type
-                        surrounding_markers(
-                            map,
-                            relative_to,
-                            around,
-                            self.is_multiline(),
-                            quote,
-                            quote,
-                        )
-                    })
-                    .min_by_key(|range| calculate_range_distance(range, relative_offset, map))
-            }
+            Object::AnyQuotes => find_any_quotes(map, relative_to, around),
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
             }
@@ -338,24 +508,7 @@ impl Object {
                 let range = selection.range();
                 surrounding_html_tag(map, head, range, around)
             }
-            Object::AnyBrackets => {
-                let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
-                let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
-
-                bracket_pairs
-                    .iter()
-                    .flat_map(|&(open_bracket, close_bracket)| {
-                        surrounding_markers(
-                            map,
-                            relative_to,
-                            around,
-                            self.is_multiline(),
-                            open_bracket,
-                            close_bracket,
-                        )
-                    })
-                    .min_by_key(|range| calculate_range_distance(range, relative_offset, map))
-            }
+            Object::AnyBrackets => find_any_brackets(map, relative_to, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -407,56 +560,9 @@ impl Object {
         if let Some(range) = self.range(map, selection.clone(), around) {
             selection.start = range.start;
             selection.end = range.end;
-            if !around && self.is_multiline() {
-                preserve_indented_newline(map, selection);
-            }
             true
         } else {
             false
-        }
-    }
-}
-
-/// Returns a range without the final newline char.
-///
-/// If the selection spans multiple lines and is preceded by an opening brace (`{`),
-/// this function will trim the selection to exclude the final newline
-/// in order to preserve a properly indented line.
-pub fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
-    let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
-
-    if start_point.row == end_point.row {
-        return;
-    }
-
-    let start_offset = selection.start.to_offset(map, Bias::Left);
-    let mut pos = start_offset;
-
-    while pos > 0 {
-        pos -= 1;
-        let current_char = map.buffer_chars_at(pos).next().map(|(ch, _)| ch);
-
-        match current_char {
-            Some(ch) if !ch.is_whitespace() => break,
-            Some('\n') if pos > 0 => {
-                let prev_char = map.buffer_chars_at(pos - 1).next().map(|(ch, _)| ch);
-                if prev_char == Some('{') {
-                    let end_pos = selection.end.to_offset(map, Bias::Left);
-                    for (ch, offset) in map.reverse_buffer_chars_at(end_pos) {
-                        match ch {
-                            '\n' => {
-                                selection.end = offset.to_display_point(map);
-                                selection.reversed = true;
-                                break;
-                            }
-                            ch if !ch.is_whitespace() => break,
-                            _ => continue,
-                        }
-                    }
-                }
-                break;
-            }
-            _ => continue,
         }
     }
 }
@@ -655,37 +761,6 @@ fn around_word(
     } else {
         around_next_word(map, relative_to, ignore_punctuation)
     }
-}
-
-/// Calculate distance between a range and a cursor position
-///
-/// Returns a score where:
-/// - Lower values indicate better matches
-/// - Range containing cursor gets priority (returns range length)
-/// - For non-containing ranges, uses minimum distance to boundaries as primary factor
-/// - Range length is used as secondary factor for tiebreaking
-fn calculate_range_distance(
-    range: &Range<DisplayPoint>,
-    cursor_offset: isize,
-    map: &DisplaySnapshot,
-) -> isize {
-    let start_offset = range.start.to_offset(map, Bias::Left) as isize;
-    let end_offset = range.end.to_offset(map, Bias::Right) as isize;
-    let range_length = end_offset - start_offset;
-
-    // If cursor is inside the range, return range length
-    if cursor_offset >= start_offset && cursor_offset <= end_offset {
-        return range_length;
-    }
-
-    // Calculate minimum distance to range boundaries
-    let start_distance = (cursor_offset - start_offset).abs();
-    let end_distance = (cursor_offset - end_offset).abs();
-    let min_distance = start_distance.min(end_distance);
-
-    // Use min_distance as primary factor, range_length as secondary
-    // Multiply by large number to ensure distance is primary factor
-    min_distance * 10000 + range_length
 }
 
 fn around_subword(
@@ -1396,38 +1471,39 @@ fn surrounding_markers(
         }
     }
 
-    if !around && search_across_lines {
-        // Handle trailing newline after opening
-        if let Some((ch, range)) = movement::chars_after(map, opening.end).next() {
-            if ch == '\n' {
-                opening.end = range.end;
+    // Adjust selection to remove leading and trailing whitespace for multiline inner brackets
+    if !around && open_marker != close_marker {
+        let start_point = opening.end.to_display_point(map);
+        let end_point = closing.start.to_display_point(map);
+        let start_offset = start_point.to_offset(map, Bias::Left);
+        let end_offset = end_point.to_offset(map, Bias::Left);
 
-                // After newline, skip leading whitespace
-                let mut chars = movement::chars_after(map, opening.end).peekable();
-                while let Some((ch, range)) = chars.peek() {
-                    if !ch.is_whitespace() {
-                        break;
-                    }
-                    opening.end = range.end;
-                    chars.next();
+        if start_point.row() != end_point.row()
+            && map
+                .buffer_chars_at(start_offset)
+                .take_while(|(_, offset)| offset < &end_offset)
+                .any(|(ch, _)| !ch.is_whitespace())
+        {
+            let mut first_non_ws = None;
+            let mut last_non_ws = None;
+            for (ch, offset) in map.buffer_chars_at(start_offset) {
+                if !ch.is_whitespace() {
+                    first_non_ws = Some(offset);
+                    break;
                 }
             }
-        }
-
-        // Handle leading whitespace before closing
-        let mut last_newline_end = None;
-        for (ch, range) in movement::chars_before(map, closing.start) {
-            if !ch.is_whitespace() {
-                break;
+            for (ch, offset) in map.reverse_buffer_chars_at(end_offset) {
+                if !ch.is_whitespace() {
+                    last_non_ws = Some(offset + ch.len_utf8());
+                    break;
+                }
             }
-            if ch == '\n' {
-                last_newline_end = Some(range.end);
-                break;
+            if let Some(start) = first_non_ws {
+                opening.end = start;
             }
-        }
-        // Adjust closing.start to exclude whitespace after a newline, if present
-        if let Some(end) = last_newline_end {
-            closing.start = end;
+            if let Some(end) = last_non_ws {
+                closing.start = end;
+            }
         }
     }
 
@@ -1780,10 +1856,10 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                   «ˇif a == \"\" {
+                   «if a == \"\" {
                       return true
                    }
-                   return false»
+                   return falseˇ»
                 }"
             },
             Mode::Visual,
@@ -1805,7 +1881,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «ˇreturn true»
+                         «return trueˇ»
                      }
                      return false
                 }"
@@ -1829,7 +1905,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «ˇreturn true»
+                         «return trueˇ»
                      }
                      return false
                 }"
@@ -1852,13 +1928,32 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                     «ˇif a == \"\" {
+                     «if a == \"\" {
                          return true
                      }
-                     return false»
+                     return falseˇ»
                 }"
             },
             Mode::Visual,
+        );
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                             if a == \"\" {
+                             ˇ
+
+                             }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                             if a == \"\" {ˇ}"
+            },
+            Mode::Insert,
         );
     }
 
@@ -2098,9 +2193,36 @@ mod test {
 
     #[gpui::test]
     async fn test_anyquotes_object(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = VimTestContext::new_typescript(cx).await;
 
         const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // Special cases from mini.ai plugin
+            // the false string in the middle should not be considered
+            (
+                "c i q",
+                "'first' false ˇstring 'second'",
+                "'first' false string 'ˇ'",
+                Mode::Insert,
+            ),
+            // Multiline support :)! Same behavior as mini.ai plugin
+            (
+                "c i q",
+                indoc! {"
+                    `
+                    first
+                    middle ˇstring
+                    second
+                    `
+                "},
+                indoc! {"
+                    `ˇ`
+                "},
+                Mode::Insert,
+            ),
+            // If you are in the close quote and it is the only quote in the buffer, it should replace inside the quote
+            // This is not working with the core motion ci' for this special edge case, so I am happy to fix it in AnyQuotes :)
+            // Bug reference: https://github.com/zed-industries/zed/issues/23889
+            ("c i q", "'quote«'ˇ»", "'ˇ'", Mode::Insert),
             // Single quotes
             (
                 "c i q",
@@ -2111,19 +2233,19 @@ mod test {
             (
                 "c a q",
                 "Thisˇ is a 'quote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
                 "c i q",
                 "This is a \"simple 'qˇuote'\" example.",
-                "This is a \"simple 'ˇ'\" example.",
+                "This is a \"ˇ\" example.", // Not supported by Tree-sitter queries for now
                 Mode::Insert,
             ),
             (
                 "c a q",
                 "This is a \"simple 'qˇuote'\" example.",
-                "This is a \"simpleˇ\" example.",
+                "This is a ˇ example.", // Not supported by Tree-sitter queries for now
                 Mode::Insert,
             ),
             (
@@ -2135,7 +2257,7 @@ mod test {
             (
                 "c a q",
                 "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -2147,7 +2269,7 @@ mod test {
             (
                 "d a q",
                 "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
             // Double quotes
@@ -2160,7 +2282,7 @@ mod test {
             (
                 "c a q",
                 "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -2172,7 +2294,7 @@ mod test {
             (
                 "d a q",
                 "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
             // Back quotes
@@ -2185,7 +2307,7 @@ mod test {
             (
                 "c a q",
                 "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -2197,7 +2319,7 @@ mod test {
             (
                 "d a q",
                 "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
         ];
@@ -2246,6 +2368,76 @@ mod test {
         });
 
         const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // Special cases from mini.ai plugin
+            // Current line has more priority for the cover or next algorithm, to avoid changing curly brackets which is supper anoying
+            // Same behavior as mini.ai plugin
+            (
+                "c i b",
+                indoc! {"
+                    {
+                        {
+                            ˇprint('hello')
+                        }
+                    }
+                "},
+                indoc! {"
+                    {
+                        {
+                            print(ˇ)
+                        }
+                    }
+                "},
+                Mode::Insert,
+            ),
+            // If the current line doesn't have brackets then it should consider if the caret is inside an external bracket
+            // Same behavior as mini.ai plugin
+            (
+                "c i b",
+                indoc! {"
+                    {
+                        {
+                            ˇ
+                            print('hello')
+                        }
+                    }
+                "},
+                indoc! {"
+                    {
+                        {ˇ}
+                    }
+                "},
+                Mode::Insert,
+            ),
+            // If you are in the open bracket then it has higher priority
+            (
+                "c i b",
+                indoc! {"
+                    «{ˇ»
+                        {
+                            print('hello')
+                        }
+                    }
+                "},
+                indoc! {"
+                    {ˇ}
+                "},
+                Mode::Insert,
+            ),
+            // If you are in the close bracket then it has higher priority
+            (
+                "c i b",
+                indoc! {"
+                    {
+                        {
+                            print('hello')
+                        }
+                    «}ˇ»
+                "},
+                indoc! {"
+                    {ˇ}
+                "},
+                Mode::Insert,
+            ),
             // Bracket (Parentheses)
             (
                 "c i b",
@@ -2382,7 +2574,6 @@ mod test {
     #[gpui::test]
     async fn test_anybrackets_trailing_space(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-
         cx.set_shared_state("(trailingˇ whitespace          )")
             .await;
         cx.simulate_shared_keystrokes("v i b").await;

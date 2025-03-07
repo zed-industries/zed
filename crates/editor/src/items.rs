@@ -38,10 +38,14 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     item::{BreadcrumbText, FollowEvent},
     searchable::SearchOptions,
+    OpenVisible,
+};
+use workspace::{
+    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
+    OpenOptions,
 };
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
@@ -618,11 +622,8 @@ impl Item for Editor {
         ItemSettings::get_global(cx)
             .file_icons
             .then(|| {
-                self.buffer
-                    .read(cx)
-                    .as_singleton()
-                    .and_then(|buffer| buffer.read(cx).project_path(cx))
-                    .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
+                path_for_buffer(&self.buffer, 0, true, cx)
+                    .and_then(|path| FileIcons::get_icon(path.as_ref(), cx))
             })
             .flatten()
             .map(Icon::from_path)
@@ -703,6 +704,10 @@ impl Item for Editor {
     }
 
     fn is_singleton(&self, cx: &App) -> bool {
+        self.buffer.read(cx).is_singleton()
+    }
+
+    fn can_save_as(&self, cx: &App) -> bool {
         self.buffer.read(cx).is_singleton()
     }
 
@@ -1069,12 +1074,16 @@ impl SerializableItem for Editor {
                             buffer.set_language(Some(language), cx);
                         }
                         buffer.set_text(contents, cx);
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            buffer.forget_transaction(entry.transaction_id());
+                        }
                     })?;
 
                     cx.update(|window, cx| {
                         cx.new(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
+                            editor.read_selections_from_db(item_id, workspace_id, window, cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             editor
                         })
@@ -1122,6 +1131,9 @@ impl SerializableItem for Editor {
                                         );
                                     }
                                     buffer.set_text(buffer_text, cx);
+                                    if let Some(entry) = buffer.peek_undo_stack() {
+                                        buffer.forget_transaction(entry.transaction_id());
+                                    }
                                 })?;
                             }
 
@@ -1130,6 +1142,12 @@ impl SerializableItem for Editor {
                                     let mut editor =
                                         Editor::for_buffer(buffer, Some(project), window, cx);
 
+                                    editor.read_selections_from_db(
+                                        item_id,
+                                        workspace_id,
+                                        window,
+                                        cx,
+                                    );
                                     editor.read_scroll_position_from_db(
                                         item_id,
                                         workspace_id,
@@ -1143,11 +1161,20 @@ impl SerializableItem for Editor {
                     }
                     None => {
                         let open_by_abs_path = workspace.update(cx, |workspace, cx| {
-                            workspace.open_abs_path(abs_path.clone(), false, window, cx)
+                            workspace.open_abs_path(
+                                abs_path.clone(),
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
                         });
                         window.spawn(cx, |mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
                             editor.update_in(&mut cx, |editor, window, cx| {
+                                editor.read_selections_from_db(item_id, workspace_id, window, cx);
                                 editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             })?;
                             Ok(editor)
@@ -1207,28 +1234,27 @@ impl SerializableItem for Editor {
         let snapshot = buffer.read(cx).snapshot();
 
         Some(cx.spawn_in(window, |_this, cx| async move {
-            cx.background_executor()
-                .spawn(async move {
-                    let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                        let contents = snapshot.text();
-                        let language = snapshot.language().map(|lang| lang.name().to_string());
-                        (Some(contents), language)
-                    } else {
-                        (None, None)
-                    };
+            cx.background_spawn(async move {
+                let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                    let contents = snapshot.text();
+                    let language = snapshot.language().map(|lang| lang.name().to_string());
+                    (Some(contents), language)
+                } else {
+                    (None, None)
+                };
 
-                    let editor = SerializedEditor {
-                        abs_path,
-                        contents,
-                        language,
-                        mtime,
-                    };
-                    DB.save_serialized_editor(item_id, workspace_id, editor)
-                        .await
-                        .context("failed to save serialized editor")
-                })
-                .await
-                .context("failed to save contents of buffer")?;
+                let editor = SerializedEditor {
+                    abs_path,
+                    contents,
+                    language,
+                    mtime,
+                };
+                DB.save_serialized_editor(item_id, workspace_id, editor)
+                    .await
+                    .context("failed to save serialized editor")
+            })
+            .await
+            .context("failed to save contents of buffer")?;
 
             Ok(())
         }))
@@ -1401,11 +1427,9 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        let mut ranges = Vec::new();
-        for m in matches {
-            ranges.push(self.range_for_match(m))
-        }
-        self.change_selections(None, window, cx, |s| s.select_ranges(ranges));
+        self.change_selections(None, window, cx, |s| {
+            s.select_ranges(matches.iter().cloned())
+        });
     }
     fn replace(
         &mut self,
@@ -1524,7 +1548,7 @@ impl SearchableItem for Editor {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut ranges = Vec::new();
 
             let search_within_ranges = if search_within_ranges.is_empty() {
@@ -1577,11 +1601,13 @@ impl SearchableItem for Editor {
 
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Range<Anchor>],
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         active_match_index(
+            direction,
             matches,
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
@@ -1594,6 +1620,7 @@ impl SearchableItem for Editor {
 }
 
 pub fn active_match_index(
+    direction: Direction,
     ranges: &[Range<Anchor>],
     cursor: &Anchor,
     buffer: &MultiBufferSnapshot,
@@ -1601,7 +1628,7 @@ pub fn active_match_index(
     if ranges.is_empty() {
         None
     } else {
-        match ranges.binary_search_by(|probe| {
+        let r = ranges.binary_search_by(|probe| {
             if probe.end.cmp(cursor, buffer).is_lt() {
                 Ordering::Less
             } else if probe.start.cmp(cursor, buffer).is_gt() {
@@ -1609,8 +1636,15 @@ pub fn active_match_index(
             } else {
                 Ordering::Equal
             }
-        }) {
-            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+        });
+        match direction {
+            Direction::Prev => match r {
+                Ok(i) => Some(i),
+                Err(i) => Some(i.saturating_sub(1)),
+            },
+            Direction::Next => match r {
+                Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+            },
         }
     }
 }
@@ -1724,6 +1758,7 @@ mod tests {
         let file = TestFile {
             path: Path::new("").into(),
             root_name: String::new(),
+            local_root: None,
         };
         assert_eq!(path_for_file(&file, 0, false, cx), None);
     }

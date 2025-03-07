@@ -402,7 +402,7 @@ impl Render for DataTable {
                     .overflow_hidden()
                     .border_1()
                     .border_color(rgb(0xE0E0E0))
-                    .rounded_md()
+                    .rounded_sm()
                     .child(
                         div()
                             .flex()

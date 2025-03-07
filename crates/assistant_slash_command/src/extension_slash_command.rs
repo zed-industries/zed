@@ -103,7 +103,7 @@ impl SlashCommand for ExtensionSlashCommand {
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let command = self.command.clone();
         let arguments = arguments.to_owned();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let completions = self
                 .extension
                 .complete_slash_command_argument(command, arguments)
@@ -135,7 +135,7 @@ impl SlashCommand for ExtensionSlashCommand {
     ) -> Task<SlashCommandResult> {
         let command = self.command.clone();
         let arguments = arguments.to_owned();
-        let output = cx.background_executor().spawn(async move {
+        let output = cx.background_spawn(async move {
             let delegate =
                 delegate.map(|delegate| Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _);
             let output = self

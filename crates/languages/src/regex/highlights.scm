@@ -9,7 +9,7 @@
   "]"
   "{"
   "}"
-] @punctuation.bracket
+] @string
 
 (group_name) @property
 
@@ -31,6 +31,7 @@
   "|"
   "="
   "!"
+  (any_character)
 ] @operator
 
 (count_quantifier
@@ -44,7 +45,3 @@
     "^" @operator
     (class_range "-" @operator)
   ])
-
-(class_character) @constant.character
-
-(pattern_character) @string

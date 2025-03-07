@@ -188,6 +188,11 @@ mod easing {
         }
     }
 
+    /// The Quint ease-out function, which starts quickly and decelerates to a stop
+    pub fn ease_out_quint() -> impl Fn(f32) -> f32 {
+        move |delta| 1.0 - (1.0 - delta).powi(5)
+    }
+
     /// Apply the given easing function, first in the forward direction and then in the reverse direction
     pub fn bounce(easing: impl Fn(f32) -> f32) -> impl Fn(f32) -> f32 {
         move |delta| {

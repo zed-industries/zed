@@ -330,17 +330,22 @@ impl PickerDelegate for ThemeSelectorDelegate {
     ) -> Option<gpui::AnyElement> {
         Some(
             h_flex()
-                .w_full()
                 .p_2()
+                .w_full()
+                .justify_between()
                 .gap_2()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("docs", "Theme Docs").on_click(cx.listener(|_, _, _, cx| {
-                        cx.open_url("https://zed.dev/docs/themes");
-                    })),
+                    Button::new("docs", "View Theme Docs")
+                        .icon(IconName::ArrowUpRight)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            cx.open_url("https://zed.dev/docs/themes");
+                        })),
                 )
-                .child(div().flex_grow())
                 .child(
                     Button::new("more-themes", "Install Themes").on_click(cx.listener({
                         move |_, _, window, cx| {
