@@ -304,8 +304,11 @@ impl CommitModal {
             git_panel.update(cx, |git_panel, cx| git_panel.editor_focus_handle(cx));
 
         let commit_button = panel_filled_button(commit_label)
-            .tooltip(move |window, cx| {
-                Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
+            .tooltip({
+                let panel_editor_focus_handle = panel_editor_focus_handle.clone();
+                move |window, cx| {
+                    Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
+                }
             })
             .disabled(!can_commit)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -328,8 +331,8 @@ impl CommitModal {
                 h_flex()
                     .gap_1()
                     .child(branch_picker)
-                    .children(co_authors)
-                    .child(generate_commit_message),
+                    .children(generate_commit_message)
+                    .children(co_authors),
             )
             .child(div().flex_1())
             .child(
