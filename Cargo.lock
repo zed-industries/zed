@@ -11927,7 +11927,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "util",
  "workspace",
 ]
