@@ -20,10 +20,10 @@ use crate::{
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight,
+    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
@@ -4132,46 +4132,74 @@ impl EditorElement {
                     }
                 }
 
-                let mut paint_highlight =
-                    |highlight_row_start: DisplayRow, highlight_row_end: DisplayRow, color| {
-                        let origin = point(
-                            layout.hitbox.origin.x,
-                            layout.hitbox.origin.y
-                                + (highlight_row_start.as_f32() - scroll_top)
-                                    * layout.position_map.line_height,
-                        );
-                        let size = size(
-                            layout.hitbox.size.width,
-                            layout.position_map.line_height
-                                * highlight_row_end.next_row().minus(highlight_row_start) as f32,
-                        );
-                        window.paint_quad(fill(Bounds { origin, size }, color));
-                    };
+                let mut paint_highlight = |highlight_row_start: DisplayRow,
+                                           highlight_row_end: DisplayRow,
+                                           highlight: crate::LineHighlight,
+                                           edges| {
+                    let origin = point(
+                        layout.hitbox.origin.x,
+                        layout.hitbox.origin.y
+                            + (highlight_row_start.as_f32() - scroll_top)
+                                * layout.position_map.line_height,
+                    );
+                    let size = size(
+                        layout.hitbox.size.width,
+                        layout.position_map.line_height
+                            * highlight_row_end.next_row().minus(highlight_row_start) as f32,
+                    );
+                    let mut quad = fill(Bounds { origin, size }, highlight.background);
+                    if let Some(border_color) = highlight.border {
+                        quad.border_color = border_color;
+                        quad.border_widths = edges
+                    }
+                    window.paint_quad(quad);
+                };
 
-                let mut current_paint: Option<(gpui::Background, Range<DisplayRow>)> = None;
+                let mut current_paint: Option<(LineHighlight, Range<DisplayRow>, Edges<Pixels>)> =
+                    None;
                 for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
-                        Some((current_background, current_range)) => {
+                        Some((current_background, current_range, mut edges)) => {
                             let current_background = *current_background;
                             let new_range_started = current_background != new_background
                                 || current_range.end.next_row() != new_row;
                             if new_range_started {
+                                if current_range.end.next_row() == new_row {
+                                    edges.bottom = px(0.);
+                                };
                                 paint_highlight(
                                     current_range.start,
                                     current_range.end,
                                     current_background,
+                                    edges,
                                 );
-                                current_paint = Some((new_background, new_row..new_row));
+                                let edges = Edges {
+                                    top: if current_range.end.next_row() != new_row {
+                                        px(1.)
+                                    } else {
+                                        px(0.)
+                                    },
+                                    bottom: px(1.),
+                                    ..Default::default()
+                                };
+                                current_paint = Some((new_background, new_row..new_row, edges));
                                 continue;
                             } else {
                                 current_range.end = current_range.end.next_row();
                             }
                         }
-                        None => current_paint = Some((new_background, new_row..new_row)),
+                        None => {
+                            let edges = Edges {
+                                top: px(1.),
+                                bottom: px(1.),
+                                ..Default::default()
+                            };
+                            current_paint = Some((new_background, new_row..new_row, edges))
+                        }
                     };
                 }
-                if let Some((color, range)) = current_paint {
-                    paint_highlight(range.start, range.end, color);
+                if let Some((color, range, edges)) = current_paint {
+                    paint_highlight(range.start, range.end, color, edges);
                 }
 
                 let scroll_left =
@@ -4430,6 +4458,9 @@ impl EditorElement {
                                 background_color =
                                     background_color.opacity(if is_light { 0.2 } else { 0.32 });
                             }
+                        }
+                        GitHunkStyleSetting::StagedBorder | GitHunkStyleSetting::Border => {
+                            // Don't change the background color
                         }
                     }
 
@@ -6775,12 +6806,15 @@ impl Element for EditorElement {
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
                         let slash_width = line_height.0 / 1.5; // ~16 by default
 
-                        let staged_background = match hunk_style {
-                            GitHunkStyleSetting::Transparent | GitHunkStyleSetting::Pattern => {
-                                solid_background(background_color.opacity(hunk_opacity))
+                        let staged_highlight: LineHighlight = match hunk_style {
+                            GitHunkStyleSetting::Transparent
+                            | GitHunkStyleSetting::Pattern
+                            | GitHunkStyleSetting::Border => {
+                                solid_background(background_color.opacity(hunk_opacity)).into()
                             }
                             GitHunkStyleSetting::StagedPattern => {
                                 pattern_slash(background_color.opacity(hunk_opacity), slash_width)
+                                    .into()
                             }
                             GitHunkStyleSetting::StagedTransparent => {
                                 solid_background(background_color.opacity(if is_light {
@@ -6788,30 +6822,56 @@ impl Element for EditorElement {
                                 } else {
                                     0.04
                                 }))
+                                .into()
                             }
+                            GitHunkStyleSetting::StagedBorder => LineHighlight {
+                                background: (background_color.opacity(if is_light {
+                                    0.08
+                                } else {
+                                    0.06
+                                }))
+                                .into(),
+                                border: Some(if is_light {
+                                    background_color.opacity(0.48)
+                                } else {
+                                    background_color.opacity(0.36)
+                                }),
+                            },
                         };
 
-                        let unstaged_background = match hunk_style {
+                        let unstaged_highlight = match hunk_style {
                             GitHunkStyleSetting::Transparent => {
                                 solid_background(background_color.opacity(if is_light {
                                     0.08
                                 } else {
                                     0.04
                                 }))
+                                .into()
                             }
                             GitHunkStyleSetting::Pattern => {
                                 pattern_slash(background_color.opacity(hunk_opacity), slash_width)
+                                    .into()
                             }
+                            GitHunkStyleSetting::Border => LineHighlight {
+                                background: (background_color.opacity(if is_light {
+                                    0.08
+                                } else {
+                                    0.02
+                                }))
+                                .into(),
+                                border: Some(background_color.opacity(0.5)),
+                            },
                             GitHunkStyleSetting::StagedPattern
-                            | GitHunkStyleSetting::StagedTransparent => {
-                                solid_background(background_color.opacity(hunk_opacity))
+                            | GitHunkStyleSetting::StagedTransparent
+                            | GitHunkStyleSetting::StagedBorder => {
+                                solid_background(background_color.opacity(hunk_opacity)).into()
                             }
                         };
 
                         let background = if unstaged {
-                            unstaged_background
+                            unstaged_highlight
                         } else {
-                            staged_background
+                            staged_highlight
                         };
 
                         highlighted_rows
@@ -7660,7 +7720,7 @@ pub struct EditorLayout {
     indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
     active_rows: BTreeMap<DisplayRow, bool>,
-    highlighted_rows: BTreeMap<DisplayRow, gpui::Background>,
+    highlighted_rows: BTreeMap<DisplayRow, LineHighlight>,
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
