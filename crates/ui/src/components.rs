@@ -15,6 +15,7 @@ mod keybinding;
 mod keybinding_hint;
 mod label;
 mod list;
+pub mod list_2;
 mod modal;
 mod navigable;
 mod notification;
