@@ -64,6 +64,7 @@ members = [
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/image_viewer",
+    "crates/indentation",
     "crates/indexed_docs",
     "crates/inline_completion",
     "crates/inline_completion_button",
@@ -268,6 +269,7 @@ gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
+indentation = { path = "crates/indentation" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion = { path = "crates/inline_completion" }
 inline_completion_button = { path = "crates/inline_completion_button" }

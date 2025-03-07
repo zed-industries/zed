@@ -989,7 +989,8 @@ impl SettingsStore {
                 properties = EditorconfigProperties::new();
             }
             for section in parsed_editorconfig.sections {
-                section.apply_to(&mut properties, for_path).log_err()?;
+                section.props().apply_to(&mut properties, for_path).log_err()?;
+                //section.apply_to(&mut properties, for_path).log_err()?;
             }
         }
 
