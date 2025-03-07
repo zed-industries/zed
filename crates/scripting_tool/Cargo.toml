@@ -15,10 +15,15 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 assistant_tool.workspace = true
+futures.workspace = true
 gpui.workspace = true
 mlua.workspace = true
+parking_lot.workspace = true
+project.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smol.workspace = true
+util.workspace = true
 workspace.workspace = true
-regex.workspace = true

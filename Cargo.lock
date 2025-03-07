@@ -8134,6 +8134,7 @@ checksum = "d3f763c1041eff92ffb5d7169968a327e1ed2ebfe425dac0ee5a35f29082534b"
 dependencies = [
  "bstr",
  "either",
+ "futures-util",
  "mlua-sys",
  "num-traits",
  "parking_lot",
@@ -11915,12 +11916,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_tool",
+ "futures 0.3.31",
  "gpui",
  "mlua",
+ "parking_lot",
+ "project",
  "regex",
  "schemars",
  "serde",
  "serde_json",
+ "smol",
+ "util",
  "workspace",
 ]
 
