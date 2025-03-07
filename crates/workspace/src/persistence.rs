@@ -180,10 +180,11 @@ impl Bind for BreakpointKindWrapper<'_> {
 impl Column for BreakpointKindWrapper<'_> {
     fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
         let kind = statement.column_int(start_index)?;
+
         match kind {
             0 => Ok((BreakpointKind::Standard.into(), start_index + 2)),
             1 => {
-                let message = statement.column_text(start_index + 1)?.to_string();
+                let message = statement.column_text(start_index)?.to_string();
                 Ok((BreakpointKind::Log(message.into()).into(), start_index + 1))
             }
             _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
@@ -732,8 +733,23 @@ impl WorkspaceDb {
                     conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
                     .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
-                        // todo: handle log breakpoint serialization.
-                        conn.exec_bound(sql!(INSERT INTO breakpoints (workspace_id, path, kind, breakpoint_location) VALUES (?1, ?2, ?3, ?4)))?((workspace.id, path.as_ref(),  0, bp.position))?;
+                        let kind = BreakpointKindWrapper::from(bp.kind);
+                        match conn.exec_bound(sql!(
+                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location, kind, log_message)
+                            VALUES (?1, ?2, ?3, ?4, ?5);))?
+
+                        ((
+                            workspace.id,
+                            path.as_ref(),
+                            bp.position,
+                            kind,
+                        )) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                log::error!("{err}");
+                                continue;
+                            }
+                        }
                     }
 
                 }
@@ -1386,7 +1402,6 @@ mod tests {
         let id = db.next_id().await.unwrap();
 
         let path = Path::new("/tmp/test.rs");
-        let worktree = Path::new("/tmp");
 
         let breakpoint = Breakpoint {
             position: 123,
@@ -1409,7 +1424,7 @@ mod tests {
             breakpoints: {
                 let mut map = collections::BTreeMap::default();
                 map.insert(
-                    Arc::from(worktree),
+                    Arc::from(path),
                     vec![
                         SerializedBreakpoint {
                             position: breakpoint.position,
@@ -1432,7 +1447,7 @@ mod tests {
         db.save_workspace(workspace.clone()).await;
 
         let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
-        let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(worktree)).unwrap();
+        let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(path)).unwrap();
 
         assert_eq!(loaded_breakpoints.len(), 2);
         assert_eq!(loaded_breakpoints[0].position, breakpoint.position);
