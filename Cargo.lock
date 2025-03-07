@@ -11916,6 +11916,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_tool",
+ "collections",
  "futures 0.3.31",
  "gpui",
  "mlua",
