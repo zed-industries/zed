@@ -27,6 +27,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
     SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
 };
+use itertools::Itertools;
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
@@ -4144,6 +4145,75 @@ impl BufferSnapshot {
         } else {
             None
         }
+    }
+
+    // TODO kb move it into the completions_menu module within editor crate?
+    // TODO kb limit parameter?
+    // TODO kb settings to enable/disable LSP and word-based completions
+    pub fn words_in_range(&self, query: Option<&str>, range: Range<usize>) -> Vec<String> {
+        if query.map_or(false, |query| query.is_empty()) {
+            return Vec::new();
+        }
+
+        let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
+            language,
+            override_id: None,
+        }));
+
+        // TODO kb cases:
+        // * query is together in the text
+        // * query matches case of the text
+        // * query is closer to the beginning of the word
+        // * ??? multiple queries can match in the same word
+        let mut score = 0;
+        let mut query_ix = 0;
+        let query = query.map(|query| query.chars().collect::<Vec<_>>());
+        let query_len = query.as_ref().map_or(0, |query| query.len());
+
+        let mut words = HashMap::default();
+        let mut current_word_start_ix = None;
+        let mut chunk_ix = range.start;
+        for chunk in self.chunks(range, false) {
+            for (i, c) in chunk.text.char_indices() {
+                let ix = chunk_ix + i;
+                if classifier.is_word(c) {
+                    if current_word_start_ix.is_none() {
+                        current_word_start_ix = Some(ix);
+                    }
+                    if query_ix == query_len {
+                        continue;
+                    } else {
+                        match &query {
+                            Some(query) =>  if c.eq_ignore_ascii_case(query.get(query_ix).expect(
+                                "query_ix is updated with query chars' length and should match the indices",
+                            )) {
+                                query_ix += 1;
+                                continue;
+                            },
+                            None => continue,
+                        }
+                    }
+                } else if let Some(word_start) = current_word_start_ix.take() {
+                    if query_ix == query_len {
+                        words.insert(
+                            self.text_for_range(word_start..ix).collect::<String>(),
+                            score,
+                        );
+                    }
+                }
+                score = 0;
+                query_ix = 0;
+            }
+            chunk_ix += chunk.text.len();
+        }
+
+        words
+            .into_iter()
+            .sorted_by(|(word_a, score_a), (word_b, score_b)| {
+                score_b.cmp(score_a).then_with(|| word_b.cmp(&word_a))
+            })
+            .map(|(word, _)| word)
+            .collect()
     }
 }
 
