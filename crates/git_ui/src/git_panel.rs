@@ -1476,17 +1476,30 @@ impl GitPanel {
                 });
 
                 let mut diff_text = diff.await??;
+
                 const ONE_MB: usize = 1_000_000;
                 if diff_text.len() > ONE_MB {
                     diff_text = diff_text.chars().take(ONE_MB).collect()
                 }
+
+                let subject_line = this.update(&mut cx, |this, cx| {
+                    this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
+                })?;
+
+                let had_text = !subject_line.trim().is_empty();
+
+                let content = if subject_line.trim().is_empty() {
+                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{PROMPT}\nHere is the user's subject line:\n{subject_line}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
 
                 const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
                 let request = LanguageModelRequest {
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,
-                        content: vec![format!("{PROMPT}\n{diff_text}").into()],
+                        content: vec![content.into()],
                         cache: false,
                     }],
                     tools: Vec::new(),
@@ -1496,6 +1509,15 @@ impl GitPanel {
 
                 let stream = model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
+
+                if had_text {
+                    this.update(&mut cx, |this, cx| {
+                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                            let insert_position = buffer.anchor_before(buffer.len());
+                            buffer.edit([(insert_position..insert_position, "\n")], None, cx)
+                        });
+                    })?;
+                }
 
                 while let Some(message) = messages.stream.next().await {
                     let text = message?;
