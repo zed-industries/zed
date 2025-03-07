@@ -1,0 +1,20 @@
+[package]
+name = "tool_evals"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/cli.rs"
+doctest = false
+
+[[bin]]
+name = "cli"
+path = "src/main.rs"
+
+[dependencies]
+assistant2.workspace = true
