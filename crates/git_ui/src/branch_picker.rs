@@ -132,7 +132,6 @@ impl Render for BranchList {
 enum BranchEntry {
     Branch(StringMatch),
     History(String),
-    NewBranch { name: String },
 }
 
 impl BranchEntry {
@@ -140,7 +139,6 @@ impl BranchEntry {
         match self {
             Self::Branch(branch) => &branch.string,
             Self::History(branch) => &branch,
-            Self::NewBranch { name } => &name,
         }
     }
 }
@@ -173,11 +171,11 @@ impl BranchListDelegate {
         }
     }
 
-    pub fn branch_count(&self) -> usize {
-        self.matches
-            .iter()
-            .filter(|item| matches!(item, BranchEntry::Branch(_)))
-            .count()
+    fn has_exact_match(&self, target: &str) -> bool {
+        self.matches.iter().any(|mat| match mat {
+            BranchEntry::Branch(branch) => branch.string == target,
+            _ => false,
+        })
     }
 }
 
@@ -261,12 +259,6 @@ impl PickerDelegate for BranchListDelegate {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
-                        if !query.is_empty() {
-                            delegate.matches.push(BranchEntry::NewBranch {
-                                name: query.trim().replace(' ', "-"),
-                            });
-                        }
-
                         delegate.selected_index = 0;
                     } else {
                         delegate.selected_index =
@@ -317,13 +309,7 @@ impl PickerDelegate for BranchListDelegate {
                                 ..
                             })
                             | BranchEntry::History(branch_name) => {
-                                cx.update(|cx| repo.read(cx).change_branch(branch_name))?
-                                    .await?
-                            }
-                            BranchEntry::NewBranch { name: branch_name } => {
-                                cx.update(|cx| repo.read(cx).create_branch(branch_name.clone()))?
-                                    .await??;
-                                cx.update(|cx| repo.read(cx).change_branch(branch_name))?
+                                cx.update(|cx| repo.read(cx).change_branch(&branch_name))?
                                     .await?
                             }
                         }
@@ -385,10 +371,57 @@ impl PickerDelegate for BranchListDelegate {
                         el.child(HighlightedLabel::new(shortened_branch_name, highlights))
                     }
                     BranchEntry::History(_) => el.child(Label::new(shortened_branch_name)),
-                    BranchEntry::NewBranch { name } => {
-                        el.child(Label::new(format!("Create branch '{name}'")))
-                    }
                 }),
         )
+    }
+
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        let repo = self.repo.clone()?;
+        let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
+        let handle = cx.weak_entity();
+        Some(
+            h_flex()
+                .w_full()
+                .p_2()
+                .gap_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .when(
+                    !new_branch_name.is_empty() && !self.has_exact_match(&new_branch_name),
+                    |el| {
+                        el.child(
+                            Button::new(
+                                "create-branch",
+                                format!("Create branch '{new_branch_name}'",),
+                            )
+                            .on_click(move |_, window, cx| {
+                                let repo = repo.clone();
+                                let new_branch_name = new_branch_name.clone();
+                                cx.spawn(|cx| async move {
+                                    cx.update(|cx| repo.read(cx).create_branch(&new_branch_name))?
+                                        .await??;
+                                    cx.update(|cx| repo.read(cx).change_branch(&new_branch_name))?
+                                        .await??;
+                                    Ok(())
+                                })
+                                .detach_and_prompt_err(
+                                    "Failed to create branch",
+                                    window,
+                                    cx,
+                                    |e, _, _| Some(e.to_string()),
+                                );
+                                if let Some(this) = handle.upgrade() {
+                                    this.update(cx, |_, cx| cx.emit(DismissEvent))
+                                }
+                            }),
+                        )
+                    },
+                )
+                .into_any(),
+        )
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        None
     }
 }
