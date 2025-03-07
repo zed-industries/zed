@@ -1,3 +1,5 @@
+mod session;
+
 use anyhow::anyhow;
 use assistant_tool::{Tool, ToolRegistry};
 use futures::{

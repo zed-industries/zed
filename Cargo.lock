@@ -11925,6 +11925,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "util",
  "workspace",
