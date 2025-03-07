@@ -334,8 +334,7 @@ define_connection! {
     //
     // CREATE TABLE breakpoints(
     //      workspace_id: usize Foreign Key, // References workspace table
-    //      worktree_path: PathBuf, // Path of worktree that this breakpoint belong's too. Used to determine the absolute path of a breakpoint
-    //      relative_path: PathBuf, // References the file that the breakpoints belong too
+    //      path: PathBuf, // The absolute path of the file that this breakpoint belongs to
     //      breakpoint_location: Vec<u32>, // A list of the locations of breakpoints
     //      kind: int, // The kind of breakpoint (standard, log)
     //      log_message: String, // log message for log breakpoints, otherwise it's Null
