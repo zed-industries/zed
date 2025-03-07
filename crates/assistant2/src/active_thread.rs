@@ -14,7 +14,7 @@ use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
-use util::{maybe, ResultExt as _};
+use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
@@ -249,7 +249,7 @@ impl ActiveThread {
 
     fn handle_thread_event(
         &mut self,
-        thread: &Entity<Thread>,
+        _thread: &Entity<Thread>,
         event: &ThreadEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -265,33 +265,6 @@ impl ActiveThread {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
                         markdown.append(text, cx);
-                    });
-                }
-
-                let script_source = maybe!({
-                    if let Some(message) = self.thread.read(cx).message(*message_id) {
-                        const SCRIPT_START_TAG: &str = "<lua_script>";
-                        const SCRIPT_END_TAG: &str = "</lua_script>";
-
-                        if message.text.find(SCRIPT_END_TAG).is_some() {
-                            let script_source = message
-                                .text
-                                .split(SCRIPT_START_TAG)
-                                .skip(1)
-                                .next()?
-                                .split(SCRIPT_END_TAG)
-                                .next();
-
-                            return script_source.map(|source| source.to_string());
-                        }
-                    }
-
-                    None
-                });
-
-                if let Some(script_source) = script_source {
-                    thread.update(cx, |thread, cx| {
-                        thread.run_script(script_source, cx);
                     });
                 }
             }

@@ -5,7 +5,7 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
-use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -13,7 +13,7 @@ use language_model::{
     Role, StopReason,
 };
 use project::Project;
-use scripting_tool::ScriptSession;
+use scripting_tool::{ScriptEvent, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT};
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
@@ -76,6 +76,7 @@ pub struct Thread {
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
     script_session: Entity<ScriptSession>,
+    _script_session_subscription: Subscription,
 }
 
 impl Thread {
@@ -84,6 +85,9 @@ impl Thread {
         tools: Arc<ToolWorkingSet>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let script_session = cx.new(|cx| ScriptSession::new(project, cx));
+        let script_session_subscription = cx.subscribe(&script_session, Self::handle_script_event);
+
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -97,7 +101,8 @@ impl Thread {
             pending_completions: Vec::new(),
             tools,
             tool_use: ToolUseState::new(),
-            script_session: cx.new(|cx| ScriptSession::new(project, cx)),
+            script_session,
+            _script_session_subscription: script_session_subscription,
         }
     }
 
@@ -116,6 +121,8 @@ impl Thread {
                 .unwrap_or(0),
         );
         let tool_use = ToolUseState::from_saved_messages(&saved.messages);
+        let script_session = cx.new(|cx| ScriptSession::new(project, cx));
+        let script_session_subscription = cx.subscribe(&script_session, Self::handle_script_event);
 
         Self {
             id,
@@ -138,7 +145,8 @@ impl Thread {
             pending_completions: Vec::new(),
             tools,
             tool_use,
-            script_session: cx.new(|cx| ScriptSession::new(project, cx)),
+            script_session,
+            _script_session_subscription: script_session_subscription,
         }
     }
 
@@ -294,26 +302,28 @@ impl Thread {
         text
     }
 
-    pub fn run_script(&mut self, script_source: String, cx: &mut Context<Self>) {
-        let script_session = self.script_session.clone();
-        cx.spawn(|thread, mut cx| async move {
-            let script_task =
-                script_session.update(&mut cx, |this, cx| this.run_script(script_source, cx))?;
+    fn handle_script_event(
+        &mut self,
+        _script_session: Entity<ScriptSession>,
+        event: &ScriptEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ScriptEvent::Exited { stdout, error, .. } => {
+                let message = if let Some(error) = error {
+                    format!(
+                        "The script failed with:\n{}\n\nHere's the output it managed to print:\n{}",
+                        error, stdout
+                    )
+                } else {
+                    format!("Here's the script output:\n{}", stdout)
+                };
 
-            let output = script_task.await?;
+                self.insert_user_message(message, Vec::new(), cx);
 
-            thread.update(&mut cx, |thread, cx| {
-                thread.insert_user_message(
-                    format!("Here is the script output: {}", output.stdout),
-                    Vec::new(),
-                    cx,
-                );
-                cx.emit(ThreadEvent::ScriptFinished);
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                cx.emit(ThreadEvent::ScriptFinished)
+            }
+        }
     }
 
     pub fn send_to_model(
@@ -353,38 +363,9 @@ impl Thread {
             temperature: None,
         };
 
-        let scripting_prompt = r#"
-            You can write a Lua script and I'll run it on my codebase and tell you what its
-            output was, including both stdout as well as the git diff of changes it made to
-            the filesystem. That way, you can get more information about the code base, or
-            make changes to the code base directly.
-
-            Put the Lua script inside of a `<lua_script>` tag like so:
-
-            <lua_script>
-            print("Hello, world!")
-            </lua_script>
-
-            Only include a maximum of one Lua script in your message.
-
-            The Lua script will have access to `io` and it will run with the current working
-            directory being in the root of the code base, so you can use it to explore,
-            search, make changes, etc. You can also have the script print things, and I'll
-            tell you what the output was. Note that `io` only has `open`, and then the file
-            it returns only has the methods read, write, and close - it doesn't have popen
-            or anything else.
-
-            There will be a global called `search` which accepts a regex (it's implemented
-            using Rust's regex crate, so use that regex syntax) and runs that regex on the
-            contents of every file in the code base (aside from gitignored files), then
-            returns an array of tables with two fields: "path" (the path to the file that
-            had the matches) and "matches" (an array of strings, with each string being a
-            match that was found within the file).
-"#;
-
         request.messages.push(LanguageModelRequestMessage {
             role: Role::System,
-            content: vec![scripting_prompt.to_string().into()],
+            content: vec![SCRIPTING_PROMPT.to_string().into()],
             cache: true,
         });
 
@@ -461,6 +442,7 @@ impl Thread {
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
+                let mut script_tag_parser = ScriptTagParser::new();
 
                 while let Some(event) = events.next().await {
                     let event = event?;
@@ -474,6 +456,8 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                let parsed_script = script_tag_parser.parse_chunk(&chunk);
+
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.text.push_str(&chunk);
@@ -489,6 +473,12 @@ impl Thread {
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
                                         thread.insert_message(Role::Assistant, chunk, cx);
                                     }
+                                }
+
+                                if let Some(script_source) = parsed_script {
+                                    thread
+                                        .script_session
+                                        .update(cx, |this, cx| this.run_script(script_source, cx));
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
