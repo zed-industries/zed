@@ -3830,6 +3830,11 @@ impl MultiBufferSnapshot {
             // When there are no more metadata items for this excerpt, move to the next excerpt.
             else {
                 current_excerpt_metadata.take();
+                if let Some((end_excerpt_id, _)) = range_end {
+                    if excerpt.id == end_excerpt_id {
+                        return None;
+                    }
+                }
                 cursor.next_excerpt();
             }
         })
