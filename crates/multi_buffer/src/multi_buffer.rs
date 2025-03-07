@@ -40,7 +40,10 @@ use std::{
     ops::{Range, RangeBounds, Sub},
     path::Path,
     str,
-    sync::Arc,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use sum_tree::{Bias, Cursor, SumTree, TreeMap};
@@ -76,6 +79,7 @@ pub struct MultiBuffer {
     history: History,
     title: Option<String>,
     capability: Capability,
+    changed_since_sync: AtomicBool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -568,6 +572,7 @@ impl MultiBuffer {
             capability,
             title: None,
             buffers_by_path: Default::default(),
+            changed_since_sync: AtomicBool::new(false),
             history: History {
                 next_transaction_id: clock::Lamport::default(),
                 undo_stack: Vec::new(),
@@ -587,6 +592,7 @@ impl MultiBuffer {
             subscriptions: Default::default(),
             singleton: false,
             capability,
+            changed_since_sync: AtomicBool::new(false),
             history: History {
                 next_transaction_id: Default::default(),
                 undo_stack: Default::default(),
@@ -629,6 +635,9 @@ impl MultiBuffer {
             capability: self.capability,
             history: self.history.clone(),
             title: self.title.clone(),
+            changed_since_sync: AtomicBool::new(
+                self.changed_since_sync.load(atomic::Ordering::SeqCst),
+            ),
         }
     }
 
@@ -2195,6 +2204,8 @@ impl MultiBuffer {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) {
+        self.changed_since_sync
+            .store(true, atomic::Ordering::SeqCst);
         cx.emit(match event {
             language::BufferEvent::Edited => Event::Edited {
                 singleton_buffer_edited: true,
@@ -2227,6 +2238,8 @@ impl MultiBuffer {
         let buffer_id = diff.buffer_id;
         let diff = diff.snapshot(cx);
         snapshot.diffs.insert(buffer_id, diff);
+        self.changed_since_sync
+            .store(true, atomic::Ordering::SeqCst);
     }
 
     fn buffer_diff_changed(
@@ -2714,6 +2727,13 @@ impl MultiBuffer {
     }
 
     fn sync(&self, cx: &App) {
+        let changed = self
+            .changed_since_sync
+            .swap(false, atomic::Ordering::SeqCst);
+        if !changed {
+            return;
+        }
+
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
         let mut non_text_state_updated = false;
