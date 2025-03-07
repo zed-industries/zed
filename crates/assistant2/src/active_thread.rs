@@ -11,11 +11,11 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
+use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
-use workspace::Workspace;
 
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
@@ -23,7 +23,7 @@ use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
-    workspace: WeakEntity<Workspace>,
+    project: WeakEntity<Project>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
     thread_store: Entity<ThreadStore>,
@@ -46,7 +46,7 @@ impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
-        workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,
@@ -58,7 +58,7 @@ impl ActiveThread {
         ];
 
         let mut this = Self {
-            workspace,
+            project,
             language_registry,
             tools,
             thread_store,
@@ -311,7 +311,7 @@ impl ActiveThread {
 
                 for tool_use in pending_tool_uses {
                     if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
+                        let task = tool.run(tool_use.input, self.project.clone(), cx);
 
                         self.thread.update(cx, |thread, cx| {
                             thread.insert_tool_output(tool_use.id.clone(), task, cx);

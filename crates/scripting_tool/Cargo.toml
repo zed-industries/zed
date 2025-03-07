@@ -27,11 +27,9 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 util.workspace = true
-workspace.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }

@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
-use gpui::{App, Task, WeakEntity, Window};
+use gpui::{App, Task, WeakEntity};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListWorktreesToolInput {}
@@ -34,15 +34,12 @@ impl Tool for ListWorktreesTool {
     fn run(
         self: Arc<Self>,
         _input: serde_json::Value,
-        workspace: WeakEntity<Workspace>,
-        _window: &mut Window,
+        project: WeakEntity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let Some(workspace) = workspace.upgrade() else {
-            return Task::ready(Err(anyhow!("workspace dropped")));
+        let Some(project) = project.upgrade() else {
+            return Task::ready(Err(anyhow!("project dropped")));
         };
-
-        let project = workspace.read(cx).project().clone();
 
         cx.spawn(|cx| async move {
             cx.update(|cx| {
