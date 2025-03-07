@@ -173,6 +173,8 @@ impl ActiveThread {
 
         text_style.refine(&TextStyleRefinement {
             font_family: Some(theme_settings.ui_font.family.clone()),
+            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(ui_font_size.into()),
             color: Some(cx.theme().colors().text),
             ..Default::default()
@@ -207,6 +209,8 @@ impl ActiveThread {
                 },
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                    font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
                     ..Default::default()
                 }),
@@ -214,6 +218,8 @@ impl ActiveThread {
             },
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 background_color: Some(colors.editor_foreground.opacity(0.1)),
                 ..Default::default()
