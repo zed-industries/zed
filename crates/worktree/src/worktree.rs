@@ -3425,6 +3425,7 @@ impl BackgroundScannerState {
     }
 
     fn remove_path(&mut self, path: &Path) {
+        log::info!("background scanner removing path {path:?}");
         let mut new_entries;
         let removed_entries;
         {
@@ -3480,7 +3481,14 @@ impl BackgroundScannerState {
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
         self.snapshot.repositories.retain(&(), |repository| {
-            !repository.work_directory.path_key().0.starts_with(path)
+            let retain = !repository.work_directory.path_key().0.starts_with(path);
+            if !retain {
+                log::info!(
+                    "dropping repository entry for {:?}",
+                    repository.work_directory
+                );
+            }
+            retain
         });
 
         #[cfg(test)]
@@ -3535,12 +3543,14 @@ impl BackgroundScannerState {
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
+        log::info!("insert git reposiutory for {dot_git_path:?}");
         let work_dir_id = self
             .snapshot
             .entry_for_path(work_directory.path_key().0)
             .map(|entry| entry.id)?;
 
         if self.snapshot.git_repositories.get(&work_dir_id).is_some() {
+            log::info!("existing git repository for {work_directory:?}");
             return None;
         }
 
@@ -3548,6 +3558,7 @@ impl BackgroundScannerState {
 
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
+        log::info!("opened git repo for {dot_git_abs_path:?}");
 
         let repository_path = repository.path();
         watcher.add(&repository_path).log_err()?;
@@ -3606,6 +3617,7 @@ impl BackgroundScannerState {
             .git_repositories
             .insert(work_dir_id, local_repository.clone());
 
+        log::info!("inserting new local git repository");
         Some(local_repository)
     }
 }
@@ -4823,7 +4835,7 @@ impl BackgroundScanner {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
             }
-            log::debug!("scanning directory {:?}", job.path);
+            log::info!("scanning directory {:?}", job.path);
             root_abs_path = snapshot.abs_path().clone();
             root_char_bag = snapshot.root_char_bag;
         }
@@ -5405,7 +5417,7 @@ impl BackgroundScanner {
     }
 
     fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Task<()> {
-        log::debug!("reloading repositories: {dot_git_paths:?}");
+        log::info!("reloading repositories: {dot_git_paths:?}");
 
         let mut status_updates = Vec::new();
         {
