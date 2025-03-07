@@ -177,6 +177,28 @@ impl BranchListDelegate {
             _ => false,
         })
     }
+
+    fn create_branch(
+        &self,
+        new_branch_name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        cx.spawn(|_, cx| async move {
+            cx.update(|cx| repo.read(cx).create_branch(&new_branch_name))?
+                .await??;
+            cx.update(|cx| repo.read(cx).change_branch(&new_branch_name))?
+                .await??;
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to create branch", window, cx, |e, _, _| {
+            Some(e.to_string())
+        });
+        cx.emit(DismissEvent);
+    }
 }
 
 impl PickerDelegate for BranchListDelegate {
@@ -271,6 +293,12 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if self.selected_index == 0 && self.matches.len() == 0 {
+            let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
+            self.create_branch(new_branch_name, window, cx);
+            return;
+        }
+
         let Some(branch) = self.matches.get(self.selected_index()) else {
             return;
         };
@@ -376,7 +404,6 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        let repo = self.repo.clone()?;
         let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
         let handle = cx.weak_entity();
         Some(
@@ -394,24 +421,13 @@ impl PickerDelegate for BranchListDelegate {
                                 "create-branch",
                                 format!("Create branch '{new_branch_name}'",),
                             )
+                            .toggle_state(self.selected_index == 0 && self.matches.len() == 0)
                             .on_click(move |_, window, cx| {
-                                let repo = repo.clone();
                                 let new_branch_name = new_branch_name.clone();
-                                cx.spawn(|cx| async move {
-                                    cx.update(|cx| repo.read(cx).create_branch(&new_branch_name))?
-                                        .await??;
-                                    cx.update(|cx| repo.read(cx).change_branch(&new_branch_name))?
-                                        .await??;
-                                    Ok(())
-                                })
-                                .detach_and_prompt_err(
-                                    "Failed to create branch",
-                                    window,
-                                    cx,
-                                    |e, _, _| Some(e.to_string()),
-                                );
-                                if let Some(this) = handle.upgrade() {
-                                    this.update(cx, |_, cx| cx.emit(DismissEvent))
+                                if let Some(picker) = handle.upgrade() {
+                                    picker.update(cx, |picker, cx| {
+                                        picker.delegate.create_branch(new_branch_name, window, cx)
+                                    });
                                 }
                             }),
                         )
