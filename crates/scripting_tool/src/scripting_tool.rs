@@ -1,3 +1,5 @@
+mod streaming_lua;
+
 use anyhow::anyhow;
 use assistant_tool::{Tool, ToolRegistry};
 use gpui::{App, AppContext as _, Task, WeakEntity, Window};

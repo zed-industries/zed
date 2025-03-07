@@ -498,6 +498,7 @@ rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.22" }
 rustls-platform-verifier = "0.5.0"
+full_moon = { version = "1.2.0", features = ["lua54"] }
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
