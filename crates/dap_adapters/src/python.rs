@@ -62,7 +62,7 @@ impl DebugAdapter for PythonDebugAdapter {
             .await
         {
             // TODO Debugger: Rename folder instead of moving all files to another folder
-            // We're doing uncessary IO work right now
+            // We're doing unnecessary IO work right now
             util::fs::move_folder_files_to_folder(debugpy_dir.as_path(), version_path.as_path())
                 .await?;
         }

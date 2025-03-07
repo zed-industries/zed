@@ -43,7 +43,7 @@ pub struct ThemeColors {
     pub element_hover: Hsla,
     /// Background Color. Used for the active state of an element that should have a different background than the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     pub element_active: Hsla,
     /// Background Color. Used for the selected state of an element that should have a different background than the surface it's on.
     ///
@@ -69,7 +69,7 @@ pub struct ThemeColors {
     pub ghost_element_hover: Hsla,
     /// Background Color. Used for the active state of a ghost element that should have the same background as the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     pub ghost_element_active: Hsla,
     /// Background Color. Used for the selected state of a ghost element that should have the same background as the surface it's on.
     ///

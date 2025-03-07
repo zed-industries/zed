@@ -153,7 +153,8 @@ async fn test_show_attach_modal_and_select_process(
         .update(cx, |workspace, _window, cx| {
             let attach_modal = workspace.active_modal::<_AttachModal>(cx).unwrap();
 
-            let names = attach_modal.update(cx, |modal, cx| attach_modal::procss_names(&modal, cx));
+            let names =
+                attach_modal.update(cx, |modal, cx| attach_modal::process_names(&modal, cx));
 
             // we filtered out all processes that are not the current process(zed itself)
             assert_eq!(1, names.len());
@@ -244,7 +245,8 @@ async fn test_shutdown_session_when_modal_is_dismissed(
         .update(cx, |workspace, _window, cx| {
             let attach_modal = workspace.active_modal::<_AttachModal>(cx).unwrap();
 
-            let names = attach_modal.update(cx, |modal, cx| attach_modal::procss_names(&modal, cx));
+            let names =
+                attach_modal.update(cx, |modal, cx| attach_modal::process_names(&modal, cx));
 
             // we filtered out all processes that are not the current process(zed itself)
             assert_eq!(1, names.len());

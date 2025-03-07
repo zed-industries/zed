@@ -537,6 +537,7 @@ impl TcpTransport {
         }
     }
 
+    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
@@ -632,6 +633,7 @@ pub struct StdioTransport {
 }
 
 impl StdioTransport {
+    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
         let mut command = util::command::new_smol_command(&binary.command);
 

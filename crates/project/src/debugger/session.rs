@@ -12,6 +12,7 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
+use dap::OutputEventCategory;
 use dap::{
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
@@ -19,7 +20,6 @@ use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SourceBreakpoint,
     StackFrameId, SteppingGranularity, StoppedEvent, VariableReference,
 };
-use dap::{DebugAdapterKind, OutputEventCategory};
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::Shared, FutureExt};
@@ -180,7 +180,7 @@ impl LocalMode {
 
             #[cfg(any(test, feature = "test-support"))]
             {
-                let DebugAdapterKind::Fake(caps) = session.config.kind.clone() else {
+                let dap::DebugAdapterKind::Fake(caps) = session.config.kind.clone() else {
                     panic!("Only fake debug adapter configs should be used in tests");
                 };
 

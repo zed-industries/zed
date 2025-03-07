@@ -292,7 +292,7 @@ impl PickerDelegate for _AttachModalDelegate {
 
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn procss_names(modal: &_AttachModal, cx: &mut Context<_AttachModal>) -> Vec<String> {
+pub(crate) fn process_names(modal: &_AttachModal, cx: &mut Context<_AttachModal>) -> Vec<String> {
     modal.picker.update(cx, |picker, _| {
         picker
             .delegate

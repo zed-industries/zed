@@ -1,9 +1,6 @@
 use call::ActiveCall;
 use dap::requests::{Disconnect, Initialize, Launch, StackTrace};
-use dap::{
-    requests::{RestartFrame, SetBreakpoints},
-    SourceBreakpoint, StackFrame,
-};
+use dap::{requests::SetBreakpoints, SourceBreakpoint};
 use debugger_ui::debugger_panel::DebugPanel;
 use debugger_ui::session::DebugSession;
 use editor::Editor;
@@ -15,7 +12,6 @@ use std::{
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
-use unindent::Unindent as _;
 use workspace::{dock::Panel, Workspace};
 
 use super::{TestClient, TestServer};
@@ -49,7 +45,7 @@ async fn add_debugger_panel(workspace: &Entity<Workspace>, cx: &mut VisualTestCo
     });
 }
 
-pub fn active_session(
+pub fn _active_session(
     workspace: Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<DebugSession> {
@@ -134,7 +130,7 @@ impl<'a> ZedInstance<'a> {
     }
 }
 
-async fn setup_three_member_test<'a, 'b, 'c>(
+async fn _setup_three_member_test<'a, 'b, 'c>(
     server: &mut TestServer,
     host_cx: &'a mut TestAppContext,
     first_remote_cx: &'b mut TestAppContext,
@@ -251,7 +247,7 @@ async fn test_debug_panel_item_opens_on_remote(
 
     remote_workspace.update(remote_cx, |workspace, cx| {
         let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-        let active_session = debug_panel
+        let _active_session = debug_panel
             .update(cx, |this, cx| this.active_session(cx))
             .unwrap();
 
@@ -342,7 +338,7 @@ async fn test_active_debug_panel_item_set_on_join_project(
 
     remote_workspace.update(remote_cx, |workspace, cx| {
         let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-        let active_session = debug_panel
+        let _active_session = debug_panel
             .update(cx, |this, cx| this.active_session(cx))
             .unwrap();
 
@@ -378,8 +374,8 @@ async fn test_active_debug_panel_item_set_on_join_project(
 
 #[gpui::test]
 async fn test_debug_panel_remote_button_presses(
-    host_cx: &mut TestAppContext,
-    remote_cx: &mut TestAppContext,
+    _host_cx: &mut TestAppContext,
+    _remote_cx: &mut TestAppContext,
 ) {
     unimplemented!("Collab is still being refactored");
     // let executor = host_cx.executor();
@@ -709,7 +705,7 @@ async fn test_debug_panel_remote_button_presses(
 }
 
 #[gpui::test]
-async fn test_restart_stack_frame(host_cx: &mut TestAppContext, remote_cx: &mut TestAppContext) {
+async fn test_restart_stack_frame(_host_cx: &mut TestAppContext, _remote_cx: &mut TestAppContext) {
     unimplemented!("Collab is still being refactored");
     // let executor = host_cx.executor();
     // let mut server = TestServer::start(executor).await;
@@ -1070,9 +1066,9 @@ async fn test_updated_breakpoints_send_to_dap(
 
 #[gpui::test]
 async fn test_module_list(
-    host_cx: &mut TestAppContext,
-    remote_cx: &mut TestAppContext,
-    late_join_cx: &mut TestAppContext,
+    _host_cx: &mut TestAppContext,
+    _remote_cx: &mut TestAppContext,
+    _late_join_cx: &mut TestAppContext,
 ) {
     unimplemented!("Collab is still being refactored");
     // let executor = host_cx.executor();
@@ -1738,9 +1734,9 @@ async fn test_module_list(
 
 #[gpui::test]
 async fn test_ignore_breakpoints(
-    host_cx: &mut TestAppContext,
-    remote_cx: &mut TestAppContext,
-    cx_c: &mut TestAppContext,
+    _host_cx: &mut TestAppContext,
+    _remote_cx: &mut TestAppContext,
+    _cx_c: &mut TestAppContext,
 ) {
     unimplemented!("Collab is still being refactored");
     // let executor = host_cx.executor();
@@ -2179,7 +2175,7 @@ async fn test_ignore_breakpoints(
 }
 
 #[gpui::test]
-async fn test_debug_panel_console(host_cx: &mut TestAppContext, remote_cx: &mut TestAppContext) {
+async fn test_debug_panel_console(_host_cx: &mut TestAppContext, _remote_cx: &mut TestAppContext) {
     unimplemented!("Collab is still being refactored");
     // let executor = host_cx.executor();
     // let mut server = TestServer::start(executor).await;

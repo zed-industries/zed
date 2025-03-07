@@ -188,7 +188,7 @@ pub struct ThemeColorsContent {
 
     /// Background Color. Used for the active state of an element that should have a different background than the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     #[serde(rename = "element.active")]
     pub element_active: Option<String>,
 
@@ -226,7 +226,7 @@ pub struct ThemeColorsContent {
 
     /// Background Color. Used for the active state of a ghost element that should have the same background as the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     #[serde(rename = "ghost_element.active")]
     pub ghost_element_active: Option<String>,
 
