@@ -9853,6 +9853,31 @@ impl Editor {
         })
     }
 
+    pub fn move_to_start_of_next_excerpt(
+        &mut self,
+        _: &MoveToStartOfNextExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::start_of_excerpt(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Next,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
     pub fn move_to_end_of_excerpt(
         &mut self,
         _: &MoveToEndOfExcerpt,
@@ -9871,6 +9896,31 @@ impl Editor {
                         map,
                         selection.head(),
                         workspace::searchable::Direction::Next,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn move_to_end_of_previous_excerpt(
+        &mut self,
+        _: &MoveToEndOfPreviousExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::end_of_excerpt(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Prev,
                     ),
                     SelectionGoal::None,
                 )
@@ -9899,6 +9949,27 @@ impl Editor {
         })
     }
 
+    pub fn select_to_start_of_next_excerpt(
+        &mut self,
+        _: &SelectToStartOfNextExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::start_of_excerpt(map, head, workspace::searchable::Direction::Next),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
     pub fn select_to_end_of_excerpt(
         &mut self,
         _: &SelectToEndOfExcerpt,
@@ -9914,6 +9985,27 @@ impl Editor {
             s.move_heads_with(|map, head, _| {
                 (
                     movement::end_of_excerpt(map, head, workspace::searchable::Direction::Next),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn select_to_end_of_previous_excerpt(
+        &mut self,
+        _: &SelectToEndOfPreviousExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::end_of_excerpt(map, head, workspace::searchable::Direction::Prev),
                     SelectionGoal::None,
                 )
             });
