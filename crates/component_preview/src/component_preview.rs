@@ -62,7 +62,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
 enum PreviewEntry {
     AllComponents,
-    Seperator,
+    Separator,
     Component(ComponentMetadata),
     SectionHeader(SharedString),
 }
@@ -196,7 +196,7 @@ impl ComponentPreview {
 
         // Always show all components first
         entries.push(PreviewEntry::AllComponents);
-        entries.push(PreviewEntry::Seperator);
+        entries.push(PreviewEntry::Separator);
 
         for scope in known_scopes.iter() {
             let scope_key = Some(scope.clone());
@@ -227,7 +227,7 @@ impl ComponentPreview {
 
         if let Some(components) = scope_groups.get(&None) {
             if !components.is_empty() {
-                entries.push(PreviewEntry::Seperator);
+                entries.push(PreviewEntry::Separator);
                 entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
 
                 for component in components {
@@ -276,7 +276,7 @@ impl ComponentPreview {
                     }))
                     .into_any_element()
             }
-            PreviewEntry::Seperator => ListItem::new(ix)
+            PreviewEntry::Separator => ListItem::new(ix)
                 .child(h_flex().pt_3().child(Divider::horizontal_dashed()))
                 .into_any_element(),
         }
@@ -303,7 +303,7 @@ impl ComponentPreview {
                             .render_scope_header(ix, shared_string.clone(), window, cx)
                             .into_any_element(),
                         PreviewEntry::AllComponents => div().w_full().h_0().into_any_element(),
-                        PreviewEntry::Seperator => div().w_full().h_0().into_any_element(),
+                        PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
                     })
                     .unwrap()
             },
