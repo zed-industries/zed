@@ -1482,16 +1482,16 @@ impl GitPanel {
                     diff_text = diff_text.chars().take(ONE_MB).collect()
                 }
 
-                let subject_line = this.update(&mut cx, |this, cx| {
+                let subject = this.update(&mut cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
                 })?;
 
-                let had_text = !subject_line.trim().is_empty();
+                let text_empty = subject.trim().is_empty();
 
-                let content = if subject_line.trim().is_empty() {
+                let content = if text_empty {
                     format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
                 } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject_line}\nHere are the changes in this commit:\n{diff_text}\n")
+                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
                 };
 
                 const PROMPT: &str = include_str!("commit_message_prompt.txt");
@@ -1510,7 +1510,7 @@ impl GitPanel {
                 let stream = model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
 
-                if had_text {
+                if !text_empty {
                     this.update(&mut cx, |this, cx| {
                         this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                             let insert_position = buffer.anchor_before(buffer.len());
