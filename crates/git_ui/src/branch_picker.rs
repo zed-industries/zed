@@ -443,9 +443,9 @@ impl PickerDelegate for BranchListDelegate {
                                         .gap_2()
                                         .justify_between()
                                         .child(
-                                            div()
-                                                .max_w_80()
-                                                .child(Label::new(shortened_branch_name).truncate()),
+                                            div().max_w_80().child(
+                                                Label::new(shortened_branch_name).truncate(),
+                                            ),
                                         )
                                         .child(
                                             h_flex()
