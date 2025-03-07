@@ -4537,6 +4537,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "convert_case 0.8.0",
  "fs",
  "futures 0.3.31",
  "gpui",
