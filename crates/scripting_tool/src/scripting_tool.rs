@@ -1,6 +1,6 @@
 mod session;
 
-pub(crate) use session::*;
+pub use session::*;
 
 use assistant_tool::{Tool, ToolRegistry};
 use gpui::{App, AppContext as _, Task, WeakEntity, Window};
@@ -51,7 +51,7 @@ impl Tool for ScriptingTool {
             return Task::ready(Err(anyhow::anyhow!("No project found")));
         };
 
-        let session = cx.new(|cx| Session::new(project, cx));
+        let session = cx.new(|cx| ScriptSession::new(project, cx));
         let lua_script = input.lua_script;
         let script = session.update(cx, |session, cx| session.run_script(lua_script, cx));
         cx.spawn(|_cx| async move {

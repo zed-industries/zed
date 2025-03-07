@@ -20,9 +20,9 @@ pub struct ScriptOutput {
     pub stdout: String,
 }
 
-struct ForegroundFn(Box<dyn FnOnce(WeakEntity<Session>, AsyncApp) + Send>);
+struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptSession>, AsyncApp) + Send>);
 
-pub struct Session {
+pub struct ScriptSession {
     project: Entity<Project>,
     // TODO Remove this
     fs_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
@@ -30,10 +30,10 @@ pub struct Session {
     _invoke_foreground_fns: Task<()>,
 }
 
-impl Session {
+impl ScriptSession {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let (foreground_fns_tx, mut foreground_fns_rx) = mpsc::channel(128);
-        Session {
+        ScriptSession {
             project,
             fs_changes: Arc::new(Mutex::new(HashMap::default())),
             foreground_fns_tx,
@@ -692,7 +692,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let session = cx.new(|cx| Session::new(project, cx));
+        let session = cx.new(|cx| ScriptSession::new(project, cx));
         let script = r#"
             print("Hello", "world!")
             print("Goodbye", "moon!")
@@ -717,7 +717,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/")], cx).await;
-        let session = cx.new(|cx| Session::new(project, cx));
+        let session = cx.new(|cx| ScriptSession::new(project, cx));
         let script = r#"
             local results = search("world")
             for i, result in ipairs(results) do

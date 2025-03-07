@@ -490,6 +490,7 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "rope",
+ "scripting_tool",
  "serde",
  "serde_json",
  "settings",

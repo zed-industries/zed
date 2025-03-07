@@ -5,13 +5,15 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
-use gpui::{App, Context, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason,
 };
+use project::Project;
+use scripting_tool::ScriptSession;
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
@@ -73,10 +75,15 @@ pub struct Thread {
     pending_completions: Vec<PendingCompletion>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
+    script_session: Entity<ScriptSession>,
 }
 
 impl Thread {
-    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        tools: Arc<ToolWorkingSet>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -90,14 +97,16 @@ impl Thread {
             pending_completions: Vec::new(),
             tools,
             tool_use: ToolUseState::new(),
+            script_session: cx.new(|cx| ScriptSession::new(project, cx)),
         }
     }
 
     pub fn from_saved(
         id: ThreadId,
         saved: SavedThread,
+        project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
             saved
@@ -129,6 +138,7 @@ impl Thread {
             pending_completions: Vec::new(),
             tools,
             tool_use,
+            script_session: cx.new(|cx| ScriptSession::new(project, cx)),
         }
     }
 
@@ -284,6 +294,28 @@ impl Thread {
         text
     }
 
+    pub fn run_script(&mut self, script_source: String, cx: &mut Context<Self>) {
+        let script_session = self.script_session.clone();
+        cx.spawn(|thread, mut cx| async move {
+            let script_task =
+                script_session.update(&mut cx, |this, cx| this.run_script(script_source, cx))?;
+
+            let output = script_task.await?;
+
+            thread.update(&mut cx, |thread, cx| {
+                thread.insert_user_message(
+                    format!("Here is the script output: {}", output.stdout),
+                    Vec::new(),
+                    cx,
+                );
+                cx.emit(ThreadEvent::ScriptFinished);
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn send_to_model(
         &mut self,
         model: Arc<dyn LanguageModel>,
@@ -320,6 +352,41 @@ impl Thread {
             stop: Vec::new(),
             temperature: None,
         };
+
+        let scripting_prompt = r#"
+            You can write a Lua script and I'll run it on my codebase and tell you what its
+            output was, including both stdout as well as the git diff of changes it made to
+            the filesystem. That way, you can get more information about the code base, or
+            make changes to the code base directly.
+
+            Put the Lua script inside of a `<lua_script>` tag like so:
+
+            <lua_script>
+            print("Hello, world!")
+            </lua_script>
+
+            Only include a maximum of one Lua script in your message.
+
+            The Lua script will have access to `io` and it will run with the current working
+            directory being in the root of the code base, so you can use it to explore,
+            search, make changes, etc. You can also have the script print things, and I'll
+            tell you what the output was. Note that `io` only has `open`, and then the file
+            it returns only has the methods read, write, and close - it doesn't have popen
+            or anything else.
+
+            There will be a global called `search` which accepts a regex (it's implemented
+            using Rust's regex crate, so use that regex syntax) and runs that regex on the
+            contents of every file in the code base (aside from gitignored files), then
+            returns an array of tables with two fields: "path" (the path to the file that
+            had the matches) and "matches" (an array of strings, with each string being a
+            match that was found within the file).
+"#;
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::System,
+            content: vec![scripting_prompt.to_string().into()],
+            cache: true,
+        });
 
         let mut referenced_context_ids = HashSet::default();
 
@@ -609,6 +676,7 @@ pub enum ThreadEvent {
         #[allow(unused)]
         tool_use_id: LanguageModelToolUseId,
     },
+    ScriptFinished,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
