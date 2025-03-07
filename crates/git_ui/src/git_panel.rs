@@ -23,7 +23,7 @@ use git::repository::{
     ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
-use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
+use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
     actions, anchored, deferred, hsla, percentage, point, uniform_list, Action, Animation,
     AnimationExt as _, AnyView, BoxShadow, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
@@ -124,6 +124,9 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
+            });
+            workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
+                CommitModal::toggle(workspace, window, cx)
             });
         },
     )
