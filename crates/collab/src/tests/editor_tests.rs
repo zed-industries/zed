@@ -2427,6 +2427,13 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         worktree_id,
         path: Arc::from(Path::new(&"test.txt")),
     };
+    let abs_path = project_a.read_with(cx_a, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -2480,7 +2487,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2489,12 +2496,12 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
-    assert_eq!(1, breakpoints_a.get(&project_path).unwrap().len());
+    assert_eq!(1, breakpoints_a.get(&abs_path).unwrap().len());
     assert_eq!(breakpoints_a, breakpoints_b);
 
     // Client B adds breakpoint on line(2)
@@ -2513,7 +2520,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2522,13 +2529,13 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
     assert_eq!(breakpoints_a, breakpoints_b);
-    assert_eq!(2, breakpoints_a.get(&project_path).unwrap().len());
+    assert_eq!(2, breakpoints_a.get(&abs_path).unwrap().len());
 
     // Client A removes last added breakpoint from client B
     editor_a.update_in(cx_a, |editor, window, cx| {
@@ -2546,7 +2553,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2555,13 +2562,13 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
     assert_eq!(breakpoints_a, breakpoints_b);
-    assert_eq!(1, breakpoints_a.get(&project_path).unwrap().len());
+    assert_eq!(1, breakpoints_a.get(&abs_path).unwrap().len());
 
     // Client B removes first added breakpoint by client A
     editor_b.update_in(cx_b, |editor, window, cx| {
@@ -2579,7 +2586,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2588,7 +2595,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .breakpoints()
+            .all_breakpoints(cx)
             .clone()
     });
 

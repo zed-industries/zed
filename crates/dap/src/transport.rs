@@ -74,12 +74,16 @@ pub enum Transport {
 }
 
 impl Transport {
-    async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
+    #[cfg(any(test, feature = "test-support"))]
+    async fn start(_: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         #[cfg(any(test, feature = "test-support"))]
         return FakeTransport::start(cx)
             .await
             .map(|(transports, fake)| (transports, Self::Fake(fake)));
+    }
 
+    #[cfg(not(any(test, feature = "test-support")))]
+    async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         if binary.connection.is_some() {
             TcpTransport::start(binary, cx)
                 .await
