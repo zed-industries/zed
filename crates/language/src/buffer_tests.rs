@@ -3140,6 +3140,30 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     );
 }
 
+#[gpui::test]
+fn test_words_in_range(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+
+    let contents = r#"let word=foo.bar Foo word2-FoO-Pizza-word FOO word"#;
+
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(contents, cx).with_language(Arc::new(rust_lang()), cx);
+        assert_eq!(buffer.text(), contents);
+        buffer.check_invariants();
+        buffer
+    });
+
+    // TODO kb
+    buffer.update(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        dbg!(snapshot.words_in_range(Some("piz"), 0..snapshot.len()));
+        dbg!(snapshot.words_in_range(Some("fo"), 0..snapshot.len()));
+        dbg!(snapshot.words_in_range(Some("o"), 0..snapshot.len()));
+        dbg!(snapshot.words_in_range(Some(""), 0..snapshot.len()));
+        dbg!(snapshot.words_in_range(None, 0..snapshot.len()));
+    });
+}
+
 fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
