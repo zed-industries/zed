@@ -5855,7 +5855,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
             while events.next().await.is_some() {
-                if tree.update(cx, |tree, _| !tree.entry_for_path(file_name).is_some()) {
+                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_none()) {
                     break;
                 }
             }
