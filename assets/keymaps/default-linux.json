@@ -105,7 +105,6 @@
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
-      "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
       // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true }],
       // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
@@ -471,15 +470,15 @@
       "ctrl-shift-d": "editor::DuplicateLineDown",
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
-      "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
-      "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
-      "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
-      "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
-      "ctrl-alt-shift-left": "editor::SelectToPreviousSubwordStart",
-      "ctrl-alt-shift-b": "editor::SelectToPreviousSubwordStart",
-      "ctrl-alt-shift-right": "editor::SelectToNextSubwordEnd",
-      "ctrl-alt-shift-f": "editor::SelectToNextSubwordEnd"
+      "ctrl-alt-left": "editor::MoveToPreviousSubwordStart", // macos sublime
+      "ctrl-alt-right": "editor::MoveToNextSubwordStart", // macos sublime
+      "alt-left": "editor::MoveToPreviousWordStart",
+      "alt-right": "editor::MoveToNextWordEnd",
+      "ctrl-l": "editor::SelectLine", // goes downwards
+      //"alt-l": "editor::SelectLineUp",
+      "alt-shift-left": "editor::SelectToPreviousSubwordStart",
+      "alt-shift-right": "editor::SelectToNextSubwordEnd"
     }
   },
   // Bindings from Atom

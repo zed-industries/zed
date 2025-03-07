@@ -28,6 +28,10 @@
   {
     "context": "Editor",
     "bindings": {
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordStart",
+      "alt-shift-left": "editor::SelectToPreviousSubwordStart",
+      "alt-shift-right": "editor::SelectToNextSubwordEnd",
       "ctrl-alt-up": "editor::AddSelectionAbove",
       "ctrl-alt-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::MoveLineUp",
