@@ -28,6 +28,7 @@ mod hover_popover;
 mod indent_guides;
 mod inlay_hint_cache;
 pub mod items;
+mod jsx_tag_auto_close;
 mod linked_editing_ranges;
 mod lsp_ext;
 mod mouse_context_menu;
@@ -260,6 +261,7 @@ enum DisplayDiffHunk {
         display_row: DisplayRow,
     },
     Unfolded {
+        is_created_file: bool,
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
@@ -724,6 +726,7 @@ pub struct Editor {
     use_autoclose: bool,
     use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
+    jsx_tag_auto_close_enabled_in_any_buffer: bool,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
@@ -1010,8 +1013,8 @@ pub struct ClipboardSelection {
     pub len: usize,
     /// Whether this was a full-line selection.
     pub is_entire_line: bool,
-    /// The column where this selection originally started.
-    pub start_column: u32,
+    /// The indentation of the first line when this content was originally copied.
+    pub first_line_indent: u32,
 }
 
 #[derive(Debug)]
@@ -1199,7 +1202,7 @@ impl Editor {
                     .bg(cx.theme().colors().ghost_element_background)
                     .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                     .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                    .rounded_sm()
+                    .rounded_xs()
                     .size_full()
                     .cursor_pointer()
                     .child("⋯")
@@ -1410,6 +1413,7 @@ impl Editor {
             use_autoclose: true,
             use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
+            jsx_tag_auto_close_enabled_in_any_buffer: false,
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
@@ -1493,6 +1497,7 @@ impl Editor {
 
         this.end_selection(window, cx);
         this.scroll_manager.show_scrollbar(window, cx);
+        jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut this, &buffer, cx);
 
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
@@ -2350,7 +2355,7 @@ impl Editor {
     pub fn edit_with_block_indent<I, S, T>(
         &mut self,
         edits: I,
-        original_start_columns: Vec<u32>,
+        original_indent_columns: Vec<Option<u32>>,
         cx: &mut Context<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -2365,7 +2370,7 @@ impl Editor {
             buffer.edit(
                 edits,
                 Some(AutoindentMode::Block {
-                    original_start_columns,
+                    original_indent_columns,
                 }),
                 cx,
             )
@@ -3101,6 +3106,9 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
+            let initial_buffer_versions =
+                jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
+
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
@@ -3188,6 +3196,7 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
+            jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
         });
     }
 
@@ -3472,7 +3481,7 @@ impl Editor {
 
     pub fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
-            original_start_columns: Vec::new(),
+            original_indent_columns: Vec::new(),
         });
         self.insert_with_autoindent_mode(text, autoindent, window, cx);
     }
@@ -6542,7 +6551,7 @@ impl Editor {
             .pl_1()
             .pr(padding_right)
             .gap_1()
-            .rounded(px(6.))
+            .rounded_md()
             .border_1()
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
@@ -7887,6 +7896,9 @@ impl Editor {
         hunk: &MultiBufferDiffHunk,
         cx: &mut App,
     ) -> Option<()> {
+        if hunk.is_created_file() {
+            return None;
+        }
         let buffer = self.buffer.read(cx);
         let diff = buffer.diff_for(hunk.buffer_id)?;
         let buffer = buffer.buffer(hunk.buffer_id)?;
@@ -8696,7 +8708,9 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    start_column: selection.start.column,
+                    first_line_indent: buffer
+                        .indent_size_for_line(MultiBufferRow(selection.start.row))
+                        .len,
                 });
             }
         }
@@ -8775,7 +8789,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    start_column: start.column,
+                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
                 });
             }
         }
@@ -8805,8 +8819,8 @@ impl Editor {
                 let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
                     clipboard_selections.iter().all(|s| s.is_entire_line);
-                let first_selection_start_column =
-                    clipboard_selections.first().map(|s| s.start_column);
+                let first_selection_indent_column =
+                    clipboard_selections.first().map(|s| s.first_line_indent);
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
@@ -8821,21 +8835,21 @@ impl Editor {
 
                     let mut start_offset = 0;
                     let mut edits = Vec::new();
-                    let mut original_start_columns = Vec::new();
+                    let mut original_indent_columns = Vec::new();
                     for (ix, selection) in old_selections.iter().enumerate() {
                         let to_insert;
                         let entire_line;
-                        let original_start_column;
+                        let original_indent_column;
                         if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                             let end_offset = start_offset + clipboard_selection.len;
                             to_insert = &clipboard_text[start_offset..end_offset];
                             entire_line = clipboard_selection.is_entire_line;
                             start_offset = end_offset + 1;
-                            original_start_column = Some(clipboard_selection.start_column);
+                            original_indent_column = Some(clipboard_selection.first_line_indent);
                         } else {
                             to_insert = clipboard_text.as_str();
                             entire_line = all_selections_were_entire_line;
-                            original_start_column = first_selection_start_column
+                            original_indent_column = first_selection_indent_column
                         }
 
                         // If the corresponding selection was empty when this slice of the
@@ -8851,7 +8865,7 @@ impl Editor {
                         };
 
                         edits.push((range, to_insert));
-                        original_start_columns.extend(original_start_column);
+                        original_indent_columns.push(original_indent_column);
                     }
                     drop(snapshot);
 
@@ -8859,7 +8873,7 @@ impl Editor {
                         edits,
                         if auto_indent_on_paste {
                             Some(AutoindentMode::Block {
-                                original_start_columns,
+                                original_indent_columns,
                             })
                         } else {
                             None
@@ -15393,6 +15407,7 @@ impl Editor {
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
+                jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::ExcerptsEdited {
@@ -15412,6 +15427,7 @@ impl Editor {
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
+                jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
@@ -15420,6 +15436,7 @@ impl Editor {
             }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
                 linked_editing_ranges::refresh_linked_ranges(self, window, cx);
+                jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
             }
@@ -17269,6 +17286,7 @@ impl EditorSnapshot {
                     if hunk_display_end.column() > 0 {
                         end_row.0 += 1;
                     }
+                    let is_created_file = hunk.is_created_file();
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range,
@@ -17278,6 +17296,7 @@ impl EditorSnapshot {
                             hunk.buffer_id,
                             hunk.buffer_range,
                         ),
+                        is_created_file,
                     }
                 };
 

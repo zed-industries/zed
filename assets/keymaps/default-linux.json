@@ -747,7 +747,8 @@
     "context": "GitCommit > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "ctrl-enter": "git::Commit"
+      "ctrl-enter": "git::Commit",
+      "alt-l": "git::GenerateCommitMessage"
     }
   },
   {
@@ -769,7 +770,8 @@
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
       "ctrl-enter": "git::Commit",
-      "alt-up": "git_panel::FocusChanges"
+      "alt-up": "git_panel::FocusChanges",
+      "alt-l": "git::GenerateCommitMessage"
     }
   },
   {

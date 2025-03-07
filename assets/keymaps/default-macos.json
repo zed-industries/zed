@@ -786,7 +786,8 @@
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
       "alt-up": "git_panel::FocusChanges",
-      "shift-escape": "git::ExpandCommitEditor"
+      "shift-escape": "git::ExpandCommitEditor",
+      "alt-tab": "git::GenerateCommitMessage"
     }
   },
   {
@@ -794,7 +795,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
-      "cmd-enter": "git::Commit"
+      "cmd-enter": "git::Commit",
+      "alt-tab": "git::GenerateCommitMessage"
     }
   },
   {

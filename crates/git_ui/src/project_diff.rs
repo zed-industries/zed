@@ -90,6 +90,14 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        telemetry::event!(
+            "Git Diff Opened",
+            source = if entry.is_some() {
+                "Git Panel"
+            } else {
+                "Action"
+            }
+        );
         let project_diff = if let Some(existing) = workspace.item_of_type::<Self>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
             existing

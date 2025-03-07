@@ -10,8 +10,11 @@ pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
 mod theme_preview;
+mod toast_layer;
 mod toolbar;
 mod workspace_settings;
+
+pub use toast_layer::{ToastLayer, ToastView};
 
 use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
@@ -32,7 +35,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
+    action_as, actions, canvas, deferred, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
     Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
@@ -816,12 +819,14 @@ pub struct Workspace {
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
+    toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
     project: Entity<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, PeerId>,
     window_edited: bool,
+    dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
@@ -1032,6 +1037,7 @@ impl Workspace {
         });
 
         let modal_layer = cx.new(|_| ModalLayer::new());
+        let toast_layer = cx.new(|_| ToastLayer::new());
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
@@ -1112,6 +1118,7 @@ impl Workspace {
             last_active_view_id: None,
             status_bar,
             modal_layer,
+            toast_layer,
             titlebar_item: None,
             notifications: Default::default(),
             left_dock,
@@ -1122,6 +1129,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             dispatching_keystrokes: Default::default(),
             window_edited: false,
+            dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
             app_state,
@@ -1526,7 +1534,7 @@ impl Workspace {
                                 pane.active_item().map(|p| p.item_id())
                             })?;
                             let open_by_abs_path = workspace.update_in(&mut cx, |workspace, window, cx| {
-                                workspace.open_abs_path(abs_path.clone(), false, window, cx)
+                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
                             })?;
                             match open_by_abs_path
                                 .await
@@ -2104,7 +2112,7 @@ impl Workspace {
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
-        visible: OpenVisible,
+        options: OpenOptions,
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2119,7 +2127,7 @@ impl Workspace {
             let mut tasks = Vec::with_capacity(abs_paths.len());
 
             for abs_path in &abs_paths {
-                let visible = match visible {
+                let visible = match options.visible.as_ref().unwrap_or(&OpenVisible::None) {
                     OpenVisible::All => Some(true),
                     OpenVisible::None => Some(false),
                     OpenVisible::OnlyFiles => match fs.metadata(abs_path).await.log_err() {
@@ -2183,7 +2191,13 @@ impl Workspace {
                     } else {
                         Some(
                             this.update_in(&mut cx, |this, window, cx| {
-                                this.open_path(project_path, pane, true, window, cx)
+                                this.open_path(
+                                    project_path,
+                                    pane,
+                                    options.focus.unwrap_or(true),
+                                    window,
+                                    cx,
+                                )
                             })
                             .log_err()?
                             .await,
@@ -2207,7 +2221,15 @@ impl Workspace {
             ResolvedPath::ProjectPath { project_path, .. } => {
                 self.open_path(project_path, None, true, window, cx)
             }
-            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, window, cx),
+            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
+                path,
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            ),
         }
     }
 
@@ -2251,7 +2273,16 @@ impl Workspace {
             if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
                     .update_in(&mut cx, |this, window, cx| {
-                        this.open_paths(paths, OpenVisible::All, None, window, cx)
+                        this.open_paths(
+                            paths,
+                            OpenOptions {
+                                visible: Some(OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
                     })?
                     .await;
                 for result in results.into_iter().flatten() {
@@ -2744,24 +2775,14 @@ impl Workspace {
     pub fn open_abs_path(
         &mut self,
         abs_path: PathBuf,
-        visible: bool,
+        options: OpenOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         cx.spawn_in(window, |workspace, mut cx| async move {
             let open_paths_task_result = workspace
                 .update_in(&mut cx, |workspace, window, cx| {
-                    workspace.open_paths(
-                        vec![abs_path.clone()],
-                        if visible {
-                            OpenVisible::All
-                        } else {
-                            OpenVisible::None
-                        },
-                        None,
-                        window,
-                        cx,
-                    )
+                    workspace.open_paths(vec![abs_path.clone()], options, None, window, cx)
                 })
                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
                 .await;
@@ -3389,13 +3410,11 @@ impl Workspace {
                 if *pane == self.active_pane {
                     self.active_item_path_changed(window, cx);
                 }
-                self.update_window_edited(window, cx);
                 serialize_workspace = false;
             }
             pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item_id } => {
                 cx.emit(Event::ActiveItemChanged);
-                self.update_window_edited(window, cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
                     if entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
@@ -3852,13 +3871,44 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
-        let is_edited = !self.project.read(cx).is_disconnected(cx)
-            && self
-                .items(cx)
-                .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
+        let is_edited = !self.project.read(cx).is_disconnected(cx) && !self.dirty_items.is_empty();
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
             window.set_window_edited(self.window_edited)
+        }
+    }
+
+    fn update_item_dirty_state(
+        &mut self,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let is_dirty = item.is_dirty(cx);
+        let item_id = item.item_id();
+        let was_dirty = self.dirty_items.contains_key(&item_id);
+        if is_dirty == was_dirty {
+            return;
+        }
+        if was_dirty {
+            self.dirty_items.remove(&item_id);
+            self.update_window_edited(window, cx);
+            return;
+        }
+        if let Some(window_handle) = window.window_handle().downcast::<Self>() {
+            let s = item.on_release(
+                cx,
+                Box::new(move |cx| {
+                    window_handle
+                        .update(cx, |this, window, cx| {
+                            this.dirty_items.remove(&item_id);
+                            this.update_window_edited(window, cx)
+                        })
+                        .ok();
+                }),
+            );
+            self.dirty_items.insert(item_id, s);
+            self.update_window_edited(window, cx);
         }
     }
 
@@ -4971,6 +5021,17 @@ impl Workspace {
         })
     }
 
+    pub fn toggle_status_toast<V: ToastView>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+        entity: Entity<V>,
+    ) {
+        self.toast_layer.update(cx, |toast_layer, cx| {
+            toast_layer.toggle_toast(window, cx, entity)
+        })
+    }
+
     pub fn toggle_centered_layout(
         &mut self,
         _: &ToggleCenteredLayout,
@@ -5485,7 +5546,8 @@ impl Render for Workspace {
                                 .children(self.render_notifications(window, cx)),
                         )
                         .child(self.status_bar.clone())
-                        .child(self.modal_layer.clone()),
+                        .child(deferred(self.modal_layer.clone()))
+                        .child(self.toast_layer.clone()),
                 ),
             window,
             cx,
@@ -5953,10 +6015,13 @@ pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<Workspace>> {
 
 #[derive(Default)]
 pub struct OpenOptions {
+    pub visible: Option<OpenVisible>,
+    pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -6040,7 +6105,16 @@ pub fn open_paths(
             let open_task = existing
                 .update(&mut cx, |workspace, window, cx| {
                     window.activate_window();
-                    workspace.open_paths(abs_paths, open_visible, None, window, cx)
+                    workspace.open_paths(
+                        abs_paths,
+                        OpenOptions {
+                            visible: Some(open_visible),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
                 })?
                 .await;
 
@@ -6105,7 +6179,10 @@ pub fn create_and_open_local_file(
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     workspace.open_paths(
                         vec![path.to_path_buf()],
-                        OpenVisible::None,
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
                         None,
                         window,
                         cx,

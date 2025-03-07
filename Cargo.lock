@@ -3046,8 +3046,12 @@ dependencies = [
 name = "component_preview"
 version = "0.1.0"
 dependencies = [
+ "client",
  "component",
  "gpui",
+ "languages",
+ "notifications",
+ "project",
  "ui",
  "workspace",
 ]
@@ -4154,6 +4158,7 @@ dependencies = [
  "inline_completion",
  "itertools 0.14.0",
  "language",
+ "languages",
  "linkify",
  "log",
  "lsp",
@@ -5461,6 +5466,7 @@ dependencies = [
  "panel",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "schemars",
  "serde",
@@ -5469,6 +5475,7 @@ dependencies = [
  "settings",
  "smallvec",
  "strum",
+ "telemetry",
  "theme",
  "time",
  "ui",
@@ -8376,13 +8383,17 @@ dependencies = [
  "channel",
  "client",
  "collections",
+ "component",
  "db",
  "gpui",
+ "linkme",
  "rpc",
  "settings",
  "sum_tree",
  "time",
+ "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -17026,13 +17037,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_erlang"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_extension_api"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17082,13 +17086,6 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
-]
-
-[[package]]
-name = "zed_lua"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
 ]
 
 [[package]]

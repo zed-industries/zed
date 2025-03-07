@@ -973,7 +973,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 h_flex()
                     .gap_2()
                     .px_1()
-                    .rounded_md()
+                    .rounded_sm()
                     .bg(color.surface_background.opacity(0.5))
                     .map(|stack| {
                         stack.child(
