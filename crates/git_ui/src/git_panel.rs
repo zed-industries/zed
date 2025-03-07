@@ -374,7 +374,7 @@ impl GitPanel {
             tracked_count: 0,
             tracked_staged_count: 0,
             update_visible_entries_task: Task::ready(()),
-            width: Some(px(360.)),
+            width: None,
             context_menu: None,
             workspace,
             modal_open: false,
