@@ -277,6 +277,17 @@ fn main() {
                 load_login_shell_environment().log_err();
             })
             .detach()
+    } else {
+        if cfg!(target_os = "macos")
+            && std::env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "zed")
+        {
+            // We're running under `cargo run`. This can lead to a problem where the `cargo run` build of Zed invalidates
+            // all caches of Rust projects it's ran on, because cargo propagates `MACOSX_DEPLOYMENT_TARGET` env variable.
+            // This then has a cascading effect on how RA builds these projects - as it busts the cache.
+            //
+            // Remove `MACOSX_DEPLOYMENT_TARGET` from the environment.
+            std::env::remove_var("MACOSX_DEPLOYMENT_TARGET");
+        }
     };
 
     app.on_open_urls({
@@ -326,6 +337,7 @@ fn main() {
             .or_else(read_proxy_from_env);
         let http = {
             let _guard = Tokio::handle(cx).enter();
+
             ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
                 .expect("could not start HTTP client")
         };
