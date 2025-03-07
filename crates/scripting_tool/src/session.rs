@@ -7,7 +7,8 @@ use futures::{
 use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
-use project::{search::SearchQuery, Project};
+use project::{search::SearchQuery, Fs, Project};
+use regex::Regex;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -24,7 +25,7 @@ struct ForegroundFn(Box<dyn FnOnce(WeakEntity<Session>, AsyncApp) + Send>);
 pub struct Session {
     project: Entity<Project>,
     // TODO Remove this
-    fs: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
+    fs_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
     foreground_fns_tx: mpsc::Sender<ForegroundFn>,
     _invoke_foreground_fns: Task<()>,
 }
@@ -34,7 +35,7 @@ impl Session {
         let (foreground_fns_tx, mut foreground_fns_rx) = mpsc::channel(128);
         Session {
             project,
-            fs: Arc::new(Mutex::new(HashMap::default())),
+            fs_changes: Arc::new(Mutex::new(HashMap::default())),
             foreground_fns_tx,
             _invoke_foreground_fns: cx.spawn(|this, cx| async move {
                 while let Some(foreground_fn) = foreground_fns_rx.next().await {
@@ -53,7 +54,7 @@ impl Session {
         const SANDBOX_PREAMBLE: &str = include_str!("sandbox_preamble.lua");
 
         // TODO Remove fs_changes
-        let fs_changes = self.fs.clone();
+        let fs_changes = self.fs_changes.clone();
         // TODO Honor all worktrees instead of the first one
         let root_dir = self
             .project
@@ -61,6 +62,7 @@ impl Session {
             .visible_worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).abs_path());
+        let fs = self.project.read(cx).fs().clone();
         let foreground_fns_tx = self.foreground_fns_tx.clone();
         cx.background_spawn(async move {
             let lua = Lua::new();
@@ -78,7 +80,10 @@ impl Session {
                 "search",
                 lua.create_async_function({
                     let foreground_fns_tx = foreground_fns_tx.clone();
-                    move |lua, regex| Self::search(lua, foreground_fns_tx.clone(), regex)
+                    let fs = fs.clone();
+                    move |lua, regex| {
+                        Self::search(lua, foreground_fns_tx.clone(), fs.clone(), regex)
+                    }
                 })?,
             )?;
             globals.set(
@@ -93,7 +98,7 @@ impl Session {
             )?;
             globals.set("user_script", script)?;
 
-            lua.load(SANDBOX_PREAMBLE).exec()?;
+            lua.load(SANDBOX_PREAMBLE).exec_async().await?;
 
             // Drop Lua instance to decrement reference count.
             drop(lua);
@@ -507,12 +512,9 @@ impl Session {
     async fn search(
         lua: Lua,
         mut foreground_tx: mpsc::Sender<ForegroundFn>,
+        fs: Arc<dyn Fs>,
         regex: String,
     ) -> mlua::Result<Table> {
-        use mlua::Table;
-        use regex::Regex;
-        use std::fs;
-
         // TODO: Allow specification of these options.
         let search_query = SearchQuery::regex(
             &regex,
@@ -541,14 +543,14 @@ impl Session {
         let mut search_results: Vec<Table> = Vec::new();
         while let Some(path) = abs_paths_rx.next().await {
             // Skip files larger than 1MB
-            if let Ok(metadata) = fs::metadata(&path) {
-                if metadata.len() > 1_000_000 {
+            if let Ok(Some(metadata)) = fs.metadata(&path).await {
+                if metadata.len > 1_000_000 {
                     continue;
                 }
             }
 
             // Attempt to read the file as text
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(content) = fs.load(&path).await {
                 let mut matches = Vec::new();
 
                 // Find all regex matches in the content
@@ -680,6 +682,7 @@ impl UserData for FileContent {
 mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
+    use serde_json::json;
     use settings::SettingsStore;
 
     use super::*;
@@ -699,6 +702,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output.stdout, "Hello\tworld!\nGoodbye\tmoon!\n");
+    }
+
+    #[gpui::test]
+    async fn test_search(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "file1.txt": "Hello world!",
+                "file2.txt": "Goodbye moon!"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/")], cx).await;
+        let session = cx.new(|cx| Session::new(project, cx));
+        let script = r#"
+            local results = search("world")
+            for i, result in ipairs(results) do
+                print("File: " .. result.path)
+                print("Matches:")
+                for j, match in ipairs(result.matches) do
+                    print("  " .. match)
+                end
+            end
+        "#;
+        let output = session
+            .update(cx, |session, cx| session.run_script(script.to_string(), cx))
+            .await
+            .unwrap();
+        assert_eq!(output.stdout, "File: /file1.txt\nMatches:\n  world\n");
     }
 
     fn init_test(cx: &mut TestAppContext) {
