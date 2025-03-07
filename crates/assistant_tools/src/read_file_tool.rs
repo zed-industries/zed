@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
-use gpui::{App, Task, WeakEntity};
+use gpui::{App, Entity, Task};
 use project::{Project, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,13 +37,9 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        project: WeakEntity<Project>,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let Some(project) = project.upgrade() else {
-            return Task::ready(Err(anyhow!("project dropped")));
-        };
-
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),

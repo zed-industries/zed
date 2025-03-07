@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use chrono::{Local, Utc};
-use gpui::{App, Task, WeakEntity};
+use gpui::{App, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ impl Tool for NowTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _project: WeakEntity<Project>,
+        _project: Entity<Project>,
         _cx: &mut App,
     ) -> Task<Result<String>> {
         let input: NowToolInput = match serde_json::from_value(input) {
