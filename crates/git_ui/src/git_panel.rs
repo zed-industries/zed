@@ -22,6 +22,7 @@ use git::repository::{
     Branch, CommitDetails, CommitSummary, DiffType, PushOptions, Remote, RemoteCommandOutput,
     ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
+use git::status::StageStatus;
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
@@ -195,7 +196,7 @@ pub struct GitStatusEntry {
     pub(crate) worktree_path: Arc<Path>,
     pub(crate) abs_path: PathBuf,
     pub(crate) status: FileStatus,
-    pub(crate) is_staged: Option<bool>,
+    pub(crate) staging: StageStatus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,7 +210,7 @@ enum TargetStatus {
 struct PendingOperation {
     finished: bool,
     target_status: TargetStatus,
-    repo_paths: HashSet<RepoPath>,
+    entries: Vec<GitStatusEntry>,
     op_id: usize,
 }
 
@@ -226,6 +227,8 @@ pub struct GitPanel {
     add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
+    single_staged_entry: Option<GitStatusEntry>,
+    single_tracked_entry: Option<GitStatusEntry>,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
     hide_scrollbar_task: Option<Task<()>>,
@@ -365,6 +368,8 @@ impl GitPanel {
             pending: Vec::new(),
             pending_commit: None,
             pending_serialization: Task::ready(None),
+            single_staged_entry: None,
+            single_tracked_entry: None,
             project,
             scroll_handle,
             scrollbar_state,
@@ -828,13 +833,13 @@ impl GitPanel {
                 .repo_path_to_project_path(&entry.repo_path)?;
             let workspace = self.workspace.clone();
 
-            if entry.status.is_staged() != Some(false) {
-                self.perform_stage(false, vec![entry.repo_path.clone()], cx);
+            if entry.status.staging().has_staged() {
+                self.change_file_stage(false, vec![entry.clone()], cx);
             }
             let filename = path.path.file_name()?.to_string_lossy();
 
             if !entry.status.is_created() {
-                self.perform_checkout(vec![entry.repo_path.clone()], cx);
+                self.perform_checkout(vec![entry.clone()], cx);
             } else {
                 let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
                 cx.spawn_in(window, |_, mut cx| async move {
@@ -863,7 +868,7 @@ impl GitPanel {
         });
     }
 
-    fn perform_checkout(&mut self, repo_paths: Vec<RepoPath>, cx: &mut Context<Self>) {
+    fn perform_checkout(&mut self, entries: Vec<GitStatusEntry>, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let Some(active_repository) = self.active_repository.clone() else {
             return;
@@ -873,19 +878,19 @@ impl GitPanel {
         self.pending.push(PendingOperation {
             op_id,
             target_status: TargetStatus::Reverted,
-            repo_paths: repo_paths.iter().cloned().collect(),
+            entries: entries.clone(),
             finished: false,
         });
         self.update_visible_entries(cx);
         let task = cx.spawn(|_, mut cx| async move {
             let tasks: Vec<_> = workspace.update(&mut cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
-                    repo_paths
+                    entries
                         .iter()
-                        .filter_map(|repo_path| {
+                        .filter_map(|entry| {
                             let path = active_repository
                                 .read(cx)
-                                .repo_path_to_project_path(&repo_path)?;
+                                .repo_path_to_project_path(&entry.repo_path)?;
                             Some(project.open_buffer(path, cx))
                         })
                         .collect()
@@ -895,7 +900,15 @@ impl GitPanel {
             let buffers = futures::future::join_all(tasks).await;
 
             active_repository
-                .update(&mut cx, |repo, _| repo.checkout_files("HEAD", repo_paths))?
+                .update(&mut cx, |repo, _| {
+                    repo.checkout_files(
+                        "HEAD",
+                        entries
+                            .iter()
+                            .map(|entries| entries.repo_path.clone())
+                            .collect(),
+                    )
+                })?
                 .await??;
 
             let tasks: Vec<_> = cx.update(|cx| {
@@ -983,8 +996,7 @@ impl GitPanel {
             match prompt.await {
                 Ok(RestoreCancel::RestoreTrackedFiles) => {
                     this.update(&mut cx, |this, cx| {
-                        let repo_paths = entries.into_iter().map(|entry| entry.repo_path).collect();
-                        this.perform_checkout(repo_paths, cx);
+                        this.perform_checkout(entries, cx);
                     })
                     .ok();
                 }
@@ -1053,16 +1065,10 @@ impl GitPanel {
             })?;
             let to_unstage = to_delete
                 .into_iter()
-                .filter_map(|entry| {
-                    if entry.status.is_staged() != Some(false) {
-                        Some(entry.repo_path.clone())
-                    } else {
-                        None
-                    }
-                })
+                .filter(|entry| !entry.status.staging().is_fully_unstaged())
                 .collect();
             this.update(&mut cx, |this, cx| {
-                this.perform_stage(false, to_unstage, cx)
+                this.change_file_stage(false, to_unstage, cx)
             })?;
             for task in tasks {
                 task.await?;
@@ -1075,25 +1081,25 @@ impl GitPanel {
     }
 
     fn stage_all(&mut self, _: &StageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let repo_paths = self
+        let entries = self
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.is_staged != Some(true))
-            .map(|status_entry| status_entry.repo_path.clone())
+            .filter(|status_entry| status_entry.staging.has_unstaged())
+            .cloned()
             .collect::<Vec<_>>();
-        self.perform_stage(true, repo_paths, cx);
+        self.change_file_stage(true, entries, cx);
     }
 
     fn unstage_all(&mut self, _: &UnstageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let repo_paths = self
+        let entries = self
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.is_staged != Some(false))
-            .map(|status_entry| status_entry.repo_path.clone())
+            .filter(|status_entry| status_entry.staging.has_staged())
+            .cloned()
             .collect::<Vec<_>>();
-        self.perform_stage(false, repo_paths, cx);
+        self.change_file_stage(false, entries, cx);
     }
 
     fn toggle_staged_for_entry(
@@ -1107,10 +1113,10 @@ impl GitPanel {
         };
         let (stage, repo_paths) = match entry {
             GitListEntry::GitStatusEntry(status_entry) => {
-                if status_entry.status.is_staged().unwrap_or(false) {
-                    (false, vec![status_entry.repo_path.clone()])
+                if status_entry.status.staging().is_fully_staged() {
+                    (false, vec![status_entry.clone()])
                 } else {
-                    (true, vec![status_entry.repo_path.clone()])
+                    (true, vec![status_entry.clone()])
                 }
             }
             GitListEntry::Header(section) => {
@@ -1122,18 +1128,23 @@ impl GitPanel {
                     .filter_map(|entry| entry.status_entry())
                     .filter(|status_entry| {
                         section.contains(&status_entry, repository)
-                            && status_entry.is_staged != Some(goal_staged_state)
+                            && status_entry.staging.as_bool() != Some(goal_staged_state)
                     })
-                    .map(|status_entry| status_entry.repo_path.clone())
+                    .map(|status_entry| status_entry.clone())
                     .collect::<Vec<_>>();
 
                 (goal_staged_state, entries)
             }
         };
-        self.perform_stage(stage, repo_paths, cx);
+        self.change_file_stage(stage, repo_paths, cx);
     }
 
-    fn perform_stage(&mut self, stage: bool, repo_paths: Vec<RepoPath>, cx: &mut Context<Self>) {
+    fn change_file_stage(
+        &mut self,
+        stage: bool,
+        entries: Vec<GitStatusEntry>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -1145,10 +1156,9 @@ impl GitPanel {
             } else {
                 TargetStatus::Unstaged
             },
-            repo_paths: repo_paths.iter().cloned().collect(),
+            entries: entries.clone(),
             finished: false,
         });
-        let repo_paths = repo_paths.clone();
         let repository = active_repository.read(cx);
         self.update_counts(repository);
         cx.notify();
@@ -1158,11 +1168,21 @@ impl GitPanel {
                 let result = cx
                     .update(|cx| {
                         if stage {
-                            active_repository
-                                .update(cx, |repo, cx| repo.stage_entries(repo_paths.clone(), cx))
+                            active_repository.update(cx, |repo, cx| {
+                                let repo_paths = entries
+                                    .iter()
+                                    .map(|entry| entry.repo_path.clone())
+                                    .collect();
+                                repo.stage_entries(repo_paths, cx)
+                            })
                         } else {
-                            active_repository
-                                .update(cx, |repo, cx| repo.unstage_entries(repo_paths.clone(), cx))
+                            active_repository.update(cx, |repo, cx| {
+                                let repo_paths = entries
+                                    .iter()
+                                    .map(|entry| entry.repo_path.clone())
+                                    .collect();
+                                repo.unstage_entries(repo_paths, cx)
+                            })
                         }
                     })?
                     .await;
@@ -1397,21 +1417,13 @@ impl GitPanel {
 
     /// Suggests a commit message based on the changed files and their statuses
     pub fn suggest_commit_message(&self) -> Option<String> {
-        if self.total_staged_count() != 1 {
-            return None;
-        }
-
-        let entry = self
-            .entries
-            .iter()
-            .find(|entry| match entry.status_entry() {
-                Some(entry) => entry.is_staged.unwrap_or(false),
-                _ => false,
-            })?;
-
-        let GitListEntry::GitStatusEntry(git_status_entry) = entry.clone() else {
-            return None;
-        };
+        let git_status_entry = if let Some(staged_entry) = &self.single_staged_entry {
+            Some(staged_entry)
+        } else if let Some(single_tracked_entry) = &self.single_tracked_entry {
+            Some(single_tracked_entry)
+        } else {
+            None
+        }?;
 
         let action_text = if git_status_entry.status.is_deleted() {
             Some("Delete")
@@ -1970,9 +1982,13 @@ impl GitPanel {
 
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
+        self.single_staged_entry.take();
+        self.single_staged_entry.take();
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
+        let mut last_staged = None;
+        let mut staged_count = 0;
 
         let Some(repo) = self.active_repository.as_ref() else {
             // Just clear entries if no repository is active.
@@ -1985,12 +2001,15 @@ impl GitPanel {
         for entry in repo.status() {
             let is_conflict = repo.has_conflict(&entry.repo_path);
             let is_new = entry.status.is_created();
-            let is_staged = entry.status.is_staged();
+            let staging = entry.status.staging();
 
             if self.pending.iter().any(|pending| {
                 pending.target_status == TargetStatus::Reverted
                     && !pending.finished
-                    && pending.repo_paths.contains(&entry.repo_path)
+                    && pending
+                        .entries
+                        .iter()
+                        .any(|pending| pending.repo_path == entry.repo_path)
             }) {
                 continue;
             }
@@ -2007,8 +2026,13 @@ impl GitPanel {
                 worktree_path,
                 abs_path,
                 status: entry.status,
-                is_staged,
+                staging,
             };
+
+            if staging.has_staged() {
+                staged_count += 1;
+                last_staged = Some(entry.clone());
+            }
 
             if is_conflict {
                 conflict_entries.push(entry);
@@ -2017,6 +2041,40 @@ impl GitPanel {
             } else {
                 changed_entries.push(entry);
             }
+        }
+
+        let mut pending_staged_count = 0;
+        let mut last_pending_staged = None;
+        let mut pending_status_for_last_staged = None;
+        for pending in self.pending.iter() {
+            if pending.target_status == TargetStatus::Staged {
+                pending_staged_count += pending.entries.len();
+                last_pending_staged = pending.entries.iter().next().cloned();
+            }
+            if let Some(last_staged) = &last_staged {
+                if pending
+                    .entries
+                    .iter()
+                    .any(|entry| entry.repo_path == last_staged.repo_path)
+                {
+                    pending_status_for_last_staged = Some(pending.target_status);
+                }
+            }
+        }
+
+        if conflict_entries.len() == 0 && staged_count == 1 && pending_staged_count == 0 {
+            match pending_status_for_last_staged {
+                Some(TargetStatus::Staged) | None => {
+                    self.single_staged_entry = last_staged;
+                }
+                _ => {}
+            }
+        } else if conflict_entries.len() == 0 && pending_staged_count == 1 {
+            self.single_staged_entry = last_pending_staged;
+        }
+
+        if conflict_entries.len() == 0 && changed_entries.len() == 1 {
+            self.single_tracked_entry = changed_entries.first().cloned();
         }
 
         if conflict_entries.len() > 0 {
@@ -2083,35 +2141,39 @@ impl GitPanel {
             };
             if repo.has_conflict(&status_entry.repo_path) {
                 self.conflicted_count += 1;
-                if self.entry_is_staged(status_entry) != Some(false) {
+                if self.entry_staging(status_entry).has_staged() {
                     self.conflicted_staged_count += 1;
                 }
             } else if status_entry.status.is_created() {
                 self.new_count += 1;
-                if self.entry_is_staged(status_entry) != Some(false) {
+                if self.entry_staging(status_entry).has_staged() {
                     self.new_staged_count += 1;
                 }
             } else {
                 self.tracked_count += 1;
-                if self.entry_is_staged(status_entry) != Some(false) {
+                if self.entry_staging(status_entry).has_staged() {
                     self.tracked_staged_count += 1;
                 }
             }
         }
     }
 
-    fn entry_is_staged(&self, entry: &GitStatusEntry) -> Option<bool> {
+    fn entry_staging(&self, entry: &GitStatusEntry) -> StageStatus {
         for pending in self.pending.iter().rev() {
-            if pending.repo_paths.contains(&entry.repo_path) {
+            if pending
+                .entries
+                .iter()
+                .any(|pending_entry| pending_entry.repo_path == entry.repo_path)
+            {
                 match pending.target_status {
-                    TargetStatus::Staged => return Some(true),
-                    TargetStatus::Unstaged => return Some(false),
+                    TargetStatus::Staged => return StageStatus::Staged,
+                    TargetStatus::Unstaged => return StageStatus::Unstaged,
                     TargetStatus::Reverted => continue,
                     TargetStatus::Unchanged => continue,
                 }
             }
         }
-        entry.is_staged
+        entry.staging
     }
 
     pub(crate) fn has_staged_changes(&self) -> bool {
@@ -2604,9 +2666,9 @@ impl GitPanel {
         let ix = self.entry_by_path(&repo_path)?;
         let entry = self.entries.get(ix)?;
 
-        let is_staged = self.entry_is_staged(entry.status_entry()?);
+        let entry_staging = self.entry_staging(entry.status_entry()?);
 
-        let checkbox = Checkbox::new("stage-file", is_staged.into())
+        let checkbox = Checkbox::new("stage-file", entry_staging.as_bool().into())
             .disabled(!self.has_write_access(cx))
             .fill()
             .elevation(ElevationIndex::Surface)
@@ -2752,7 +2814,7 @@ impl GitPanel {
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
-        let stage_title = if entry.status.is_staged() == Some(true) {
+        let stage_title = if entry.status.staging().is_fully_staged() {
             "Unstage File"
         } else {
             "Stage File"
@@ -2858,8 +2920,8 @@ impl GitPanel {
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
-        let is_entry_staged = self.entry_is_staged(entry);
-        let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
+        let entry_staging = self.entry_staging(entry);
+        let mut is_staged: ToggleState = self.entry_staging(entry).as_bool().into();
 
         if !self.has_staged_changes() && !self.has_conflicts() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
@@ -2978,7 +3040,7 @@ impl GitPanel {
                                 })
                             })
                             .tooltip(move |window, cx| {
-                                let tooltip_name = if is_entry_staged.unwrap_or(false) {
+                                let tooltip_name = if entry_staging.is_fully_staged() {
                                     "Unstage"
                                 } else {
                                     "Stage"
@@ -4150,14 +4212,14 @@ mod tests {
                     repo_path: "crates/gpui/gpui.rs".into(),
                     worktree_path: Path::new("gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
-                    is_staged: Some(false),
+                    staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
                     abs_path: path!("/root/zed/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
                     worktree_path: Path::new("../util/util.rs").into(),
                     status: StatusCode::Modified.worktree(),
-                    is_staged: Some(false),
+                    staging: StageStatus::Unstaged,
                 },),
             ],
         );
@@ -4224,14 +4286,14 @@ mod tests {
                     repo_path: "crates/gpui/gpui.rs".into(),
                     worktree_path: Path::new("../../gpui/gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
-                    is_staged: Some(false),
+                    staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
                     abs_path: path!("/root/zed/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
                     worktree_path: Path::new("util.rs").into(),
                     status: StatusCode::Modified.worktree(),
-                    is_staged: Some(false),
+                    staging: StageStatus::Unstaged,
                 },),
             ],
         );

@@ -3960,10 +3960,6 @@ pub struct StatusEntry {
 }
 
 impl StatusEntry {
-    pub fn is_staged(&self) -> Option<bool> {
-        self.status.is_staged()
-    }
-
     fn to_proto(&self) -> proto::StatusEntry {
         let simple_status = match self.status {
             FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
