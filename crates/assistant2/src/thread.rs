@@ -5,13 +5,14 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
-use gpui::{App, Context, EventEmitter, SharedString, Task};
+use gpui::{App, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason,
 };
+use project::Project;
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
@@ -71,12 +72,17 @@ pub struct Thread {
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
+    project: WeakEntity<Project>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
 }
 
 impl Thread {
-    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        tools: Arc<ToolWorkingSet>,
+        _cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -88,6 +94,7 @@ impl Thread {
             context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
+            project: project.downgrade(),
             tools,
             tool_use: ToolUseState::new(),
         }
@@ -96,6 +103,7 @@ impl Thread {
     pub fn from_saved(
         id: ThreadId,
         saved: SavedThread,
+        project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
         _cx: &mut Context<Self>,
     ) -> Self {
@@ -127,6 +135,7 @@ impl Thread {
             context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
+            project: project.downgrade(),
             tools,
             tool_use,
         }
@@ -550,6 +559,23 @@ impl Thread {
         });
     }
 
+    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) {
+        let pending_tool_uses = self
+            .pending_tool_uses()
+            .into_iter()
+            .filter(|tool_use| tool_use.status.is_idle())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for tool_use in pending_tool_uses {
+            if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                let task = tool.run(tool_use.input, self.project.clone(), cx);
+
+                self.insert_tool_output(tool_use.id.clone(), task, cx);
+            }
+        }
+    }
+
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -574,6 +600,23 @@ impl Thread {
 
         self.tool_use
             .run_pending_tool(tool_use_id, insert_output_task);
+    }
+
+    pub fn send_tool_results_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
+    ) {
+        // Insert a user message to contain the tool results.
+        self.insert_user_message(
+            // TODO: Sending up a user message without any content results in the model sending back
+            // responses that also don't have any content. We currently don't handle this case well,
+            // so for now we provide some text to keep the model on track.
+            "Here are the tool results.",
+            Vec::new(),
+            cx,
+        );
+        self.send_to_model(model, RequestKind::Chat, true, cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.

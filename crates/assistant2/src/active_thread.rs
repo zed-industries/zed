@@ -1,17 +1,15 @@
 use std::sync::Arc;
 
-use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
     Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, UnderlineStyle, WeakEntity,
+    Task, TextStyleRefinement, UnderlineStyle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
-use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
@@ -23,9 +21,7 @@ use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
-    project: WeakEntity<Project>,
     language_registry: Arc<LanguageRegistry>,
-    tools: Arc<ToolWorkingSet>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     save_thread_task: Option<Task<()>>,
@@ -46,9 +42,7 @@ impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
-        project: WeakEntity<Project>,
         language_registry: Arc<LanguageRegistry>,
-        tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -58,9 +52,7 @@ impl ActiveThread {
         ];
 
         let mut this = Self {
-            project,
             language_registry,
-            tools,
             thread_store,
             thread: thread.clone(),
             save_thread_task: None,
@@ -300,24 +292,9 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::UsePendingTools => {
-                let pending_tool_uses = self
-                    .thread
-                    .read(cx)
-                    .pending_tool_uses()
-                    .into_iter()
-                    .filter(|tool_use| tool_use.status.is_idle())
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                for tool_use in pending_tool_uses {
-                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.project.clone(), cx);
-
-                        self.thread.update(cx, |thread, cx| {
-                            thread.insert_tool_output(tool_use.id.clone(), task, cx);
-                        });
-                    }
-                }
+                self.thread.update(cx, |thread, cx| {
+                    thread.use_pending_tools(cx);
+                });
             }
             ThreadEvent::ToolFinished { .. } => {
                 let all_tools_finished = self
@@ -330,16 +307,7 @@ impl ActiveThread {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         self.thread.update(cx, |thread, cx| {
-                            // Insert a user message to contain the tool results.
-                            thread.insert_user_message(
-                                // TODO: Sending up a user message without any content results in the model sending back
-                                // responses that also don't have any content. We currently don't handle this case well,
-                                // so for now we provide some text to keep the model on track.
-                                "Here are the tool results.",
-                                Vec::new(),
-                                cx,
-                            );
-                            thread.send_to_model(model, RequestKind::Chat, true, cx);
+                            thread.send_tool_results_to_model(model, cx);
                         });
                     }
                 }
