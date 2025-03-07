@@ -751,7 +751,7 @@ impl Project {
                 GitStore::new(
                     &worktree_store,
                     buffer_store.clone(),
-                    None,
+                    Some(environment.clone()),
                     client.clone().into(),
                     None,
                     cx,
