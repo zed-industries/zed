@@ -891,7 +891,9 @@ impl GitPanel {
             let buffers = futures::future::join_all(tasks).await;
 
             active_repository
-                .update(&mut cx, |repo, _| repo.checkout_files("HEAD", repo_paths))?
+                .update(&mut cx, |repo, cx| {
+                    repo.checkout_files("HEAD", repo_paths, cx)
+                })?
                 .await??;
 
             let tasks: Vec<_> = cx.update(|cx| {
@@ -1322,7 +1324,7 @@ impl GitPanel {
                 if let Ok(true) = confirmation.await {
                     let prior_head = prior_head.await?;
 
-                    repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
+                    repo.update(&mut cx, |repo, cx| repo.reset("HEAD^", ResetMode::Soft, cx))?
                         .await??;
 
                     Ok(Some(prior_head))
