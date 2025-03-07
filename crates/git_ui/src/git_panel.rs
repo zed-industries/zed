@@ -3013,16 +3013,9 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-        return None;
-    };
-    let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
-        return None;
-    };
-    if !provider.is_authenticated(cx) {
-        return None;
-    }
-    Some(model)
+    let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+    let model = LanguageModelRegistry::read_global(cx).active_model()?;
+    provider.is_authenticated(cx).then(|| model)
 }
 
 impl Render for GitPanel {
