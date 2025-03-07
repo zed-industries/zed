@@ -177,9 +177,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-up": "editor::MoveToStartOfExcerpt",
-      "cmd-down": "editor::MoveToEndOfExcerpt",
+      "cmd-down": "editor::MoveToStartOfNextExcerpt",
       "cmd-shift-up": "editor::SelectToStartOfExcerpt",
-      "cmd-shift-down": "editor::SelectToEndOfExcerpt"
+      "cmd-shift-down": "editor::SelectToStartOfNextExcerpt"
     }
   },
   {
