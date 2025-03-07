@@ -4353,7 +4353,7 @@ impl BackgroundScanner {
             }
 
             let ancestor_dot_git = ancestor.join(*DOT_GIT);
-            log::debug!("considering ancestor: {ancestor_dot_git:?}");
+            log::info!("considering ancestor: {ancestor_dot_git:?}");
             // Check whether the directory or file called `.git` exists (in the
             // case of worktrees it's a file.)
             if self
@@ -4362,7 +4362,6 @@ impl BackgroundScanner {
                 .await
                 .is_ok_and(|metadata| metadata.is_some())
             {
-                log::debug!(".git path exists");
                 if index != 0 {
                     // We canonicalize, since the FS events use the canonicalized path.
                     if let Some(ancestor_dot_git) =
@@ -4373,7 +4372,7 @@ impl BackgroundScanner {
                             .strip_prefix(ancestor)
                             .unwrap()
                             .into();
-                        log::debug!(
+                        log::info!(
                             "inserting parent git repo for this worktree: {location_in_repo:?}"
                         );
                         // We associate the external git repo with our root folder and
@@ -4396,12 +4395,10 @@ impl BackgroundScanner {
 
                 // Reached root of git repository.
                 break;
-            } else {
-                log::debug!(".git path doesn't exist");
             }
         }
 
-        log::debug!("containing git repository: {containing_git_repository:?}");
+        log::info!("containing git repository: {containing_git_repository:?}");
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
