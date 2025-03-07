@@ -808,6 +808,27 @@ impl LocalLspStore {
             .detach();
 
         language_server
+            .on_request::<lsp::request::CodeLensRefresh, _, _>({
+                let this = this.clone();
+                move |(), mut cx| {
+                    let this = this.clone();
+                    async move {
+                        this.update(&mut cx, |this, cx| {
+                            cx.emit(LspStoreEvent::RefreshCodeLens);
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
+                                client.send(proto::RefreshCodeLens {
+                                    project_id: *project_id,
+                                })
+                            })
+                        })?
+                        .transpose()?;
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
                 let this = this.clone();
                 let name = name.to_string();
@@ -1628,10 +1649,8 @@ impl LocalLspStore {
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
             LspAction::Action(lsp_action) => {
-                if action.resolved {
-                    return Ok(());
-                }
-                if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+                if !action.resolved
+                    && GetCodeActions::can_resolve_actions(&lang_server.capabilities())
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
@@ -1640,11 +1659,24 @@ impl LocalLspStore {
                             .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
                             .await?,
                     );
-                    action.resolved = true;
+                }
+            }
+            LspAction::CodeLens(lens) => {
+                if !action.resolved
+                    // TODO kb
+                    // && CodeLens::can_resolve_actions(&lang_server.capabilities())
+                    && lens.data.is_some()
+                    && lens.command.is_none()
+                {
+                    *lens = lang_server
+                        .request::<lsp::request::CodeLensResolve>(lens.clone())
+                        .await?;
                 }
             }
             LspAction::Command(_) => {}
         }
+
+        action.resolved = true;
         anyhow::Ok(())
     }
 
@@ -2891,6 +2923,7 @@ pub enum LspStoreEvent {
     },
     Notification(String),
     RefreshInlayHints,
+    RefreshCodeLens,
     DiagnosticsUpdated {
         language_server_id: LanguageServerId,
         path: ProjectPath,
@@ -2946,6 +2979,9 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
+        client.add_entity_request_handler(Self::handle_code_lens);
+        client.add_entity_request_handler(Self::handle_resolve_code_lens);
+        client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
@@ -7215,6 +7251,33 @@ impl LspStore {
         })
     }
 
+    async fn handle_refresh_code_lens(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::RefreshCodeLens>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::RefreshCodeLens);
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_code_lens(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::GetCodeLens>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetCodeLensResponse> {
+        todo!("TODO kb")
+    }
+
+    async fn handle_resolve_code_lens(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::ResolveCodeLens>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ResolveCodeLensResponse> {
+        todo!("TODO kb")
+    }
+
     async fn handle_open_buffer_for_symbol(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
@@ -8438,6 +8501,10 @@ impl LspStore {
                 proto::code_action::Kind::Command as i32,
                 serde_json::to_vec(command).unwrap(),
             ),
+            LspAction::CodeLens(code_lens) => (
+                proto::code_action::Kind::CodeLens as i32,
+                serde_json::to_vec(code_lens).unwrap(),
+            ),
         };
 
         proto::CodeAction {
@@ -8465,6 +8532,9 @@ impl LspStore {
             }
             Some(proto::code_action::Kind::Command) => {
                 LspAction::Command(serde_json::from_slice(&action.lsp_action)?)
+            }
+            Some(proto::code_action::Kind::CodeLens) => {
+                LspAction::CodeLens(serde_json::from_slice(&action.lsp_action)?)
             }
             None => anyhow::bail!("Unknown action kind {}", action.kind),
         };

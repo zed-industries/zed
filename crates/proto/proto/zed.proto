@@ -346,7 +346,14 @@ message Envelope {
         GitDiff git_diff = 319;
         GitDiffResponse git_diff_response = 320;
 
-        GitInit git_init = 321; // current max
+        GitInit git_init = 321;
+
+        CodeLens code_lens = 322;
+        GetCodeLens get_code_lens = 323;
+        GetCodeLensResponse get_code_lens_response = 324;
+        ResolveCodeLens resolve_code_lens = 325;
+        ResolveCodeLensResponse resolve_code_lens_response = 326;
+        RefreshCodeLens refresh_code_lens = 327; // current max
     }
 
     reserved 87 to 88;
@@ -1263,6 +1270,36 @@ message RefreshInlayHints {
     uint64 project_id = 1;
 }
 
+message CodeLens {
+    Range range = 1;
+    optional string command = 2;
+    optional string data = 3;
+}
+
+message GetCodeLens {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetCodeLensResponse {
+    repeated CodeLens lenses = 1;
+}
+
+message ResolveCodeLens {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    CodeLens lens = 3;
+}
+
+message ResolveCodeLensResponse {
+    CodeLens lens = 1;
+}
+
+message RefreshCodeLens {
+    uint64 project_id = 1;
+}
+
 message MarkupContent {
     bool is_markdown = 1;
     string value = 2;
@@ -1302,6 +1339,7 @@ message CodeAction {
     enum Kind {
         Action = 0;
         Command = 1;
+        CodeLens = 2;
     }
 }
 

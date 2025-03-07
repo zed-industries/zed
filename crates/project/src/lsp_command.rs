@@ -235,6 +235,9 @@ pub(crate) struct InlayHints {
 }
 
 #[derive(Debug)]
+pub(crate) struct GetCodeLens;
+
+#[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
 }
@@ -3034,6 +3037,129 @@ impl LspCommand for InlayHints {
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetCodeLens {
+    type Response = Vec<LspAction>;
+    type LspRequest = lsp::CodeLensRequest;
+    type ProtoRequest = proto::GetCodeLens;
+
+    fn display_name(&self) -> &str {
+        "Code Lens"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .code_lens_provider
+            .as_ref()
+            .map_or(false, |code_lens_options| {
+                code_lens_options.resolve_provider.unwrap_or(false)
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::CodeLensParams> {
+        Ok(lsp::CodeLensParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::CodeLens>>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<LspAction>> {
+        todo!("TODO kb")
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCodeLens {
+        proto::GetCodeLens {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetCodeLens,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Vec<LspAction>,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetCodeLensResponse {
+        // proto::GetCodeLensResponse {
+        //     lenses: response
+        //         .into_iter()
+        //         .filter_map(|lsp_action| {
+        //             if let LspAction::CodeLens(lens) = lsp_action {
+        //                 Some(proto::CodeLens {
+        //                     range: lens.range.into(),
+        //                     command: lens.command.map(|command| command.into()),
+        //                     data: lens.data.map(|data| data.to_string()),
+        //                 })
+        //             } else {
+        //                 None
+        //             }
+        //         })
+        //         .collect(),
+        // }
+        todo!("TODO kb")
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetCodeLensResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<LspAction>> {
+        // buffer
+        //     .update(&mut cx, |buffer, _| {
+        //         buffer.wait_for_version(deserialize_version(&message.version))
+        //     })?
+        //     .await?;
+
+        // let mut hints = Vec::new();
+        // for message_hint in message.hints {
+        //     hints.push(InlayHints::proto_to_project_hint(message_hint)?);
+        // }
+
+        // Ok(hints)
+        todo!("TODO kb")
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetCodeLens) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
