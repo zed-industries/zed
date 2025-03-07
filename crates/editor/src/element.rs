@@ -1691,7 +1691,7 @@ impl EditorElement {
             let pos_y = content_origin.y
                 + line_height * (row.0 as f32 - scroll_pixel_position.y / line_height);
 
-            let window_ix = row.minus(start_row) as usize;
+            let window_ix = row.0.saturating_sub(start_row.0) as usize;
             let pos_x = {
                 let crease_trailer_layout = &crease_trailers[window_ix];
                 let line_layout = &line_layouts[window_ix];
