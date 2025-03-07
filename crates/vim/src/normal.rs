@@ -18,7 +18,7 @@ use crate::{
     indent::IndentDirection,
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
-    state::{Mode, Operator},
+    state::{Mark, Mode, Operator},
     surrounds::SurroundsType,
     Vim,
 };
@@ -340,7 +340,9 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let Some(marks) = vim.get_local_mark("^".to_string(), window, cx) else {
+            let Some(Mark::Local(marks)) =
+                vim.get_mark("^".to_string(), editor.buffer(), window, cx)
+            else {
                 return;
             };
 

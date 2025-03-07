@@ -50,7 +50,7 @@ impl Vim {
                     .filter(|sel| sel.len() > 1 && vim.mode != Mode::VisualLine);
 
                 if !action.preserve_clipboard && vim.mode.is_visual() {
-                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, cx);
+                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, window, cx);
                 }
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);

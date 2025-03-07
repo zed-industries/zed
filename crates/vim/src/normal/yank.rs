@@ -36,7 +36,7 @@ impl Vim {
                         motion.expand_selection(map, selection, times, true, &text_layout_details);
                     });
                 });
-                vim.yank_selections_content(editor, motion.linewise(), cx);
+                vim.yank_selections_content(editor, motion.linewise(), window, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
@@ -66,7 +66,7 @@ impl Vim {
                         start_positions.insert(selection.id, start_position);
                     });
                 });
-                vim.yank_selections_content(editor, false, cx);
+                vim.yank_selections_content(editor, false, window, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = start_positions.remove(&selection.id).unwrap();
@@ -82,6 +82,7 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         self.copy_ranges(
@@ -94,6 +95,7 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
+            window,
             cx,
         )
     }
@@ -102,6 +104,7 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         self.copy_ranges(
@@ -114,6 +117,7 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
+            window,
             cx,
         )
     }
@@ -124,25 +128,28 @@ impl Vim {
         linewise: bool,
         is_yank: bool,
         selections: Vec<Range<Point>>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
-        self.set_local_mark(
+        self.set_mark(
             "[".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_before(s.start))
                 .collect(),
-            editor,
+            editor.buffer(),
+            window,
             cx,
         );
-        self.set_local_mark(
+        self.set_mark(
             "]".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_after(s.end))
                 .collect(),
-            editor,
+            editor.buffer(),
+            window,
             cx,
         );
 

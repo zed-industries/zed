@@ -37,7 +37,7 @@ use crate::{
         JoinLines,
     },
     object::Object,
-    state::Mode,
+    state::{Mark, Mode},
     visual::VisualDeleteLine,
     Vim,
 };
@@ -284,6 +284,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     true,
                     true,
                     vec![Point::new(range.start.0, 0)..end],
+                    window,
                     cx,
                 )
             }
@@ -595,17 +596,9 @@ impl Position {
             }
             Position::Mark { name, offset } => {
                 let multi_buffer = editor.buffer();
-                let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
-                    return Err(anyhow!("mark {} could not get buffer", name));
-                };
-
-                let Some(anchors) = vim.get_local_mark_without_editor(
-                    name.to_string(),
-                    window,
-                    &buffer,
-                    multi_buffer,
-                    cx,
-                ) else {
+                let Some(Mark::Local(anchors)) =
+                    vim.get_mark(name.to_string(), multi_buffer, window, cx)
+                else {
                     return Err(anyhow!("mark {} not set", name));
                 };
                 let Some(mark) = anchors.last() else {
