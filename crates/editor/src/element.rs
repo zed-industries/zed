@@ -6763,8 +6763,7 @@ impl Element for EditorElement {
                         let unstaged_background = if use_pattern {
                             pattern_slash(
                                 background_color.opacity(hunk_opacity),
-                                dbg!(window.line_height().0 * 0.5),
-                                //window.rem_size().0 * 1.125, // ~18 by default
+                                window.rem_size().0 * 1.125, // ~18 by default
                             )
                         } else {
                             solid_background(background_color.opacity(if is_light {
