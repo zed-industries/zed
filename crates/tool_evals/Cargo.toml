@@ -8,13 +8,15 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
-[lib]
-path = "src/cli.rs"
-doctest = false
-
 [[bin]]
 name = "cli"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
 assistant2.workspace = true
+fs.workspace = true
+gpui.workspace = true
+futures.workspace = true
+language_model.workspace = true
+client.workspace = true

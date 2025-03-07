@@ -14175,6 +14175,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tool_evals"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant2",
+ "client",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "language_model",
+]
+
+[[package]]
 name = "toolchain_selector"
 version = "0.1.0"
 dependencies = [

@@ -150,6 +150,7 @@ members = [
     "crates/theme_selector",
     "crates/time_format",
     "crates/title_bar",
+    "crates/tool_evals",
     "crates/toolchain_selector",
     "crates/ui",
     "crates/ui_input",
