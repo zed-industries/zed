@@ -10,7 +10,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::git::Repository;
 use std::sync::Arc;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -292,9 +292,12 @@ impl PickerDelegate for BranchListDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if self.selected_index == 0 && self.matches.len() == 0 {
-            let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
+        if !new_branch_name.is_empty()
+            && !self.has_exact_match(&new_branch_name)
+            && ((self.selected_index == 0 && self.matches.len() == 0) || secondary)
+        {
             self.create_branch(new_branch_name, window, cx);
             return;
         }
@@ -422,6 +425,10 @@ impl PickerDelegate for BranchListDelegate {
                                 format!("Create branch '{new_branch_name}'",),
                             )
                             .toggle_state(self.selected_index == 0 && self.matches.len() == 0)
+                            .tooltip(Tooltip::for_action_title(
+                                "Create branch",
+                                &menu::SecondaryConfirm,
+                            ))
                             .on_click(move |_, window, cx| {
                                 let new_branch_name = new_branch_name.clone();
                                 if let Some(picker) = handle.upgrade() {
