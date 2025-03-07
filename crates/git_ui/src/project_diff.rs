@@ -90,6 +90,14 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        telemetry::event!(
+            "Git Diff Opened",
+            source = if entry.is_some() {
+                "Git Panel"
+            } else {
+                "Action"
+            }
+        );
         let project_diff = if let Some(existing) = workspace.item_of_type::<Self>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
@@ -130,6 +138,7 @@ impl ProjectDiff {
                 window,
                 cx,
             );
+            diff_display_editor.disable_inline_diagnostics();
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
                 workspace: workspace.downgrade(),

@@ -42,8 +42,8 @@ use ui::{
 };
 use util::{maybe, paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, SplitDirection,
-    Workspace,
+    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, OpenOptions,
+    OpenVisible, SplitDirection, Workspace,
 };
 
 actions!(file_finder, [SelectPrevious, ToggleMenu]);
@@ -1239,7 +1239,10 @@ impl PickerDelegate for FileFinderDelegate {
                                         } else {
                                             workspace.open_abs_path(
                                                 abs_path.to_path_buf(),
-                                                false,
+                                                OpenOptions {
+                                                    visible: Some(OpenVisible::None),
+                                                    ..Default::default()
+                                                },
                                                 window,
                                                 cx,
                                             )

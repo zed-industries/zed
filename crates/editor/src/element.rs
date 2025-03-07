@@ -1691,7 +1691,7 @@ impl EditorElement {
             let pos_y = content_origin.y
                 + line_height * (row.0 as f32 - scroll_pixel_position.y / line_height);
 
-            let window_ix = row.minus(start_row) as usize;
+            let window_ix = row.0.saturating_sub(start_row.0) as usize;
             let pos_x = {
                 let crease_trailer_layout = &crease_trailers[window_ix];
                 let line_layout = &line_layouts[window_ix];
@@ -1724,7 +1724,7 @@ impl EditorElement {
                 .h(line_height)
                 .w_full()
                 .px_1()
-                .rounded_sm()
+                .rounded_xs()
                 .opacity(opacity)
                 .bg(severity_to_color(&diagnostic_to_render.severity)
                     .color(cx)
@@ -2717,7 +2717,7 @@ impl EditorElement {
                     .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                     .pl_0p5()
                     .pr_5()
-                    .rounded_md()
+                    .rounded_sm()
                     .shadow_md()
                     .border_1()
                     .map(|div| {
@@ -2741,7 +2741,7 @@ impl EditorElement {
                         header.child(
                             div()
                                 .hover(|style| style.bg(colors.element_selected))
-                                .rounded_sm()
+                                .rounded_xs()
                                 .child(
                                     ButtonLike::new("toggle-buffer-fold")
                                         .style(ui::ButtonStyle::Transparent)
@@ -3948,6 +3948,7 @@ impl EditorElement {
                 display_row_range,
                 multi_buffer_range,
                 status,
+                is_created_file,
                 ..
             } = &hunk
             {
@@ -3979,6 +3980,7 @@ impl EditorElement {
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
+                        *is_created_file,
                         line_height,
                         &editor,
                         cx,
@@ -4347,6 +4349,11 @@ impl EditorElement {
     fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         let is_light = cx.theme().appearance().is_light();
 
+        let hunk_style = ProjectSettings::get_global(cx)
+            .git
+            .hunk_style
+            .unwrap_or_default();
+
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -4410,9 +4417,20 @@ impl EditorElement {
                 if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
                     hunk_to_paint
                 {
-                    if secondary_status.has_secondary_hunk() {
-                        background_color =
-                            background_color.opacity(if is_light { 0.2 } else { 0.32 });
+                    match hunk_style {
+                        GitHunkStyleSetting::Transparent | GitHunkStyleSetting::Pattern => {
+                            if secondary_status.has_secondary_hunk() {
+                                background_color =
+                                    background_color.opacity(if is_light { 0.2 } else { 0.32 });
+                            }
+                        }
+                        GitHunkStyleSetting::StagedPattern
+                        | GitHunkStyleSetting::StagedTransparent => {
+                            if !secondary_status.has_secondary_hunk() {
+                                background_color =
+                                    background_color.opacity(if is_light { 0.2 } else { 0.32 });
+                            }
+                        }
                     }
 
                     // Flatten the background color with the editor color to prevent
@@ -6732,10 +6750,10 @@ impl Element for EditorElement {
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     let is_light = cx.theme().appearance().is_light();
-                    let use_pattern = ProjectSettings::get_global(cx)
+                    let hunk_style = ProjectSettings::get_global(cx)
                         .git
                         .hunk_style
-                        .map_or(false, |style| matches!(style, GitHunkStyleSetting::Pattern));
+                        .unwrap_or_default();
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
@@ -6755,20 +6773,39 @@ impl Element for EditorElement {
 
                         let unstaged = diff_status.has_secondary_hunk();
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
+                        let slash_width = line_height.0 / 1.5; // ~16 by default
 
-                        let staged_background =
-                            solid_background(background_color.opacity(hunk_opacity));
-                        let unstaged_background = if use_pattern {
-                            pattern_slash(
-                                background_color.opacity(hunk_opacity),
-                                window.rem_size().0 * 1.125, // ~18 by default
-                            )
-                        } else {
-                            solid_background(background_color.opacity(if is_light {
-                                0.08
-                            } else {
-                                0.04
-                            }))
+                        let staged_background = match hunk_style {
+                            GitHunkStyleSetting::Transparent | GitHunkStyleSetting::Pattern => {
+                                solid_background(background_color.opacity(hunk_opacity))
+                            }
+                            GitHunkStyleSetting::StagedPattern => {
+                                pattern_slash(background_color.opacity(hunk_opacity), slash_width)
+                            }
+                            GitHunkStyleSetting::StagedTransparent => {
+                                solid_background(background_color.opacity(if is_light {
+                                    0.08
+                                } else {
+                                    0.04
+                                }))
+                            }
+                        };
+
+                        let unstaged_background = match hunk_style {
+                            GitHunkStyleSetting::Transparent => {
+                                solid_background(background_color.opacity(if is_light {
+                                    0.08
+                                } else {
+                                    0.04
+                                }))
+                            }
+                            GitHunkStyleSetting::Pattern => {
+                                pattern_slash(background_color.opacity(hunk_opacity), slash_width)
+                            }
+                            GitHunkStyleSetting::StagedPattern
+                            | GitHunkStyleSetting::StagedTransparent => {
+                                solid_background(background_color.opacity(hunk_opacity))
+                            }
                         };
 
                         let background = if unstaged {
@@ -8786,6 +8823,7 @@ fn diff_hunk_controls(
     row: u32,
     status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
+    is_created_file: bool,
     line_height: Pixels,
     editor: &Entity<Editor>,
     cx: &mut App,
@@ -8801,6 +8839,7 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
+        .occlude()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
@@ -8879,7 +8918,8 @@ fn diff_hunk_controls(
                             editor.restore_hunks_in_ranges(vec![point..point], window, cx);
                         });
                     }
-                }),
+                })
+                .disabled(is_created_file),
         )
         .when(
             !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),

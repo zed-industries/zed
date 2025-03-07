@@ -173,6 +173,8 @@ impl ActiveThread {
 
         text_style.refine(&TextStyleRefinement {
             font_family: Some(theme_settings.ui_font.family.clone()),
+            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(ui_font_size.into()),
             color: Some(cx.theme().colors().text),
             ..Default::default()
@@ -207,6 +209,8 @@ impl ActiveThread {
                 },
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                    font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
                     ..Default::default()
                 }),
@@ -214,6 +218,8 @@ impl ActiveThread {
             },
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 background_color: Some(colors.editor_foreground.opacity(0.1)),
                 ..Default::default()
@@ -645,7 +651,7 @@ impl ActiveThread {
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
-                    .rounded_md()
+                    .rounded_sm()
                     .child(message_content),
             ),
         };
@@ -674,7 +680,7 @@ impl ActiveThread {
                         .pr_2()
                         .bg(cx.theme().colors().editor_foreground.opacity(0.02))
                         .when(is_open, |element| element.border_b_1().rounded_t(px(6.)))
-                        .when(!is_open, |element| element.rounded(px(6.)))
+                        .when(!is_open, |element| element.rounded_md())
                         .border_color(cx.theme().colors().border)
                         .child(
                             h_flex()

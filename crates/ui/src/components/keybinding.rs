@@ -120,7 +120,7 @@ impl RenderOnce for KeyBinding {
                 h_flex()
                     .flex_none()
                     .py_0p5()
-                    .rounded_sm()
+                    .rounded_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .when(use_text, |el| {
                         el.child(
