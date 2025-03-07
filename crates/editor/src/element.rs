@@ -4556,7 +4556,7 @@ impl EditorElement {
                     .read(cx)
                     .all_diff_hunks_expanded()
                 {
-                    window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                    window.set_cursor_style(CursorStyle::PointingHand, Some(hunk_hitbox));
                 }
             }
         }
