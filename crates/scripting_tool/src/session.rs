@@ -5,7 +5,7 @@ use futures::{
     pin_mut, SinkExt, StreamExt,
 };
 use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
-use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods};
+use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods, Value};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project};
 use regex::Regex;
@@ -15,6 +15,8 @@ use std::{
     sync::Arc,
 };
 use util::{paths::PathMatcher, ResultExt};
+
+use crate::sandboxed_shell::ShellCmd;
 
 pub struct ScriptOutput {
     pub stdout: String,
@@ -96,6 +98,16 @@ impl Session {
                     }
                 })?,
             )?;
+            globals.set(
+                "sb_io_popen",
+                lua.create_function({
+                    move |lua, shell_str| {
+                        let mut allowed_commands = HashMap::default(); // TODO persist this
+
+                        Self::io_popen(&lua, root_dir.as_ref(), shell_str, &mut allowed_commands)
+                    }
+                })?,
+            )?;
             globals.set("user_script", script)?;
 
             lua.load(SANDBOX_PREAMBLE).exec_async().await?;
@@ -124,6 +136,82 @@ impl Session {
         stdout.lock().push('\n');
 
         Ok(())
+    }
+
+    /// Sandboxed io.popen() function in Lua.
+    fn io_popen(
+        lua: &Lua,
+        root_dir: Option<&Arc<Path>>,
+        shell_str: mlua::String,
+        allowed_commands: &mut HashMap<String, bool>,
+    ) -> mlua::Result<(Option<Table>, String)> {
+        let cmds = ShellCmd::parse_shell_str(shell_str.to_str()?);
+        todo!()
+        // if cmd == "find" {
+        //     let todo = todo!("Implement find wrapper in terms of search. Be careful, as some of the args may be like pipes to grep and such.");
+        // }
+
+        // let cmd_bytes = cmd.as_bytes();
+        // let cmd_is_path;
+
+        // #[cfg(windows)]
+        // {
+        //     cmd_is_path = cmd_bytes.contains(&b'/') || cmd_bytes.contains(&b'\\');
+        // }
+
+        // #[cfg(not(windows))]
+        // {
+        //     cmd_is_path = cmd_bytes.contains(&b'/');
+        // }
+
+        // // If the command is a path, verify that it's within the root dir.
+        // if cmd_is_path {
+        //     if let Some(root_dir) = root_dir {
+        //         if let Ok(cmd_str) = cmd.to_str() {
+        //             let cmd_str = cmd_str.as_ref();
+        //             let cmd_path = Path::new(cmd_str);
+
+        //             if cmd_path.is_absolute() && !cmd_path.starts_with(root_dir) {
+        //                 return Err(mlua::Error::runtime(format!(
+        //                     "Path {} is outside the current project",
+        //                     cmd.display()
+        //                 )));
+        //             }
+
+        //             if let Some(allowed) = allowed_commands.get(cmd_str) {
+        //                 if *allowed {
+        //                     // You've already said this command is allowed
+        //                     let todo = todo!("return the file");
+        //                 } else {
+        //                     // You've already said this command is NOT allowed,
+        //                     // so crash the script with a message that informs
+        //                     // the model that this command can't be used.
+        //                     return Err(mlua::Error::runtime(format!(
+        //                         "The command {} is not available on this system.",
+        //                         cmd.display(),
+        //                     )));
+        //                 }
+        //             }
+
+        //             // We don't have a preprecorded entry for whether this is allowed,
+        //             // so prompt the user!
+
+        //             let todo = todo!("suspend the script and prompt the user");
+        //         } else {
+        //             return Err(mlua::Error::runtime("Invalid command path"));
+        //         }
+        //     } else {
+        //         return Err(mlua::Error::runtime(
+        //             "Cannot execute path without a root directory",
+        //         ));
+        //     }
+        // } else {
+        //     // cmd is on the PATH
+        // }
+
+        // let file = lua.create_table()?;
+
+        // Ok((Some(file), String::new()))
     }
 
     /// Sandboxed io.open() function in Lua.
