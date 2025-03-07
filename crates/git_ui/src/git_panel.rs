@@ -1571,6 +1571,7 @@ impl GitPanel {
                         this.show_remote_output(RemoteAction::Fetch, remote_message, cx);
                     }
                     Err(e) => {
+                        log::error!("Error while fetching {:?}", e);
                         this.show_err_toast(e, cx);
                     }
                 }
@@ -1629,7 +1630,10 @@ impl GitPanel {
                 Ok(remote_message) => {
                     this.show_remote_output(RemoteAction::Pull, remote_message, cx)
                 }
-                Err(err) => this.show_err_toast(err, cx),
+                Err(err) => {
+                    log::error!("Error while pull {:?}", err);
+                    this.show_err_toast(err, cx)
+                }
             })
             .ok();
 
@@ -1697,6 +1701,7 @@ impl GitPanel {
                     this.show_remote_output(RemoteAction::Push(remote), remote_message, cx);
                 }
                 Err(e) => {
+                    log::error!("Error while pushing {:?}", e);
                     this.show_err_toast(e, cx);
                 }
             })?;

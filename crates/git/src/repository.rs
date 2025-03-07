@@ -690,7 +690,9 @@ impl GitRepository for RealGitRepository {
                 PushOptions::Force => "--force-with-lease",
             }))
             .arg(remote_name)
-            .arg(format!("{}:{}", branch_name, branch_name));
+            .arg(format!("{}:{}", branch_name, branch_name))
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
         let git_process = command.spawn()?;
 
         run_remote_command(ask_pass, git_process)
@@ -712,7 +714,9 @@ impl GitRepository for RealGitRepository {
             .current_dir(&working_directory)
             .args(["pull"])
             .arg(remote_name)
-            .arg(branch_name);
+            .arg(branch_name)
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
         let git_process = command.spawn()?;
 
         run_remote_command(ask_pass, git_process)
@@ -727,7 +731,9 @@ impl GitRepository for RealGitRepository {
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
-            .args(["fetch", "--all"]);
+            .args(["fetch", "--all"])
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
         let git_process = command.spawn()?;
 
         run_remote_command(ask_pass, git_process)
