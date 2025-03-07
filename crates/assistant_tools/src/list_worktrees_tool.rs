@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use assistant_tool::Tool;
-use gpui::{App, Task, WeakEntity};
+use gpui::{App, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,13 +34,9 @@ impl Tool for ListWorktreesTool {
     fn run(
         self: Arc<Self>,
         _input: serde_json::Value,
-        project: WeakEntity<Project>,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let Some(project) = project.upgrade() else {
-            return Task::ready(Err(anyhow!("project dropped")));
-        };
-
         cx.spawn(|cx| async move {
             cx.update(|cx| {
                 #[derive(Debug, Serialize)]

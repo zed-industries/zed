@@ -5,7 +5,7 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
-use gpui::{App, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -72,7 +72,7 @@ pub struct Thread {
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    project: WeakEntity<Project>,
+    project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
 }
@@ -94,7 +94,7 @@ impl Thread {
             context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
-            project: project.downgrade(),
+            project,
             tools,
             tool_use: ToolUseState::new(),
         }
@@ -135,7 +135,7 @@ impl Thread {
             context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
-            project: project.downgrade(),
+            project,
             tools,
             tool_use,
         }

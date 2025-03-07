@@ -4,7 +4,7 @@ use project::Project;
 pub(crate) use session::*;
 
 use assistant_tool::{Tool, ToolRegistry};
-use gpui::{App, AppContext as _, Task, WeakEntity};
+use gpui::{App, AppContext as _, Entity, Task};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -38,15 +38,12 @@ impl Tool for ScriptingTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        project: WeakEntity<Project>,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<anyhow::Result<String>> {
         let input = match serde_json::from_value::<ScriptingToolInput>(input) {
             Err(err) => return Task::ready(Err(err.into())),
             Ok(input) => input,
-        };
-        let Some(project) = project.upgrade() else {
-            return Task::ready(Err(anyhow::anyhow!("project dropped")));
         };
 
         let session = cx.new(|cx| Session::new(project, cx));
