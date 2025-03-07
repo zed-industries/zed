@@ -637,6 +637,8 @@ impl CompletionsMenu {
         )
     }
 
+    // TODO kb here, filter the buffer words too? Those can be fetched along with the buffer
+    // Consider debouncing menu creations?
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
