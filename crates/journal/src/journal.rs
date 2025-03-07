@@ -133,13 +133,31 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                     .await?;
                 new_workspace
                     .update(&mut cx, |workspace, window, cx| {
-                        workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
+                        workspace.open_paths(
+                            vec![entry_path],
+                            workspace::OpenOptions {
+                                visible: Some(OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
                     })?
                     .await
             } else {
                 view_snapshot
                     .update_in(&mut cx, |workspace, window, cx| {
-                        workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
+                        workspace.open_paths(
+                            vec![entry_path],
+                            workspace::OpenOptions {
+                                visible: Some(OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
                     })?
                     .await
             };

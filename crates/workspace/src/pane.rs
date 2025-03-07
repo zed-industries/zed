@@ -7,8 +7,8 @@ use crate::{
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
-    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
+    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -3086,7 +3086,10 @@ impl Pane {
                         }
                         workspace.open_paths(
                             paths,
-                            OpenVisible::OnlyDirectories,
+                            OpenOptions {
+                                visible: Some(OpenVisible::OnlyDirectories),
+                                ..Default::default()
+                            },
                             Some(to_pane.downgrade()),
                             window,
                             cx,
