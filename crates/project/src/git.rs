@@ -1353,7 +1353,7 @@ impl Repository {
         let to_stage = self
             .repository_entry
             .status()
-            .filter(|entry| !entry.status.is_staged().unwrap_or(false))
+            .filter(|entry| !entry.status.staging().is_fully_staged())
             .map(|entry| entry.repo_path.clone())
             .collect();
         self.stage_entries(to_stage, cx)
@@ -1363,7 +1363,7 @@ impl Repository {
         let to_unstage = self
             .repository_entry
             .status()
-            .filter(|entry| entry.status.is_staged().unwrap_or(true))
+            .filter(|entry| entry.status.staging().has_staged())
             .map(|entry| entry.repo_path.clone())
             .collect();
         self.unstage_entries(to_unstage, cx)
