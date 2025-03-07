@@ -14,7 +14,7 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    ActionVariant, CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint,
+    CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
     ProjectItem as _, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -1629,7 +1629,7 @@ impl LocalLspStore {
         action: &mut CodeAction,
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
-            ActionVariant::Action(lsp_action) => {
+            LspAction::Action(lsp_action) => {
                 if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
@@ -1641,7 +1641,7 @@ impl LocalLspStore {
                     );
                 }
             }
-            ActionVariant::Command(_) => {}
+            LspAction::Command(_) => {}
         }
         anyhow::Ok(())
     }
@@ -8207,11 +8207,11 @@ impl LspStore {
 
     pub(crate) fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
         let (kind, lsp_action) = match &action.lsp_action {
-            ActionVariant::Action(code_action) => (
+            LspAction::Action(code_action) => (
                 proto::code_action::Kind::Action as i32,
                 serde_json::to_vec(code_action).unwrap(),
             ),
-            ActionVariant::Command(command) => (
+            LspAction::Command(command) => (
                 proto::code_action::Kind::Command as i32,
                 serde_json::to_vec(command).unwrap(),
             ),
@@ -8237,10 +8237,10 @@ impl LspStore {
             .ok_or_else(|| anyhow!("invalid end"))?;
         let lsp_action = match proto::code_action::Kind::from_i32(action.kind) {
             Some(proto::code_action::Kind::Action) => {
-                ActionVariant::Action(serde_json::from_slice(&action.lsp_action)?)
+                LspAction::Action(serde_json::from_slice(&action.lsp_action)?)
             }
             Some(proto::code_action::Kind::Command) => {
-                ActionVariant::Command(serde_json::from_slice(&action.lsp_action)?)
+                LspAction::Command(serde_json::from_slice(&action.lsp_action)?)
             }
             None => anyhow::bail!("Unknown action kind {}", action.kind),
         };

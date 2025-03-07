@@ -443,12 +443,12 @@ pub struct CodeAction {
     pub range: Range<Anchor>,
     /// The raw code action provided by the language server.
     /// Can be either an action or a command.
-    pub lsp_action: ActionVariant,
+    pub lsp_action: LspAction,
 }
 
 /// An action sent back by a language server.
 #[derive(Clone, Debug)]
-pub enum ActionVariant {
+pub enum LspAction {
     /// An action with the full data, may have a command or may not.
     /// May require resolving.
     Action(Box<lsp::CodeAction>),
@@ -456,7 +456,7 @@ pub enum ActionVariant {
     Command(lsp::Command),
 }
 
-impl ActionVariant {
+impl LspAction {
     pub fn title(&self) -> &str {
         match self {
             Self::Action(action) => &action.title,
