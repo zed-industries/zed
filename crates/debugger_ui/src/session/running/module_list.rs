@@ -1,18 +1,31 @@
-use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
-use project::debugger::session::{Session, SessionEvent};
+use anyhow::anyhow;
+use gpui::{
+    list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription, WeakEntity,
+};
+use project::{
+    debugger::session::{Session, SessionEvent},
+    ProjectItem as _, ProjectPath,
+};
+use std::{path::Path, sync::Arc};
 use ui::prelude::*;
 use util::maybe;
+use workspace::Workspace;
 
 pub struct ModuleList {
     list: ListState,
     invalidate: bool,
     session: Entity<Session>,
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     _subscription: Subscription,
 }
 
 impl ModuleList {
-    pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        session: Entity<Session>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
 
@@ -39,10 +52,63 @@ impl ModuleList {
         Self {
             list,
             session,
+            workspace,
             focus_handle,
             _subscription,
             invalidate: true,
         }
+    }
+
+    fn open_module(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, move |this, mut cx| async move {
+            let (worktree, relative_path) = this
+                .update(&mut cx, |this, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.project().update(cx, |this, cx| {
+                            this.find_or_create_worktree(&path, false, cx)
+                        })
+                    })
+                })??
+                .await?;
+
+            let buffer = this
+                .update(&mut cx, |this, cx| {
+                    this.workspace.update(cx, |this, cx| {
+                        this.project().update(cx, |this, cx| {
+                            let worktree_id = worktree.read(cx).id();
+                            this.open_buffer(
+                                ProjectPath {
+                                    worktree_id,
+                                    path: relative_path.into(),
+                                },
+                                cx,
+                            )
+                        })
+                    })
+                })??
+                .await?;
+
+            this.update_in(&mut cx, |this, window, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
+                        anyhow!("Could not select a stack frame for unnamed buffer")
+                    })?;
+                    anyhow::Ok(workspace.open_path_preview(
+                        project_path,
+                        None,
+                        false,
+                        true,
+                        true,
+                        window,
+                        cx,
+                    ))
+                })
+            })???
+            .await?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -57,6 +123,19 @@ impl ModuleList {
             .rounded_md()
             .w_full()
             .group("")
+            .id(("module-list", ix))
+            .when(module.path.is_some(), |this| {
+                this.on_click({
+                    let path = module.path.as_deref().map(|path| Arc::<Path>::from(Path::new(path)));
+                    cx.listener(move |this, _, window, cx| {
+                        if let Some(path) = path.as_ref() {
+                            this.open_module(path.clone(), window, cx);
+                        } else {
+                            log::error!("Wasn't able to find module path, but was still able to click on module list entry");
+                        }
+                    })
+                })
+            })
             .p_1()
             .hover(|s| s.bg(cx.theme().colors().element_hover))
             .child(h_flex().gap_0p5().text_ui_sm(cx).child(module.name.clone()))
