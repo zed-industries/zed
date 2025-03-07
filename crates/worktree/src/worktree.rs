@@ -5844,14 +5844,21 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_some())
-                .await;
+            let mut events = cx.events(&tree);
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_some()) {
+                    break;
+                }
+            }
 
             fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
-            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_none())
-                .await;
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| !tree.entry_for_path(file_name).is_some()) {
+                    break;
+                }
+            }
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
@@ -5905,19 +5912,22 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| {
-                scan_id_increased(tree, &mut git_dir_scan_id)
-            })
-            .await;
+            let mut events = cx.events(&tree);
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
+                    break;
+                }
+            }
 
             fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| {
-                scan_id_increased(tree, &mut git_dir_scan_id)
-            })
-            .await;
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
+                    break;
+                }
+            }
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
