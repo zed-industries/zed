@@ -8153,17 +8153,23 @@ impl LspStore {
     }
 
     pub(crate) fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
-        let (server_id, lsp_completion, resolved) = match &completion.source {
+        let (source, server_id, lsp_completion, resolved) = match &completion.source {
             CompletionSource::Lsp {
                 server_id,
                 lsp_completion,
                 resolved,
             } => (
-                Some(server_id.0 as u64),
-                Some(serde_json::to_vec(lsp_completion).unwrap()),
-                Some(*resolved),
+                proto::completion::Source::Lsp as i32,
+                server_id.0 as u64,
+                serde_json::to_vec(lsp_completion).unwrap(),
+                *resolved,
             ),
-            CompletionSource::Custom => (None, None, None),
+            CompletionSource::Custom => (
+                proto::completion::Source::Custom as i32,
+                0,
+                Vec::new(),
+                true,
+            ),
         };
 
         proto::Completion {
@@ -8173,6 +8179,7 @@ impl LspStore {
             server_id,
             lsp_completion,
             resolved,
+            source,
         }
     }
 
@@ -8185,22 +8192,17 @@ impl LspStore {
             .old_end
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid old end"))?;
-        let server_id = completion.server_id.map(LanguageServerId::from_proto);
-        let lsp_completion = completion
-            .lsp_completion
-            .as_ref()
-            .map(|lsp_completion| serde_json::from_slice::<lsp::CompletionItem>(lsp_completion))
-            .transpose()?;
         Ok(CoreCompletion {
             old_range: old_start..old_end,
             new_text: completion.new_text,
-            source: match server_id.zip(lsp_completion).zip(completion.resolved) {
-                Some(((server_id, lsp_completion), resolved)) => CompletionSource::Lsp {
-                    server_id,
-                    lsp_completion: Box::new(lsp_completion),
-                    resolved,
+            source: match proto::completion::Source::from_i32(completion.source) {
+                Some(proto::completion::Source::Custom) => CompletionSource::Custom,
+                Some(proto::completion::Source::Lsp) => CompletionSource::Lsp {
+                    server_id: LanguageServerId::from_proto(completion.server_id),
+                    lsp_completion: serde_json::from_slice(&completion.lsp_completion)?,
+                    resolved: completion.resolved,
                 },
-                None => CompletionSource::Custom,
+                _ => anyhow::bail!("Unexpected completion source {}", completion.source),
             },
         })
     }
