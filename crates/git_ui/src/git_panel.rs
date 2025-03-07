@@ -2243,37 +2243,37 @@ impl GitPanel {
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let potential_co_authors = self.potential_co_authors(cx);
-        // if potential_co_authors.is_empty() {
-        //     None
-        // } else {
-        Some(
-            IconButton::new("co-authors", IconName::Person)
-                .shape(ui::IconButtonShape::Square)
-                .icon_color(Color::Disabled)
-                .selected_icon_color(Color::Selected)
-                .toggle_state(self.add_coauthors)
-                .tooltip(move |_, cx| {
-                    let title = format!(
-                        "Add co-authored-by:{}{}",
-                        if potential_co_authors.len() == 1 {
-                            ""
-                        } else {
-                            "\n"
-                        },
-                        potential_co_authors
-                            .iter()
-                            .map(|(name, email)| format!(" {} <{}>", name, email))
-                            .join("\n")
-                    );
-                    Tooltip::simple(title, cx)
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.add_coauthors = !this.add_coauthors;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        )
-        // }
+        if potential_co_authors.is_empty() {
+            None
+        } else {
+            Some(
+                IconButton::new("co-authors", IconName::Person)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_color(Color::Disabled)
+                    .selected_icon_color(Color::Selected)
+                    .toggle_state(self.add_coauthors)
+                    .tooltip(move |_, cx| {
+                        let title = format!(
+                            "Add co-authored-by:{}{}",
+                            if potential_co_authors.len() == 1 {
+                                ""
+                            } else {
+                                "\n"
+                            },
+                            potential_co_authors
+                                .iter()
+                                .map(|(name, email)| format!(" {} <{}>", name, email))
+                                .join("\n")
+                        );
+                        Tooltip::simple(title, cx)
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.add_coauthors = !this.add_coauthors;
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            )
+        }
     }
 
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
