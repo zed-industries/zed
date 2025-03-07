@@ -171,7 +171,6 @@ members = [
 
     "extensions/emmet",
     "extensions/glsl",
-    "extensions/haskell",
     "extensions/html",
     "extensions/perplexity",
     "extensions/proto",
