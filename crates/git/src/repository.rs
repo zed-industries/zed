@@ -195,7 +195,12 @@ pub trait GitRepository: Send + Sync {
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 
-    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
+    fn commit(
+        &self,
+        message: &str,
+        name_and_email: Option<(&str, &str)>,
+        env: &HashMap<String, String>,
+    ) -> Result<()>;
 
     fn push(
         &self,
@@ -647,11 +652,17 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(
+        &self,
+        message: &str,
+        name_and_email: Option<(&str, &str)>,
+        env: &HashMap<String, String>,
+    ) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         let mut cmd = new_std_command(&self.git_binary_path);
         cmd.current_dir(&working_directory)
+            .envs(env)
             .args(["commit", "--quiet", "-m"])
             .arg(message)
             .arg("--cleanup=strip");
@@ -1044,7 +1055,12 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(
+        &self,
+        _message: &str,
+        _name_and_email: Option<(&str, &str)>,
+        _env: &HashMap<String, String>,
+    ) -> Result<()> {
         unimplemented!()
     }
 
