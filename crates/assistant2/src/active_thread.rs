@@ -307,16 +307,7 @@ impl ActiveThread {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         self.thread.update(cx, |thread, cx| {
-                            // Insert a user message to contain the tool results.
-                            thread.insert_user_message(
-                                // TODO: Sending up a user message without any content results in the model sending back
-                                // responses that also don't have any content. We currently don't handle this case well,
-                                // so for now we provide some text to keep the model on track.
-                                "Here are the tool results.",
-                                Vec::new(),
-                                cx,
-                            );
-                            thread.send_to_model(model, RequestKind::Chat, true, cx);
+                            thread.send_tool_results_to_model(model, cx);
                         });
                     }
                 }

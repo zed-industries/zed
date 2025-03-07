@@ -602,6 +602,23 @@ impl Thread {
             .run_pending_tool(tool_use_id, insert_output_task);
     }
 
+    pub fn send_tool_results_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
+    ) {
+        // Insert a user message to contain the tool results.
+        self.insert_user_message(
+            // TODO: Sending up a user message without any content results in the model sending back
+            // responses that also don't have any content. We currently don't handle this case well,
+            // so for now we provide some text to keep the model on track.
+            "Here are the tool results.",
+            Vec::new(),
+            cx,
+        );
+        self.send_to_model(model, RequestKind::Chat, true, cx);
+    }
+
     /// Cancels the last pending completion, if there are any pending.
     ///
     /// Returns whether a completion was canceled.
