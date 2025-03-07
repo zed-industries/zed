@@ -35,7 +35,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
-use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_actions::{OpenBrowser, OpenRecent, ToggleRemote};
 use zeta::ZedPredictBanner;
 
 #[cfg(feature = "stories")]
@@ -407,14 +407,14 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
-                        Some(&OpenRemote),
+                        Some(&ToggleRemote),
                         meta.clone(),
                         window,
                         cx,
                     )
                 })
                 .on_click(|_, window, cx| {
-                    window.dispatch_action(OpenRemote.boxed_clone(), cx);
+                    window.dispatch_action(ToggleRemote.boxed_clone(), cx);
                 })
                 .into_any_element(),
         )
