@@ -2,10 +2,10 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    ActionVariant, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
-    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, MarkupContent, PrepareRenameResponse,
-    ProjectTransaction, ResolveState,
+    ActionVariant, CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover,
+    HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
+    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, MarkupContent,
+    PrepareRenameResponse, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -2011,9 +2011,11 @@ impl LspCommand for GetCompletions {
                 CoreCompletion {
                     old_range,
                     new_text,
-                    server_id,
-                    lsp_completion,
-                    resolved: false,
+                    source: CompletionSource::Lsp {
+                        server_id,
+                        lsp_completion,
+                        resolved: false,
+                    },
                 }
             })
             .collect())

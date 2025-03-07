@@ -6,11 +6,11 @@ use gpui::{
 };
 use language::Buffer;
 use language::CodeLabel;
-use lsp::LanguageServerId;
 use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
+use project::CompletionSource;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{
@@ -233,11 +233,9 @@ impl CompletionsMenu {
                     runs: Default::default(),
                     filter_range: Default::default(),
                 },
-                server_id: LanguageServerId(usize::MAX),
                 documentation: None,
-                lsp_completion: Default::default(),
                 confirm: None,
-                resolved: true,
+                source: CompletionSource::Custom,
             })
             .collect();
 
@@ -500,7 +498,12 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
-                                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                                    if completion
+                                        .source
+                                        .lsp_completion()
+                                        .and_then(|lsp_completion| lsp_completion.deprecated)
+                                        .unwrap_or(false)
+                                    {
                                         highlight.strikethrough = Some(StrikethroughStyle {
                                             thickness: 1.0.into(),
                                             ..Default::default()
@@ -708,7 +711,10 @@ impl CompletionsMenu {
 
                 let completion = &completions[mat.candidate_id];
                 let sort_key = completion.sort_key();
-                let sort_text = completion.lsp_completion.sort_text.as_deref();
+                let sort_text = completion
+                    .source
+                    .lsp_completion()
+                    .and_then(|lsp_completion| lsp_completion.sort_text.as_deref());
                 let score = Reverse(OrderedFloat(mat.score));
 
                 if mat.score >= 0.2 {
