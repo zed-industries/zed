@@ -35,7 +35,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
@@ -1443,16 +1443,10 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
+        let model = match current_language_model(cx) {
+            Some(value) => value,
+            None => return,
         };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
-            return;
-        };
-
-        if !provider.is_authenticated(cx) {
-            return;
-        }
 
         let Some(repo) = self.active_repository.as_ref() else {
             return;
@@ -2182,40 +2176,47 @@ impl GitPanel {
         self.has_staged_changes()
     }
 
-    pub(crate) fn render_generate_commit_message_button(&self, cx: &Context<Self>) -> AnyElement {
-        if self.generate_commit_message_task.is_some() {
-            return h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::ArrowCircle)
-                        .size(IconSize::XSmall)
-                        .color(Color::Info)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
-                )
-                .child(
-                    Label::new("Generating Commit...")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .into_any_element();
-        }
+    pub(crate) fn render_generate_commit_message_button(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        current_language_model(cx).is_some().then(|| {
+            if self.generate_commit_message_task.is_some() {
+                return h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::XSmall)
+                            .color(Color::Info)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            ),
+                    )
+                    .child(
+                        Label::new("Generating Commit...")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element();
+            }
 
-        IconButton::new("generate-commit-message", IconName::AiEdit)
-            .shape(ui::IconButtonShape::Square)
-            .icon_color(Color::Muted)
-            .tooltip(Tooltip::for_action_title_in(
-                "Generate Commit Message",
-                &git::GenerateCommitMessage,
-                &self.commit_editor.focus_handle(cx),
-            ))
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                this.generate_commit_message(cx);
-            }))
-            .into_any_element()
+            IconButton::new("generate-commit-message", IconName::AiEdit)
+                .shape(ui::IconButtonShape::Square)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::for_action_title_in(
+                    "Generate Commit Message",
+                    &git::GenerateCommitMessage,
+                    &self.commit_editor.focus_handle(cx),
+                ))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.generate_commit_message(cx);
+                }))
+                .into_any_element()
+        })
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -2358,7 +2359,10 @@ impl GitPanel {
                             .h(footer_size)
                             .flex_none()
                             .justify_between()
-                            .child(self.render_generate_commit_message_button(cx))
+                            .child(
+                                self.render_generate_commit_message_button(cx)
+                                    .unwrap_or_else(|| div().into_any_element()),
+                            )
                             .child(
                                 h_flex().gap_0p5().children(enable_coauthors).child(
                                     panel_filled_button(title)
@@ -2984,6 +2988,19 @@ impl GitPanel {
     fn has_write_access(&self, cx: &App) -> bool {
         !self.project.read(cx).is_read_only(cx)
     }
+}
+
+fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
+    let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        return None;
+    };
+    let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        return None;
+    };
+    if !provider.is_authenticated(cx) {
+        return None;
+    }
+    Some(model)
 }
 
 impl Render for GitPanel {

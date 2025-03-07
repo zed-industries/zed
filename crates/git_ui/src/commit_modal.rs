@@ -331,7 +331,7 @@ impl CommitModal {
                 h_flex()
                     .gap_1()
                     .child(branch_picker)
-                    .child(generate_commit_message)
+                    .children(generate_commit_message)
                     .children(co_authors),
             )
             .child(div().flex_1())
