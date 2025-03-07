@@ -14,8 +14,8 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    ActionVariant, CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _,
-    ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
+    ProjectItem as _, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -1629,7 +1629,7 @@ impl LocalLspStore {
         action: &mut CodeAction,
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
-            ActionVariant::Action(lsp_action) => {
+            LspAction::Action(lsp_action) => {
                 if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
@@ -1641,7 +1641,7 @@ impl LocalLspStore {
                     );
                 }
             }
-            ActionVariant::Command(_) => {}
+            LspAction::Command(_) => {}
         }
         anyhow::Ok(())
     }
@@ -4401,26 +4401,33 @@ impl LspStore {
             let mut did_resolve = false;
             if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
-                    let server_id = completions.borrow()[completion_index].server_id;
-
-                    if Self::resolve_completion_remote(
-                        project_id,
-                        server_id,
-                        buffer_id,
-                        completions.clone(),
-                        completion_index,
-                        client.clone(),
-                    )
-                    .await
-                    .log_err()
-                    .is_some()
-                    {
-                        did_resolve = true;
+                    let server_id = {
+                        let completion = &completions.borrow()[completion_index];
+                        completion.source.server_id()
+                    };
+                    if let Some(server_id) = server_id {
+                        if Self::resolve_completion_remote(
+                            project_id,
+                            server_id,
+                            buffer_id,
+                            completions.clone(),
+                            completion_index,
+                            client.clone(),
+                        )
+                        .await
+                        .log_err()
+                        .is_some()
+                        {
+                            did_resolve = true;
+                        }
                     }
                 }
             } else {
                 for completion_index in completion_indices {
-                    let server_id = completions.borrow()[completion_index].server_id;
+                    let Some(server_id) = completions.borrow()[completion_index].source.server_id()
+                    else {
+                        continue;
+                    };
 
                     let server_and_adapter = this
                         .read_with(&cx, |lsp_store, _| {
@@ -4480,10 +4487,19 @@ impl LspStore {
 
         let request = {
             let completion = &completions.borrow()[completion_index];
-            if completion.resolved {
-                return Ok(());
+            match &completion.source {
+                CompletionSource::Lsp {
+                    lsp_completion,
+                    resolved,
+                    ..
+                } => {
+                    if *resolved {
+                        return Ok(());
+                    }
+                    server.request::<lsp::request::ResolveCompletionItem>(*lsp_completion.clone())
+                }
+                CompletionSource::Custom => return Ok(()),
             }
-            server.request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion.clone())
         };
         let completion_item = request.await?;
 
@@ -4508,15 +4524,20 @@ impl LspStore {
             // vtsls might change the type of completion after resolution.
             let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
-            if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
-                completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
+            if let Some(lsp_completion) = completion.source.lsp_completion_mut() {
+                if completion_item.insert_text_format != lsp_completion.insert_text_format {
+                    lsp_completion.insert_text_format = completion_item.insert_text_format;
+                }
             }
         }
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
-        completion.lsp_completion = completion_item;
-        completion.resolved = true;
+        completion.source = CompletionSource::Lsp {
+            lsp_completion: Box::new(completion_item),
+            resolved: true,
+            server_id: server.server_id(),
+        };
         Ok(())
     }
 
@@ -4527,9 +4548,13 @@ impl LspStore {
         completion_index: usize,
     ) -> Result<()> {
         let completion_item = completions.borrow()[completion_index]
-            .lsp_completion
-            .clone();
-        if let Some(lsp_documentation) = completion_item.documentation.clone() {
+            .source
+            .lsp_completion()
+            .cloned();
+        if let Some(lsp_documentation) = completion_item
+            .as_ref()
+            .and_then(|completion_item| completion_item.documentation.clone())
+        {
             let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
             completion.documentation = Some(lsp_documentation.into());
@@ -4539,25 +4564,33 @@ impl LspStore {
             completion.documentation = Some(CompletionDocumentation::Undocumented);
         }
 
-        // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
-        // So we have to update the label here anyway...
-        let language = snapshot.language();
-        let mut new_label = match language {
-            Some(language) => {
-                adapter
-                    .labels_for_completions(&[completion_item.clone()], language)
-                    .await?
+        let mut new_label = match completion_item {
+            Some(completion_item) => {
+                // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
+                // So we have to update the label here anyway...
+                let language = snapshot.language();
+                match language {
+                    Some(language) => {
+                        adapter
+                            .labels_for_completions(&[completion_item.clone()], language)
+                            .await?
+                    }
+                    None => Vec::new(),
+                }
+                .pop()
+                .flatten()
+                .unwrap_or_else(|| {
+                    CodeLabel::fallback_for_completion(
+                        &completion_item,
+                        language.map(|language| language.as_ref()),
+                    )
+                })
             }
-            None => Vec::new(),
-        }
-        .pop()
-        .flatten()
-        .unwrap_or_else(|| {
-            CodeLabel::fallback_for_completion(
-                &completion_item,
-                language.map(|language| language.as_ref()),
-            )
-        });
+            None => CodeLabel::plain(
+                completions.borrow()[completion_index].new_text.clone(),
+                None,
+            ),
+        };
         ensure_uniform_list_compatible_label(&mut new_label);
 
         let mut completions = completions.borrow_mut();
@@ -4589,12 +4622,19 @@ impl LspStore {
     ) -> Result<()> {
         let lsp_completion = {
             let completion = &completions.borrow()[completion_index];
-            if completion.resolved {
-                return Ok(());
+            match &completion.source {
+                CompletionSource::Lsp {
+                    lsp_completion,
+                    resolved,
+                    ..
+                } => {
+                    if *resolved {
+                        return Ok(());
+                    }
+                    serde_json::to_string(lsp_completion).unwrap().into_bytes()
+                }
+                CompletionSource::Custom => return Ok(()),
             }
-            serde_json::to_string(&completion.lsp_completion)
-                .unwrap()
-                .into_bytes()
         };
         let request = proto::ResolveCompletionDocumentation {
             project_id,
@@ -4622,8 +4662,11 @@ impl LspStore {
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
-        completion.lsp_completion = lsp_completion;
-        completion.resolved = true;
+        completion.source = CompletionSource::Lsp {
+            server_id,
+            lsp_completion,
+            resolved: true,
+        };
 
         let old_range = response
             .old_start
@@ -4659,17 +4702,12 @@ impl LspStore {
                         completion: Some(Self::serialize_completion(&CoreCompletion {
                             old_range: completion.old_range,
                             new_text: completion.new_text,
-                            server_id: completion.server_id,
-                            lsp_completion: completion.lsp_completion,
-                            resolved: completion.resolved,
+                            source: completion.source,
                         })),
                     }
                 };
 
-                let response = client.request(request).await?;
-                completions.borrow_mut()[completion_index].resolved = true;
-
-                if let Some(transaction) = response.transaction {
+                if let Some(transaction) = client.request(request).await?.transaction {
                     let transaction = language::proto::deserialize_transaction(transaction)?;
                     buffer_handle
                         .update(&mut cx, |buffer, _| {
@@ -4687,8 +4725,9 @@ impl LspStore {
                 }
             })
         } else {
-            let server_id = completions.borrow()[completion_index].server_id;
             let Some(server) = buffer_handle.update(cx, |buffer, cx| {
+                let completion = &completions.borrow()[completion_index];
+                let server_id = completion.source.server_id()?;
                 Some(
                     self.language_server_for_local_buffer(buffer, server_id, cx)?
                         .1
@@ -4709,7 +4748,11 @@ impl LspStore {
                 .await
                 .context("resolving completion")?;
                 let completion = completions.borrow()[completion_index].clone();
-                let additional_text_edits = completion.lsp_completion.additional_text_edits;
+                let additional_text_edits = completion
+                    .source
+                    .lsp_completion()
+                    .as_ref()
+                    .and_then(|lsp_completion| lsp_completion.additional_text_edits.clone());
                 if let Some(edits) = additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {
@@ -7139,8 +7182,7 @@ impl LspStore {
                 Rc::new(RefCell::new(Box::new([Completion {
                     old_range: completion.old_range,
                     new_text: completion.new_text,
-                    lsp_completion: completion.lsp_completion,
-                    server_id: completion.server_id,
+                    source: completion.source,
                     documentation: None,
                     label: CodeLabel {
                         text: Default::default(),
@@ -7148,7 +7190,6 @@ impl LspStore {
                         filter_range: Default::default(),
                     },
                     confirm: None,
-                    resolved: completion.resolved,
                 }]))),
                 0,
                 false,
@@ -8112,13 +8153,33 @@ impl LspStore {
     }
 
     pub(crate) fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
+        let (source, server_id, lsp_completion, resolved) = match &completion.source {
+            CompletionSource::Lsp {
+                server_id,
+                lsp_completion,
+                resolved,
+            } => (
+                proto::completion::Source::Lsp as i32,
+                server_id.0 as u64,
+                serde_json::to_vec(lsp_completion).unwrap(),
+                *resolved,
+            ),
+            CompletionSource::Custom => (
+                proto::completion::Source::Custom as i32,
+                0,
+                Vec::new(),
+                true,
+            ),
+        };
+
         proto::Completion {
             old_start: Some(serialize_anchor(&completion.old_range.start)),
             old_end: Some(serialize_anchor(&completion.old_range.end)),
             new_text: completion.new_text.clone(),
-            server_id: completion.server_id.0 as u64,
-            lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
-            resolved: completion.resolved,
+            server_id,
+            lsp_completion,
+            resolved,
+            source,
         }
     }
 
@@ -8131,24 +8192,28 @@ impl LspStore {
             .old_end
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid old end"))?;
-        let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
-
         Ok(CoreCompletion {
             old_range: old_start..old_end,
             new_text: completion.new_text,
-            server_id: LanguageServerId(completion.server_id as usize),
-            lsp_completion,
-            resolved: completion.resolved,
+            source: match proto::completion::Source::from_i32(completion.source) {
+                Some(proto::completion::Source::Custom) => CompletionSource::Custom,
+                Some(proto::completion::Source::Lsp) => CompletionSource::Lsp {
+                    server_id: LanguageServerId::from_proto(completion.server_id),
+                    lsp_completion: serde_json::from_slice(&completion.lsp_completion)?,
+                    resolved: completion.resolved,
+                },
+                _ => anyhow::bail!("Unexpected completion source {}", completion.source),
+            },
         })
     }
 
     pub(crate) fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
         let (kind, lsp_action) = match &action.lsp_action {
-            ActionVariant::Action(code_action) => (
+            LspAction::Action(code_action) => (
                 proto::code_action::Kind::Action as i32,
                 serde_json::to_vec(code_action).unwrap(),
             ),
-            ActionVariant::Command(command) => (
+            LspAction::Command(command) => (
                 proto::code_action::Kind::Command as i32,
                 serde_json::to_vec(command).unwrap(),
             ),
@@ -8174,10 +8239,10 @@ impl LspStore {
             .ok_or_else(|| anyhow!("invalid end"))?;
         let lsp_action = match proto::code_action::Kind::from_i32(action.kind) {
             Some(proto::code_action::Kind::Action) => {
-                ActionVariant::Action(serde_json::from_slice(&action.lsp_action)?)
+                LspAction::Action(serde_json::from_slice(&action.lsp_action)?)
             }
             Some(proto::code_action::Kind::Command) => {
-                ActionVariant::Command(serde_json::from_slice(&action.lsp_action)?)
+                LspAction::Command(serde_json::from_slice(&action.lsp_action)?)
             }
             None => anyhow::bail!("Unknown action kind {}", action.kind),
         };
@@ -8215,17 +8280,23 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
 }
 
 async fn populate_labels_for_completions(
-    mut new_completions: Vec<CoreCompletion>,
+    new_completions: Vec<CoreCompletion>,
     language: Option<Arc<Language>>,
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
     completions: &mut Vec<Completion>,
 ) {
     let lsp_completions = new_completions
-        .iter_mut()
-        .map(|completion| mem::take(&mut completion.lsp_completion))
+        .iter()
+        .filter_map(|new_completion| {
+            if let CompletionSource::Lsp { lsp_completion, .. } = &new_completion.source {
+                Some(*lsp_completion.clone())
+            } else {
+                None
+            }
+        })
         .collect::<Vec<_>>();
 
-    let labels = if let Some((language, lsp_adapter)) = language.as_ref().zip(lsp_adapter) {
+    let mut labels = if let Some((language, lsp_adapter)) = language.as_ref().zip(lsp_adapter) {
         lsp_adapter
             .labels_for_completions(&lsp_completions, language)
             .await
@@ -8233,34 +8304,45 @@ async fn populate_labels_for_completions(
             .unwrap_or_default()
     } else {
         Vec::new()
-    };
+    }
+    .into_iter()
+    .fuse();
 
-    for ((completion, lsp_completion), label) in new_completions
-        .into_iter()
-        .zip(lsp_completions)
-        .zip(labels.into_iter().chain(iter::repeat(None)))
-    {
-        let documentation = if let Some(docs) = lsp_completion.documentation.clone() {
-            Some(docs.into())
-        } else {
-            None
-        };
+    for completion in new_completions {
+        match &completion.source {
+            CompletionSource::Lsp { lsp_completion, .. } => {
+                let documentation = if let Some(docs) = lsp_completion.documentation.clone() {
+                    Some(docs.into())
+                } else {
+                    None
+                };
 
-        let mut label = label.unwrap_or_else(|| {
-            CodeLabel::fallback_for_completion(&lsp_completion, language.as_deref())
-        });
-        ensure_uniform_list_compatible_label(&mut label);
-
-        completions.push(Completion {
-            old_range: completion.old_range,
-            new_text: completion.new_text,
-            label,
-            server_id: completion.server_id,
-            documentation,
-            lsp_completion,
-            confirm: None,
-            resolved: false,
-        })
+                let mut label = labels.next().flatten().unwrap_or_else(|| {
+                    CodeLabel::fallback_for_completion(&lsp_completion, language.as_deref())
+                });
+                ensure_uniform_list_compatible_label(&mut label);
+                completions.push(Completion {
+                    label,
+                    documentation,
+                    old_range: completion.old_range,
+                    new_text: completion.new_text,
+                    source: completion.source,
+                    confirm: None,
+                })
+            }
+            CompletionSource::Custom => {
+                let mut label = CodeLabel::plain(completion.new_text.clone(), None);
+                ensure_uniform_list_compatible_label(&mut label);
+                completions.push(Completion {
+                    label,
+                    documentation: None,
+                    old_range: completion.old_range,
+                    new_text: completion.new_text,
+                    source: completion.source,
+                    confirm: None,
+                })
+            }
+        }
     }
 }
 

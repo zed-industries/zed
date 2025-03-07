@@ -364,19 +364,54 @@ pub struct Completion {
     pub new_text: String,
     /// A label for this completion that is shown in the menu.
     pub label: CodeLabel,
-    /// The id of the language server that produced this completion.
-    pub server_id: LanguageServerId,
     /// The documentation for this completion.
     pub documentation: Option<CompletionDocumentation>,
-    /// The raw completion provided by the language server.
-    pub lsp_completion: lsp::CompletionItem,
-    /// Whether this completion has been resolved, to ensure it happens once per completion.
-    pub resolved: bool,
+    /// Completion data source which it was constructed from.
+    pub source: CompletionSource,
     /// An optional callback to invoke when this completion is confirmed.
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CompletionSource {
+    Lsp {
+        /// The id of the language server that produced this completion.
+        server_id: LanguageServerId,
+        /// The raw completion provided by the language server.
+        lsp_completion: Box<lsp::CompletionItem>,
+        /// Whether this completion has been resolved, to ensure it happens once per completion.
+        resolved: bool,
+    },
+    Custom,
+}
+
+impl CompletionSource {
+    pub fn server_id(&self) -> Option<LanguageServerId> {
+        if let CompletionSource::Lsp { server_id, .. } = self {
+            Some(*server_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn lsp_completion(&self) -> Option<&lsp::CompletionItem> {
+        if let Self::Lsp { lsp_completion, .. } = self {
+            Some(lsp_completion)
+        } else {
+            None
+        }
+    }
+
+    fn lsp_completion_mut(&mut self) -> Option<&mut lsp::CompletionItem> {
+        if let Self::Lsp { lsp_completion, .. } = self {
+            Some(lsp_completion)
+        } else {
+            None
+        }
+    }
 }
 
 impl std::fmt::Debug for Completion {
@@ -385,9 +420,8 @@ impl std::fmt::Debug for Completion {
             .field("old_range", &self.old_range)
             .field("new_text", &self.new_text)
             .field("label", &self.label)
-            .field("server_id", &self.server_id)
             .field("documentation", &self.documentation)
-            .field("lsp_completion", &self.lsp_completion)
+            .field("source", &self.source)
             .finish()
     }
 }
@@ -397,9 +431,7 @@ impl std::fmt::Debug for Completion {
 pub(crate) struct CoreCompletion {
     old_range: Range<Anchor>,
     new_text: String,
-    server_id: LanguageServerId,
-    lsp_completion: lsp::CompletionItem,
-    resolved: bool,
+    source: CompletionSource,
 }
 
 /// A code action provided by a language server.
@@ -411,12 +443,12 @@ pub struct CodeAction {
     pub range: Range<Anchor>,
     /// The raw code action provided by the language server.
     /// Can be either an action or a command.
-    pub lsp_action: ActionVariant,
+    pub lsp_action: LspAction,
 }
 
 /// An action sent back by a language server.
 #[derive(Clone, Debug)]
-pub enum ActionVariant {
+pub enum LspAction {
     /// An action with the full data, may have a command or may not.
     /// May require resolving.
     Action(Box<lsp::CodeAction>),
@@ -424,7 +456,7 @@ pub enum ActionVariant {
     Command(lsp::Command),
 }
 
-impl ActionVariant {
+impl LspAction {
     pub fn title(&self) -> &str {
         match self {
             Self::Action(action) => &action.title,
@@ -4605,27 +4637,38 @@ impl Completion {
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
-        let kind_key = match self.lsp_completion.kind {
-            Some(lsp::CompletionItemKind::KEYWORD) => 0,
-            Some(lsp::CompletionItemKind::VARIABLE) => 1,
-            _ => 2,
-        };
+        const DEFAULT_KIND_KEY: usize = 2;
+        let kind_key = self
+            .source
+            .lsp_completion()
+            .and_then(|lsp_completion| lsp_completion.kind)
+            .and_then(|lsp_completion_kind| match lsp_completion_kind {
+                lsp::CompletionItemKind::KEYWORD => Some(0),
+                lsp::CompletionItemKind::VARIABLE => Some(1),
+                _ => None,
+            })
+            .unwrap_or(DEFAULT_KIND_KEY);
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }
 
     /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
-        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+        self.source
+            .lsp_completion()
+            .map_or(false, |lsp_completion| {
+                lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+            })
     }
 
     /// Returns the corresponding color for this completion.
     ///
     /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
     pub fn color(&self) -> Option<Hsla> {
-        match self.lsp_completion.kind {
-            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
-            _ => None,
+        let lsp_completion = self.source.lsp_completion()?;
+        if lsp_completion.kind? == CompletionItemKind::COLOR {
+            return color_extractor::extract_color(lsp_completion);
         }
+        None
     }
 }
 

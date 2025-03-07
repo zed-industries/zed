@@ -1,6 +1,6 @@
-
 syntax = "proto3";
 package zed.messages;
+import "google/protobuf/wrappers.proto";
 
 // Looking for a number? Search "// current max"
 
@@ -999,6 +999,12 @@ message Completion {
     uint64 server_id = 4;
     bytes lsp_completion = 5;
     bool resolved = 6;
+    Source source = 7;
+
+    enum Source {
+        Custom = 0;
+        Lsp = 1;
+    }
 }
 
 message GetCodeActions {
