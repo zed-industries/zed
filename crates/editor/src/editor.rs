@@ -14792,14 +14792,14 @@ impl Editor {
         &self,
         window: &mut Window,
         cx: &mut App,
-    ) -> BTreeMap<DisplayRow, Background> {
+    ) -> BTreeMap<DisplayRow, LineHighlight> {
         let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
-                BTreeMap::<DisplayRow, Background>::new(),
+                BTreeMap::<DisplayRow, LineHighlight>::new(),
                 |mut unique_rows, highlight| {
                     let start = highlight.range.start.to_display_point(&snapshot);
                     let end = highlight.range.end.to_display_point(&snapshot);
@@ -18298,4 +18298,28 @@ fn all_edits_insertions_or_deletions(
         }
     }
     all_insertions || all_deletions
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LineHighlight {
+    pub background: Background,
+    pub border: Option<gpui::Hsla>,
+}
+
+impl From<Hsla> for LineHighlight {
+    fn from(hsla: Hsla) -> Self {
+        Self {
+            background: hsla.into(),
+            border: None,
+        }
+    }
+}
+
+impl From<Background> for LineHighlight {
+    fn from(background: Background) -> Self {
+        Self {
+            background,
+            border: None,
+        }
+    }
 }

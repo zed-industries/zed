@@ -845,7 +845,7 @@
     //    "hunk_style": "transparent"
     // 2. Show unstaged hunks with a pattern background:
     //    "hunk_style": "pattern"
-    "hunk_style": "transparent"
+    "hunk_style": "staged_border"
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
