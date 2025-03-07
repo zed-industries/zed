@@ -650,10 +650,18 @@ impl TitleBar {
                             "Contained",
                             current_layout == BottomDockLayout::Contained,
                             ui::IconPosition::End,
-                            Some(SetBottomDockLayout(BottomDockLayout::Contained).boxed_clone()),
+                            Some(
+                                SetBottomDockLayout {
+                                    layout: BottomDockLayout::Contained,
+                                }
+                                .boxed_clone(),
+                            ),
                             |window, cx| {
                                 window.dispatch_action(
-                                    SetBottomDockLayout(BottomDockLayout::Contained).boxed_clone(),
+                                    SetBottomDockLayout {
+                                        layout: BottomDockLayout::Contained,
+                                    }
+                                    .boxed_clone(),
                                     cx,
                                 )
                             },
@@ -662,10 +670,18 @@ impl TitleBar {
                             "Full",
                             current_layout == BottomDockLayout::Full,
                             ui::IconPosition::End,
-                            Some(SetBottomDockLayout(BottomDockLayout::Full).boxed_clone()),
+                            Some(
+                                SetBottomDockLayout {
+                                    layout: BottomDockLayout::Full,
+                                }
+                                .boxed_clone(),
+                            ),
                             |window, cx| {
                                 window.dispatch_action(
-                                    SetBottomDockLayout(BottomDockLayout::Full).boxed_clone(),
+                                    SetBottomDockLayout {
+                                        layout: BottomDockLayout::Full,
+                                    }
+                                    .boxed_clone(),
                                     cx,
                                 )
                             },
@@ -674,11 +690,18 @@ impl TitleBar {
                             "Left Aligned",
                             current_layout == BottomDockLayout::LeftAligned,
                             ui::IconPosition::End,
-                            Some(SetBottomDockLayout(BottomDockLayout::LeftAligned).boxed_clone()),
+                            Some(
+                                SetBottomDockLayout {
+                                    layout: BottomDockLayout::LeftAligned,
+                                }
+                                .boxed_clone(),
+                            ),
                             |window, cx| {
                                 window.dispatch_action(
-                                    SetBottomDockLayout(BottomDockLayout::LeftAligned)
-                                        .boxed_clone(),
+                                    SetBottomDockLayout {
+                                        layout: BottomDockLayout::LeftAligned,
+                                    }
+                                    .boxed_clone(),
                                     cx,
                                 )
                             },
@@ -687,11 +710,18 @@ impl TitleBar {
                             "Right Aligned",
                             current_layout == BottomDockLayout::RightAligned,
                             ui::IconPosition::End,
-                            Some(SetBottomDockLayout(BottomDockLayout::RightAligned).boxed_clone()),
+                            Some(
+                                SetBottomDockLayout {
+                                    layout: BottomDockLayout::RightAligned,
+                                }
+                                .boxed_clone(),
+                            ),
                             |window, cx| {
                                 window.dispatch_action(
-                                    SetBottomDockLayout(BottomDockLayout::RightAligned)
-                                        .boxed_clone(),
+                                    SetBottomDockLayout {
+                                        layout: BottomDockLayout::RightAligned,
+                                    }
+                                    .boxed_clone(),
                                     cx,
                                 )
                             },

@@ -179,7 +179,11 @@ pub struct MoveItemToPane {
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
-pub struct SetBottomDockLayout(pub BottomDockLayout);
+#[serde(deny_unknown_fields)]
+pub struct SetBottomDockLayout {
+    #[serde(default)]
+    pub layout: BottomDockLayout,
+}
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -4905,7 +4909,7 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, action: &SetBottomDockLayout, window, cx| {
-                    workspace.set_bottom_dock_layout(action.0, window, cx);
+                    workspace.set_bottom_dock_layout(action.layout, window, cx);
                 },
             ))
             .on_action(
