@@ -1679,6 +1679,7 @@ impl Interactivity {
                         element_id.into(),
                         FONT_SIZE,
                         &[window.text_style().to_run(str_len)],
+                        vec![],
                         None,
                         None,
                     )

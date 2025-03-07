@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use super::LineWrapper;
+use super::{InlineBox, LineWrapper};
 
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
@@ -128,6 +128,7 @@ impl LineLayout {
     fn compute_wrap_boundaries(
         &self,
         text: &str,
+        inline_boxes: &[InlineBox],
         wrap_width: Pixels,
         max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
@@ -141,6 +142,8 @@ impl LineLayout {
         };
         let mut last_boundary_x = px(0.);
         let mut prev_ch = '\0';
+        let mut inline_boxes_index = 0;
+        let mut inline_boxes_width = px(0.);
         let mut glyphs = self
             .runs
             .iter()
@@ -148,10 +151,20 @@ impl LineLayout {
             .flat_map(move |(run_ix, run)| {
                 run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
                     let character = text[glyph.index..].chars().next().unwrap();
+
+                    if let Some(inline_box) = inline_boxes.get(inline_boxes_index) {
+                        if (run_ix == inline_box.run_ix && glyph_ix >= inline_box.glyph_ix)
+                            || run_ix > inline_box.run_ix
+                        {
+                            inline_boxes_width += inline_box.size.width;
+                            inline_boxes_index += 1;
+                        }
+                    }
+
                     (
                         WrapBoundary { run_ix, glyph_ix },
                         character,
-                        glyph.position.x,
+                        glyph.position.x + inline_boxes_width,
                     )
                 })
             })
@@ -470,6 +483,7 @@ impl LineLayoutCache {
         text: Text,
         font_size: Pixels,
         runs: &[FontRun],
+        inline_boxes: &[InlineBox],
         wrap_width: Option<Pixels>,
         max_lines: Option<usize>,
     ) -> Arc<WrappedLineLayout>
@@ -502,7 +516,12 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
+                unwrapped_layout.compute_wrap_boundaries(
+                    text.as_ref(),
+                    inline_boxes,
+                    wrap_width,
+                    max_lines,
+                )
             } else {
                 SmallVec::new()
             };
