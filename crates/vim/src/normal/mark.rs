@@ -9,10 +9,11 @@ use editor::{
 use gpui::{Context, Entity, UpdateGlobal, Window};
 use language::SelectionGoal;
 use ui::App;
+use workspace::OpenOptions;
 
 use crate::{
     motion::{self, Motion},
-    state::{Mark, Mode, VimGlobals},
+    state::{Mark, MarksState, Mode, VimGlobals},
     Vim,
 };
 
@@ -98,14 +99,12 @@ impl Vim {
                 let Some(workspace) = self.workspace(window) else {
                     return;
                 };
-                let Some(workspace_id) = workspace.read(cx).database_id() else {
-                    return;
-                };
+                let entity_id = workspace.entity_id();
                 let mark = self
                     .update_editor(window, cx, |_, editor, _, cx| {
                         let buffer = editor.buffer();
                         Vim::update_globals(cx, |globals, cx| {
-                            globals.marks.get(&workspace_id)?.read(cx).get_mark(
+                            globals.marks.get(&entity_id)?.read(cx).get_mark(
                                 text.to_string(),
                                 buffer,
                                 cx,
@@ -143,7 +142,16 @@ impl Vim {
                     }
                     Some(Mark::Path(path, points)) => {
                         let task = workspace.update(cx, |workspace, cx| {
-                            workspace.open_abs_path(path.to_path_buf(), true, window, cx)
+                            workspace.open_abs_path(
+                                path.to_path_buf(),
+                                OpenOptions {
+                                    visible: Some(workspace::OpenVisible::All),
+                                    focus: Some(true),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
                         });
                         cx.spawn_in(window, |this, mut cx| async move {
                             let editor = task.await?;
@@ -235,14 +243,19 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(workspace_id) = self
-            .workspace(window)
-            .and_then(|workspace| workspace.read(cx).database_id())
-        else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
+        let entity_id = workspace.entity_id();
+        let database_id = workspace.read(cx).database_id();
+        let project = workspace.read(cx).project().clone();
         Vim::update_globals(cx, |vim_globals, cx| {
-            let Some(marks_state) = vim_globals.marks.get(&workspace_id) else {
+            if !vim_globals.marks.contains_key(&entity_id) {
+                vim_globals
+                    .marks
+                    .insert(entity_id, MarksState::new(database_id, project, cx));
+            }
+            let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
                 return;
             };
             marks_state.update(cx, |ms, cx| {
@@ -259,7 +272,7 @@ impl Vim {
         cx: &mut App,
     ) -> Option<Mark> {
         VimGlobals::update_global(cx, |globals, cx| {
-            let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+            let workspace_id = self.workspace(window)?.entity_id();
             globals
                 .marks
                 .get_mut(&workspace_id)?

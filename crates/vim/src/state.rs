@@ -11,10 +11,10 @@ use db::{define_connection, query};
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer};
 use gpui::{
-    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, EntityId, Global, HighlightStyle,
-    StyledText, Subscription, Task, TextStyle, WeakEntity,
+    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, EntityId,
+    Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Point, ToPoint};
+use language::{Buffer, BufferEvent, BufferId, Point};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -216,7 +216,7 @@ pub struct VimGlobals {
 
     pub focused_vim: Option<WeakEntity<Vim>>,
 
-    pub marks: HashMap<WorkspaceId, Entity<MarksState>>,
+    pub marks: HashMap<EntityId, Entity<MarksState>>,
 }
 
 // #[derive(Clone)]
@@ -399,7 +399,7 @@ pub struct VimGlobals {
 // }
 
 pub struct MarksState {
-    pub workspace_id: WorkspaceId,
+    pub workspace_id: Option<WorkspaceId>,
     pub project: Entity<project::Project>,
 
     pub multibuffer_marks: HashMap<EntityId, HashMap<String, Vec<Anchor>>>,
@@ -424,7 +424,7 @@ pub enum Mark {
 
 impl MarksState {
     pub fn new(
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
         cx: &mut App,
     ) -> Entity<MarksState> {
@@ -441,12 +441,10 @@ impl MarksState {
 
     pub fn load(
         &mut self,
-        workspace_id: WorkspaceId,
         marks: Vec<(Vec<u8>, String, String)>,
         global_mark_paths: Vec<(Vec<u8>, String)>,
         cx: &mut Context<Self>,
     ) {
-        self.workspace_id = workspace_id;
         for (path, name, values) in marks {
             let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
                 continue;
@@ -493,8 +491,6 @@ impl MarksState {
     }
 
     pub fn on_buffer_loaded(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) {
-        let workspace_id = self.workspace_id;
-
         let Some(project_path) = buffer_handle.read(cx).project_path(cx) else {
             return;
         };
@@ -763,30 +759,34 @@ impl VimGlobals {
         })
         .detach();
         cx.observe_new(|workspace: &mut Workspace, _, cx| {
-            let Some(workspace_id) = workspace.database_id() else {
-                return;
-            };
+            let entity_id = cx.entity_id();
+            let workspace_id = workspace.database_id();
 
             cx.spawn(|workspace, mut cx| async move {
-                let marks = cx
-                    .background_executor()
-                    .spawn(async move { DB.get_marks(workspace_id) })
-                    .await?;
-                let global_marks_paths = cx
-                    .background_executor()
-                    .spawn(async move { DB.get_global_marks_paths(workspace_id) })
-                    .await?;
                 let project =
-                    workspace.update(&mut cx, |workspace, cx| workspace.project().clone())?;
-                cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
+                    workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
+                let _ = cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
                     g.marks
-                        .insert(workspace_id, MarksState::new(workspace_id, project, cx));
-                    if let Some(marks_state) = g.marks.get(&workspace_id) {
-                        marks_state.update(cx, |ms, cx| {
-                            ms.load(workspace_id, marks, global_marks_paths, cx);
-                        });
-                    }
-                })
+                        .insert(entity_id, MarksState::new(workspace_id, project, cx));
+                })?;
+                if let Some(wid) = workspace_id {
+                    let marks = cx
+                        .background_executor()
+                        .spawn(async move { DB.get_marks(wid) })
+                        .await?;
+                    let global_marks_paths = cx
+                        .background_executor()
+                        .spawn(async move { DB.get_global_marks_paths(wid) })
+                        .await?;
+                    let _ = cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
+                        if let Some(marks_state) = g.marks.get(&entity_id) {
+                            marks_state.update(cx, |ms, cx| {
+                                ms.load(marks, global_marks_paths, cx);
+                            });
+                        }
+                    })?;
+                }
+                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
 
@@ -794,7 +794,7 @@ impl VimGlobals {
             cx.subscribe(&buffer_store, move |_, _, event, cx| match event {
                 project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
                     Vim::update_globals(cx, |globals, cx| {
-                        if let Some(marks_state) = globals.marks.get(&workspace_id) {
+                        if let Some(marks_state) = globals.marks.get(&entity_id) {
                             marks_state.update(cx, |ms, cx| {
                                 ms.on_buffer_loaded(buffer, cx);
                             });
