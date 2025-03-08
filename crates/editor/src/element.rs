@@ -282,7 +282,9 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_beginning);
         register_action(editor, window, Editor::move_to_end);
         register_action(editor, window, Editor::move_to_start_of_excerpt);
+        register_action(editor, window, Editor::move_to_start_of_next_excerpt);
         register_action(editor, window, Editor::move_to_end_of_excerpt);
+        register_action(editor, window, Editor::move_to_end_of_previous_excerpt);
         register_action(editor, window, Editor::select_up);
         register_action(editor, window, Editor::select_down);
         register_action(editor, window, Editor::select_left);
@@ -296,7 +298,9 @@ impl EditorElement {
         register_action(editor, window, Editor::select_to_start_of_paragraph);
         register_action(editor, window, Editor::select_to_end_of_paragraph);
         register_action(editor, window, Editor::select_to_start_of_excerpt);
+        register_action(editor, window, Editor::select_to_start_of_next_excerpt);
         register_action(editor, window, Editor::select_to_end_of_excerpt);
+        register_action(editor, window, Editor::select_to_end_of_previous_excerpt);
         register_action(editor, window, Editor::select_to_beginning);
         register_action(editor, window, Editor::select_to_end);
         register_action(editor, window, Editor::select_all);
