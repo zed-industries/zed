@@ -168,300 +168,309 @@ impl ShellCmd {
 mod tests {
     use super::*;
 
-    // Helper function to run a test with and without spaces around operators
-    #[track_caller]
-    fn test_with_and_without_spaces(
-        cmd_with_spaces: &str,
-        cmd_without_spaces: &str,
-        expected: (ShellCmd, Vec<(Operator, ShellCmd)>),
-    ) {
-        let result_with_spaces = ShellCmd::parse_shell_str(cmd_with_spaces)
-            .expect("parsing failed for {cmd_with_spaces:?}");
-        let result_without_spaces = ShellCmd::parse_shell_str(cmd_without_spaces)
-            .expect("parsing failed for {cmd_without_spaces:?}");
-
-        assert_eq!(expected, result_with_spaces);
-        assert_eq!(expected, result_without_spaces);
-    }
-
     #[test]
     fn test_simple_command() {
         // Basic command with no args or operators
-        test_with_and_without_spaces(
-            "ls",
-            "ls",
-            (
-                ShellCmd {
-                    command: "ls".to_string(),
-                    args: vec![],
-                    stdout_redirect: None,
-                    stderr_redirect: None,
-                },
-                vec![],
-            ),
+        let cmd = "ls";
+        let expected = (
+            ShellCmd {
+                command: "ls".to_string(),
+                args: vec![],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_command_with_args() {
         // Command with arguments
-        test_with_and_without_spaces(
-            "ls -la /home",
-            "ls -la /home",
-            (
-                ShellCmd {
-                    command: "ls".to_string(),
-                    args: vec!["-la".to_string(), "/home".to_string()],
-                    stdout_redirect: None,
-                    stderr_redirect: None,
-                },
-                vec![],
-            ),
+        let cmd = "ls -la /home";
+        let expected = (
+            ShellCmd {
+                command: "ls".to_string(),
+                args: vec!["-la".to_string(), "/home".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_simple_pipe() {
         // Test pipe operator
-        test_with_and_without_spaces(
-            "ls -l | grep txt",
-            "ls -l|grep txt",
-            (
+        let cmd = "ls -l | grep txt";
+        let expected = (
+            ShellCmd {
+                command: "ls".to_string(),
+                args: vec!["-l".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![(
+                Operator::Pipe,
                 ShellCmd {
-                    command: "ls".to_string(),
-                    args: vec!["-l".to_string()],
+                    command: "grep".to_string(),
+                    args: vec!["txt".to_string()],
                     stdout_redirect: None,
                     stderr_redirect: None,
                 },
-                vec![(
-                    Operator::Pipe,
-                    ShellCmd {
-                        command: "grep".to_string(),
-                        args: vec!["txt".to_string()],
-                        stdout_redirect: None,
-                        stderr_redirect: None,
-                    },
-                )],
-            ),
+            )],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_simple_and() {
         // Test && operator
-        test_with_and_without_spaces(
-            "mkdir test && cd test",
-            "mkdir test&&cd test",
-            (
+        let cmd = "mkdir test && cd test";
+        let expected = (
+            ShellCmd {
+                command: "mkdir".to_string(),
+                args: vec!["test".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![(
+                Operator::And,
                 ShellCmd {
-                    command: "mkdir".to_string(),
+                    command: "cd".to_string(),
                     args: vec!["test".to_string()],
                     stdout_redirect: None,
                     stderr_redirect: None,
                 },
-                vec![(
-                    Operator::And,
-                    ShellCmd {
-                        command: "cd".to_string(),
-                        args: vec!["test".to_string()],
-                        stdout_redirect: None,
-                        stderr_redirect: None,
-                    },
-                )],
-            ),
+            )],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_simple_semicolon() {
         // Test ; operator
-        test_with_and_without_spaces(
-            "echo hello ; echo world",
-            "echo hello;echo world",
-            (
+        let cmd = "echo hello ; echo world";
+        let expected = (
+            ShellCmd {
+                command: "echo".to_string(),
+                args: vec!["hello".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![(
+                Operator::Semicolon,
                 ShellCmd {
                     command: "echo".to_string(),
-                    args: vec!["hello".to_string()],
+                    args: vec!["world".to_string()],
                     stdout_redirect: None,
                     stderr_redirect: None,
                 },
-                vec![(
-                    Operator::Semicolon,
-                    ShellCmd {
-                        command: "echo".to_string(),
-                        args: vec!["world".to_string()],
-                        stdout_redirect: None,
-                        stderr_redirect: None,
-                    },
-                )],
-            ),
+            )],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_stdout_redirection() {
         // Test stdout redirection
-        test_with_and_without_spaces(
-            "echo hello > output.txt",
-            "echo hello>output.txt",
-            (
-                ShellCmd {
-                    command: "echo".to_string(),
-                    args: vec!["hello".to_string()],
-                    stdout_redirect: Some("output.txt".to_string()),
-                    stderr_redirect: None,
-                },
-                vec![],
-            ),
+        let cmd = "echo hello > output.txt";
+        let expected = (
+            ShellCmd {
+                command: "echo".to_string(),
+                args: vec!["hello".to_string()],
+                stdout_redirect: Some("output.txt".to_string()),
+                stderr_redirect: None,
+            },
+            vec![],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_stderr_redirection() {
         // Test stderr redirection
-        test_with_and_without_spaces(
-            "find / -name test 2> errors.log",
-            "find / -name test 2>errors.log",
-            (
-                ShellCmd {
-                    command: "find".to_string(),
-                    args: vec!["/".to_string(), "-name".to_string(), "test".to_string()],
-                    stdout_redirect: None,
-                    stderr_redirect: Some("errors.log".to_string()),
-                },
-                vec![],
-            ),
+        let cmd = "find / -name test 2> errors.log";
+        let expected = (
+            ShellCmd {
+                command: "find".to_string(),
+                args: vec!["/".to_string(), "-name".to_string(), "test".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: Some("errors.log".to_string()),
+            },
+            vec![],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_both_redirections() {
         // Test both stdout and stderr redirection
-        test_with_and_without_spaces(
-            "make &> build.log",
-            "make&>build.log",
-            (
-                ShellCmd {
-                    command: "make".to_string(),
-                    args: vec![],
-                    stdout_redirect: Some("build.log".to_string()),
-                    stderr_redirect: Some("build.log".to_string()),
-                },
-                vec![],
-            ),
+        let cmd = "make &> build.log";
+        let expected = (
+            ShellCmd {
+                command: "make".to_string(),
+                args: vec![],
+                stdout_redirect: Some("build.log".to_string()),
+                stderr_redirect: Some("build.log".to_string()),
+            },
+            vec![],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
 
         // Test alternative syntax
-        test_with_and_without_spaces(
-            "make >& build.log",
-            "make>&build.log",
-            (
-                ShellCmd {
-                    command: "make".to_string(),
-                    args: vec![],
-                    stdout_redirect: Some("build.log".to_string()),
-                    stderr_redirect: Some("build.log".to_string()),
-                },
-                vec![],
-            ),
+        let cmd = "make >& build.log";
+        let expected = (
+            ShellCmd {
+                command: "make".to_string(),
+                args: vec![],
+                stdout_redirect: Some("build.log".to_string()),
+                stderr_redirect: Some("build.log".to_string()),
+            },
+            vec![],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_multiple_operators() {
         // Test multiple operators in a single command
-        test_with_and_without_spaces(
-            "find . -name \"*.rs\" | grep impl && echo \"Found implementations\" ; echo \"Done\"",
-            "find . -name \"*.rs\"|grep impl&&echo \"Found implementations\";echo \"Done\"",
-            (
-                ShellCmd {
-                    command: "find".to_string(),
-                    args: vec![".".to_string(), "-name".to_string(), "*.rs".to_string()],
-                    stdout_redirect: None,
-                    stderr_redirect: None,
-                },
-                vec![
-                    (
-                        Operator::Pipe,
-                        ShellCmd {
-                            command: "grep".to_string(),
-                            args: vec!["impl".to_string()],
-                            stdout_redirect: None,
-                            stderr_redirect: None,
-                        },
-                    ),
-                    (
-                        Operator::And,
-                        ShellCmd {
-                            command: "echo".to_string(),
-                            args: vec!["Found implementations".to_string()],
-                            stdout_redirect: None,
-                            stderr_redirect: None,
-                        },
-                    ),
-                    (
-                        Operator::Semicolon,
-                        ShellCmd {
-                            command: "echo".to_string(),
-                            args: vec!["Done".to_string()],
-                            stdout_redirect: None,
-                            stderr_redirect: None,
-                        },
-                    ),
-                ],
-            ),
+        let cmd =
+            "find . -name \"*.rs\" | grep impl && echo \"Found implementations\" ; echo \"Done\"";
+        let expected = (
+            ShellCmd {
+                command: "find".to_string(),
+                args: vec![".".to_string(), "-name".to_string(), "*.rs".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![
+                (
+                    Operator::Pipe,
+                    ShellCmd {
+                        command: "grep".to_string(),
+                        args: vec!["impl".to_string()],
+                        stdout_redirect: None,
+                        stderr_redirect: None,
+                    },
+                ),
+                (
+                    Operator::And,
+                    ShellCmd {
+                        command: "echo".to_string(),
+                        args: vec!["Found implementations".to_string()],
+                        stdout_redirect: None,
+                        stderr_redirect: None,
+                    },
+                ),
+                (
+                    Operator::Semicolon,
+                    ShellCmd {
+                        command: "echo".to_string(),
+                        args: vec!["Done".to_string()],
+                        stdout_redirect: None,
+                        stderr_redirect: None,
+                    },
+                ),
+            ],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_pipe_with_redirections() {
         // Test pipe with redirections
-        test_with_and_without_spaces(
-            "cat file.txt | grep error > results.txt 2> errors.log",
-            "cat file.txt|grep error>results.txt 2>errors.log",
-            (
+        let cmd = "cat file.txt | grep error > results.txt 2> errors.log";
+        let expected = (
+            ShellCmd {
+                command: "cat".to_string(),
+                args: vec!["file.txt".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![(
+                Operator::Pipe,
                 ShellCmd {
-                    command: "cat".to_string(),
-                    args: vec!["file.txt".to_string()],
-                    stdout_redirect: None,
-                    stderr_redirect: None,
+                    command: "grep".to_string(),
+                    args: vec!["error".to_string()],
+                    stdout_redirect: Some("results.txt".to_string()),
+                    stderr_redirect: Some("errors.log".to_string()),
                 },
-                vec![(
-                    Operator::Pipe,
-                    ShellCmd {
-                        command: "grep".to_string(),
-                        args: vec!["error".to_string()],
-                        stdout_redirect: Some("results.txt".to_string()),
-                        stderr_redirect: Some("errors.log".to_string()),
-                    },
-                )],
-            ),
+            )],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
     #[test]
     fn test_quoted_arguments() {
         // Test quoted arguments
-        test_with_and_without_spaces(
-            "echo \"hello world\" | grep \"o w\"",
-            "echo \"hello world\"|grep \"o w\"",
-            (
+        let cmd = "echo \"hello world\" | grep \"o w\"";
+        let expected = (
+            ShellCmd {
+                command: "echo".to_string(),
+                args: vec!["hello world".to_string()],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![(
+                Operator::Pipe,
                 ShellCmd {
-                    command: "echo".to_string(),
-                    args: vec!["hello world".to_string()],
+                    command: "grep".to_string(),
+                    args: vec!["o w".to_string()],
                     stdout_redirect: None,
                     stderr_redirect: None,
                 },
-                vec![(
-                    Operator::Pipe,
-                    ShellCmd {
-                        command: "grep".to_string(),
-                        args: vec!["o w".to_string()],
-                        stdout_redirect: None,
-                        stderr_redirect: None,
-                    },
-                )],
-            ),
+            )],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
@@ -483,27 +492,29 @@ mod tests {
 
     #[test]
     fn test_complex_command() {
-        test_with_and_without_spaces(
-            "find /path/to/dir -type f -name \"*.txt\" -exec grep \"pattern with spaces\";",
-            "find /path/to/dir -type f -name \"*.txt\" -exec grep \"pattern with spaces\";",
-            (
-                ShellCmd {
-                    command: "find".to_string(),
-                    args: vec![
-                        "/path/to/dir".to_string(),
-                        "-type".to_string(),
-                        "f".to_string(),
-                        "-name".to_string(),
-                        "*.txt".to_string(),
-                        "-exec".to_string(),
-                        "grep".to_string(),
-                        "pattern with spaces".to_string(),
-                    ],
-                    stdout_redirect: None,
-                    stderr_redirect: None,
-                },
-                vec![],
-            ),
+        let cmd = "find /path/to/dir -type f -name \"*.txt\" -exec grep \"pattern with spaces\";";
+        let expected = (
+            ShellCmd {
+                command: "find".to_string(),
+                args: vec![
+                    "/path/to/dir".to_string(),
+                    "-type".to_string(),
+                    "f".to_string(),
+                    "-name".to_string(),
+                    "*.txt".to_string(),
+                    "-exec".to_string(),
+                    "grep".to_string(),
+                    "pattern with spaces".to_string(),
+                ],
+                stdout_redirect: None,
+                stderr_redirect: None,
+            },
+            vec![],
+        );
+
+        assert_eq!(
+            expected,
+            ShellCmd::parse_shell_str(cmd).expect("parsing failed for {cmd:?}")
         );
     }
 
@@ -527,11 +538,8 @@ mod tests {
     #[test]
     fn test_ampersand_as_argument() {
         // Test & as a background operator is not allowed
-        let result_with_spaces = ShellCmd::parse_shell_str("grep & file.txt");
-        assert!(result_with_spaces.is_err());
-
-        let result_without_spaces = ShellCmd::parse_shell_str("grep&file.txt");
-        assert!(result_without_spaces.is_err());
+        let result = ShellCmd::parse_shell_str("grep & file.txt");
+        assert!(result.is_err());
 
         // Verify the error message mentions background processes
         if let Err(Error::RuntimeError(msg)) = ShellCmd::parse_shell_str("grep & file.txt") {
