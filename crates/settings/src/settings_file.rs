@@ -91,7 +91,6 @@ pub fn watch_config_dir(
             for file_path in &config_paths {
                 if fs.metadata(file_path).await.is_ok_and(|v| v.is_some()) {
                     if let Ok(contents) = fs.load(file_path).await {
-                        dbg!(&file_path);
                         if tx.unbounded_send(contents).is_err() {
                             return;
                         }
@@ -104,7 +103,6 @@ pub fn watch_config_dir(
 
             while let Some(event_batch) = events.next().await {
                 for event in event_batch {
-                    dbg!(&event);
                     if config_paths.contains(&event.path) {
                         match event.kind {
                             Some(PathEventKind::Removed) => {
