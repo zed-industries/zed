@@ -9,7 +9,7 @@ use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::define_connection;
 use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
-use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer};
+use editor::{Anchor, ClipboardSelection, Editor, ExcerptId, MultiBuffer};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, EntityId,
     Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
@@ -414,12 +414,14 @@ pub struct MarksState {
 #[derive(Debug, PartialEq, Eq)]
 pub enum MarkLocation {
     MultiBuffer(EntityId),
+    Buffer(BufferId),
     Path(Arc<Path>),
 }
 
 pub enum Mark {
     Local(Vec<Anchor>),
     MultiBuffer(EntityId, Vec<Anchor>),
+    Buffer(BufferId, Vec<Anchor>), // for singleton buffers with no file
     Path(Arc<Path>, Vec<Point>),
 }
 
@@ -650,6 +652,12 @@ impl MarksState {
     ) -> bool {
         match location {
             MarkLocation::MultiBuffer(entity_id) => entity_id == &multi_buffer.entity_id(),
+            MarkLocation::Buffer(buffer_id) => {
+                let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
+                    return false;
+                };
+                buffer_id == &buffer.read(cx).remote_id()
+            }
             MarkLocation::Path(path) => {
                 let Some(singleton) = multi_buffer.read(cx).as_singleton() else {
                     return false;
@@ -726,12 +734,20 @@ impl MarksState {
                 .map(|anchor| anchor.text_anchor)
                 .collect::<Vec<_>>()
         );
-        self.buffer_marks.entry(buffer_id).or_default().insert(
-            name,
-            anchors
-                .into_iter()
-                .map(|anchor| anchor.text_anchor)
-                .collect(),
+        self.buffer_marks
+            .entry(buffer_id.clone())
+            .or_default()
+            .insert(
+                name.clone(),
+                anchors
+                    .into_iter()
+                    .map(|anchor| anchor.text_anchor)
+                    .collect(),
+            );
+        self.global_marks.insert(
+            // this will be overwritten by serialize if there is an associated file
+            name.clone(),
+            MarkLocation::Buffer(buffer_id),
         );
         let Some(abs_path) = self.path_for_buffer(&buffer_handle, cx) else {
             return;
@@ -750,7 +766,7 @@ impl MarksState {
     ) -> Option<Mark> {
         let target = self.global_marks.get(name);
 
-        if target.is_some_and(|t| self.points_at(t, multi_buffer, cx)) || !self.is_global_mark(name)
+        if !self.is_global_mark(name) || target.is_some_and(|t| self.points_at(t, multi_buffer, cx))
         {
             if let Some(anchors) = self.multibuffer_marks.get(&multi_buffer.entity_id()) {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
@@ -773,6 +789,14 @@ impl MarksState {
             MarkLocation::MultiBuffer(entity_id) => {
                 let anchors = self.multibuffer_marks.get(&entity_id)?;
                 return Some(Mark::MultiBuffer(*entity_id, anchors.get(name)?.clone()));
+            }
+            MarkLocation::Buffer(buffer_id) => {
+                let text_anchors = self.buffer_marks.get(&buffer_id)?.get(name)?;
+                let anchors: Vec<_> = text_anchors
+                    .into_iter()
+                    .map(|anchor| Anchor::in_buffer(ExcerptId::min(), *buffer_id, anchor.clone()))
+                    .collect();
+                return Some(Mark::Buffer(*buffer_id, anchors));
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;

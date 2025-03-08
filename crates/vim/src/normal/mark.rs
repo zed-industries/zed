@@ -131,6 +131,73 @@ impl Vim {
                         });
                         return;
                     }
+                    Some(Mark::Buffer(buffer_id, anchors)) => {
+                        let Some(workspace) = self.workspace(window) else {
+                            return;
+                        };
+                        let entity_id = workspace.entity_id();
+                        workspace.update(cx, |workspace, cx| {
+                            let mut panes = workspace.panes().to_vec();
+                            panes.insert(0, workspace.active_pane().clone());
+                            let name = text.to_string().clone();
+                            for pane in panes {
+                                let mut found = false;
+                                let name = name.clone();
+                                let anchors = anchors.clone();
+                                pane.update(cx, |pane, cx| {
+                                    let Some(item_handle) =
+                                        pane.items().find(|&item_handle| -> bool {
+                                            let Some(editor) = item_handle.act_as::<Editor>(cx)
+                                            else {
+                                                return false;
+                                            };
+                                            let Some(buffer) =
+                                                editor.read(cx).buffer().read(cx).as_singleton()
+                                            else {
+                                                return false;
+                                            };
+                                            buffer_id == buffer.read(cx).remote_id()
+                                        })
+                                    else {
+                                        return;
+                                    };
+                                    found = true;
+                                    let Some(editor) = item_handle.act_as::<Editor>(cx) else {
+                                        return;
+                                    };
+
+                                    let Some(index) = pane.index_for_item(&editor) else {
+                                        return;
+                                    };
+                                    pane.activate_item(index, true, true, window, cx);
+
+                                    cx.spawn_in(window, |_, mut cx| async move {
+                                        editor.update_in(&mut cx, |editor, window, cx| {
+                                            editor.change_selections(
+                                                Some(Autoscroll::fit()),
+                                                window,
+                                                cx,
+                                                |s| {
+                                                    s.select_anchor_ranges(
+                                                        anchors
+                                                            .clone()
+                                                            .iter()
+                                                            .map(|&anchor| anchor..anchor),
+                                                    );
+                                                },
+                                            )
+                                        })?;
+                                        anyhow::Ok(())
+                                    })
+                                    .detach_and_log_err(cx);
+                                });
+                                if found {
+                                    break;
+                                }
+                            }
+                        });
+                        return;
+                    }
                     Some(Mark::Path(path, points)) => {
                         let Some(workspace) = self.workspace(window) else {
                             return;
