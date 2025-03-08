@@ -313,11 +313,7 @@ impl TextLayout {
         } else {
             vec![text_style.to_run(text.len())]
         };
-        let inline_boxes = if let Some(inline_boxes) = inline_boxes {
-            inline_boxes
-        } else {
-            Vec::new()
-        };
+        let inline_boxes = inline_boxes.unwrap_or_default();
 
         let layout_id = window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
@@ -453,8 +449,8 @@ impl TextLayout {
         }
     }
 
-    /// Get the position of a specifed inline box.
-    fn position_of_inline_box(&self, index: usize) -> Option<Point<Pixels>> {
+    /// Get the position of a specified inline box index.
+    pub fn position_of_inline_box(&self, index: usize) -> Option<Point<Pixels>> {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()
@@ -467,10 +463,20 @@ impl TextLayout {
         for line in &element_state.lines {
             if let Some(inline_box) = line.inline_boxes.get(index) {
                 let origin = line.position_for_index(inline_box.glyph_ix, line_height);
+                let should_remove_width = line
+                    .runs()
+                    .get(inline_box.run_ix)
+                    .map(|run| run.glyphs.len() != inline_box.glyph_ix)
+                    .unwrap_or(false);
 
                 if let Some(origin) = origin {
                     return Some(point(
-                        origin.x,
+                        bounds.origin.x + origin.x
+                            - if should_remove_width {
+                                inline_box.size.width
+                            } else {
+                                px(0.)
+                            },
                         bounds.origin.y + origin.y + line_height
                             - inline_box.size.height
                             - line.descent(),

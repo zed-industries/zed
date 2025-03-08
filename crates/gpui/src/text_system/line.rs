@@ -75,7 +75,6 @@ impl ShapedLine {
             None,
             &self.decoration_runs,
             &[],
-            &[],
             window,
             cx,
         )?;
@@ -125,7 +124,6 @@ impl WrappedLine {
             align,
             align_width,
             &self.decoration_runs,
-            &self.inline_boxes,
             &self.wrap_boundaries,
             window,
             cx,
@@ -154,7 +152,6 @@ fn paint_line(
     align: TextAlign,
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
-    inline_boxes: &[InlineBox],
     wrap_boundaries: &[WrapBoundary],
     window: &mut Window,
     cx: &mut App,
@@ -170,7 +167,6 @@ fn paint_line(
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let mut decoration_runs = decoration_runs.iter();
-        let mut inline_boxes = inline_boxes.iter().peekable();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
         let mut color = black();
@@ -196,13 +192,6 @@ fn paint_line(
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
-
-                if let Some(inline_box) = inline_boxes.peek() {
-                    if run_ix == inline_box.run_ix && glyph_ix == inline_box.glyph_ix {
-                        glyph_origin.x += inline_box.size.width;
-                        inline_boxes.next();
-                    }
-                }
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();

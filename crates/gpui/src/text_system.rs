@@ -535,7 +535,7 @@ impl WindowTextSystem {
 
         let layout = self
             .line_layout_cache
-            .layout_line(text, font_size, &font_runs);
+            .layout_line(text, font_size, &font_runs, &[]);
 
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);

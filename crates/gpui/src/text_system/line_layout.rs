@@ -128,7 +128,6 @@ impl LineLayout {
     fn compute_wrap_boundaries(
         &self,
         text: &str,
-        inline_boxes: &[InlineBox],
         wrap_width: Pixels,
         max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
@@ -142,8 +141,7 @@ impl LineLayout {
         };
         let mut last_boundary_x = px(0.);
         let mut prev_ch = '\0';
-        let mut inline_boxes_index = 0;
-        let mut inline_boxes_width = px(0.);
+
         let mut glyphs = self
             .runs
             .iter()
@@ -151,20 +149,10 @@ impl LineLayout {
             .flat_map(move |(run_ix, run)| {
                 run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
                     let character = text[glyph.index..].chars().next().unwrap();
-
-                    if let Some(inline_box) = inline_boxes.get(inline_boxes_index) {
-                        if (run_ix == inline_box.run_ix && glyph_ix >= inline_box.glyph_ix)
-                            || run_ix > inline_box.run_ix
-                        {
-                            inline_boxes_width += inline_box.size.width;
-                            inline_boxes_index += 1;
-                        }
-                    }
-
                     (
                         WrapBoundary { run_ix, glyph_ix },
                         character,
-                        glyph.position.x + inline_boxes_width,
+                        glyph.position.x,
                     )
                 })
             })
@@ -392,7 +380,11 @@ impl WrappedLineLayout {
                 line_start_ix = line_end_ix;
                 continue;
             } else {
-                let line_start_x = self.unwrapped_layout.x_for_index(line_start_ix);
+                let line_start_x = if line_start_ix == 0 {
+                    px(0.)
+                } else {
+                    self.unwrapped_layout.x_for_index(line_start_ix)
+                };
                 let x = self.unwrapped_layout.x_for_index(index) - line_start_x;
                 return Some(point(x, line_y));
             }
@@ -514,14 +506,10 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
+            let unwrapped_layout =
+                self.layout_line::<&SharedString>(&text, font_size, runs, inline_boxes);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(
-                    text.as_ref(),
-                    inline_boxes,
-                    wrap_width,
-                    max_lines,
-                )
+                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
                 SmallVec::new()
             };
@@ -552,6 +540,7 @@ impl LineLayoutCache {
         text: Text,
         font_size: Pixels,
         runs: &[FontRun],
+        inline_boxes: &[InlineBox],
     ) -> Arc<LineLayout>
     where
         Text: AsRef<str>,
@@ -576,10 +565,34 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
-            let layout = Arc::new(
-                self.platform_text_system
-                    .layout_line(&text, font_size, runs),
-            );
+            let mut inline_boxes = inline_boxes.iter().peekable();
+            let mut inline_boxes_width = px(0.);
+            let mut text_layout = self
+                .platform_text_system
+                .layout_line(&text, font_size, runs);
+
+            // Adjust glyph positions to accomodate inline boxes
+            for (run_ix, run) in text_layout.runs.iter_mut().enumerate() {
+                let mut current_inline_box = inline_boxes.peek();
+
+                for (glyph_ix, glyph) in run.glyphs.iter_mut().enumerate() {
+                    while let Some(inline_box) = current_inline_box {
+                        if inline_box.run_ix == run_ix && inline_box.glyph_ix == glyph_ix {
+                            inline_boxes_width += inline_box.size.width;
+                            inline_boxes.next();
+                        } else {
+                            break;
+                        }
+
+                        current_inline_box = inline_boxes.peek();
+                    }
+
+                    glyph.position.x += inline_boxes_width;
+                }
+            }
+            text_layout.width += inline_boxes_width;
+
+            let layout = Arc::new(text_layout);
             let key = Arc::new(CacheKey {
                 text,
                 font_size,
