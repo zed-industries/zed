@@ -92,7 +92,6 @@ pub struct AssistantPanel {
     context_editor: Option<Entity<ContextEditor>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
-    tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
     history_store: Entity<HistoryStore>,
@@ -133,7 +132,7 @@ impl AssistantPanel {
             log::info!("[assistant2-debug] finished initializing ContextStore");
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                cx.new(|cx| Self::new(workspace, thread_store, context_store, tools, window, cx))
+                cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
             })
         })
     }
@@ -142,7 +141,6 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
-        tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -170,8 +168,8 @@ impl AssistantPanel {
 
         Self {
             active_view: ActiveView::Thread,
-            workspace: workspace.clone(),
-            project,
+            workspace,
+            project: project.clone(),
             fs: fs.clone(),
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
@@ -179,9 +177,7 @@ impl AssistantPanel {
                 ActiveThread::new(
                     thread.clone(),
                     thread_store.clone(),
-                    workspace,
                     language_registry,
-                    tools.clone(),
                     window,
                     cx,
                 )
@@ -191,7 +187,6 @@ impl AssistantPanel {
             context_editor: None,
             configuration: None,
             configuration_subscription: None,
-            tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
             )
@@ -246,9 +241,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
-                self.workspace.clone(),
                 self.language_registry.clone(),
-                self.tools.clone(),
                 window,
                 cx,
             )
@@ -381,9 +374,7 @@ impl AssistantPanel {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
-                        this.workspace.clone(),
                         this.language_registry.clone(),
-                        this.tools.clone(),
                         window,
                         cx,
                     )
