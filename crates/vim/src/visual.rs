@@ -109,8 +109,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         };
         let marks = vim
             .update_editor(window, cx, |vim, editor, window, cx| {
-                vim.get_mark("<".to_string(), editor.buffer(), window, cx)
-                    .zip(vim.get_mark(">".to_string(), editor.buffer(), window, cx))
+                vim.get_mark("<", editor.buffer(), window, cx)
+                    .zip(vim.get_mark(">", editor.buffer(), window, cx))
             })
             .flatten();
         let Some((Mark::Local(start), Mark::Local(end))) = marks else {

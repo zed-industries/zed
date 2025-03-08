@@ -6,8 +6,8 @@ use crate::{ToggleRegistersView, UseSystemClipboard, Vim, VimSettings};
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use db::define_connection;
 use db::sqlez_macros::sql;
-use db::{define_connection, query};
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer};
 use gpui::{
@@ -20,9 +20,9 @@ use project::{Project, ProjectItem, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{fmt::Display, ops::Range, sync::Arc};
+use text::Bias;
 use theme::ThemeSettings;
 use ui::{
     h_flex, rems, ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement,
@@ -399,15 +399,16 @@ pub struct VimGlobals {
 // }
 
 pub struct MarksState {
-    pub workspace_id: Option<WorkspaceId>,
-    pub project: Entity<project::Project>,
+    workspace: WeakEntity<Workspace>,
 
-    pub multibuffer_marks: HashMap<EntityId, HashMap<String, Vec<Anchor>>>,
-    pub buffer_marks: HashMap<BufferId, HashMap<String, Vec<text::Anchor>>>,
-    pub watched_buffers: HashMap<BufferId, (Arc<Path>, Subscription, Subscription)>,
+    multibuffer_marks: HashMap<EntityId, HashMap<String, Vec<Anchor>>>,
+    buffer_marks: HashMap<BufferId, HashMap<String, Vec<text::Anchor>>>,
+    watched_buffers: HashMap<BufferId, (Arc<Path>, Subscription, Subscription)>,
 
-    pub serialized_marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
-    pub global_marks: HashMap<String, MarkLocation>,
+    serialized_marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
+    global_marks: HashMap<String, MarkLocation>,
+
+    _subscription: Subscription,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -423,56 +424,88 @@ pub enum Mark {
 }
 
 impl MarksState {
-    pub fn new(
-        workspace_id: Option<WorkspaceId>,
-        project: Entity<Project>,
-        cx: &mut App,
-    ) -> Entity<MarksState> {
-        cx.new(|_| Self {
-            workspace_id,
-            project,
-            multibuffer_marks: HashMap::default(),
-            buffer_marks: HashMap::default(),
-            watched_buffers: HashMap::default(),
-            serialized_marks: HashMap::default(),
-            global_marks: HashMap::default(),
+    pub fn new(workspace: &Workspace, cx: &mut App) -> Entity<MarksState> {
+        cx.new(|cx| {
+            let buffer_store = workspace.project().read(cx).buffer_store().clone();
+            let subscription =
+                cx.subscribe(
+                    &buffer_store,
+                    move |this: &mut Self, _, event, cx| match event {
+                        project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
+                            this.on_buffer_loaded(buffer, cx);
+                        }
+                        _ => {}
+                    },
+                );
+
+            let mut this = Self {
+                workspace: workspace.weak_handle(),
+                multibuffer_marks: HashMap::default(),
+                buffer_marks: HashMap::default(),
+                watched_buffers: HashMap::default(),
+                serialized_marks: HashMap::default(),
+                global_marks: HashMap::default(),
+                _subscription: subscription,
+            };
+
+            this.load(cx);
+            this
         })
     }
 
-    pub fn load(
+    fn workspace_id(&self, cx: &App) -> Option<WorkspaceId> {
+        self.workspace
+            .read_with(cx, |workspace, _| workspace.database_id())
+            .ok()
+            .flatten()
+    }
+
+    fn project(&self, cx: &App) -> Option<Entity<Project>> {
+        self.workspace
+            .read_with(cx, |workspace, _| workspace.project().clone())
+            .ok()
+    }
+
+    fn load(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(|this, mut cx| async move {
+            let Some(workspace_id) = this.update(&mut cx, |this, cx| this.workspace_id(cx))? else {
+                return Ok(());
+            };
+            let (marks, paths) = cx
+                .background_spawn(async move {
+                    let marks = DB.get_marks(workspace_id)?;
+                    let paths = DB.get_global_marks_paths(workspace_id)?;
+                    anyhow::Ok((marks, paths))
+                })
+                .await?;
+            this.update(&mut cx, |this, cx| this.loaded(marks, paths, cx))
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn loaded(
         &mut self,
-        marks: Vec<(Vec<u8>, String, String)>,
-        global_mark_paths: Vec<(Vec<u8>, String)>,
+        marks: Vec<SerializedMark>,
+        global_mark_paths: Vec<(String, Arc<Path>)>,
         cx: &mut Context<Self>,
     ) {
-        for (path, name, values) in marks {
-            let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
-                continue;
-            };
-            let points: Vec<Point> = value
-                .into_iter()
-                .map(|(row, col)| Point::new(row, col))
-                .collect();
-            let Ok(s) = String::from_utf8(path) else {
-                return;
-            };
-            let path: Arc<Path> = Arc::from(PathBuf::from(OsString::from(s)));
+        let Some(project) = self.project(cx) else {
+            return;
+        };
+
+        for mark in marks {
             self.serialized_marks
-                .entry(path)
+                .entry(mark.path)
                 .or_default()
-                .insert(name, points);
+                .insert(mark.name, mark.points);
         }
 
-        for (path, name) in global_mark_paths {
-            let Ok(s) = String::from_utf8(path) else {
-                continue;
-            };
-            let path: Arc<Path> = Arc::from(PathBuf::from(OsString::from(s)));
+        for (name, path) in global_mark_paths {
             self.global_marks
                 .insert(name, MarkLocation::Path(path.clone()));
 
-            let project = self.project.read(cx);
             let project_path = project
+                .read(cx)
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
@@ -482,8 +515,8 @@ impl MarksState {
                     })
                 })
                 .next();
-            if let Some(buffer) =
-                project_path.and_then(|project_path| project.get_open_buffer(&project_path, cx))
+            if let Some(buffer) = project_path
+                .and_then(|project_path| project.read(cx).get_open_buffer(&project_path, cx))
             {
                 self.on_buffer_loaded(&buffer, cx)
             }
@@ -491,10 +524,13 @@ impl MarksState {
     }
 
     pub fn on_buffer_loaded(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) {
+        let Some(project) = self.project(cx) else {
+            return;
+        };
         let Some(project_path) = buffer_handle.read(cx).project_path(cx) else {
             return;
         };
-        let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+        let Some(abs_path) = project.read(cx).absolute_path(&project_path, cx) else {
             return;
         };
         let abs_path: Arc<Path> = abs_path.into();
@@ -506,11 +542,12 @@ impl MarksState {
         let mut loaded_marks = HashMap::default();
         let buffer = buffer_handle.read(cx);
         for (name, points) in serialized_marks.iter() {
+            dbg!("loaded", &name, &points, &buffer.text());
             loaded_marks.insert(
                 name.clone(),
                 points
                     .iter()
-                    .map(|point| buffer.anchor_before(point))
+                    .map(|point| buffer.anchor_before(buffer.clip_point(*point, Bias::Left)))
                     .collect(),
             );
         }
@@ -549,20 +586,39 @@ impl MarksState {
         if old_points == new_points {
             return;
         }
-
-        // todo!() actually write here
+        dbg!(std::backtrace::Backtrace::force_capture());
+        dbg!(&old_points, &new_points);
 
         for (key, _) in &new_points {
             if self.is_global_mark(key) {
                 if self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone())) {
-                    // todo!() actually write here
+                    if let Some(workspace_id) = self.workspace_id(cx) {
+                        let path = path.clone();
+                        let key = key.clone();
+                        cx.background_spawn(async move {
+                            DB.set_global_mark_path(workspace_id, key, path).await
+                        })
+                        .detach_and_log_err(cx);
+                    }
+
                     self.global_marks
                         .insert(key.clone(), MarkLocation::Path(path.clone()));
                 }
             }
         }
 
-        self.serialized_marks.insert(path, new_points);
+        self.serialized_marks
+            .insert(path.clone(), new_points.clone());
+
+        if let Some(workspace_id) = self.workspace_id(cx) {
+            cx.background_spawn(async move {
+                for (key, value) in new_points {
+                    DB.set_mark(workspace_id, path.clone(), key, value).await?;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn is_global_mark(&self, key: &str) -> bool {
@@ -571,7 +627,7 @@ impl MarksState {
             .is_some_and(|c| c.is_uppercase() || c.is_digit(10))
     }
 
-    fn rename_buffer(&mut self, old_path: Arc<Path>, new_path: Arc<Path>, cx: &mut Context<Self>) {
+    fn rename_buffer(&mut self, old_path: Arc<Path>, new_path: Arc<Path>, _cx: &mut Context<Self>) {
         let old_points = self.serialized_marks.remove(&old_path).unwrap_or_default();
 
         // todo!() actually write here
@@ -581,7 +637,8 @@ impl MarksState {
 
     fn path_for_buffer(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
         let project_path = buffer.read(cx).project_path(cx)?;
-        let abs_path = self.project.read(cx).absolute_path(&project_path, cx)?;
+        let project = self.project(cx)?;
+        let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
         Some(abs_path.into())
     }
 
@@ -611,6 +668,7 @@ impl MarksState {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
             BufferEvent::Edited => {
                 if let Some(path) = this.path_for_buffer(&buffer, cx) {
+                    dbg!(&buffer.read(cx).text());
                     this.serialize_buffer_marks(path, &buffer, cx);
                 }
             }
@@ -661,6 +719,13 @@ impl MarksState {
         };
 
         let buffer_id = buffer_handle.read(cx).remote_id();
+        dbg!(
+            "set_mark",
+            anchors
+                .iter()
+                .map(|anchor| anchor.text_anchor)
+                .collect::<Vec<_>>()
+        );
         self.buffer_marks.entry(buffer_id).or_default().insert(
             name,
             anchors
@@ -679,24 +744,23 @@ impl MarksState {
 
     pub fn get_mark(
         &self,
-        name: String,
+        name: &str,
         multi_buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<Mark> {
-        let target = self.global_marks.get(&name);
+        let target = self.global_marks.get(name);
 
-        if target.is_some_and(|t| self.points_at(t, multi_buffer, cx))
-            || !self.is_global_mark(&name)
+        if target.is_some_and(|t| self.points_at(t, multi_buffer, cx)) || !self.is_global_mark(name)
         {
             if let Some(anchors) = self.multibuffer_marks.get(&multi_buffer.entity_id()) {
-                return Some(Mark::Local(anchors.get(&name)?.clone()));
+                return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
             let singleton = multi_buffer.read(cx).as_singleton()?;
             let excerpt_id = multi_buffer.read(cx).excerpt_ids().first().unwrap().clone();
             let buffer_id = singleton.read(cx).remote_id();
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
-                let text_anchors = anchors.get(&name)?;
+                let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .into_iter()
                     .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, anchor.clone()))
@@ -708,11 +772,11 @@ impl MarksState {
         match target? {
             MarkLocation::MultiBuffer(entity_id) => {
                 let anchors = self.multibuffer_marks.get(&entity_id)?;
-                return Some(Mark::MultiBuffer(*entity_id, anchors.get(&name)?.clone()));
+                return Some(Mark::MultiBuffer(*entity_id, anchors.get(name)?.clone()));
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;
-                return Some(Mark::Path(path.clone(), points.get(&name)?.clone()));
+                return Some(Mark::Path(path.clone(), points.get(name)?.clone()));
             }
         }
     }
@@ -760,49 +824,19 @@ impl VimGlobals {
         .detach();
         cx.observe_new(|workspace: &mut Workspace, _, cx| {
             let entity_id = cx.entity_id();
-            let workspace_id = workspace.database_id();
-
-            cx.spawn(|workspace, mut cx| async move {
-                let project =
-                    workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
-                let _ = cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
-                    g.marks
-                        .insert(entity_id, MarksState::new(workspace_id, project, cx));
-                })?;
-                if let Some(wid) = workspace_id {
-                    let marks = cx
-                        .background_executor()
-                        .spawn(async move { DB.get_marks(wid) })
-                        .await?;
-                    let global_marks_paths = cx
-                        .background_executor()
-                        .spawn(async move { DB.get_global_marks_paths(wid) })
-                        .await?;
-                    let _ = cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
-                        if let Some(marks_state) = g.marks.get(&entity_id) {
-                            marks_state.update(cx, |ms, cx| {
-                                ms.load(marks, global_marks_paths, cx);
-                            });
-                        }
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-
-            let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            cx.subscribe(&buffer_store, move |_, _, event, cx| match event {
-                project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                    Vim::update_globals(cx, |globals, cx| {
-                        if let Some(marks_state) = globals.marks.get(&entity_id) {
-                            marks_state.update(cx, |ms, cx| {
-                                ms.on_buffer_loaded(buffer, cx);
-                            });
-                        }
+            Vim::update_globals(cx, |globals, cx| {
+                globals
+                    .marks
+                    .insert(entity_id, MarksState::new(workspace, cx))
+            });
+            cx.observe_release(
+                &workspace.weak_handle().upgrade().unwrap(),
+                move |_, _, cx| {
+                    Vim::update_globals(cx, |globals, _| {
+                        globals.marks.remove(&entity_id);
                     })
-                }
-                _ => {}
-            })
+                },
+            )
             .detach();
         })
         .detach()
@@ -1380,38 +1414,66 @@ define_connection! (
     ];
 );
 
+struct SerializedMark {
+    path: Arc<Path>,
+    name: String,
+    points: Vec<Point>,
+}
+
 impl VimDb {
     pub(crate) async fn set_mark(
         &self,
         workspace_id: WorkspaceId,
+        path: Arc<Path>,
         mark_name: String,
-        path: Vec<u8>,
-        value: String,
+        value: Vec<Point>,
     ) -> Result<()> {
+        let pairs: Vec<(u32, u32)> = value
+            .into_iter()
+            .map(|point| (point.row, point.column))
+            .collect();
+        let serialized = serde_json::to_string(&pairs)?;
+        dbg!(&path, &mark_name, &serialized);
         self.write(move |conn| {
             conn.exec_bound(sql!(
                 INSERT OR REPLACE INTO vim_marks
                     (workspace_id, mark_name, path, value)
                 VALUES
                     (?, ?, ?, ?)
-            ))?((workspace_id, mark_name, path, value))
+            ))?((workspace_id, mark_name, path, serialized))
         })
         .await
     }
 
-    query! {
-        pub fn get_marks(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String, String)>> {
+    fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerializedMark>> {
+        let result: Vec<(Arc<Path>, String, String)> = self.select_bound(sql!(
             SELECT path, mark_name, value FROM vim_marks
                 WHERE workspace_id = ?
-        }
+        ))?(workspace_id)?;
+
+        Ok(result
+            .into_iter()
+            .filter_map(|(path, name, value)| {
+                let pairs: Vec<(u32, u32)> = serde_json::from_str(&value).log_err()?;
+                Some(SerializedMark {
+                    path,
+                    name,
+                    points: pairs
+                        .into_iter()
+                        .map(|(row, column)| Point { row, column })
+                        .collect(),
+                })
+            })
+            .collect())
     }
 
     pub(crate) async fn set_global_mark_path(
         &self,
         workspace_id: WorkspaceId,
         mark_name: String,
-        path: Vec<u8>,
+        path: Arc<Path>,
     ) -> Result<()> {
+        dbg!(&mark_name, &path);
         self.write(move |conn| {
             conn.exec_bound(sql!(
                 INSERT OR REPLACE INTO vim_global_marks_paths
@@ -1423,10 +1485,13 @@ impl VimDb {
         .await
     }
 
-    query! {
-        pub fn get_global_marks_paths(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String)>> {
-            SELECT path, mark_name FROM vim_global_marks_paths
-                WHERE workspace_id = ?
-        }
+    pub fn get_global_marks_paths(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<(String, Arc<Path>)>> {
+        self.select_bound(sql!(
+        SELECT mark_name, path FROM vim_global_marks_paths
+            WHERE workspace_id = ?
+        ))?(workspace_id)
     }
 }

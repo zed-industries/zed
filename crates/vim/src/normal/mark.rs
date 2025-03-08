@@ -13,7 +13,7 @@ use workspace::OpenOptions;
 
 use crate::{
     motion::{self, Motion},
-    state::{Mark, MarksState, Mode, VimGlobals},
+    state::{Mark, Mode, VimGlobals},
     Vim,
 };
 
@@ -96,27 +96,18 @@ impl Vim {
             }),
             "." => self.change_list.last().cloned(),
             _ => {
-                let Some(workspace) = self.workspace(window) else {
+                let Some(buffer) = self.editor().map(|editor| editor.read(cx).buffer().clone())
+                else {
                     return;
                 };
-                let entity_id = workspace.entity_id();
-                let mark = self
-                    .update_editor(window, cx, |_, editor, _, cx| {
-                        let buffer = editor.buffer();
-                        Vim::update_globals(cx, |globals, cx| {
-                            globals.marks.get(&entity_id)?.read(cx).get_mark(
-                                text.to_string(),
-                                buffer,
-                                cx,
-                            )
-                        })
-                    })
-                    .flatten();
-
+                let mark = self.get_mark(&*text, &buffer, window, cx);
                 match mark {
                     None => None,
                     Some(Mark::Local(anchors)) => Some(anchors),
                     Some(Mark::MultiBuffer(entity_id, anchors)) => {
+                        let Some(workspace) = self.workspace(window) else {
+                            return;
+                        };
                         workspace.update(cx, |workspace, cx| {
                             let item = workspace.items(cx).find(|item| {
                                 item.act_as::<Editor>(cx).is_some_and(|editor| {
@@ -141,6 +132,9 @@ impl Vim {
                         return;
                     }
                     Some(Mark::Path(path, points)) => {
+                        let Some(workspace) = self.workspace(window) else {
+                            return;
+                        };
                         let task = workspace.update(cx, |workspace, cx| {
                             workspace.open_abs_path(
                                 path.to_path_buf(),
@@ -247,18 +241,12 @@ impl Vim {
             return;
         };
         let entity_id = workspace.entity_id();
-        let database_id = workspace.read(cx).database_id();
-        let project = workspace.read(cx).project().clone();
         Vim::update_globals(cx, |vim_globals, cx| {
-            if !vim_globals.marks.contains_key(&entity_id) {
-                vim_globals
-                    .marks
-                    .insert(entity_id, MarksState::new(database_id, project, cx));
-            }
             let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
                 return;
             };
             marks_state.update(cx, |ms, cx| {
+                dbg!("setting mark", name.clone());
                 ms.set_mark(name.clone(), buffer_entity, anchors, cx);
             });
         });
@@ -266,7 +254,7 @@ impl Vim {
 
     pub fn get_mark(
         &self,
-        name: String,
+        name: &str,
         multi_buffer: &Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut App,

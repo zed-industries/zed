@@ -597,7 +597,7 @@ impl Position {
             Position::Mark { name, offset } => {
                 let multi_buffer = editor.buffer();
                 let Some(Mark::Local(anchors)) =
-                    vim.get_mark(name.to_string(), multi_buffer, window, cx)
+                    vim.get_mark(&name.to_string(), multi_buffer, window, cx)
                 else {
                     return Err(anyhow!("mark {} not set", name));
                 };
