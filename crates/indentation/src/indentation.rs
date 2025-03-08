@@ -1,8 +1,9 @@
 use editor::Editor;
 use gpui::{Entity, Focusable, FocusHandle, Subscription, Task, WeakEntity};
+use language::{language_settings::language_settings, LanguageName};
 use settings::{LocalSettingsKind, SettingsStore};
-use std::{num::NonZeroU32, time::Duration};
-use text::Point;
+use std::{num::NonZeroU32, sync::PoisonError, time::Duration};
+use text::{Point, Selection};
 use ui::{
     div, BorrowAppContext, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize, ParentElement, Render, Tooltip, Window
 };
@@ -18,7 +19,6 @@ pub struct Indentation {
     indentation: Option<IndentationSettings>,
     context: Option<FocusHandle>,
     workspace: WeakEntity<Workspace>,
-    update_indentation: Task<()>,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -28,7 +28,6 @@ impl Indentation {
             indentation: None,
             context: None,
             workspace: workspace.weak_handle(),
-            update_indentation: Task::ready(()),
             _observe_active_editor: None,
         }
     }
@@ -36,55 +35,35 @@ impl Indentation {
     fn update_indentation(
         &mut self,
         editor: Entity<Editor>,
-        debounce: Option<Duration>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let editor = editor.downgrade();
-        self.update_indentation = cx.spawn_in(window, |indentation, mut cx| async move {
-            let is_singleton = editor
-                .update(&mut cx, |editor, cx| {
-                    editor.buffer().read(cx).is_singleton()
-                })
-                .ok()
-                .unwrap_or(true);
+        let editor = editor.read(cx);
+        if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
+            let buffer = buffer.read(cx);
+            if let Some(language) = buffer.language() {                
+                let file = buffer.file();
+                let settings = language_settings(Some(language.name()), file, cx);
 
-            if !is_singleton {
-                if let Some(debounce) = debounce {
-                    cx.background_executor().timer(debounce).await;
-                }
+                self.indentation = Some(IndentationSettings {
+                    tab_size: settings.tab_size,
+                    hard_tabs: settings.hard_tabs,
+                });
             }
+        }
 
-            editor
-                .update(&mut cx, |editor, cx| {
-                    indentation.update(cx, |indentation, cx| {
-                        if editor.mode() == editor::EditorMode::Full {
-                            let settings = editor.buffer().read(cx).settings_at(Point::new(0, 0), cx);
-                            indentation.indentation = Some(IndentationSettings {
-                                tab_size: settings.tab_size,
-                                hard_tabs: settings.hard_tabs,
-                            });
-                            indentation.context = Some(editor.focus_handle(cx));
-                        } else {
-                            indentation.indentation = None;
-                            indentation.context = None;
-                        }
-                    })
-                })
-                .ok()
-                .transpose()
-                .ok()
-                .flatten();
-        });
+        cx.notify();
     }
 }
 
 impl Render for Indentation {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().when_some(self.indentation, |el, indentation| {
+            let mode = if indentation.hard_tabs { "Tabs" } else { "Spaces" };
+            let text = format!("{}:{}", mode, indentation.tab_size);
             let context = self.context.clone();
             el.child(
-                Button::new("tab-size", indentation.tab_size.to_string())
+                Button::new("tab-size", text)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
@@ -133,8 +112,6 @@ impl Render for Indentation {
     }
 }
 
-const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
-
 impl StatusItemView for Indentation {
     fn set_active_pane_item(
         &mut self,
@@ -142,15 +119,10 @@ impl StatusItemView for Indentation {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self._observe_active_editor = Some(cx.observe_in(
-                &editor,
-                window,
-                |indentation, editor, window, cx| {
-                    Self::update_indentation(indentation, editor, Some(UPDATE_DEBOUNCE), window, cx)
-                },
-            ));
-            self.update_indentation(editor, None, window, cx);
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+            self._observe_active_editor =
+                Some(cx.observe_in(&editor, window, Self::update_indentation));
+            self.update_indentation(editor, window, cx);
         } else {
             self.indentation = None;
             self._observe_active_editor = None;
