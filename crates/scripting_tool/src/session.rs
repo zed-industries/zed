@@ -11,6 +11,7 @@ use project::{search::SearchQuery, Fs, Project};
 use regex::Regex;
 use std::{
     cell::RefCell,
+    fs::File,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -494,6 +495,16 @@ impl Session {
                 // Update position
                 let new_position = position + bytes.len();
                 file_userdata.set("__position", new_position)?;
+
+                match std::fs::write(path.clone(), &*content_vec) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "Failed to write to file on the actual filesytem: {}",
+                            e
+                        )));
+                    }
+                }
 
                 // Update fs_changes
                 let path = file_userdata.get::<String>("__path")?;
