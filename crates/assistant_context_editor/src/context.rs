@@ -2257,7 +2257,7 @@ impl AssistantContext {
                                         
                                         // Then check if we've just completed a shell code block 
                                         // and format it if needed
-                                        if chunk.contains("```") {
+                                        if chunk.contains("```sh") {
                                             format_shell_code_blocks(buffer, cx);
                                         }
                                     }
@@ -3407,10 +3407,8 @@ fn format_shell_code_blocks(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
     }
     
     for (start, end, command) in blocks.iter().rev() {
-        // Just use indentation without the play icon
-        // The actual IconName::Play component would be added by the UI layer
-        // when it renders this content
-        let formatted = format!("    {}", command);
+        // Add a visual play button character (▶) at the beginning of the command
+        let formatted = format!("▶ {}", command);
         buffer.edit([(*start..*end, formatted)], None, cx);
     }
 }

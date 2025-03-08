@@ -65,6 +65,7 @@ use crate::{
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
 };
+use terminal_view::terminal_panel::{TerminalPanel, ToggleFocus};
 
 actions!(
     assistant,
@@ -2650,6 +2651,41 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
     }
 
     None
+}
+
+fn render_shell_command_run_button(
+    editor: WeakEntity<Editor>,
+    workspace: WeakEntity<Workspace>,
+    icon: IconName,
+    label: SharedString,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, cx| {
+        let editor = editor.clone();
+        let workspace = workspace.clone();
+
+        ButtonLike::new(fold_id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(icon))
+            .child(Label::new(label.clone()).single_line())
+            .on_click(move |_, window, cx| {
+                // Get the text content of the fold (shell command)
+                let command_text = editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).read(cx);
+                    let start = fold_range.start.to_offset(&buffer);
+                    let end = fold_range.end.to_offset(&buffer);
+                    buffer.text_for_range(start..end).collect::<String>()
+                });
+
+                // Just open the terminal panel for now
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+                    });
+                }
+            })
+            .into_any_element()
+    })
 }
 
 fn render_fold_icon_button(

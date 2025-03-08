@@ -537,6 +537,7 @@ dependencies = [
  "smol",
  "strum",
  "telemetry_events",
+ "terminal_view",
  "text",
  "theme",
  "tree-sitter-md",
