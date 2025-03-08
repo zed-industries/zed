@@ -14303,6 +14303,13 @@ impl Editor {
         EditorSettings::override_global(editor_settings, cx);
     }
 
+    pub fn line_numbers_enabled(&self, cx: &App) -> bool {
+        if let Some(show_line_numbers) = self.show_line_numbers {
+            return show_line_numbers;
+        }
+        EditorSettings::get_global(cx).gutter.line_numbers
+    }
+
     pub fn should_use_relative_line_numbers(&self, cx: &mut App) -> bool {
         self.use_relative_line_numbers
             .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
@@ -14336,10 +14343,6 @@ impl Editor {
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
         self.show_line_numbers = Some(show_line_numbers);
         cx.notify();
-    }
-
-    pub fn show_line_numbers(&self) -> Option<bool> {
-        self.show_line_numbers
     }
 
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
