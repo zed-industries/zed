@@ -1710,11 +1710,11 @@ impl Interactivity {
                         let was_hovered = hitbox.is_hovered(window);
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            move |_: &MouseMoveEvent, phase, window, _| {
+                            move |e: &MouseMoveEvent, phase, window, _| {
                                 if phase == DispatchPhase::Capture {
                                     let hovered = hitbox.is_hovered(window);
                                     if hovered != was_hovered {
-                                        window.refresh();
+                                        window.refresh_at(e.position)
                                     }
                                 }
                             }
@@ -1828,10 +1828,10 @@ impl Interactivity {
         {
             let hitbox = hitbox.clone();
             let was_hovered = hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, _cx| {
                 let hovered = hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    window.refresh_at(e.position);
                 }
             });
         }
@@ -2109,10 +2109,10 @@ impl Interactivity {
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, _cx| {
                 let hovered = group_hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    window.refresh_at(e.position);
                 }
             });
         }
@@ -2164,7 +2164,7 @@ impl Interactivity {
                     scroll_offset.x += delta_x;
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
-                        window.refresh();
+                        window.refresh_at(event.position);
                     }
                 }
             });
