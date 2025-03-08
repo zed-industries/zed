@@ -98,7 +98,9 @@
     // The unit for image file sizes.
     // By default we're setting it to binary.
     // The second option is decimal.
-    "unit": "binary"
+    "unit": "binary",
+    // Whether to show breadcrumbs in the image viewer
+    "breadcrumbs": true
   },
   // The key to use for adding multiple cursors
   // Currently "alt" or "cmd_or_ctrl"  (also aliased as
