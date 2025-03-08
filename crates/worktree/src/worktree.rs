@@ -1570,7 +1570,6 @@ impl LocalWorktree {
                             this.update_abs_path_and_refresh(new_path, cx);
                         }
                     }
-                    cx.notify();
                 })
                 .ok();
             }
@@ -3425,6 +3424,7 @@ impl BackgroundScannerState {
     }
 
     fn remove_path(&mut self, path: &Path) {
+        log::info!("background scanner removing path {path:?}");
         let mut new_entries;
         let removed_entries;
         {
@@ -3480,7 +3480,14 @@ impl BackgroundScannerState {
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
         self.snapshot.repositories.retain(&(), |repository| {
-            !repository.work_directory.path_key().0.starts_with(path)
+            let retain = !repository.work_directory.path_key().0.starts_with(path);
+            if !retain {
+                log::info!(
+                    "dropping repository entry for {:?}",
+                    repository.work_directory
+                );
+            }
+            retain
         });
 
         #[cfg(test)]
@@ -3535,12 +3542,14 @@ impl BackgroundScannerState {
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
+        log::info!("insert git reposiutory for {dot_git_path:?}");
         let work_dir_id = self
             .snapshot
             .entry_for_path(work_directory.path_key().0)
             .map(|entry| entry.id)?;
 
         if self.snapshot.git_repositories.get(&work_dir_id).is_some() {
+            log::info!("existing git repository for {work_directory:?}");
             return None;
         }
 
@@ -3548,6 +3557,7 @@ impl BackgroundScannerState {
 
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
+        log::info!("opened git repo for {dot_git_abs_path:?}");
 
         let repository_path = repository.path();
         watcher.add(&repository_path).log_err()?;
@@ -3606,6 +3616,7 @@ impl BackgroundScannerState {
             .git_repositories
             .insert(work_dir_id, local_repository.clone());
 
+        log::info!("inserting new local git repository");
         Some(local_repository)
     }
 }
@@ -3949,10 +3960,6 @@ pub struct StatusEntry {
 }
 
 impl StatusEntry {
-    pub fn is_staged(&self) -> Option<bool> {
-        self.status.is_staged()
-    }
-
     fn to_proto(&self) -> proto::StatusEntry {
         let simple_status = match self.status {
             FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
@@ -4353,7 +4360,7 @@ impl BackgroundScanner {
             }
 
             let ancestor_dot_git = ancestor.join(*DOT_GIT);
-            log::debug!("considering ancestor: {ancestor_dot_git:?}");
+            log::info!("considering ancestor: {ancestor_dot_git:?}");
             // Check whether the directory or file called `.git` exists (in the
             // case of worktrees it's a file.)
             if self
@@ -4362,7 +4369,6 @@ impl BackgroundScanner {
                 .await
                 .is_ok_and(|metadata| metadata.is_some())
             {
-                log::debug!(".git path exists");
                 if index != 0 {
                     // We canonicalize, since the FS events use the canonicalized path.
                     if let Some(ancestor_dot_git) =
@@ -4373,7 +4379,7 @@ impl BackgroundScanner {
                             .strip_prefix(ancestor)
                             .unwrap()
                             .into();
-                        log::debug!(
+                        log::info!(
                             "inserting parent git repo for this worktree: {location_in_repo:?}"
                         );
                         // We associate the external git repo with our root folder and
@@ -4396,12 +4402,10 @@ impl BackgroundScanner {
 
                 // Reached root of git repository.
                 break;
-            } else {
-                log::debug!(".git path doesn't exist");
             }
         }
 
-        log::debug!("containing git repository: {containing_git_repository:?}");
+        log::info!("containing git repository: {containing_git_repository:?}");
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -4826,7 +4830,7 @@ impl BackgroundScanner {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
             }
-            log::debug!("scanning directory {:?}", job.path);
+            log::info!("scanning directory {:?}", job.path);
             root_abs_path = snapshot.abs_path().clone();
             root_char_bag = snapshot.root_char_bag;
         }
@@ -5408,7 +5412,7 @@ impl BackgroundScanner {
     }
 
     fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Task<()> {
-        log::debug!("reloading repositories: {dot_git_paths:?}");
+        log::info!("reloading repositories: {dot_git_paths:?}");
 
         let mut status_updates = Vec::new();
         {
@@ -5889,14 +5893,21 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_some())
-                .await;
+            let mut events = cx.events(&tree);
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_some()) {
+                    break;
+                }
+            }
 
             fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
-            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_none())
-                .await;
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_none()) {
+                    break;
+                }
+            }
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
@@ -5950,19 +5961,22 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| {
-                scan_id_increased(tree, &mut git_dir_scan_id)
-            })
-            .await;
+            let mut events = cx.events(&tree);
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
+                    break;
+                }
+            }
 
             fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
 
-            cx.condition(&tree, |tree, _| {
-                scan_id_increased(tree, &mut git_dir_scan_id)
-            })
-            .await;
+            while events.next().await.is_some() {
+                if tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
+                    break;
+                }
+            }
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;

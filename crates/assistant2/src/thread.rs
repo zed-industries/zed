@@ -73,6 +73,7 @@ pub struct Thread {
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
+    project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
     script_session: Entity<ScriptSession>,
@@ -85,7 +86,7 @@ impl Thread {
         tools: Arc<ToolWorkingSet>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let script_session = cx.new(|cx| ScriptSession::new(project, cx));
+        let script_session = cx.new(|cx| ScriptSession::new(project.clone(), cx));
         let script_session_subscription = cx.subscribe(&script_session, Self::handle_script_event);
 
         Self {
@@ -99,6 +100,7 @@ impl Thread {
             context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
+            project,
             tools,
             tool_use: ToolUseState::new(),
             script_session,
@@ -121,7 +123,7 @@ impl Thread {
                 .unwrap_or(0),
         );
         let tool_use = ToolUseState::from_saved_messages(&saved.messages);
-        let script_session = cx.new(|cx| ScriptSession::new(project, cx));
+        let script_session = cx.new(|cx| ScriptSession::new(project.clone(), cx));
         let script_session_subscription = cx.subscribe(&script_session, Self::handle_script_event);
 
         Self {
@@ -143,6 +145,7 @@ impl Thread {
             context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
+            project,
             tools,
             tool_use,
             script_session,
@@ -209,6 +212,15 @@ impl Thread {
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.tool_use.pending_tool_uses()
+    }
+
+    /// Returns whether all of the tool uses have finished running.
+    pub fn all_tools_finished(&self) -> bool {
+        // If the only pending tool uses left are the ones with errors, then that means that we've finished running all
+        // of the pending tools.
+        self.pending_tool_uses()
+            .into_iter()
+            .all(|tool_use| tool_use.status.is_error())
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
@@ -607,6 +619,23 @@ impl Thread {
         });
     }
 
+    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) {
+        let pending_tool_uses = self
+            .pending_tool_uses()
+            .into_iter()
+            .filter(|tool_use| tool_use.status.is_idle())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for tool_use in pending_tool_uses {
+            if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                let task = tool.run(tool_use.input, self.project.clone(), cx);
+
+                self.insert_tool_output(tool_use.id.clone(), task, cx);
+            }
+        }
+    }
+
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -631,6 +660,23 @@ impl Thread {
 
         self.tool_use
             .run_pending_tool(tool_use_id, insert_output_task);
+    }
+
+    pub fn send_tool_results_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
+    ) {
+        // Insert a user message to contain the tool results.
+        self.insert_user_message(
+            // TODO: Sending up a user message without any content results in the model sending back
+            // responses that also don't have any content. We currently don't handle this case well,
+            // so for now we provide some text to keep the model on track.
+            "Here are the tool results.",
+            Vec::new(),
+            cx,
+        );
+        self.send_to_model(model, RequestKind::Chat, true, cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.

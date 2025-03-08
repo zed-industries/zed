@@ -659,9 +659,9 @@ dependencies = [
  "derive_more",
  "gpui",
  "parking_lot",
+ "project",
  "serde",
  "serde_json",
- "workspace",
 ]
 
 [[package]]
@@ -676,7 +676,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "workspace",
 ]
 
 [[package]]
@@ -3048,6 +3047,7 @@ name = "component_preview"
 version = "0.1.0"
 dependencies = [
  "client",
+ "collections",
  "component",
  "gpui",
  "languages",
@@ -3140,7 +3140,6 @@ dependencies = [
  "smol",
  "url",
  "util",
- "workspace",
 ]
 
 [[package]]
@@ -4537,6 +4536,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "convert_case 0.8.0",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -11929,7 +11929,6 @@ dependencies = [
  "serde_json",
  "settings",
  "util",
- "workspace",
 ]
 
 [[package]]
@@ -17067,13 +17066,6 @@ dependencies = [
 [[package]]
 name = "zed_glsl"
 version = "0.1.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_haskell"
-version = "0.1.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

@@ -10,9 +10,9 @@ use gpui::{
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
-    LanguageServerId, ToOffset,
+    ToOffset,
 };
-use project::{search::SearchQuery, Completion};
+use project::{search::SearchQuery, Completion, CompletionSource};
 use settings::Settings;
 use std::{
     cell::RefCell,
@@ -309,11 +309,9 @@ impl MessageEditor {
                     old_range: range.clone(),
                     new_text,
                     label,
-                    documentation: None,
-                    server_id: LanguageServerId(0), // TODO: Make this optional or something?
-                    lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
-                    resolved: true,
+                    documentation: None,
+                    source: CompletionSource::Custom,
                 }
             })
             .collect()

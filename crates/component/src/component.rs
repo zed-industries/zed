@@ -78,6 +78,7 @@ pub struct ComponentId(pub &'static str);
 
 #[derive(Clone)]
 pub struct ComponentMetadata {
+    id: ComponentId,
     name: SharedString,
     scope: Option<ComponentScope>,
     description: Option<SharedString>,
@@ -85,6 +86,10 @@ pub struct ComponentMetadata {
 }
 
 impl ComponentMetadata {
+    pub fn id(&self) -> ComponentId {
+        self.id.clone()
+    }
+
     pub fn name(&self) -> SharedString {
         self.name.clone()
     }
@@ -156,9 +161,11 @@ pub fn components() -> AllComponents {
     for (ref scope, name, description) in &data.components {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
+        let id = ComponentId(name);
         all_components.insert(
-            ComponentId(name),
+            id.clone(),
             ComponentMetadata {
+                id,
                 name: component_name,
                 scope: scope.clone(),
                 description: description.map(Into::into),

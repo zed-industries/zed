@@ -2,9 +2,9 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    ActionVariant, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
     HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, MarkupContent, PrepareRenameResponse,
+    InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -2011,9 +2011,11 @@ impl LspCommand for GetCompletions {
                 CoreCompletion {
                     old_range,
                     new_text,
-                    server_id,
-                    lsp_completion,
-                    resolved: false,
+                    source: CompletionSource::Lsp {
+                        server_id,
+                        lsp_completion: Box::new(lsp_completion),
+                        resolved: false,
+                    },
                 }
             })
             .collect())
@@ -2256,11 +2258,11 @@ impl LspCommand for GetCodeActions {
                                 return None;
                             }
                         }
-                        ActionVariant::Action(Box::new(lsp_action))
+                        LspAction::Action(Box::new(lsp_action))
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
                         if available_commands.contains(&command.command) {
-                            ActionVariant::Command(command)
+                            LspAction::Command(command)
                         } else {
                             return None;
                         }
