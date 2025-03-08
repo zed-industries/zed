@@ -7,7 +7,7 @@
 /// minimalstic shell which Lua popen() commands can execute in.
 use mlua::{Error, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ShellCmd {
     command: String,
     args: Vec<String>,
@@ -15,7 +15,7 @@ pub struct ShellCmd {
     stderr_redirect: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Operator {
     /// The `|` shell operator
     Pipe,
@@ -49,176 +49,495 @@ impl ShellCmd {
         }
 
         // Split the string into individual commands based on connectors
-        let mut command_strings = Vec::new();
-        let mut connector_types = Vec::new();
-        let mut current_cmd = String::new();
-        let mut current_args = Vec::new();
+        let mut first_cmd = None;
+        let mut other_cmds = Vec::new();
+        let mut current_cmd = ShellCmd::default();
+        let mut pending_op = Operator::Semicolon;
 
-        // Create a lexer for the shell string
+        macro_rules! finish_cmd {
+            ($new_pending_op:expr) => {
+                if current_cmd.command.is_empty() {
+                    if current_cmd.stdout_redirect.is_some()
+                        || current_cmd.stderr_redirect.is_some()
+                    {
+                        // This means we finished a command that was all redirects
+                        // and no command, e.g. something like:
+                        // `; > foo.txt 2> bar.txt ;`
+                        return Err(Error::RuntimeError(
+                            "Invalid operator sequence in this shell".to_string(),
+                        ));
+                    }
+                } else {
+                    let cmd = std::mem::take(&mut current_cmd);
+
+                    if first_cmd.is_none() {
+                        first_cmd = Some(cmd);
+                    } else {
+                        other_cmds.push((pending_op, cmd));
+                    }
+
+                    pending_op = $new_pending_op;
+                }
+            };
+        }
+
         let mut lexer = shlex::Shlex::new(string);
 
         // Process tokens to split commands
         while let Some(token) = lexer.next() {
-            match token.as_str() {
+            match dbg!(token.as_str()) {
                 "|" => {
-                    if !current_cmd.is_empty() {
-                        let joined_cmd = if current_args.is_empty() {
-                            current_cmd.clone()
-                        } else {
-                            format!("{} {}", current_cmd, current_args.join(" "))
-                        };
-                        command_strings.push(joined_cmd);
-                        connector_types.push(Operator::Pipe);
-                        current_cmd = String::new();
-                        current_args = Vec::new();
-                    }
-                }
-                "&" => {
-                    // Check if next token is also "&" (for "&&" operator)
-                    if let Some(next_token) = lexer.next() {
-                        if next_token == "&" {
-                            if !current_cmd.is_empty() {
-                                let joined_cmd = if current_args.is_empty() {
-                                    current_cmd.clone()
-                                } else {
-                                    format!("{} {}", current_cmd, current_args.join(" "))
-                                };
-                                command_strings.push(joined_cmd);
-                                connector_types.push(Operator::And);
-                                current_cmd = String::new();
-                                current_args = Vec::new();
-                            }
-                        } else {
-                            // It was a single &, not &&
-                            if current_cmd.is_empty() {
-                                current_cmd = token;
-                            } else {
-                                current_args.push(token);
-                            }
-                            // Don't forget to process the next_token we peeked
-                            if current_cmd.is_empty() {
-                                current_cmd = next_token;
-                            } else {
-                                current_args.push(next_token);
-                            }
-                        }
-                    } else {
-                        // Just a single & at the end
-                        if current_cmd.is_empty() {
-                            current_cmd = token;
-                        } else {
-                            current_args.push(token);
-                        }
-                    }
+                    finish_cmd!(Operator::Pipe);
                 }
                 ";" => {
-                    if !current_cmd.is_empty() {
-                        let joined_cmd = if current_args.is_empty() {
-                            current_cmd.clone()
-                        } else {
-                            format!("{} {}", current_cmd, current_args.join(" "))
-                        };
-                        command_strings.push(joined_cmd);
-                        connector_types.push(Operator::Semicolon);
-                        current_cmd = String::new();
-                        current_args = Vec::new();
-                    }
+                    finish_cmd!(Operator::Semicolon);
                 }
-                _ => {
-                    if current_cmd.is_empty() {
-                        current_cmd = token;
-                    } else {
-                        current_args.push(token);
-                    }
+                "&&" => {
+                    finish_cmd!(Operator::And);
                 }
-            }
-        }
-
-        // Add the last command if there is one
-        if !current_cmd.is_empty() {
-            let joined_cmd = if current_args.is_empty() {
-                current_cmd.clone()
-            } else {
-                format!("{} {}", current_cmd, current_args.join(" "))
-            };
-            command_strings.push(joined_cmd);
-        }
-
-        if command_strings.is_empty() {
-            return Err(Error::RuntimeError(
-                "Missing command to run in shell".to_string(),
-            ));
-        }
-
-        // Parse the first command to return separately
-        let first_cmd = Self::parse_single_command(&command_strings[0])?;
-
-        // Parse the remaining commands
-        let mut connected_cmds = Vec::new();
-        for i in 1..command_strings.len() {
-            let cmd = Self::parse_single_command(&command_strings[i])?;
-            connected_cmds.push((connector_types[i - 1].clone(), cmd));
-        }
-
-        Ok((first_cmd, connected_cmds))
-    }
-
-    // Helper method to parse a single command
-    fn parse_single_command(cmd_str: &str) -> Result<Self> {
-        // Use shlex to split the command line into tokens
-        let tokens = shlex::split(cmd_str).ok_or_else(|| {
-            Error::RuntimeError(format!("Failed to parse shell command: {}", cmd_str))
-        })?;
-
-        // The first token is the command
-        let mut tokens_iter = tokens.into_iter();
-        let Some(command) = tokens_iter.next() else {
-            return Err(Error::RuntimeError(
-                "Missing command to run in shell".to_string(),
-            ));
-        };
-
-        let mut args = Vec::new();
-        let mut stdout_redirect = None;
-        let mut stderr_redirect = None;
-
-        // Process the remaining tokens
-        while let Some(token) = tokens_iter.next() {
-            match token.as_str() {
+                "&" => {
+                    return Err(Error::RuntimeError(
+                        "Background processes (&) are not supported in this shell".to_string(),
+                    ));
+                }
                 ">" | "1>" => {
                     // stdout redirection
-                    let target = tokens_iter.next().ok_or_else(|| {
+                    let target = lexer.next().ok_or_else(|| {
                         Error::RuntimeError("Missing redirection target in shell".to_string())
                     })?;
-                    stdout_redirect = Some(target);
+                    current_cmd.stdout_redirect = Some(target);
                 }
                 "2>" => {
                     // stderr redirection
-                    let target = tokens_iter.next().ok_or_else(|| {
+                    let target = lexer.next().ok_or_else(|| {
                         Error::RuntimeError("Missing redirection target in shell".to_string())
                     })?;
-                    stderr_redirect = Some(target);
+                    current_cmd.stderr_redirect = Some(target);
                 }
                 "&>" | ">&" => {
                     // both stdout and stderr redirection
-                    let target = tokens_iter.next().ok_or_else(|| {
+                    let target = lexer.next().ok_or_else(|| {
                         Error::RuntimeError("Missing redirection target in shell".to_string())
                     })?;
-                    stdout_redirect = Some(target.clone());
-                    stderr_redirect = Some(target);
+                    current_cmd.stdout_redirect = Some(target.clone());
+                    current_cmd.stderr_redirect = Some(target);
                 }
                 _ => {
-                    // Regular argument
-                    args.push(token);
+                    let original_token_len = token.len();
+                    let mut token = token;
+
+                    // The lexer keeps trailing semicolons in tokens.
+                    while token.ends_with(';') {
+                        token.pop();
+                    }
+
+                    let had_semicolon = token.len() != original_token_len;
+
+                    if current_cmd.command.is_empty() {
+                        current_cmd.command = token;
+                    } else {
+                        current_cmd.args.push(token);
+                    }
+
+                    if had_semicolon {
+                        finish_cmd!(Operator::Semicolon);
+                    }
                 }
             }
         }
 
-        Ok(ShellCmd {
-            command,
-            args,
-            stdout_redirect,
-            stderr_redirect,
-        })
+        // We ran out of tokens; finish the last command we were working on.
+        finish_cmd!(Operator::Semicolon);
+
+        // This silences a warning about pending_op being assigned in the
+        // finish_cmd! macro and then never read again, without silencing
+        // it in all macro invocations.
+        drop(pending_op);
+
+        if let Some(cmd) = first_cmd {
+            Ok((cmd, other_cmds))
+        } else {
+            Err(Error::RuntimeError(
+                "Missing command to run in shell".to_string(),
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper function to run a test with and without spaces around operators
+    #[track_caller]
+    fn test_with_and_without_spaces(
+        cmd_with_spaces: &str,
+        cmd_without_spaces: &str,
+        expected: (ShellCmd, Vec<(Operator, ShellCmd)>),
+    ) {
+        let result_with_spaces = ShellCmd::parse_shell_str(cmd_with_spaces)
+            .expect("parsing failed for {cmd_with_spaces:?}");
+        let result_without_spaces = ShellCmd::parse_shell_str(cmd_without_spaces)
+            .expect("parsing failed for {cmd_without_spaces:?}");
+
+        assert_eq!(expected, result_with_spaces);
+        assert_eq!(expected, result_without_spaces);
+    }
+
+    #[test]
+    fn test_simple_command() {
+        // Basic command with no args or operators
+        test_with_and_without_spaces(
+            "ls",
+            "ls",
+            (
+                ShellCmd {
+                    command: "ls".to_string(),
+                    args: vec![],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_command_with_args() {
+        // Command with arguments
+        test_with_and_without_spaces(
+            "ls -la /home",
+            "ls -la /home",
+            (
+                ShellCmd {
+                    command: "ls".to_string(),
+                    args: vec!["-la".to_string(), "/home".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_simple_pipe() {
+        // Test pipe operator
+        test_with_and_without_spaces(
+            "ls -l | grep txt",
+            "ls -l|grep txt",
+            (
+                ShellCmd {
+                    command: "ls".to_string(),
+                    args: vec!["-l".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![(
+                    Operator::Pipe,
+                    ShellCmd {
+                        command: "grep".to_string(),
+                        args: vec!["txt".to_string()],
+                        stdout_redirect: None,
+                        stderr_redirect: None,
+                    },
+                )],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_simple_and() {
+        // Test && operator
+        test_with_and_without_spaces(
+            "mkdir test && cd test",
+            "mkdir test&&cd test",
+            (
+                ShellCmd {
+                    command: "mkdir".to_string(),
+                    args: vec!["test".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![(
+                    Operator::And,
+                    ShellCmd {
+                        command: "cd".to_string(),
+                        args: vec!["test".to_string()],
+                        stdout_redirect: None,
+                        stderr_redirect: None,
+                    },
+                )],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_simple_semicolon() {
+        // Test ; operator
+        test_with_and_without_spaces(
+            "echo hello ; echo world",
+            "echo hello;echo world",
+            (
+                ShellCmd {
+                    command: "echo".to_string(),
+                    args: vec!["hello".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![(
+                    Operator::Semicolon,
+                    ShellCmd {
+                        command: "echo".to_string(),
+                        args: vec!["world".to_string()],
+                        stdout_redirect: None,
+                        stderr_redirect: None,
+                    },
+                )],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_stdout_redirection() {
+        // Test stdout redirection
+        test_with_and_without_spaces(
+            "echo hello > output.txt",
+            "echo hello>output.txt",
+            (
+                ShellCmd {
+                    command: "echo".to_string(),
+                    args: vec!["hello".to_string()],
+                    stdout_redirect: Some("output.txt".to_string()),
+                    stderr_redirect: None,
+                },
+                vec![],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_stderr_redirection() {
+        // Test stderr redirection
+        test_with_and_without_spaces(
+            "find / -name test 2> errors.log",
+            "find / -name test 2>errors.log",
+            (
+                ShellCmd {
+                    command: "find".to_string(),
+                    args: vec!["/".to_string(), "-name".to_string(), "test".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: Some("errors.log".to_string()),
+                },
+                vec![],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_both_redirections() {
+        // Test both stdout and stderr redirection
+        test_with_and_without_spaces(
+            "make &> build.log",
+            "make&>build.log",
+            (
+                ShellCmd {
+                    command: "make".to_string(),
+                    args: vec![],
+                    stdout_redirect: Some("build.log".to_string()),
+                    stderr_redirect: Some("build.log".to_string()),
+                },
+                vec![],
+            ),
+        );
+
+        // Test alternative syntax
+        test_with_and_without_spaces(
+            "make >& build.log",
+            "make>&build.log",
+            (
+                ShellCmd {
+                    command: "make".to_string(),
+                    args: vec![],
+                    stdout_redirect: Some("build.log".to_string()),
+                    stderr_redirect: Some("build.log".to_string()),
+                },
+                vec![],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_multiple_operators() {
+        // Test multiple operators in a single command
+        test_with_and_without_spaces(
+            "find . -name \"*.rs\" | grep impl && echo \"Found implementations\" ; echo \"Done\"",
+            "find . -name \"*.rs\"|grep impl&&echo \"Found implementations\";echo \"Done\"",
+            (
+                ShellCmd {
+                    command: "find".to_string(),
+                    args: vec![".".to_string(), "-name".to_string(), "*.rs".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![
+                    (
+                        Operator::Pipe,
+                        ShellCmd {
+                            command: "grep".to_string(),
+                            args: vec!["impl".to_string()],
+                            stdout_redirect: None,
+                            stderr_redirect: None,
+                        },
+                    ),
+                    (
+                        Operator::And,
+                        ShellCmd {
+                            command: "echo".to_string(),
+                            args: vec!["Found implementations".to_string()],
+                            stdout_redirect: None,
+                            stderr_redirect: None,
+                        },
+                    ),
+                    (
+                        Operator::Semicolon,
+                        ShellCmd {
+                            command: "echo".to_string(),
+                            args: vec!["Done".to_string()],
+                            stdout_redirect: None,
+                            stderr_redirect: None,
+                        },
+                    ),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_pipe_with_redirections() {
+        // Test pipe with redirections
+        test_with_and_without_spaces(
+            "cat file.txt | grep error > results.txt 2> errors.log",
+            "cat file.txt|grep error>results.txt 2>errors.log",
+            (
+                ShellCmd {
+                    command: "cat".to_string(),
+                    args: vec!["file.txt".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![(
+                    Operator::Pipe,
+                    ShellCmd {
+                        command: "grep".to_string(),
+                        args: vec!["error".to_string()],
+                        stdout_redirect: Some("results.txt".to_string()),
+                        stderr_redirect: Some("errors.log".to_string()),
+                    },
+                )],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_quoted_arguments() {
+        // Test quoted arguments
+        test_with_and_without_spaces(
+            "echo \"hello world\" | grep \"o w\"",
+            "echo \"hello world\"|grep \"o w\"",
+            (
+                ShellCmd {
+                    command: "echo".to_string(),
+                    args: vec!["hello world".to_string()],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![(
+                    Operator::Pipe,
+                    ShellCmd {
+                        command: "grep".to_string(),
+                        args: vec!["o w".to_string()],
+                        stdout_redirect: None,
+                        stderr_redirect: None,
+                    },
+                )],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_unsupported_features() {
+        // Test unsupported shell features
+        let result = ShellCmd::parse_shell_str("echo $HOME");
+        assert!(result.is_err());
+
+        let result = ShellCmd::parse_shell_str("echo `date`");
+        assert!(result.is_err());
+
+        let result = ShellCmd::parse_shell_str("echo $(date)");
+        assert!(result.is_err());
+
+        let result = ShellCmd::parse_shell_str("for i in {1..5}; do echo $i; done");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_complex_command() {
+        test_with_and_without_spaces(
+            "find /path/to/dir -type f -name \"*.txt\" -exec grep \"pattern with spaces\";",
+            "find /path/to/dir -type f -name \"*.txt\" -exec grep \"pattern with spaces\";",
+            (
+                ShellCmd {
+                    command: "find".to_string(),
+                    args: vec![
+                        "/path/to/dir".to_string(),
+                        "-type".to_string(),
+                        "f".to_string(),
+                        "-name".to_string(),
+                        "*.txt".to_string(),
+                        "-exec".to_string(),
+                        "grep".to_string(),
+                        "pattern with spaces".to_string(),
+                    ],
+                    stdout_redirect: None,
+                    stderr_redirect: None,
+                },
+                vec![],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_empty_command() {
+        // Test empty command
+        let result = ShellCmd::parse_shell_str("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_missing_redirection_target() {
+        // Test missing redirection target
+        let result = ShellCmd::parse_shell_str("echo hello >");
+        assert!(result.is_err());
+
+        let result = ShellCmd::parse_shell_str("ls 2>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ampersand_as_argument() {
+        // Test & as a background operator is not allowed
+        let result_with_spaces = ShellCmd::parse_shell_str("grep & file.txt");
+        assert!(result_with_spaces.is_err());
+
+        let result_without_spaces = ShellCmd::parse_shell_str("grep&file.txt");
+        assert!(result_without_spaces.is_err());
+
+        // Verify the error message mentions background processes
+        if let Err(Error::RuntimeError(msg)) = ShellCmd::parse_shell_str("grep & file.txt") {
+            assert!(msg.contains("Background processes"));
+        } else {
+            panic!("Expected RuntimeError about background processes");
+        }
     }
 }
