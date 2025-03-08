@@ -5,14 +5,23 @@
 /// parse the shell command ourselves and translate it into a sequence of
 /// commands in our normal sandbox. Essentially, this is an extremely
 /// minimalstic shell which Lua popen() commands can execute in.
+///
+/// Our shell supports:
+/// - Basic commands and args
+/// - The operators `|`, `&&`, `;`, `>`, `1>`, `2>`, `&>`, `>&`
+///
+/// The operators currently have to have whitespace around them because the
+/// `shlex` crate we use to tokenize the strings does not treat operators
+/// as word boundaries, even though shells do. Fortunately, LLMs consistently
+/// generate spaces around these operators anyway.
 use mlua::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ShellCmd {
-    command: String,
-    args: Vec<String>,
-    stdout_redirect: Option<String>,
-    stderr_redirect: Option<String>,
+    pub command: String,
+    pub args: Vec<String>,
+    pub stdout_redirect: Option<String>,
+    pub stderr_redirect: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

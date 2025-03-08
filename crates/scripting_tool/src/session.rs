@@ -11,7 +11,9 @@ use project::{search::SearchQuery, Fs, Project};
 use regex::Regex;
 use std::{
     cell::RefCell,
+    fs::File,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::Arc,
 };
 use util::{paths::PathMatcher, ResultExt};
@@ -145,11 +147,75 @@ impl Session {
         shell_str: mlua::String,
         allowed_commands: &mut HashMap<String, bool>,
     ) -> mlua::Result<(Option<Table>, String)> {
-        let cmds = ShellCmd::parse_shell_str(shell_str.to_str()?);
-        todo!()
-        // if cmd == "find" {
-        //     let todo = todo!("Implement find wrapper in terms of search. Be careful, as some of the args may be like pipes to grep and such.");
-        // }
+        let (first_cmd, other_cmds) = ShellCmd::parse_shell_str(shell_str.to_str()?)?;
+
+        // Build up all the cmds, and then execute them only if they are approved.
+        let mut cmds = Vec::with_capacity(1 + other_cmds.len());
+        let mut current_cmd = first_cmd;
+        let mut cmd_iter = other_cmds.into_iter().rev();
+
+        loop {
+            let mut cmd = Command::new(&current_cmd.command).args(&current_cmd.args);
+
+            if let Some(stderr_redirect) = current_cmd.stderr_redirect {
+                if stderr_redirect == "/dev/null" {
+                    cmd.stderr(Stdio::null());
+                } else {
+                    let redirect_path = Path::new(&stderr_redirect);
+
+                    let todo = (); // TODO verify that the redirect path is root-safe
+
+                    // Create a file for the stderr to be redirected to
+                    let file = match File::create(redirect_path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "Failed to open stderr redirect file {}: {}",
+                                stderr_redirect, e
+                            )))
+                        }
+                    };
+                    cmd.stderr(file);
+                }
+            }
+
+            if let Some(stdout_redirect) = current_cmd.stdout_redirect {
+                if stdout_redirect == "/dev/null" {
+                    cmd.stdout(Stdio::null());
+                } else {
+                    let redirect_path = Path::new(&stdout_redirect);
+
+                    let todo = (); // TODO verify that the redirect path is root-safe
+
+                    // Create a file for the stdout to be redirected to
+                    let file = match File::create(redirect_path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "Failed to open stdout redirect file {}: {}",
+                                stdout_redirect, e
+                            )))
+                        }
+                    };
+                    cmd.stdout(file);
+                }
+            }
+
+            let todo = (); // TODO if there's a pipe, then we actually need to spawn the other processes first?!
+            let todo = (); // TODO semicolon is trivial, there's no connection.
+            let todo = (); // TODO && is also pretty trivial, we just run it and then only run the next one if it succeeded.
+            let todo = (); // TODO need to actually resolve precedence of these
+
+            cmds.push(current_cmd);
+        }
+
+        if other_cmds.is_empty() {
+            run_cmd(first_cmd)
+        } else {
+            let mut prev_cmd = first_cmd;
+
+            for (operator, cmd) in other_cmds {}
+        }
 
         // let cmd_bytes = cmd.as_bytes();
         // let cmd_is_path;
