@@ -73,7 +73,7 @@ impl State {
             let mut models: Vec<lmstudio::Model> = models
                 .into_iter()
                 .filter(|model| model.r#type != ModelType::Embeddings)
-                .map(|model| lmstudio::Model::new(&model.id, None, None))
+                .map(|model| lmstudio::Model::new(&model.id, None, model.max_context_length))
                 .collect();
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
