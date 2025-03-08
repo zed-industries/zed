@@ -374,9 +374,17 @@ impl Render for CommitModal {
             .on_action(cx.listener(Self::commit))
             .on_action(
                 cx.listener(|this, _: &zed_actions::git::Branch, window, cx| {
-                    this.branch_list.update(cx, |branch_list, cx| {
-                        branch_list.popover_handle.toggle(window, cx);
-                    })
+                    toggle_branch_picker(this, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &zed_actions::git::CheckoutBranch, window, cx| {
+                    toggle_branch_picker(this, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &zed_actions::git::Switch, window, cx| {
+                    toggle_branch_picker(this, window, cx);
                 }),
             )
             .elevation_3(cx)
@@ -414,4 +422,14 @@ impl Render for CommitModal {
                     .child(self.render_footer(window, cx)),
             )
     }
+}
+
+fn toggle_branch_picker(
+    this: &mut CommitModal,
+    window: &mut Window,
+    cx: &mut Context<'_, CommitModal>,
+) {
+    this.branch_list.update(cx, |branch_list, cx| {
+        branch_list.popover_handle.toggle(window, cx);
+    })
 }
