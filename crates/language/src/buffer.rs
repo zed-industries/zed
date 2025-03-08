@@ -1289,9 +1289,9 @@ impl Buffer {
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
+        self.was_changed();
         cx.emit(BufferEvent::Saved);
         cx.notify();
-        self.was_changed();
     }
 
     /// This method is called to signal that the buffer has been discarded.
@@ -1385,6 +1385,7 @@ impl Buffer {
 
         self.file = Some(new_file);
         if file_changed {
+            self.was_changed();
             self.non_text_state_update_count += 1;
             if was_dirty != self.is_dirty() {
                 cx.emit(BufferEvent::DirtyChanged);
@@ -2389,6 +2390,7 @@ impl Buffer {
         }
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
+        self.was_changed();
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
