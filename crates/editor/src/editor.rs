@@ -14338,6 +14338,10 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn show_line_numbers(&self) -> Option<bool> {
+        self.show_line_numbers
+    }
+
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
         self.show_git_diff_gutter = Some(show_git_diff_gutter);
         cx.notify();
