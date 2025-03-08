@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
     Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, UnderlineStyle, WeakEntity,
+    Task, TextStyleRefinement, UnderlineStyle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -15,7 +14,6 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
-use workspace::Workspace;
 
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
@@ -23,9 +21,7 @@ use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
-    workspace: WeakEntity<Workspace>,
     language_registry: Arc<LanguageRegistry>,
-    tools: Arc<ToolWorkingSet>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     save_thread_task: Option<Task<()>>,
@@ -46,9 +42,7 @@ impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
-        workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
-        tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -58,9 +52,7 @@ impl ActiveThread {
         ];
 
         let mut this = Self {
-            workspace,
             language_registry,
-            tools,
             thread_store,
             thread: thread.clone(),
             save_thread_task: None,
@@ -173,6 +165,8 @@ impl ActiveThread {
 
         text_style.refine(&TextStyleRefinement {
             font_family: Some(theme_settings.ui_font.family.clone()),
+            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(ui_font_size.into()),
             color: Some(cx.theme().colors().text),
             ..Default::default()
@@ -207,6 +201,8 @@ impl ActiveThread {
                 },
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                    font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
                     ..Default::default()
                 }),
@@ -214,6 +210,8 @@ impl ActiveThread {
             },
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 background_color: Some(colors.editor_foreground.opacity(0.1)),
                 ..Default::default()
@@ -294,46 +292,16 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::UsePendingTools => {
-                let pending_tool_uses = self
-                    .thread
-                    .read(cx)
-                    .pending_tool_uses()
-                    .into_iter()
-                    .filter(|tool_use| tool_use.status.is_idle())
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                for tool_use in pending_tool_uses {
-                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
-
-                        self.thread.update(cx, |thread, cx| {
-                            thread.insert_tool_output(tool_use.id.clone(), task, cx);
-                        });
-                    }
-                }
+                self.thread.update(cx, |thread, cx| {
+                    thread.use_pending_tools(cx);
+                });
             }
             ThreadEvent::ToolFinished { .. } => {
-                let all_tools_finished = self
-                    .thread
-                    .read(cx)
-                    .pending_tool_uses()
-                    .into_iter()
-                    .all(|tool_use| tool_use.status.is_error());
-                if all_tools_finished {
+                if self.thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         self.thread.update(cx, |thread, cx| {
-                            // Insert a user message to contain the tool results.
-                            thread.insert_user_message(
-                                // TODO: Sending up a user message without any content results in the model sending back
-                                // responses that also don't have any content. We currently don't handle this case well,
-                                // so for now we provide some text to keep the model on track.
-                                "Here are the tool results.",
-                                Vec::new(),
-                                cx,
-                            );
-                            thread.send_to_model(model, RequestKind::Chat, true, cx);
+                            thread.send_tool_results_to_model(model, cx);
                         });
                     }
                 }
@@ -645,7 +613,7 @@ impl ActiveThread {
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
-                    .rounded_md()
+                    .rounded_sm()
                     .child(message_content),
             ),
         };
@@ -674,7 +642,7 @@ impl ActiveThread {
                         .pr_2()
                         .bg(cx.theme().colors().editor_foreground.opacity(0.02))
                         .when(is_open, |element| element.border_b_1().rounded_t(px(6.)))
-                        .when(!is_open, |element| element.rounded(px(6.)))
+                        .when(!is_open, |element| element.rounded_md())
                         .border_color(cx.theme().colors().border)
                         .child(
                             h_flex()

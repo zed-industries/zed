@@ -500,7 +500,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .h_8()
                 .p_2()
                 .justify_between()
-                .rounded_b_md()
+                .rounded_b_sm()
                 .bg(cx.theme().colors().ghost_element_selected)
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
@@ -602,7 +602,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use util::path;
-    use workspace::CloseInactiveTabsAndPanes;
+    use workspace::{CloseInactiveTabsAndPanes, OpenOptions, OpenVisible};
 
     use crate::{modal::Spawn, tests::init_test};
 
@@ -653,7 +653,15 @@ mod tests {
 
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -819,7 +827,10 @@ mod tests {
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/dir/file_with.odd_extension")),
-                    true,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 )
@@ -846,7 +857,10 @@ mod tests {
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/dir/file_without_extension")),
-                    true,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 )
@@ -954,7 +968,15 @@ mod tests {
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a1.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a1.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -995,7 +1017,15 @@ mod tests {
 
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a2.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1018,7 +1048,15 @@ mod tests {
 
         let _rs_file = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/b.rs")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/b.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1033,7 +1071,15 @@ mod tests {
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a2.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();

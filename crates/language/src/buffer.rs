@@ -49,7 +49,7 @@ use std::{
     num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
-    str,
+    rc, str,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
     vec,
@@ -125,6 +125,7 @@ pub struct Buffer {
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
+    change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -401,17 +402,16 @@ pub enum AutoindentMode {
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
-        /// The original start column of each insertion, if it was
-        /// copied from elsewhere.
+        /// The original indentation column of the first line of each
+        /// insertion, if it has been copied.
         ///
-        /// Knowing this start column makes it possible to preserve the
-        /// relative indentation of every line in the insertion from
-        /// when it was copied.
+        /// Knowing this makes it possible to preserve the relative indentation
+        /// of every line in the insertion from when it was copied.
         ///
-        /// If the start column is `a`, and the first line of insertion
+        /// If the original indent column is `a`, and the first line of insertion
         /// is then auto-indented to column `b`, then every other line of
         /// the insertion will be auto-indented to column `b - a`
-        original_start_columns: Vec<u32>,
+        original_indent_columns: Vec<Option<u32>>,
     },
 }
 
@@ -979,6 +979,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
+            change_bits: Default::default(),
             _subscriptions: Vec::new(),
         }
     }
@@ -1253,6 +1254,7 @@ impl Buffer {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
+        self.was_changed();
         self.reparse(cx);
         cx.emit(BufferEvent::LanguageChanged);
     }
@@ -1287,6 +1289,7 @@ impl Buffer {
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
+        self.was_changed();
         cx.emit(BufferEvent::Saved);
         cx.notify();
     }
@@ -1382,6 +1385,7 @@ impl Buffer {
 
         self.file = Some(new_file);
         if file_changed {
+            self.was_changed();
             self.non_text_state_update_count += 1;
             if was_dirty != self.is_dirty() {
                 cx.emit(BufferEvent::DirtyChanged);
@@ -1959,6 +1963,23 @@ impl Buffer {
         self.text.subscribe()
     }
 
+    /// Adds a bit to the list of bits that are set when the buffer's text changes.
+    ///
+    /// This allows downstream code to check if the buffer's text has changed without
+    /// waiting for an effect cycle, which would be required if using eents.
+    pub fn record_changes(&mut self, bit: rc::Weak<Cell<bool>>) {
+        self.change_bits.push(bit);
+    }
+
+    fn was_changed(&mut self) {
+        self.change_bits.retain(|change_bit| {
+            change_bit.upgrade().map_or(false, |bit| {
+                bit.replace(true);
+                true
+            })
+        });
+    }
+
     /// Starts a transaction, if one is not already in-progress. When undoing or
     /// redoing edits, all of the edits performed within a transaction are undone
     /// or redone together.
@@ -2206,15 +2227,20 @@ impl Buffer {
 
                     let mut original_indent_column = None;
                     if let AutoindentMode::Block {
-                        original_start_columns,
+                        original_indent_columns,
                     } = &mode
                     {
                         original_indent_column = Some(
-                            original_start_columns.get(ix).copied().unwrap_or(0)
-                                + indent_size_for_text(
-                                    new_text[range_of_insertion_to_indent.clone()].chars(),
-                                )
-                                .len,
+                            original_indent_columns
+                                .get(ix)
+                                .copied()
+                                .flatten()
+                                .unwrap_or_else(|| {
+                                    indent_size_for_text(
+                                        new_text[range_of_insertion_to_indent.clone()].chars(),
+                                    )
+                                    .len
+                                }),
                         );
 
                         // Avoid auto-indenting the line after the edit.
@@ -2364,6 +2390,7 @@ impl Buffer {
         }
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
+        self.was_changed();
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
@@ -2498,7 +2525,8 @@ impl Buffer {
         }
     }
 
-    fn send_operation(&self, operation: Operation, is_local: bool, cx: &mut Context<Self>) {
+    fn send_operation(&mut self, operation: Operation, is_local: bool, cx: &mut Context<Self>) {
+        self.was_changed();
         cx.emit(BufferEvent::Operation {
             operation,
             is_local,

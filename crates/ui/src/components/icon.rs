@@ -128,6 +128,7 @@ pub enum IconName {
     AiBedrock,
     AiAnthropicHosted,
     AiDeepSeek,
+    AiEdit,
     AiGoogle,
     AiLmStudio,
     AiMistral,

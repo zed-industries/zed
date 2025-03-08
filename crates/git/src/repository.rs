@@ -219,6 +219,14 @@ pub trait GitRepository: Send + Sync {
 
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>>;
+
+    /// Run git diff
+    fn diff(&self, diff: DiffType) -> Result<String>;
+}
+
+pub enum DiffType {
+    HeadToIndex,
+    HeadToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -590,6 +598,28 @@ impl GitRepository for RealGitRepository {
         )
     }
 
+    fn diff(&self, diff: DiffType) -> Result<String> {
+        let working_directory = self.working_directory()?;
+        let args = match diff {
+            DiffType::HeadToIndex => Some("--staged"),
+            DiffType::HeadToWorktree => None,
+        };
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["diff"])
+            .args(args)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to run git diff:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
     fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
         let working_directory = self.working_directory()?;
 
@@ -675,7 +705,9 @@ impl GitRepository for RealGitRepository {
                 PushOptions::Force => "--force-with-lease",
             }))
             .arg(remote_name)
-            .arg(format!("{}:{}", branch_name, branch_name));
+            .arg(format!("{}:{}", branch_name, branch_name))
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
         let git_process = command.spawn()?;
 
         run_remote_command(ask_pass, git_process)
@@ -697,7 +729,9 @@ impl GitRepository for RealGitRepository {
             .current_dir(&working_directory)
             .args(["pull"])
             .arg(remote_name)
-            .arg(branch_name);
+            .arg(branch_name)
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
         let git_process = command.spawn()?;
 
         run_remote_command(ask_pass, git_process)
@@ -712,7 +746,9 @@ impl GitRepository for RealGitRepository {
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
-            .args(["fetch", "--all"]);
+            .args(["fetch", "--all"])
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
         let git_process = command.spawn()?;
 
         run_remote_command(ask_pass, git_process)
@@ -1065,6 +1101,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>> {
+        unimplemented!()
+    }
+
+    fn diff(&self, _diff: DiffType) -> Result<String> {
         unimplemented!()
     }
 }

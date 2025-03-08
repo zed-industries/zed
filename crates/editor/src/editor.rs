@@ -138,8 +138,9 @@ use multi_buffer::{
 use project::{
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
-    CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
+    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
+    TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -261,6 +262,7 @@ enum DisplayDiffHunk {
         display_row: DisplayRow,
     },
     Unfolded {
+        is_created_file: bool,
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
@@ -1012,8 +1014,8 @@ pub struct ClipboardSelection {
     pub len: usize,
     /// Whether this was a full-line selection.
     pub is_entire_line: bool,
-    /// The column where this selection originally started.
-    pub start_column: u32,
+    /// The indentation of the first line when this content was originally copied.
+    pub first_line_indent: u32,
 }
 
 #[derive(Debug)]
@@ -1249,11 +1251,6 @@ impl Editor {
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
             if let Some(project) = project.as_ref() {
-                if buffer.read(cx).is_singleton() {
-                    project_subscriptions.push(cx.observe_in(project, window, |_, _, _, cx| {
-                        cx.emit(EditorEvent::TitleChanged);
-                    }));
-                }
                 project_subscriptions.push(cx.subscribe_in(
                     project,
                     window,
@@ -1576,13 +1573,16 @@ impl Editor {
             }
         }
 
-        if let Some(extension) = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
-        {
-            key_context.set("extension", extension.to_string());
+        if let Some(singleton_buffer) = self.buffer.read(cx).as_singleton() {
+            if let Some(extension) = singleton_buffer
+                .read(cx)
+                .file()
+                .and_then(|file| file.path().extension()?.to_str())
+            {
+                key_context.set("extension", extension.to_string());
+            }
+        } else {
+            key_context.add("multibuffer");
         }
 
         if has_active_edit_prediction {
@@ -2354,7 +2354,7 @@ impl Editor {
     pub fn edit_with_block_indent<I, S, T>(
         &mut self,
         edits: I,
-        original_start_columns: Vec<u32>,
+        original_indent_columns: Vec<Option<u32>>,
         cx: &mut Context<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -2369,7 +2369,7 @@ impl Editor {
             buffer.edit(
                 edits,
                 Some(AutoindentMode::Block {
-                    original_start_columns,
+                    original_indent_columns,
                 }),
                 cx,
             )
@@ -3480,7 +3480,7 @@ impl Editor {
 
     pub fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
-            original_start_columns: Vec::new(),
+            original_indent_columns: Vec::new(),
         });
         self.insert_with_autoindent_mode(text, autoindent, window, cx);
     }
@@ -6550,7 +6550,7 @@ impl Editor {
             .pl_1()
             .pr(padding_right)
             .gap_1()
-            .rounded(px(6.))
+            .rounded_md()
             .border_1()
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
@@ -7895,6 +7895,9 @@ impl Editor {
         hunk: &MultiBufferDiffHunk,
         cx: &mut App,
     ) -> Option<()> {
+        if hunk.is_created_file() {
+            return None;
+        }
         let buffer = self.buffer.read(cx);
         let diff = buffer.diff_for(hunk.buffer_id)?;
         let buffer = buffer.buffer(hunk.buffer_id)?;
@@ -8704,7 +8707,9 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    start_column: selection.start.column,
+                    first_line_indent: buffer
+                        .indent_size_for_line(MultiBufferRow(selection.start.row))
+                        .len,
                 });
             }
         }
@@ -8783,7 +8788,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    start_column: start.column,
+                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
                 });
             }
         }
@@ -8813,8 +8818,8 @@ impl Editor {
                 let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
                     clipboard_selections.iter().all(|s| s.is_entire_line);
-                let first_selection_start_column =
-                    clipboard_selections.first().map(|s| s.start_column);
+                let first_selection_indent_column =
+                    clipboard_selections.first().map(|s| s.first_line_indent);
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
@@ -8829,21 +8834,21 @@ impl Editor {
 
                     let mut start_offset = 0;
                     let mut edits = Vec::new();
-                    let mut original_start_columns = Vec::new();
+                    let mut original_indent_columns = Vec::new();
                     for (ix, selection) in old_selections.iter().enumerate() {
                         let to_insert;
                         let entire_line;
-                        let original_start_column;
+                        let original_indent_column;
                         if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                             let end_offset = start_offset + clipboard_selection.len;
                             to_insert = &clipboard_text[start_offset..end_offset];
                             entire_line = clipboard_selection.is_entire_line;
                             start_offset = end_offset + 1;
-                            original_start_column = Some(clipboard_selection.start_column);
+                            original_indent_column = Some(clipboard_selection.first_line_indent);
                         } else {
                             to_insert = clipboard_text.as_str();
                             entire_line = all_selections_were_entire_line;
-                            original_start_column = first_selection_start_column
+                            original_indent_column = first_selection_indent_column
                         }
 
                         // If the corresponding selection was empty when this slice of the
@@ -8859,7 +8864,7 @@ impl Editor {
                         };
 
                         edits.push((range, to_insert));
-                        original_start_columns.extend(original_start_column);
+                        original_indent_columns.push(original_indent_column);
                     }
                     drop(snapshot);
 
@@ -8867,7 +8872,7 @@ impl Editor {
                         edits,
                         if auto_indent_on_paste {
                             Some(AutoindentMode::Block {
-                                original_start_columns,
+                                original_indent_columns,
                             })
                         } else {
                             None
@@ -9843,6 +9848,31 @@ impl Editor {
         })
     }
 
+    pub fn move_to_start_of_next_excerpt(
+        &mut self,
+        _: &MoveToStartOfNextExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::start_of_excerpt(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Next,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
     pub fn move_to_end_of_excerpt(
         &mut self,
         _: &MoveToEndOfExcerpt,
@@ -9861,6 +9891,31 @@ impl Editor {
                         map,
                         selection.head(),
                         workspace::searchable::Direction::Next,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn move_to_end_of_previous_excerpt(
+        &mut self,
+        _: &MoveToEndOfPreviousExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::end_of_excerpt(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Prev,
                     ),
                     SelectionGoal::None,
                 )
@@ -9889,6 +9944,27 @@ impl Editor {
         })
     }
 
+    pub fn select_to_start_of_next_excerpt(
+        &mut self,
+        _: &SelectToStartOfNextExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::start_of_excerpt(map, head, workspace::searchable::Direction::Next),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
     pub fn select_to_end_of_excerpt(
         &mut self,
         _: &SelectToEndOfExcerpt,
@@ -9904,6 +9980,27 @@ impl Editor {
             s.move_heads_with(|map, head, _| {
                 (
                     movement::end_of_excerpt(map, head, workspace::searchable::Direction::Next),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn select_to_end_of_previous_excerpt(
+        &mut self,
+        _: &SelectToEndOfPreviousExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::end_of_excerpt(map, head, workspace::searchable::Direction::Prev),
                     SelectionGoal::None,
                 )
             });
@@ -14881,14 +14978,14 @@ impl Editor {
         &self,
         window: &mut Window,
         cx: &mut App,
-    ) -> BTreeMap<DisplayRow, Background> {
+    ) -> BTreeMap<DisplayRow, LineHighlight> {
         let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
-                BTreeMap::<DisplayRow, Background>::new(),
+                BTreeMap::<DisplayRow, LineHighlight>::new(),
                 |mut unique_rows, highlight| {
                     let start = highlight.range.start.to_display_point(&snapshot);
                     let end = highlight.range.end.to_display_point(&snapshot);
@@ -15436,14 +15533,9 @@ impl Editor {
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
-            multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
-                cx.emit(EditorEvent::TitleChanged)
-            }
-            // multi_buffer::Event::DiffBaseChanged => {
-            //     self.scrollbar_marker_state.dirty = true;
-            //     cx.emit(EditorEvent::DiffBaseChanged);
-            //     cx.notify();
-            // }
+            multi_buffer::Event::FileHandleChanged
+            | multi_buffer::Event::Reloaded
+            | multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
@@ -16901,38 +16993,40 @@ fn snippet_completions(
                 Some(Completion {
                     old_range: range,
                     new_text: snippet.body.clone(),
-                    resolved: false,
+                    source: CompletionSource::Lsp {
+                        server_id: LanguageServerId(usize::MAX),
+                        resolved: true,
+                        lsp_completion: Box::new(lsp::CompletionItem {
+                            label: snippet.prefix.first().unwrap().clone(),
+                            kind: Some(CompletionItemKind::SNIPPET),
+                            label_details: snippet.description.as_ref().map(|description| {
+                                lsp::CompletionItemLabelDetails {
+                                    detail: Some(description.clone()),
+                                    description: None,
+                                }
+                            }),
+                            insert_text_format: Some(InsertTextFormat::SNIPPET),
+                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                lsp::InsertReplaceEdit {
+                                    new_text: snippet.body.clone(),
+                                    insert: lsp_range,
+                                    replace: lsp_range,
+                                },
+                            )),
+                            filter_text: Some(snippet.body.clone()),
+                            sort_text: Some(char::MAX.to_string()),
+                            ..lsp::CompletionItem::default()
+                        }),
+                    },
                     label: CodeLabel {
                         text: matching_prefix.clone(),
-                        runs: vec![],
+                        runs: Vec::new(),
                         filter_range: 0..matching_prefix.len(),
                     },
-                    server_id: LanguageServerId(usize::MAX),
                     documentation: snippet
                         .description
                         .clone()
                         .map(|description| CompletionDocumentation::SingleLine(description.into())),
-                    lsp_completion: lsp::CompletionItem {
-                        label: snippet.prefix.first().unwrap().clone(),
-                        kind: Some(CompletionItemKind::SNIPPET),
-                        label_details: snippet.description.as_ref().map(|description| {
-                            lsp::CompletionItemLabelDetails {
-                                detail: Some(description.clone()),
-                                description: None,
-                            }
-                        }),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                            lsp::InsertReplaceEdit {
-                                new_text: snippet.body.clone(),
-                                insert: lsp_range,
-                                replace: lsp_range,
-                            },
-                        )),
-                        filter_text: Some(snippet.body.clone()),
-                        sort_text: Some(char::MAX.to_string()),
-                        ..Default::default()
-                    },
                     confirm: None,
                 })
             })
@@ -17280,6 +17374,7 @@ impl EditorSnapshot {
                     if hunk_display_end.column() > 0 {
                         end_row.0 += 1;
                     }
+                    let is_created_file = hunk.is_created_file();
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range,
@@ -17289,6 +17384,7 @@ impl EditorSnapshot {
                             hunk.buffer_id,
                             hunk.buffer_range,
                         ),
+                        is_created_file,
                     }
                 };
 
@@ -18426,5 +18522,29 @@ impl Render for MissingEditPredictionKeybindingTooltip {
                         })),
                 )
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LineHighlight {
+    pub background: Background,
+    pub border: Option<gpui::Hsla>,
+}
+
+impl From<Hsla> for LineHighlight {
+    fn from(hsla: Hsla) -> Self {
+        Self {
+            background: hsla.into(),
+            border: None,
+        }
+    }
+}
+
+impl From<Background> for LineHighlight {
+    fn from(background: Background) -> Self {
+        Self {
+            background,
+            border: None,
+        }
     }
 }

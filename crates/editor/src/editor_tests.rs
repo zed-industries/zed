@@ -4931,6 +4931,34 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
             )
         );
     "});
+
+    // Copy an indented block, starting mid-line
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(),
+            somethin«g(
+                e,
+                f
+            )ˇ»
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    // Paste it on a line with a lower indent level
+    cx.update_editor(|e, window, cx| e.move_to_end(&Default::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+            something(
+                e,
+                f
+            )
+        );
+        g(
+            e,
+            f
+        )ˇ"});
 }
 
 #[gpui::test]
@@ -16383,6 +16411,199 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
     );
+}
+
+#[gpui::test]
+async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+            "keymaps/default-linux.json",
+            cx,
+        )
+        .unwrap();
+        cx.bind_keys(default_key_bindings);
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("a0\nb0\nc0\nd0\ne0\n", vec![Point::row_range(0..2)]),
+                ("a1\nb1\nc1\nd1\ne1\n", vec![Point::row_range(0..2)]),
+                ("a2\nb2\nc2\nd2\ne2\n", vec![Point::row_range(0..2)]),
+                ("a3\nb3\nc3\nd3\ne3\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        let mut editor = Editor::new(
+            EditorMode::Full,
+            multi_buffer.clone(),
+            None,
+            true,
+            window,
+            cx,
+        );
+
+        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        // fold all but the second buffer, so that we test navigating between two
+        // adjacent folded buffers, as well as folded buffers at the start and
+        // end the multibuffer
+        editor.fold_buffer(buffer_ids[0], cx);
+        editor.fold_buffer(buffer_ids[2], cx);
+        editor.fold_buffer(buffer_ids[3], cx);
+
+        editor
+    });
+    cx.simulate_resize(size(px(1000.), px(1000.)));
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇa1
+        b1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        ˇb1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        ˇ[EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    for _ in 0..5 {
+        cx.simulate_keystroke("down");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            a1
+            b1
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            ˇ[FOLDED]
+            "
+        });
+    }
+
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        ˇ[EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        ˇb1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇa1
+        b1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    for _ in 0..5 {
+        cx.simulate_keystroke("up");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            ˇ[FOLDED]
+            [EXCERPT]
+            a1
+            b1
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            [FOLDED]
+            "
+        });
+    }
 }
 
 #[gpui::test]

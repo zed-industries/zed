@@ -475,9 +475,7 @@
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
-      // "ctrl-alt-b": "editor::MoveToPreviousSubwordStart",
       "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
-      "ctrl-alt-f": "editor::MoveToNextSubwordEnd",
       "ctrl-alt-shift-left": "editor::SelectToPreviousSubwordStart",
       "ctrl-alt-shift-b": "editor::SelectToPreviousSubwordStart",
       "ctrl-alt-shift-right": "editor::SelectToNextSubwordEnd",
@@ -747,7 +745,8 @@
     "context": "GitCommit > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "ctrl-enter": "git::Commit"
+      "ctrl-enter": "git::Commit",
+      "alt-l": "git::GenerateCommitMessage"
     }
   },
   {
@@ -769,7 +768,8 @@
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
       "ctrl-enter": "git::Commit",
-      "alt-up": "git_panel::FocusChanges"
+      "alt-up": "git_panel::FocusChanges",
+      "alt-l": "git::GenerateCommitMessage"
     }
   },
   {

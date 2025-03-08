@@ -418,6 +418,8 @@ impl Telemetry {
 
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
+        // RUST_LOG=telemetry=trace to debug telemetry events
+        log::trace!(target: "telemetry", "{:?}", event);
 
         if !state.settings.metrics {
             return;
