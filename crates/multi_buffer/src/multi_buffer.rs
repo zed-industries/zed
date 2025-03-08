@@ -31,7 +31,7 @@ use smol::future::yield_now;
 use std::{
     any::type_name,
     borrow::Cow,
-    cell::{Ref, RefCell},
+    cell::{Cell, Ref, RefCell},
     cmp, fmt,
     future::Future,
     io,
@@ -39,6 +39,7 @@ use std::{
     mem,
     ops::{Range, RangeBounds, Sub},
     path::Path,
+    rc::Rc,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -76,6 +77,7 @@ pub struct MultiBuffer {
     history: History,
     title: Option<String>,
     capability: Capability,
+    buffer_changed_since_sync: Rc<Cell<bool>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -568,6 +570,7 @@ impl MultiBuffer {
             capability,
             title: None,
             buffers_by_path: Default::default(),
+            buffer_changed_since_sync: Default::default(),
             history: History {
                 next_transaction_id: clock::Lamport::default(),
                 undo_stack: Vec::new(),
@@ -587,6 +590,7 @@ impl MultiBuffer {
             subscriptions: Default::default(),
             singleton: false,
             capability,
+            buffer_changed_since_sync: Default::default(),
             history: History {
                 next_transaction_id: Default::default(),
                 undo_stack: Default::default(),
@@ -600,7 +604,11 @@ impl MultiBuffer {
 
     pub fn clone(&self, new_cx: &mut Context<Self>) -> Self {
         let mut buffers = HashMap::default();
+        let buffer_changed_since_sync = Rc::new(Cell::new(false));
         for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
+            buffer_state.buffer.update(new_cx, |buffer, _| {
+                buffer.record_changes(Rc::downgrade(&buffer_changed_since_sync));
+            });
             buffers.insert(
                 *buffer_id,
                 BufferState {
@@ -629,6 +637,7 @@ impl MultiBuffer {
             capability: self.capability,
             history: self.history.clone(),
             title: self.title.clone(),
+            buffer_changed_since_sync,
         }
     }
 
@@ -1728,19 +1737,25 @@ impl MultiBuffer {
 
         self.sync(cx);
 
-        let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer_snapshot.remote_id();
 
         let mut buffers = self.buffers.borrow_mut();
-        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
-            last_version: buffer_snapshot.version().clone(),
-            last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
-            excerpts: Default::default(),
-            _subscriptions: [
-                cx.observe(&buffer, |_, _, cx| cx.notify()),
-                cx.subscribe(&buffer, Self::on_buffer_event),
-            ],
-            buffer: buffer.clone(),
+        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| {
+            self.buffer_changed_since_sync.replace(true);
+            buffer.update(cx, |buffer, _| {
+                buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
+            });
+            BufferState {
+                last_version: buffer_snapshot.version().clone(),
+                last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
+                excerpts: Default::default(),
+                _subscriptions: [
+                    cx.observe(&buffer, |_, _, cx| cx.notify()),
+                    cx.subscribe(&buffer, Self::on_buffer_event),
+                ],
+                buffer: buffer.clone(),
+            }
         });
 
         let mut snapshot = self.snapshot.borrow_mut();
@@ -2236,6 +2251,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         self.sync(cx);
+        self.buffer_changed_since_sync.replace(true);
 
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
@@ -2714,6 +2730,11 @@ impl MultiBuffer {
     }
 
     fn sync(&self, cx: &App) {
+        let changed = self.buffer_changed_since_sync.replace(false);
+        if !changed {
+            return;
+        }
+
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
         let mut non_text_state_updated = false;

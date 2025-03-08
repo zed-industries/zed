@@ -49,7 +49,7 @@ use std::{
     num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
-    str,
+    rc, str,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
     vec,
@@ -125,6 +125,7 @@ pub struct Buffer {
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
+    change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -978,6 +979,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
+            change_bits: Default::default(),
             _subscriptions: Vec::new(),
         }
     }
@@ -1252,6 +1254,7 @@ impl Buffer {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
+        self.was_changed();
         self.reparse(cx);
         cx.emit(BufferEvent::LanguageChanged);
     }
@@ -1286,6 +1289,7 @@ impl Buffer {
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
+        self.was_changed();
         cx.emit(BufferEvent::Saved);
         cx.notify();
     }
@@ -1381,6 +1385,7 @@ impl Buffer {
 
         self.file = Some(new_file);
         if file_changed {
+            self.was_changed();
             self.non_text_state_update_count += 1;
             if was_dirty != self.is_dirty() {
                 cx.emit(BufferEvent::DirtyChanged);
@@ -1958,6 +1963,23 @@ impl Buffer {
         self.text.subscribe()
     }
 
+    /// Adds a bit to the list of bits that are set when the buffer's text changes.
+    ///
+    /// This allows downstream code to check if the buffer's text has changed without
+    /// waiting for an effect cycle, which would be required if using eents.
+    pub fn record_changes(&mut self, bit: rc::Weak<Cell<bool>>) {
+        self.change_bits.push(bit);
+    }
+
+    fn was_changed(&mut self) {
+        self.change_bits.retain(|change_bit| {
+            change_bit.upgrade().map_or(false, |bit| {
+                bit.replace(true);
+                true
+            })
+        });
+    }
+
     /// Starts a transaction, if one is not already in-progress. When undoing or
     /// redoing edits, all of the edits performed within a transaction are undone
     /// or redone together.
@@ -2368,6 +2390,7 @@ impl Buffer {
         }
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
+        self.was_changed();
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
@@ -2502,7 +2525,8 @@ impl Buffer {
         }
     }
 
-    fn send_operation(&self, operation: Operation, is_local: bool, cx: &mut Context<Self>) {
+    fn send_operation(&mut self, operation: Operation, is_local: bool, cx: &mut Context<Self>) {
+        self.was_changed();
         cx.emit(BufferEvent::Operation {
             operation,
             is_local,
