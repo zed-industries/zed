@@ -26,17 +26,6 @@ pub struct ScriptSession {
     scripts: Vec<Script>,
 }
 
-#[derive(Debug)]
-pub enum ScriptEvent {
-    Exited {
-        id: ScriptId,
-        stdout: String,
-        error: Option<anyhow::Error>,
-    },
-}
-
-impl EventEmitter<ScriptEvent> for ScriptSession {}
-
 impl ScriptSession {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let (foreground_fns_tx, mut foreground_fns_rx) = mpsc::channel(128);
@@ -53,9 +42,46 @@ impl ScriptSession {
         }
     }
 
-    /// Runs a Lua script in a sandboxed environment and returns the printed lines
-    pub fn run_script(&mut self, script: String, cx: &mut Context<Self>) -> ScriptId {
-        println!("Running script\n{}", script);
+    /// Spawn a Lua script in a sandboxed environment and returns an id
+    /// that can be used to consult its state.
+    pub fn spawn(&mut self, script: String, cx: &mut Context<Self>) -> ScriptId {
+        let (stdout, task) = self.run(script, cx);
+
+        let script_id = ScriptId(self.scripts.len() as u32);
+
+        let script = Script {
+            state: ScriptState::Running { stdout },
+        };
+
+        self.scripts.push(script);
+
+        cx.emit(ScriptEvent::Spawned(script_id));
+
+        cx.spawn(|session, mut cx| async move {
+            let result = task.await;
+
+            session.update(&mut cx, |session, cx| {
+                let script = session.get_mut(script_id);
+                let stdout = script.stdout_snapshot();
+
+                script.state = match result {
+                    Ok(()) => ScriptState::Succeeded { stdout },
+                    Err(error) => ScriptState::Failed { stdout, error },
+                };
+
+                cx.emit(ScriptEvent::Exited(script_id))
+            })
+        })
+        .detach_and_log_err(cx);
+
+        script_id
+    }
+
+    fn run(
+        &mut self,
+        script: String,
+        cx: &mut Context<Self>,
+    ) -> (Arc<Mutex<String>>, Task<anyhow::Result<()>>) {
         const SANDBOX_PREAMBLE: &str = include_str!("sandbox_preamble.lua");
 
         // TODO Remove fs_changes
@@ -72,7 +98,6 @@ impl ScriptSession {
         let foreground_fns_tx = self.foreground_fns_tx.clone();
 
         let stdout = Arc::new(Mutex::new(String::new()));
-        let script_id = ScriptId(self.scripts.len() as u32);
 
         let task = cx.background_spawn({
             let stdout = stdout.clone();
@@ -119,32 +144,15 @@ impl ScriptSession {
             }
         });
 
-        let task = cx.spawn(|session, mut cx| {
-            let stdout = stdout.clone();
-            async move {
-                let result = task.await;
-                println!("Ran!");
-                dbg!(&result);
+        (stdout, task)
+    }
 
-                session
-                    .update(&mut cx, |_, cx| {
-                        cx.emit(ScriptEvent::Exited {
-                            id: script_id,
-                            stdout: stdout.lock().clone(),
-                            error: result.err(),
-                        });
-                    })
-                    .log_err();
-            }
-        });
+    pub fn get(&self, script_id: ScriptId) -> &Script {
+        &self.scripts[script_id.0 as usize]
+    }
 
-        let script = Script {
-            stdout,
-            _task: task,
-        };
-
-        self.scripts.push(script);
-        script_id
+    fn get_mut(&mut self, script_id: ScriptId) -> &mut Script {
+        &mut self.scripts[script_id.0 as usize]
     }
 
     /// Sandboxed print() function in Lua.
@@ -705,11 +713,6 @@ impl ScriptSession {
             ))),
         }
     }
-
-    #[cfg(test)]
-    fn take(&mut self, id: ScriptId) -> Script {
-        self.scripts.remove(id.0 as usize)
-    }
 }
 
 struct FileContent(RefCell<Vec<u8>>);
@@ -720,12 +723,63 @@ impl UserData for FileContent {
     }
 }
 
+#[derive(Debug)]
+pub enum ScriptEvent {
+    Spawned(ScriptId),
+    Exited(ScriptId),
+}
+
+impl EventEmitter<ScriptEvent> for ScriptSession {}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ScriptId(u32);
 
 pub struct Script {
-    stdout: Arc<Mutex<String>>,
-    _task: Task<()>,
+    state: ScriptState,
+}
+
+pub enum ScriptState {
+    Running {
+        stdout: Arc<Mutex<String>>,
+    },
+    Succeeded {
+        stdout: String,
+    },
+    Failed {
+        stdout: String,
+        error: anyhow::Error,
+    },
+}
+
+impl Script {
+    /// Get the current state of the script
+    pub fn state(&self) -> &ScriptState {
+        &self.state
+    }
+
+    /// If exited, returns a message with the output for the LLM
+    pub fn output_message_for_llm(&self) -> Option<String> {
+        match &self.state {
+            ScriptState::Running { .. } => None,
+            ScriptState::Succeeded { stdout } => {
+                format!("Here's the script output:\n{}", stdout).into()
+            }
+            ScriptState::Failed { stdout, error } => format!(
+                "The script failed with:\n{}\n\nHere's the output it managed to print:\n{}",
+                error, stdout
+            )
+            .into(),
+        }
+    }
+
+    /// Get a snapshot of the script's stdout
+    pub fn stdout_snapshot(&self) -> String {
+        match &self.state {
+            ScriptState::Running { stdout } => stdout.lock().clone(),
+            ScriptState::Succeeded { stdout } => stdout.clone(),
+            ScriptState::Failed { stdout, .. } => stdout.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -744,7 +798,7 @@ mod tests {
             print("Goodbye", "moon!")
         "#;
 
-        let output = test_script_output(script, cx).await;
+        let output = test_script(script, cx).await.unwrap();
         assert_eq!(output, "Hello\tworld!\nGoodbye\tmoon!\n");
     }
 
@@ -761,11 +815,11 @@ mod tests {
             end
         "#;
 
-        let output = test_script_output(script, cx).await;
+        let output = test_script(script, cx).await.unwrap();
         assert_eq!(output, "File: /file1.txt\nMatches:\n  world\n");
     }
 
-    async fn test_script_output(source: &str, cx: &mut TestAppContext) -> String {
+    async fn test_script(source: &str, cx: &mut TestAppContext) -> anyhow::Result<String> {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -780,16 +834,9 @@ mod tests {
         let project = Project::test(fs, [Path::new("/")], cx).await;
         let session = cx.new(|cx| ScriptSession::new(project, cx));
 
-        let script = session.update(cx, |session, cx| {
-            let script_id = session.run_script(source.to_string(), cx);
-            session.take(script_id)
-        });
+        let (stdout, task) = session.update(cx, |session, cx| session.run(source.to_string(), cx));
 
-        let output = script.stdout.clone();
-        script._task.await;
-
-        let stdout = output.lock().clone();
-        stdout
+        task.await.map(|_| stdout.lock().clone())
     }
 
     fn init_test(cx: &mut TestAppContext) {

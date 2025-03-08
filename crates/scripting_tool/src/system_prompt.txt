@@ -23,6 +23,9 @@ returns an array of tables with two fields: "path" (the path to the file that
 had the matches) and "matches" (an array of strings, with each string being a
 match that was found within the file).
 
+When I send you the script output, do not thank me for running it,
+act as if you ran it yourself.
+
 IMPORTANT!
 Only include a maximum of one Lua script at the very end of your message
 DO NOT WRITE ANYTHING ELSE AFTER THE SCRIPT. Wait for my response with the script

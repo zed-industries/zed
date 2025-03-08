@@ -13,9 +13,9 @@ use language_model::{
     Role, StopReason,
 };
 use project::Project;
-use scripting_tool::{ScriptEvent, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT};
+use scripting_tool::{ScriptEvent, ScriptId, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT};
 use serde::{Deserialize, Serialize};
-use util::{post_inc, TryFutureExt as _};
+use util::{maybe, post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
@@ -76,6 +76,7 @@ pub struct Thread {
     project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
+    scripts_by_message: HashMap<MessageId, ScriptId>,
     script_session: Entity<ScriptSession>,
     _script_session_subscription: Subscription,
 }
@@ -103,6 +104,7 @@ impl Thread {
             project,
             tools,
             tool_use: ToolUseState::new(),
+            scripts_by_message: HashMap::default(),
             script_session,
             _script_session_subscription: script_session_subscription,
         }
@@ -148,6 +150,7 @@ impl Thread {
             project,
             tools,
             tool_use,
+            scripts_by_message: HashMap::default(),
             script_session,
             _script_session_subscription: script_session_subscription,
         }
@@ -321,20 +324,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         match event {
-            ScriptEvent::Exited { stdout, error, .. } => {
-                let message = if let Some(error) = error {
-                    format!(
-                        "The script failed with:\n{}\n\nHere's the output it managed to print:\n{}",
-                        error, stdout
-                    )
-                } else {
-                    format!("Here's the script output:\n{}", stdout)
-                };
-
-                self.insert_user_message(message, Vec::new(), cx);
-
-                cx.emit(ThreadEvent::ScriptFinished)
-            }
+            ScriptEvent::Spawned(_) => {}
+            ScriptEvent::Exited(_) => cx.emit(ThreadEvent::ScriptFinished),
         }
     }
 
@@ -366,7 +357,7 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
-        _cx: &App,
+        cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             messages: vec![],
@@ -393,6 +384,7 @@ impl Thread {
                 content: Vec::new(),
                 cache: false,
             };
+
             match request_kind {
                 RequestKind::Chat => {
                     self.tool_use
@@ -409,17 +401,35 @@ impl Thread {
                     .push(MessageContent::Text(message.text.clone()));
             }
 
-            match request_kind {
+            let script_output_message = match request_kind {
                 RequestKind::Chat => {
                     self.tool_use
                         .attach_tool_uses(message.id, &mut request_message);
+
+                    maybe!({
+                        if !matches!(message.role, Role::Assistant) {
+                            return None;
+                        }
+
+                        let script_id = self.scripts_by_message.get(&message.id)?;
+                        let script = self.script_session.read(cx).get(*script_id);
+                        let message = script.output_message_for_llm()?;
+
+                        Some(LanguageModelRequestMessage {
+                            role: Role::User,
+                            content: vec![message.into()],
+                            cache: false,
+                        })
+                    })
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
+                    None
                 }
-            }
+            };
 
             request.messages.push(request_message);
+            request.messages.extend(script_output_message);
         }
 
         if !referenced_context_ids.is_empty() {
@@ -471,26 +481,28 @@ impl Thread {
                                 let parsed_script = script_tag_parser.parse_chunk(&chunk);
 
                                 if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant {
+                                    let message_id = if last_message.role == Role::Assistant {
                                         last_message.text.push_str(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
                                             last_message.id,
                                             chunk,
                                         ));
+                                        last_message.id
                                     } else {
                                         // If we won't have an Assistant message yet, assume this chunk marks the beginning
                                         // of a new Assistant response.
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(Role::Assistant, chunk, cx);
-                                    }
-                                }
+                                        thread.insert_message(Role::Assistant, chunk, cx)
+                                    };
 
-                                if let Some(script_source) = parsed_script {
-                                    thread
-                                        .script_session
-                                        .update(cx, |this, cx| this.run_script(script_source, cx));
+                                    if let Some(script_source) = parsed_script {
+                                        let script_id = thread
+                                            .script_session
+                                            .update(cx, |this, cx| this.spawn(script_source, cx));
+                                        thread.scripts_by_message.insert(message_id, script_id);
+                                    }
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
