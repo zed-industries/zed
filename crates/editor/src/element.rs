@@ -8962,7 +8962,7 @@ fn diff_hunk_controls(
                 })
         })
         .child(
-            Button::new("discard", "Restore")
+            Button::new("restore", "Restore")
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
                     move |window, cx| {
