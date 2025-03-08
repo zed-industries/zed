@@ -33,7 +33,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(git, [Diff]);
+actions!(git, [Diff, Add]);
 
 pub struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
@@ -70,6 +70,9 @@ impl ProjectDiff {
         let Some(window) = window else { return };
         cx.when_flag_enabled::<feature_flags::GitUiFeatureFlag>(window, |workspace, _, _cx| {
             workspace.register_action(Self::deploy);
+            workspace.register_action(|workspace, _: &Add, window, cx| {
+                Self::deploy(workspace, &Diff, window, cx);
+            });
         });
 
         workspace::register_serializable_item::<ProjectDiff>(cx);
