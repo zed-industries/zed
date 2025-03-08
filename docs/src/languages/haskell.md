@@ -1,6 +1,6 @@
 # Haskell
 
-Haskell support is available through the [Haskell extension](https://github.com/zed-industries/zed/tree/main/extensions/haskell).
+Haskell support is available through the [Haskell extension](https://github.com/zed-extensions/haskell).
 
 - Tree-sitter: [tree-sitter-haskell](https://github.com/tree-sitter/tree-sitter-haskell)
 - Language Server: [haskell-language-server](https://github.com/haskell/haskell-language-server)

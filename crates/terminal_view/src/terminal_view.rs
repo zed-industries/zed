@@ -38,8 +38,8 @@ use workspace::{
     },
     register_serializable_item,
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
-    WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenOptions, OpenVisible, ToolbarItemLocation,
+    Workspace, WorkspaceId,
 };
 
 use anyhow::Context as _;
@@ -910,7 +910,10 @@ fn subscribe_for_terminal_events(
                                 .update_in(&mut cx, |workspace, window, cx| {
                                     workspace.open_paths(
                                         vec![path_to_open.path.clone()],
-                                        OpenVisible::OnlyDirectories,
+                                        OpenOptions {
+                                            visible: Some(OpenVisible::OnlyDirectories),
+                                            ..Default::default()
+                                        },
                                         None,
                                         window,
                                         cx,

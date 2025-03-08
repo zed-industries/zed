@@ -470,7 +470,7 @@ impl Render for FeedbackModal {
                     .bg(cx.theme().colors().editor_background)
                     .p_2()
                     .border_1()
-                    .rounded_md()
+                    .rounded_sm()
                     .border_color(cx.theme().colors().border)
                     .child(self.feedback_editor.clone()),
             )
@@ -482,7 +482,7 @@ impl Render for FeedbackModal {
                             .bg(cx.theme().colors().editor_background)
                             .p_2()
                             .border_1()
-                            .rounded_md()
+                            .rounded_sm()
                             .border_color(if self.valid_email_address() {
                                 cx.theme().colors().border
                             } else {

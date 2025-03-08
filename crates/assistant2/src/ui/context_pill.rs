@@ -103,7 +103,7 @@ impl RenderOnce for ContextPill {
             .pl_1()
             .pb(px(1.))
             .border_1()
-            .rounded_md()
+            .rounded_sm()
             .gap_1()
             .child(self.icon().size(IconSize::XSmall).color(Color::Muted));
 

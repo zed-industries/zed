@@ -299,34 +299,6 @@ pub struct AdapterServerCapabilities {
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
-/// Experimental: Informs the end user about the state of the server
-///
-/// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
-#[derive(Debug)]
-pub enum ServerStatus {}
-
-/// Other(String) variant to handle unknown values due to this still being experimental
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub enum ServerHealthStatus {
-    Ok,
-    Warning,
-    Error,
-    Other(String),
-}
-
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerStatusParams {
-    pub health: ServerHealthStatus,
-    pub message: Option<String>,
-}
-
-impl lsp_types::notification::Notification for ServerStatus {
-    type Params = ServerStatusParams;
-    const METHOD: &'static str = "experimental/serverStatus";
-}
-
 impl LanguageServer {
     /// Starts a language server process.
     #[allow(clippy::too_many_arguments)]
@@ -679,6 +651,9 @@ impl LanguageServer {
                         ..Default::default()
                     }),
                     apply_edit: Some(true),
+                    execute_command: Some(ExecuteCommandClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {

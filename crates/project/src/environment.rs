@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
 use collections::HashMap;
-use gpui::{App, AppContext as _, Context, Entity, Task};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use settings::Settings as _;
 use worktree::WorktreeId;
 
@@ -18,6 +18,12 @@ pub struct ProjectEnvironment {
     environments: HashMap<WorktreeId, Shared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
 }
+
+pub enum ProjectEnvironmentEvent {
+    ErrorsUpdated,
+}
+
+impl EventEmitter<ProjectEnvironmentEvent> for ProjectEnvironment {}
 
 impl ProjectEnvironment {
     pub fn new(
@@ -65,8 +71,13 @@ impl ProjectEnvironment {
         self.environment_error_messages.iter()
     }
 
-    pub(crate) fn remove_environment_error(&mut self, worktree_id: WorktreeId) {
+    pub(crate) fn remove_environment_error(
+        &mut self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) {
         self.environment_error_messages.remove(&worktree_id);
+        cx.emit(ProjectEnvironmentEvent::ErrorsUpdated);
     }
 
     /// Returns the project environment, if possible.
@@ -158,8 +169,9 @@ impl ProjectEnvironment {
             }
 
             if let Some(error) = error_message {
-                this.update(&mut cx, |this, _| {
+                this.update(&mut cx, |this, cx| {
                     this.environment_error_messages.insert(worktree_id, error);
+                    cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
                 })
                 .log_err();
             }

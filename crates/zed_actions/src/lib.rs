@@ -114,8 +114,9 @@ pub mod workspace {
 }
 
 pub mod git {
-    use gpui::action_with_deprecated_aliases;
+    use gpui::{action_with_deprecated_aliases, actions};
 
+    actions!(git, [CheckoutBranch, Switch]);
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 

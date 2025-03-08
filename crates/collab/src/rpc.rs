@@ -402,6 +402,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)

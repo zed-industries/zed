@@ -134,7 +134,7 @@ impl AssistantConfiguration {
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .rounded_md()
+                    .rounded_sm()
                     .map(|parent| match configuration_view {
                         Some(configuration_view) => parent.child(configuration_view),
                         None => parent.child(div().child(Label::new(format!(

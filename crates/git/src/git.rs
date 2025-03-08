@@ -49,7 +49,8 @@ actions!(
         Pull,
         Fetch,
         Commit,
-        ExpandCommitEditor
+        ExpandCommitEditor,
+        GenerateCommitMessage
     ]
 );
 action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);

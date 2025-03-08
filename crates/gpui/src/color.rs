@@ -634,7 +634,7 @@ impl Display for ColorSpace {
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
@@ -644,6 +644,28 @@ pub struct Background {
     pub(crate) colors: [LinearColorStop; 2],
     /// Padding for alignment for repr(C) layout.
     pad: u32,
+}
+
+impl std::fmt::Debug for Background {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.tag {
+            BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
+            BackgroundTag::LinearGradient => {
+                write!(
+                    f,
+                    "LinearGradient({}, {:?}, {:?})",
+                    self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+                )
+            }
+            BackgroundTag::PatternSlash => {
+                write!(
+                    f,
+                    "PatternSlash({:?}, {})",
+                    self.solid, self.gradient_angle_or_pattern_height
+                )
+            }
+        }
+    }
 }
 
 impl Eq for Background {}

@@ -400,7 +400,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+            let response = request.map_err(|err| anyhow!(err))?.await;
             Ok(map_to_language_model_completion_events(
                 response,
                 owned_handle,
@@ -424,26 +424,28 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
         );
 
-        request.tool_choice = Some(BedrockToolChoice::Tool(
-            BedrockSpecificTool::builder()
-                .name(name.clone())
-                .build()
-                .unwrap(),
-        ));
+        request.tool_choice = BedrockSpecificTool::builder()
+            .name(name.clone())
+            .build()
+            .log_err()
+            .map(BedrockToolChoice::Tool);
 
-        request.tools = vec![BedrockTool::builder()
+        if let Some(tool) = BedrockTool::builder()
             .name(name.clone())
             .description(description.clone())
             .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
             .build()
-            .unwrap()];
+            .log_err()
+        {
+            request.tools.push(tool);
+        }
 
         let handle = self.handler.clone();
 
         let request = self.stream_completion(request, _cx);
         self.request_limiter
             .run(async move {
-                let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+                let response = request.map_err(|err| anyhow!(err))?.await;
                 Ok(extract_tool_args_from_events(name, response, handle)
                     .await?
                     .boxed())
@@ -757,7 +759,8 @@ pub fn map_to_language_model_completion_events(
                         None
                     })
                     .await
-                    .unwrap()
+                    .log_err()
+                    .flatten()
             }
         },
     )
@@ -966,7 +969,7 @@ impl Render for ConfigurationView {
                 .bg(bg_color)
                 .border_1()
                 .border_color(border_color)
-                .rounded_md()
+                .rounded_sm()
         };
 
         if self.load_credentials_task.is_some() {

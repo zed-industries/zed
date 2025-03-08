@@ -2951,6 +2951,10 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                         ..lsp::CodeActionOptions::default()
                     },
                 )),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["_the/command".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
                 ..lsp::ServerCapabilities::default()
             },
             ..FakeLspAdapter::default()
@@ -5372,7 +5376,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
     let code_actions = code_actions_task.await.unwrap();
     assert_eq!(code_actions.len(), 1);
     assert_eq!(
-        code_actions[0].lsp_action.kind,
+        code_actions[0].lsp_action.action_kind(),
         Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS)
     );
 }
@@ -5529,7 +5533,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             .await
             .unwrap()
             .into_iter()
-            .map(|code_action| code_action.lsp_action.title)
+            .map(|code_action| code_action.lsp_action.title().to_owned())
             .sorted()
             .collect::<Vec<_>>(),
         "Should receive code actions responses from all related servers with hover capabilities"

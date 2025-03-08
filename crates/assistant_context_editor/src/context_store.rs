@@ -104,49 +104,53 @@ impl ContextStore {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
-            let this = cx.new(|cx: &mut Context<Self>| {
-                let context_server_factory_registry =
-                    ContextServerFactoryRegistry::default_global(cx);
-                let context_server_manager = cx.new(|cx| {
-                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-                });
-                let mut this = Self {
-                    contexts: Vec::new(),
-                    contexts_metadata: Vec::new(),
-                    context_server_manager,
-                    context_server_slash_command_ids: HashMap::default(),
-                    host_contexts: Vec::new(),
-                    fs,
-                    languages,
-                    slash_commands,
-                    telemetry,
-                    _watch_updates: cx.spawn(|this, mut cx| {
-                        async move {
-                            while events.next().await.is_some() {
-                                this.update(&mut cx, |this, cx| this.reload(cx))?
-                                    .await
-                                    .log_err();
+            let this =
+                cx.new(|cx: &mut Context<Self>| {
+                    let context_server_factory_registry =
+                        ContextServerFactoryRegistry::default_global(cx);
+                    let context_server_manager = cx.new(|cx| {
+                        ContextServerManager::new(
+                            context_server_factory_registry,
+                            project.clone(),
+                            cx,
+                        )
+                    });
+                    let mut this = Self {
+                        contexts: Vec::new(),
+                        contexts_metadata: Vec::new(),
+                        context_server_manager,
+                        context_server_slash_command_ids: HashMap::default(),
+                        host_contexts: Vec::new(),
+                        fs,
+                        languages,
+                        slash_commands,
+                        telemetry,
+                        _watch_updates: cx.spawn(|this, mut cx| {
+                            async move {
+                                while events.next().await.is_some() {
+                                    this.update(&mut cx, |this, cx| this.reload(cx))?
+                                        .await
+                                        .log_err();
+                                }
+                                anyhow::Ok(())
                             }
-                            anyhow::Ok(())
-                        }
-                        .log_err()
-                    }),
-                    client_subscription: None,
-                    _project_subscriptions: vec![
-                        cx.observe(&project, Self::handle_project_changed),
-                        cx.subscribe(&project, Self::handle_project_event),
-                    ],
-                    project_is_shared: false,
-                    client: project.read(cx).client(),
-                    project: project.clone(),
-                    prompt_builder,
-                };
-                this.handle_project_changed(project.clone(), cx);
-                this.synchronize_contexts(cx);
-                this.register_context_server_handlers(cx);
-                this.reload(cx).detach_and_log_err(cx);
-                this
-            })?;
+                            .log_err()
+                        }),
+                        client_subscription: None,
+                        _project_subscriptions: vec![
+                            cx.subscribe(&project, Self::handle_project_event)
+                        ],
+                        project_is_shared: false,
+                        client: project.read(cx).client(),
+                        project: project.clone(),
+                        prompt_builder,
+                    };
+                    this.handle_project_shared(project.clone(), cx);
+                    this.synchronize_contexts(cx);
+                    this.register_context_server_handlers(cx);
+                    this.reload(cx).detach_and_log_err(cx);
+                    this
+                })?;
 
             Ok(this)
         })
@@ -288,7 +292,7 @@ impl ContextStore {
         })?
     }
 
-    fn handle_project_changed(&mut self, _: Entity<Project>, cx: &mut Context<Self>) {
+    fn handle_project_shared(&mut self, _: Entity<Project>, cx: &mut Context<Self>) {
         let is_shared = self.project.read(cx).is_shared();
         let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
         if is_shared == was_shared {
@@ -318,11 +322,14 @@ impl ContextStore {
 
     fn handle_project_event(
         &mut self,
-        _: Entity<Project>,
+        project: Entity<Project>,
         event: &project::Event,
         cx: &mut Context<Self>,
     ) {
         match event {
+            project::Event::RemoteIdChanged(_) => {
+                self.handle_project_shared(project, cx);
+            }
             project::Event::Reshared => {
                 self.advertise_contexts(cx);
             }

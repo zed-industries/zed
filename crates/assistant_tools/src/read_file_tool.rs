@@ -3,11 +3,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
-use gpui::{App, Task, WeakEntity, Window};
-use project::{ProjectPath, WorktreeId};
+use gpui::{App, Entity, Task};
+use project::{Project, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -38,20 +37,14 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        workspace: WeakEntity<Workspace>,
-        _window: &mut Window,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let Some(workspace) = workspace.upgrade() else {
-            return Task::ready(Err(anyhow!("workspace dropped")));
-        };
-
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let project = workspace.read(cx).project().clone();
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_usize(input.worktree_id),
             path: input.path,

@@ -74,7 +74,7 @@ impl Render for AskPassModal {
                     .px(DynamicSpacing::Base12.rems(cx))
                     .pt(DynamicSpacing::Base08.rems(cx))
                     .pb(DynamicSpacing::Base04.rems(cx))
-                    .rounded_t_md()
+                    .rounded_t_sm()
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))

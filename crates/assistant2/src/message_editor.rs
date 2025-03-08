@@ -389,6 +389,7 @@ impl Render for MessageEditor {
                                 let text_style = TextStyle {
                                     color: cx.theme().colors().text,
                                     font_family: settings.ui_font.family.clone(),
+                                    font_fallbacks: settings.ui_font.fallbacks.clone(),
                                     font_features: settings.ui_font.features.clone(),
                                     font_size: font_size.into(),
                                     font_weight: settings.ui_font.weight,

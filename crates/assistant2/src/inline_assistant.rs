@@ -27,6 +27,7 @@ use language::{Buffer, Point, Selection, TransactionId};
 use language_model::{report_assistant_event, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
+use project::LspAction;
 use project::{CodeAction, ProjectTransaction};
 use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
@@ -1727,10 +1728,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             Task::ready(Ok(vec![CodeAction {
                 server_id: language::LanguageServerId(0),
                 range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
-                lsp_action: lsp::CodeAction {
+                lsp_action: LspAction::Action(Box::new(lsp::CodeAction {
                     title: "Fix with Assistant".into(),
                     ..Default::default()
-                },
+                })),
             }]))
         } else {
             Task::ready(Ok(Vec::new()))

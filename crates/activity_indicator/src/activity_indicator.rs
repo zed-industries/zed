@@ -9,7 +9,10 @@ use gpui::{
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
 use lsp::LanguageServerName;
-use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
+use project::{
+    EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
+    ProjectEnvironmentEvent, WorktreeId,
+};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
@@ -73,7 +76,22 @@ impl ActivityIndicator {
             })
             .detach();
 
-            cx.observe(&project, |_, _, cx| cx.notify()).detach();
+            cx.subscribe(
+                &project.read(cx).lsp_store(),
+                |_, _, event, cx| match event {
+                    LspStoreEvent::LanguageServerUpdate { .. } => cx.notify(),
+                    _ => {}
+                },
+            )
+            .detach();
+
+            cx.subscribe(
+                &project.read(cx).environment().clone(),
+                |_, _, event, cx| match event {
+                    ProjectEnvironmentEvent::ErrorsUpdated => cx.notify(),
+                },
+            )
+            .detach();
 
             if let Some(auto_updater) = auto_updater.as_ref() {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
@@ -204,7 +222,7 @@ impl ActivityIndicator {
                 message: error.0.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
-                        project.remove_environment_error(cx, worktree_id);
+                        project.remove_environment_error(worktree_id, cx);
                     });
                     window.dispatch_action(Box::new(workspace::OpenLog), cx);
                 })),

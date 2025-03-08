@@ -16,7 +16,7 @@ pub enum ToggleButtonPosition {
 }
 
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct ToggleButton {
     base: ButtonLike,
     position_in_group: Option<ToggleButtonPosition>,

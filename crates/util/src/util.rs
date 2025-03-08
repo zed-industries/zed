@@ -828,6 +828,10 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+pub fn default<D: Default>() -> D {
+    Default::default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

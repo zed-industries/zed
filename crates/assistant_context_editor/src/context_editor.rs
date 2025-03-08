@@ -1241,7 +1241,7 @@ impl ContextEditor {
             .child("Press")
             .child(
                 h_flex()
-                    .rounded_md()
+                    .rounded_sm()
                     .px_1()
                     .mr_0p5()
                     .border_1()
@@ -2092,7 +2092,7 @@ impl ContextEditor {
                 .ml(gutter_width)
                 .pb_1()
                 .w(max_width - gutter_width)
-                .rounded_md()
+                .rounded_sm()
                 .border_1()
                 .border_color(theme.colors().border_variant)
                 .overflow_hidden()
@@ -3422,7 +3422,7 @@ fn invoked_slash_command_fold_placeholder(
                 .ml_6()
                 .gap_2()
                 .bg(cx.theme().colors().surface_background)
-                .rounded_md()
+                .rounded_sm()
                 .child(Label::new(format!("/{}", command.name.clone())))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {

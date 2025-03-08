@@ -121,9 +121,9 @@ impl SyntaxLayerContent {
 pub struct SyntaxLayer<'a> {
     /// The language for this layer.
     pub language: &'a Arc<Language>,
-    depth: usize,
+    pub(crate) depth: usize,
     tree: &'a Tree,
-    offset: (usize, tree_sitter::Point),
+    pub(crate) offset: (usize, tree_sitter::Point),
 }
 
 /// A layer of syntax highlighting. Like [SyntaxLayer], but holding
@@ -133,7 +133,7 @@ pub struct OwnedSyntaxLayer {
     /// The language for this layer.
     pub language: Arc<Language>,
     tree: tree_sitter::Tree,
-    offset: (usize, tree_sitter::Point),
+    pub offset: (usize, tree_sitter::Point),
 }
 
 #[derive(Debug, Clone)]

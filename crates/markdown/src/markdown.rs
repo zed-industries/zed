@@ -690,7 +690,7 @@ impl Element for MarkdownElement {
                                     .flex()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
-                                    .rounded_md()
+                                    .rounded_sm()
                                     .when(self.style.table_overflow_x_scroll, |mut table| {
                                         table.style().restrict_scroll_to_axis = Some(true);
                                         table.overflow_x_scroll()
@@ -736,7 +736,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        _ => log::error!("unsupported markdown tag {:?}", tag),
+                        _ => log::debug!("unsupported markdown tag {:?}", tag),
                     }
                 }
                 MarkdownEvent::End(tag) => match tag {
@@ -853,7 +853,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::TableCell => {
                         builder.pop_div();
                     }
-                    _ => log::error!("unsupported markdown tag end: {:?}", tag),
+                    _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text(parsed) => {
                     builder.push_text(parsed, range.start);

@@ -26,7 +26,6 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct ThreadStore {
-    #[allow(unused)]
     project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     context_server_manager: Entity<ContextServerManager>,
@@ -78,7 +77,7 @@ impl ThreadStore {
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
-        cx.new(|cx| Thread::new(self.tools.clone(), cx))
+        cx.new(|cx| Thread::new(self.project.clone(), self.tools.clone(), cx))
     }
 
     pub fn open_thread(
@@ -96,7 +95,15 @@ impl ThreadStore {
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
             this.update(&mut cx, |this, cx| {
-                cx.new(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
+                cx.new(|cx| {
+                    Thread::from_saved(
+                        id.clone(),
+                        thread,
+                        this.project.clone(),
+                        this.tools.clone(),
+                        cx,
+                    )
+                })
             })
         })
     }
