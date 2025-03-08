@@ -971,6 +971,8 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn commit_history(&self, skip: i32, limit: i32) -> Result<Arc<Vec<CommitDetails>>> {
+        let _ = limit;
+        let _ = skip;
         Ok(Arc::new(Vec::new()))
     }
 
