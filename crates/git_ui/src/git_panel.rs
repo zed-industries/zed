@@ -1,9 +1,9 @@
 use crate::askpass_modal::AskPassModal;
-use crate::branch_picker;
 use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
 use crate::repository_selector::filtered_repository_entries;
+use crate::{branch_picker, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -26,12 +26,11 @@ use git::status::StageStatus;
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
-    actions, anchored, deferred, hsla, percentage, point, uniform_list, Action, Animation,
-    AnimationExt as _, AnyView, BoxShadow, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Point, PromptLevel,
-    ScrollStrategy, Stateful, Subscription, Task, Transformation, UniformListScrollHandle,
-    WeakEntity,
+    actions, anchored, deferred, percentage, uniform_list, Action, Animation, AnimationExt as _,
+    ClickEvent, Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Stateful, Subscription, Task,
+    Transformation, UniformListScrollHandle, WeakEntity,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -49,7 +48,6 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use smallvec::smallvec;
 use std::cell::RefCell;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -58,8 +56,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar,
-    ScrollbarState, Tooltip,
+    prelude::*, Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState,
+    Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{AppState, OpenOptions, OpenVisible};
@@ -1748,7 +1746,7 @@ impl GitPanel {
     }
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
-        !self.project.read(cx).is_via_collab()
+        crate::can_push_and_pull(&self.project, cx)
     }
 
     fn get_current_remote(
@@ -3313,159 +3311,6 @@ impl Render for GitPanelMessageTooltip {
     }
 }
 
-fn git_action_tooltip(
-    label: impl Into<SharedString>,
-    action: &dyn Action,
-    command: impl Into<SharedString>,
-    focus_handle: Option<FocusHandle>,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyView {
-    let label = label.into();
-    let command = command.into();
-
-    if let Some(handle) = focus_handle {
-        Tooltip::with_meta_in(
-            label.clone(),
-            Some(action),
-            command.clone(),
-            &handle,
-            window,
-            cx,
-        )
-    } else {
-        Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx)
-    }
-}
-
-#[derive(IntoElement)]
-struct SplitButton {
-    pub left: ButtonLike,
-    pub right: AnyElement,
-}
-
-impl SplitButton {
-    fn new(
-        id: impl Into<SharedString>,
-        left_label: impl Into<SharedString>,
-        ahead_count: usize,
-        behind_count: usize,
-        left_icon: Option<IconName>,
-        left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
-    ) -> Self {
-        let id = id.into();
-
-        fn count(count: usize) -> impl IntoElement {
-            h_flex()
-                .ml_neg_px()
-                .h(rems(0.875))
-                .items_center()
-                .overflow_hidden()
-                .px_0p5()
-                .child(
-                    Label::new(count.to_string())
-                        .size(LabelSize::XSmall)
-                        .line_height_style(LineHeightStyle::UiLabel),
-                )
-        }
-
-        let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
-
-        let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
-            format!("split-button-left-{}", id).into(),
-        ))
-        .layer(ui::ElevationIndex::ModalSurface)
-        .size(ui::ButtonSize::Compact)
-        .when(should_render_counts, |this| {
-            this.child(
-                h_flex()
-                    .ml_neg_0p5()
-                    .mr_1()
-                    .when(behind_count > 0, |this| {
-                        this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
-                            .child(count(behind_count))
-                    })
-                    .when(ahead_count > 0, |this| {
-                        this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
-                            .child(count(ahead_count))
-                    }),
-            )
-        })
-        .when_some(left_icon, |this, left_icon| {
-            this.child(
-                h_flex()
-                    .ml_neg_0p5()
-                    .mr_1()
-                    .child(Icon::new(left_icon).size(IconSize::XSmall)),
-            )
-        })
-        .child(
-            div()
-                .child(Label::new(left_label).size(LabelSize::Small))
-                .mr_0p5(),
-        )
-        .on_click(left_on_click)
-        .tooltip(tooltip);
-
-        let right =
-            render_git_action_menu(ElementId::Name(format!("split-button-right-{}", id).into()))
-                .into_any_element();
-        // .on_click(right_on_click);
-
-        Self { left, right }
-    }
-}
-
-impl RenderOnce for SplitButton {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        h_flex()
-            .rounded_sm()
-            .border_1()
-            .border_color(cx.theme().colors().text_muted.alpha(0.12))
-            .child(self.left)
-            .child(
-                div()
-                    .h_full()
-                    .w_px()
-                    .bg(cx.theme().colors().text_muted.alpha(0.16)),
-            )
-            .child(self.right)
-            .bg(ElevationIndex::Surface.on_elevation_bg(cx))
-            .shadow(smallvec![BoxShadow {
-                color: hsla(0.0, 0.0, 0.0, 0.16),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(0.),
-                spread_radius: px(0.),
-            }])
-    }
-}
-
-fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
-    PopoverMenu::new(id.into())
-        .trigger(
-            ui::ButtonLike::new_rounded_right("split-button-right")
-                .layer(ui::ElevationIndex::ModalSurface)
-                .size(ui::ButtonSize::None)
-                .child(
-                    div()
-                        .px_1()
-                        .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
-                ),
-        )
-        .menu(move |window, cx| {
-            Some(ContextMenu::build(window, cx, |context_menu, _, _| {
-                context_menu
-                    .action("Fetch", git::Fetch.boxed_clone())
-                    .action("Pull", git::Pull.boxed_clone())
-                    .separator()
-                    .action("Push", git::Push.boxed_clone())
-                    .action("Force Push", git::ForcePush.boxed_clone())
-            }))
-        })
-        .anchor(Corner::TopRight)
-}
-
 #[derive(IntoElement, IntoComponent)]
 #[component(scope = "Version Control")]
 pub struct PanelRepoFooter {
@@ -3515,200 +3360,6 @@ impl PanelRepoFooter {
             )
             .menu(move |window, cx| Some(git_panel_context_menu(window, cx)))
             .anchor(Corner::TopRight)
-    }
-
-    fn panel_focus_handle(&self, cx: &App) -> Option<FocusHandle> {
-        if let Some(git_panel) = self.git_panel.clone() {
-            Some(git_panel.focus_handle(cx))
-        } else {
-            None
-        }
-    }
-
-    fn render_push_button(&self, id: SharedString, ahead: u32, cx: &mut App) -> SplitButton {
-        let panel = self.git_panel.clone();
-        let panel_focus_handle = self.panel_focus_handle(cx);
-
-        SplitButton::new(
-            id,
-            "Push",
-            ahead as usize,
-            0,
-            None,
-            move |_, window, cx| {
-                if let Some(panel) = panel.as_ref() {
-                    panel.update(cx, |panel, cx| {
-                        panel.push(false, window, cx);
-                    });
-                }
-            },
-            move |window, cx| {
-                git_action_tooltip(
-                    "Push committed changes to remote",
-                    &git::Push,
-                    "git push",
-                    panel_focus_handle.clone(),
-                    window,
-                    cx,
-                )
-            },
-        )
-    }
-
-    fn render_pull_button(
-        &self,
-        id: SharedString,
-        ahead: u32,
-        behind: u32,
-        cx: &mut App,
-    ) -> SplitButton {
-        let panel = self.git_panel.clone();
-        let panel_focus_handle = self.panel_focus_handle(cx);
-
-        SplitButton::new(
-            id,
-            "Pull",
-            ahead as usize,
-            behind as usize,
-            None,
-            move |_, window, cx| {
-                if let Some(panel) = panel.as_ref() {
-                    panel.update(cx, |panel, cx| {
-                        panel.pull(window, cx);
-                    });
-                }
-            },
-            move |window, cx| {
-                git_action_tooltip(
-                    "Pull",
-                    &git::Pull,
-                    "git pull",
-                    panel_focus_handle.clone(),
-                    window,
-                    cx,
-                )
-            },
-        )
-    }
-
-    fn render_fetch_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
-        let panel = self.git_panel.clone();
-        let panel_focus_handle = self.panel_focus_handle(cx);
-
-        SplitButton::new(
-            id,
-            "Fetch",
-            0,
-            0,
-            Some(IconName::ArrowCircle),
-            move |_, window, cx| {
-                if let Some(panel) = panel.as_ref() {
-                    panel.update(cx, |panel, cx| {
-                        panel.fetch(window, cx);
-                    });
-                }
-            },
-            move |window, cx| {
-                git_action_tooltip(
-                    "Fetch updates from remote",
-                    &git::Fetch,
-                    "git fetch",
-                    panel_focus_handle.clone(),
-                    window,
-                    cx,
-                )
-            },
-        )
-    }
-
-    fn render_publish_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
-        let panel = self.git_panel.clone();
-        let panel_focus_handle = self.panel_focus_handle(cx);
-
-        SplitButton::new(
-            id,
-            "Publish",
-            0,
-            0,
-            Some(IconName::ArrowUpFromLine),
-            move |_, window, cx| {
-                if let Some(panel) = panel.as_ref() {
-                    panel.update(cx, |panel, cx| {
-                        panel.push(false, window, cx);
-                    });
-                }
-            },
-            move |window, cx| {
-                git_action_tooltip(
-                    "Publish branch to remote",
-                    &git::Push,
-                    "git push --set-upstream",
-                    panel_focus_handle.clone(),
-                    window,
-                    cx,
-                )
-            },
-        )
-    }
-
-    fn render_republish_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
-        let panel = self.git_panel.clone();
-        let panel_focus_handle = self.panel_focus_handle(cx);
-
-        SplitButton::new(
-            id,
-            "Republish",
-            0,
-            0,
-            Some(IconName::ArrowUpFromLine),
-            move |_, window, cx| {
-                if let Some(panel) = panel.as_ref() {
-                    panel.update(cx, |panel, cx| {
-                        panel.push(false, window, cx);
-                    });
-                }
-            },
-            move |window, cx| {
-                git_action_tooltip(
-                    "Re-publish branch to remote",
-                    &git::Push,
-                    "git push --set-upstream",
-                    panel_focus_handle.clone(),
-                    window,
-                    cx,
-                )
-            },
-        )
-    }
-
-    fn render_relevant_button(
-        &self,
-        id: impl Into<SharedString>,
-        branch: &Branch,
-        cx: &mut App,
-    ) -> Option<impl IntoElement> {
-        if let Some(git_panel) = self.git_panel.as_ref() {
-            if !git_panel.read(cx).can_push_and_pull(cx) {
-                return None;
-            }
-        }
-        let id = id.into();
-        let upstream = branch.upstream.as_ref();
-        Some(match upstream {
-            Some(Upstream {
-                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
-                ..
-            }) => match (*ahead, *behind) {
-                (0, 0) => self.render_fetch_button(id, cx),
-                (ahead, 0) => self.render_push_button(id, ahead, cx),
-                (ahead, behind) => self.render_pull_button(id, ahead, behind, cx),
-            },
-            Some(Upstream {
-                tracking: UpstreamTracking::Gone,
-                ..
-            }) => self.render_republish_button(id, cx),
-            None => self.render_publish_button(id, cx),
-        })
     }
 }
 
@@ -3825,8 +3476,20 @@ impl RenderOnce for PanelRepoFooter {
                     .children(spinner)
                     .child(self.render_overflow_menu(overflow_menu_id))
                     .when_some(branch, |this, branch| {
-                        let button = self.render_relevant_button(self.id.clone(), &branch, cx);
-                        this.children(button)
+                        let mut focus_handle = None;
+                        if let Some(git_panel) = self.git_panel.as_ref() {
+                            if !git_panel.read(cx).can_push_and_pull(cx) {
+                                return this;
+                            }
+                            focus_handle = Some(git_panel.focus_handle(cx));
+                        }
+
+                        this.children(render_remote_button(
+                            self.id.clone(),
+                            &branch,
+                            focus_handle,
+                            true,
+                        ))
                     }),
             )
     }
