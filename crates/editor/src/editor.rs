@@ -1578,7 +1578,6 @@ impl Editor {
         }
 
         if let Some(singleton_buffer) = self.buffer.read(cx).as_singleton() {
-            key_context.add("singleton_buffer");
             if let Some(extension) = singleton_buffer
                 .read(cx)
                 .file()
