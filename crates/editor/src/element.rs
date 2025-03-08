@@ -8905,6 +8905,7 @@ fn diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .occlude()
+        .shadow_md()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
