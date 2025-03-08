@@ -22,6 +22,8 @@ pub struct SelectPrevious {
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -29,6 +31,15 @@ pub struct MoveToBeginningOfLine {
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToBeginningOfLine {
+    #[serde(default)]
+    pub(super) stop_at_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -208,6 +219,7 @@ impl_actions!(
         ComposeCompletion,
         ConfirmCodeAction,
         ConfirmCompletion,
+        DeleteToBeginningOfLine,
         DeleteToNextWordEnd,
         DeleteToPreviousWordStart,
         ExpandExcerpts,
@@ -253,7 +265,7 @@ gpui::actions!(
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
-        ContextMenuPrev,
+        ContextMenuPrevious,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
@@ -272,7 +284,6 @@ gpui::actions!(
         CutToEndOfLine,
         Delete,
         DeleteLine,
-        DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
         DeleteToPreviousSubwordStart,
@@ -297,10 +308,10 @@ gpui::actions!(
         GoToDefinitionSplit,
         GoToDiagnostic,
         GoToHunk,
+        GoToPreviousHunk,
         GoToImplementation,
         GoToImplementationSplit,
-        GoToPrevDiagnostic,
-        GoToPrevHunk,
+        GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
         HalfPageDown,
@@ -329,7 +340,9 @@ gpui::actions!(
         MoveToPreviousWordStart,
         MoveToStartOfParagraph,
         MoveToStartOfExcerpt,
+        MoveToStartOfNextExcerpt,
         MoveToEndOfExcerpt,
+        MoveToEndOfPreviousExcerpt,
         MoveUp,
         Newline,
         NewlineAbove,
@@ -344,6 +357,7 @@ gpui::actions!(
         OpenPermalinkToLine,
         OpenSelectionsInMultibuffer,
         OpenUrl,
+        OrganizeImports,
         Outdent,
         AutoIndent,
         PageDown,
@@ -366,7 +380,9 @@ gpui::actions!(
         SelectAll,
         SelectAllMatches,
         SelectToStartOfExcerpt,
+        SelectToStartOfNextExcerpt,
         SelectToEndOfExcerpt,
+        SelectToEndOfPreviousExcerpt,
         SelectDown,
         SelectEnclosingSymbol,
         SelectLargerSyntaxNode,
@@ -394,7 +410,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,
-        TabPrev,
+        Backtab,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,

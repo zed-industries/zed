@@ -2,9 +2,10 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
-    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
+    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
+    InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
+    ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -2010,9 +2011,11 @@ impl LspCommand for GetCompletions {
                 CoreCompletion {
                     old_range,
                     new_text,
-                    server_id,
-                    lsp_completion,
-                    resolved: false,
+                    source: CompletionSource::Lsp {
+                        server_id,
+                        lsp_completion: Box::new(lsp_completion),
+                        resolved: false,
+                    },
                 }
             })
             .collect())
@@ -2218,10 +2221,10 @@ impl LspCommand for GetCodeActions {
     async fn response_from_lsp(
         self,
         actions: Option<lsp::CodeActionResponse>,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
         server_id: LanguageServerId,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
         let requested_kinds_set = if let Some(kinds) = self.kinds {
             Some(kinds.into_iter().collect::<HashSet<_>>())
@@ -2229,18 +2232,47 @@ impl LspCommand for GetCodeActions {
             None
         };
 
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
+
+        let server_capabilities = language_server.capabilities();
+        let available_commands = server_capabilities
+            .execute_command_provider
+            .as_ref()
+            .map(|options| options.commands.as_slice())
+            .unwrap_or_default();
         Ok(actions
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry else {
-                    return None;
+                let lsp_action = match entry {
+                    lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
+                        if let Some(command) = lsp_action.command.as_ref() {
+                            if !available_commands.contains(&command.command) {
+                                return None;
+                            }
+                        }
+                        LspAction::Action(Box::new(lsp_action))
+                    }
+                    lsp::CodeActionOrCommand::Command(command) => {
+                        if available_commands.contains(&command.command) {
+                            LspAction::Command(command)
+                        } else {
+                            return None;
+                        }
+                    }
                 };
 
                 if let Some((requested_kinds, kind)) =
-                    requested_kinds_set.as_ref().zip(lsp_action.kind.as_ref())
+                    requested_kinds_set.as_ref().zip(lsp_action.action_kind())
                 {
-                    if !requested_kinds.contains(kind) {
+                    if !requested_kinds.contains(&kind) {
                         return None;
                     }
                 }

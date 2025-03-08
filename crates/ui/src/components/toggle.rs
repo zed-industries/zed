@@ -40,7 +40,7 @@ pub enum ToggleStyle {
 /// Each checkbox works independently from other checkboxes in the list,
 /// therefore checking an additional box does not affect any other selections.
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
@@ -197,7 +197,7 @@ impl RenderOnce for Checkbox {
                     .items_center()
                     .m(DynamicSpacing::Base04.px(cx))
                     .size(DynamicSpacing::Base16.rems(cx))
-                    .rounded_sm()
+                    .rounded_xs()
                     .bg(bg_color)
                     .border_1()
                     .border_color(border_color)
@@ -240,7 +240,7 @@ impl RenderOnce for Checkbox {
 
 /// A [`Checkbox`] that has a [`Label`].
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
@@ -318,7 +318,7 @@ impl RenderOnce for CheckboxWithLabel {
 ///
 /// Switches are used to represent opposite states, such as enabled or disabled.
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct Switch {
     id: ElementId,
     toggle_state: ToggleState,
@@ -510,7 +510,7 @@ impl RenderOnce for SwitchWithLabel {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Checkbox {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![
@@ -595,7 +595,7 @@ impl ComponentPreview for Checkbox {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Switch {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![
@@ -658,7 +658,7 @@ impl ComponentPreview for Switch {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for CheckboxWithLabel {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![example_group_with_title(

@@ -348,7 +348,7 @@ impl Extension {
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
-                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &completions.into_iter().collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
@@ -402,7 +402,7 @@ impl Extension {
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
-                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &symbols.into_iter().collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {

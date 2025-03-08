@@ -229,7 +229,7 @@ impl MarkdownPreviewView {
                                                 s.bg(cx.theme().colors().border_variant)
                                             }
                                         })
-                                        .rounded_sm();
+                                        .rounded_xs();
 
                                     container.child(
                                         div()
@@ -317,7 +317,9 @@ impl MarkdownPreviewView {
             window,
             |this, editor, event: &EditorEvent, window, cx| {
                 match event {
-                    EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
+                    EditorEvent::Edited { .. }
+                    | EditorEvent::DirtyChanged
+                    | EditorEvent::ExcerptsEdited { .. } => {
                         this.parse_markdown_from_active_editor(true, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {

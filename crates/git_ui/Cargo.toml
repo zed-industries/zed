@@ -12,10 +12,16 @@ workspace = true
 name = "git_ui"
 path = "src/git_ui.rs"
 
+[features]
+default = []
+test-support = ["multi_buffer/test-support"]
+
 [dependencies]
 anyhow.workspace = true
+askpass.workspace= true
 buffer_diff.workspace = true
 collections.workspace = true
+component.workspace = true
 db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
@@ -25,6 +31,10 @@ git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
+language_model.workspace = true
+linkify.workspace = true
+linkme.workspace = true
+log.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 panel.workspace = true
@@ -36,7 +46,9 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 strum.workspace = true
+telemetry.workspace = true
 theme.workspace = true
 time.workspace = true
 ui.workspace = true
@@ -47,5 +59,13 @@ zed_actions.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
-[features]
-default = []
+[dev-dependencies]
+ctor.workspace = true
+env_logger.workspace = true
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+unindent.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

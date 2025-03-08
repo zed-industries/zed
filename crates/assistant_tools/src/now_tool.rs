@@ -3,7 +3,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use chrono::{Local, Utc};
-use gpui::{App, Task, WeakEntity, Window};
+use gpui::{App, Entity, Task};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,7 @@ pub enum Timezone {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct FileToolInput {
+pub struct NowToolInput {
     /// The timezone to use for the datetime.
     timezone: Timezone,
 }
@@ -34,18 +35,17 @@ impl Tool for NowTool {
     }
 
     fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(FileToolInput);
+        let schema = schemars::schema_for!(NowToolInput);
         serde_json::to_value(&schema).unwrap()
     }
 
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _workspace: WeakEntity<workspace::Workspace>,
-        _window: &mut Window,
+        _project: Entity<Project>,
         _cx: &mut App,
     ) -> Task<Result<String>> {
-        let input: FileToolInput = match serde_json::from_value(input) {
+        let input: NowToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };

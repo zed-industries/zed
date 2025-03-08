@@ -26,7 +26,7 @@ impl<K> Default for MapKey<K> {
 #[derive(Clone, Debug)]
 pub struct MapKeyRef<'a, K>(Option<&'a K>);
 
-impl<'a, K> Default for MapKeyRef<'a, K> {
+impl<K> Default for MapKeyRef<'_, K> {
     fn default() -> Self {
         Self(None)
     }
@@ -68,6 +68,10 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
 
     pub fn insert(&mut self, key: K, value: V) {
         self.0.insert_or_replace(MapEntry { key, value }, &());
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = SumTree::default();
     }
 
     pub fn remove(&mut self, key: &K) -> Option<V> {
@@ -155,6 +159,14 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
 
     pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
         self.0.iter().map(|entry| &entry.value)
+    }
+
+    pub fn first(&self) -> Option<(&K, &V)> {
+        self.0.first().map(|entry| (&entry.key, &entry.value))
+    }
+
+    pub fn last(&self) -> Option<(&K, &V)> {
+        self.0.last().map(|entry| (&entry.key, &entry.value))
     }
 
     pub fn insert_tree(&mut self, other: TreeMap<K, V>) {
