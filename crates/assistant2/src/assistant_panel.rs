@@ -166,22 +166,25 @@ impl AssistantPanel {
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
+        let thread = cx.new(|cx| {
+            ActiveThread::new(
+                workspace.clone(),
+                thread.clone(),
+                thread_store.clone(),
+                language_registry.clone(),
+                window,
+                cx,
+            )
+        });
+
         Self {
             active_view: ActiveView::Thread,
             workspace,
             project: project.clone(),
             fs: fs.clone(),
-            language_registry: language_registry.clone(),
+            language_registry,
             thread_store: thread_store.clone(),
-            thread: cx.new(|cx| {
-                ActiveThread::new(
-                    thread.clone(),
-                    thread_store.clone(),
-                    language_registry,
-                    window,
-                    cx,
-                )
-            }),
+            thread,
             message_editor,
             context_store,
             context_editor: None,
@@ -239,6 +242,7 @@ impl AssistantPanel {
         self.active_view = ActiveView::Thread;
         self.thread = cx.new(|cx| {
             ActiveThread::new(
+                self.workspace.clone(),
                 thread.clone(),
                 self.thread_store.clone(),
                 self.language_registry.clone(),
@@ -372,6 +376,7 @@ impl AssistantPanel {
                 this.active_view = ActiveView::Thread;
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
+                        this.workspace.clone(),
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),

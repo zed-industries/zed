@@ -450,6 +450,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_context_editor",
+ "assistant_scripting",
  "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
@@ -561,6 +562,25 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+]
+
+[[package]]
+name = "assistant_scripting"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "mlua",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
+ "regex",
+ "serde",
+ "serde_json",
+ "settings",
+ "util",
 ]
 
 [[package]]
@@ -11911,26 +11931,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3cf7c11c38cb994f3d40e8a8cde3bbd1f72a435e4c49e85d6553d8312306152"
 
 [[package]]
-name = "scripting_tool"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant_tool",
- "collections",
- "futures 0.3.31",
- "gpui",
- "mlua",
- "parking_lot",
- "project",
- "regex",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "util",
-]
-
-[[package]]
 name = "scrypt"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16984,7 +16984,6 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
- "scripting_tool",
  "search",
  "serde",
  "serde_json",
