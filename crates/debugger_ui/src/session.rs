@@ -3,10 +3,13 @@ mod inert;
 pub mod running;
 mod starting;
 
+use std::time::Duration;
+
 use dap::client::SessionId;
 use failed::FailedState;
 use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+    percentage, Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, Task, Transformation, WeakEntity,
 };
 use inert::{InertEvent, InertState};
 use project::debugger::{dap_store::DapStore, session::Session};
@@ -30,7 +33,7 @@ pub(crate) enum DebugSessionState {
 
 impl DebugSessionState {
     #[cfg(any(test, feature = "test-support"))]
-    fn as_running(&self) -> Option<&Entity<running::RunningState>> {
+    pub(crate) fn as_running(&self) -> Option<&Entity<running::RunningState>> {
         match &self {
             DebugSessionState::Running(entity) => Some(entity),
             _ => None,
@@ -204,7 +207,23 @@ impl Item for DebugSession {
             DebugSessionState::Failed(_) => "Failed",
             DebugSessionState::Running(_) => "Running",
         };
-        div().child(Label::new(label)).into_any_element()
+        let color = if let DebugSessionState::Failed(_) = &self.mode {
+            Color::Error
+        } else {
+            Color::Default
+        };
+        let is_starting = matches!(self.mode, DebugSessionState::Starting(_));
+        h_flex()
+            .gap_1()
+            .children(is_starting.then(|| {
+                Icon::new(IconName::ArrowCircle).with_animation(
+                    "starting-debug-session",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |this, delta| this.transform(Transformation::rotate(percentage(delta))),
+                )
+            }))
+            .child(Label::new(label).color(color))
+            .into_any_element()
     }
 }
 
