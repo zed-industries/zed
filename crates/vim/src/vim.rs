@@ -26,7 +26,7 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
+    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
     KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
@@ -314,7 +314,6 @@ pub(crate) struct Vim {
     operator_stack: Vec<Operator>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
-    pub(crate) marks: HashMap<String, Vec<Anchor>>,
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
     pub(crate) change_list: Vec<Vec<Anchor>>,
     pub(crate) change_list_position: Option<usize>,
@@ -362,7 +361,6 @@ impl Vim {
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
-            marks: HashMap::default(),
             stored_visual_mode: None,
             change_list: Vec::new(),
             change_list_position: None,
@@ -1573,7 +1571,7 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::Mark) => self.create_mark(text, false, window, cx),
+            Some(Operator::Mark) => self.create_mark(text, window, cx),
             Some(Operator::RecordRegister) => {
                 self.record_register(text.chars().next().unwrap(), window, cx)
             }

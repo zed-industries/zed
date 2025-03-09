@@ -4,36 +4,30 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint,
+    Anchor, Bias, DisplayPoint, Editor, MultiBuffer,
 };
-use gpui::{Context, Window};
+use gpui::{Context, Entity, UpdateGlobal, Window};
 use language::SelectionGoal;
+use ui::App;
+use workspace::OpenOptions;
 
 use crate::{
     motion::{self, Motion},
-    state::Mode,
+    state::{Mark, Mode, VimGlobals},
     Vim,
 };
 
 impl Vim {
-    pub fn create_mark(
-        &mut self,
-        text: Arc<str>,
-        tail: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(anchors) = self.update_editor(window, cx, |_, editor, _, _| {
-            editor
+    pub fn create_mark(&mut self, text: Arc<str>, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let anchors = editor
                 .selections
                 .disjoint_anchors()
                 .iter()
-                .map(|s| if tail { s.tail() } else { s.head() })
-                .collect::<Vec<_>>()
-        }) else {
-            return;
-        };
-        self.marks.insert(text.to_string(), anchors);
+                .map(|s| s.head())
+                .collect::<Vec<_>>();
+            vim.set_mark(text.to_string(), anchors, editor.buffer(), window, cx);
+        });
         self.clear_operator(window, cx);
     }
 
@@ -55,7 +49,7 @@ impl Vim {
         let mut ends = vec![];
         let mut reversed = vec![];
 
-        self.update_editor(window, cx, |_, editor, _, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             let (map, selections) = editor.selections.all_display(cx);
             for selection in selections {
                 let end = movement::saturating_left(&map, selection.end);
@@ -69,10 +63,10 @@ impl Vim {
                 );
                 reversed.push(selection.reversed)
             }
+            vim.set_mark("<".to_string(), starts, editor.buffer(), window, cx);
+            vim.set_mark(">".to_string(), ends, editor.buffer(), window, cx);
         });
 
-        self.marks.insert("<".to_string(), starts);
-        self.marks.insert(">".to_string(), ends);
         self.stored_visual_mode.replace((mode, reversed));
     }
 
@@ -84,7 +78,6 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.pop_operator(window, cx);
-
         let anchors = match &*text {
             "{" | "}" => self.update_editor(window, cx, |_, editor, _, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
@@ -102,7 +95,148 @@ impl Vim {
                     .collect::<Vec<Anchor>>()
             }),
             "." => self.change_list.last().cloned(),
-            _ => self.marks.get(&*text).cloned(),
+            _ => {
+                let Some(buffer) = self.editor().map(|editor| editor.read(cx).buffer().clone())
+                else {
+                    return;
+                };
+                let mark = self.get_mark(&*text, &buffer, window, cx);
+                match mark {
+                    None => None,
+                    Some(Mark::Local(anchors)) => Some(anchors),
+                    Some(Mark::MultiBuffer(entity_id, anchors)) => {
+                        let Some(workspace) = self.workspace(window) else {
+                            return;
+                        };
+                        workspace.update(cx, |workspace, cx| {
+                            let item = workspace.items(cx).find(|item| {
+                                item.act_as::<Editor>(cx).is_some_and(|editor| {
+                                    editor.read(cx).buffer().entity_id() == entity_id
+                                })
+                            });
+                            if let Some(item) = item {
+                                item.act_as::<Editor>(cx).unwrap().update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        Some(Autoscroll::fit()),
+                                        window,
+                                        cx,
+                                        |s| {
+                                            s.select_anchor_ranges(
+                                                anchors.into_iter().map(|a| a.clone()..a.clone()),
+                                            )
+                                        },
+                                    )
+                                })
+                            }
+                        });
+                        return;
+                    }
+                    Some(Mark::Buffer(buffer_id, anchors)) => {
+                        let Some(workspace) = self.workspace(window) else {
+                            return;
+                        };
+                        workspace.update(cx, |workspace, cx| {
+                            let mut panes = workspace.panes().to_vec();
+                            panes.insert(0, workspace.active_pane().clone());
+                            for pane in panes {
+                                let mut found = false;
+                                let anchors = anchors.clone();
+                                pane.update(cx, |pane, cx| {
+                                    let Some(item_handle) =
+                                        pane.items().find(|&item_handle| -> bool {
+                                            let Some(editor) = item_handle.act_as::<Editor>(cx)
+                                            else {
+                                                return false;
+                                            };
+                                            let Some(buffer) =
+                                                editor.read(cx).buffer().read(cx).as_singleton()
+                                            else {
+                                                return false;
+                                            };
+                                            buffer_id == buffer.read(cx).remote_id()
+                                        })
+                                    else {
+                                        return;
+                                    };
+                                    found = true;
+                                    let Some(editor) = item_handle.act_as::<Editor>(cx) else {
+                                        return;
+                                    };
+
+                                    let Some(index) = pane.index_for_item(&editor) else {
+                                        return;
+                                    };
+                                    pane.activate_item(index, true, true, window, cx);
+
+                                    cx.spawn_in(window, |_, mut cx| async move {
+                                        editor.update_in(&mut cx, |editor, window, cx| {
+                                            editor.change_selections(
+                                                Some(Autoscroll::fit()),
+                                                window,
+                                                cx,
+                                                |s| {
+                                                    s.select_anchor_ranges(
+                                                        anchors
+                                                            .clone()
+                                                            .iter()
+                                                            .map(|&anchor| anchor..anchor),
+                                                    );
+                                                },
+                                            )
+                                        })?;
+                                        anyhow::Ok(())
+                                    })
+                                    .detach_and_log_err(cx);
+                                });
+                                if found {
+                                    break;
+                                }
+                            }
+                        });
+                        return;
+                    }
+                    Some(Mark::Path(path, points)) => {
+                        let Some(workspace) = self.workspace(window) else {
+                            return;
+                        };
+                        let task = workspace.update(cx, |workspace, cx| {
+                            workspace.open_abs_path(
+                                path.to_path_buf(),
+                                OpenOptions {
+                                    visible: Some(workspace::OpenVisible::All),
+                                    focus: Some(true),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
+                        });
+                        cx.spawn_in(window, |this, mut cx| async move {
+                            let editor = task.await?;
+                            this.update_in(&mut cx, |_, window, cx| {
+                                if let Some(editor) = editor.act_as::<Editor>(cx) {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.change_selections(
+                                            Some(Autoscroll::fit()),
+                                            window,
+                                            cx,
+                                            |s| {
+                                                s.select_ranges(
+                                                    points
+                                                        .into_iter()
+                                                        .map(|p| p.clone()..p.clone()),
+                                                )
+                                            },
+                                        )
+                                    })
+                                }
+                            })
+                        })
+                        .detach_and_log_err(cx);
+                        return;
+                    }
+                }
+            }
         };
 
         let Some(mut anchors) = anchors else { return };
@@ -144,7 +278,7 @@ impl Vim {
                     }
                 }
 
-                if !should_jump {
+                if !should_jump && !ranges.is_empty() {
                     editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_anchor_ranges(ranges)
                     });
@@ -157,6 +291,45 @@ impl Vim {
                 }
             }
         }
+    }
+
+    pub fn set_mark(
+        &mut self,
+        name: String,
+        anchors: Vec<Anchor>,
+        buffer_entity: &Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+        let entity_id = workspace.entity_id();
+        Vim::update_globals(cx, |vim_globals, cx| {
+            let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
+                return;
+            };
+            marks_state.update(cx, |ms, cx| {
+                dbg!("setting mark", name.clone());
+                ms.set_mark(name.clone(), buffer_entity, anchors, cx);
+            });
+        });
+    }
+
+    pub fn get_mark(
+        &self,
+        name: &str,
+        multi_buffer: &Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Mark> {
+        VimGlobals::update_global(cx, |globals, cx| {
+            let workspace_id = self.workspace(window)?.entity_id();
+            globals
+                .marks
+                .get_mut(&workspace_id)?
+                .update(cx, |ms, cx| ms.get_mark(name, multi_buffer, cx))
+        })
     }
 }
 
