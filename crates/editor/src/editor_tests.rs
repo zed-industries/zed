@@ -4934,6 +4934,34 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
             )
         );
     "});
+
+    // Copy an indented block, starting mid-line
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(),
+            somethin«g(
+                e,
+                f
+            )ˇ»
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    // Paste it on a line with a lower indent level
+    cx.update_editor(|e, window, cx| e.move_to_end(&Default::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+            something(
+                e,
+                f
+            )
+        );
+        g(
+            e,
+            f
+        )ˇ"});
 }
 
 #[gpui::test]
@@ -11416,7 +11444,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         //Wrap around the bottom of the buffer
         for _ in 0..3 {
-            editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
+            editor.go_to_next_hunk(&GoToHunk, window, cx);
         }
     });
 
@@ -11438,7 +11466,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         //Wrap around the top of the buffer
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
+            editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
         }
     });
 
@@ -11458,7 +11486,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
+        editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
     });
 
     cx.assert_editor_state(
@@ -11477,7 +11505,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
+        editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
     });
 
     cx.assert_editor_state(
@@ -11497,7 +11525,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
 
     cx.update_editor(|editor, window, cx| {
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPreviousHunk::default(), window, cx);
+            editor.go_to_prev_hunk(&GoToPreviousHunk, window, cx);
         }
     });
 
@@ -11521,7 +11549,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
     });
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
+        editor.go_to_next_hunk(&GoToHunk, window, cx);
     });
 
     cx.assert_editor_state(
@@ -13529,7 +13557,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
+        editor.go_to_next_hunk(&GoToHunk, window, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
     });
     executor.run_until_parked();
@@ -13551,7 +13579,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
 
     cx.update_editor(|editor, window, cx| {
         for _ in 0..2 {
-            editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
+            editor.go_to_next_hunk(&GoToHunk, window, cx);
             editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
         }
     });
@@ -13574,7 +13602,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk::default(), window, cx);
+        editor.go_to_next_hunk(&GoToHunk, window, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
     });
     executor.run_until_parked();
@@ -16390,6 +16418,199 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+            "keymaps/default-linux.json",
+            cx,
+        )
+        .unwrap();
+        cx.bind_keys(default_key_bindings);
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("a0\nb0\nc0\nd0\ne0\n", vec![Point::row_range(0..2)]),
+                ("a1\nb1\nc1\nd1\ne1\n", vec![Point::row_range(0..2)]),
+                ("a2\nb2\nc2\nd2\ne2\n", vec![Point::row_range(0..2)]),
+                ("a3\nb3\nc3\nd3\ne3\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        let mut editor = Editor::new(
+            EditorMode::Full,
+            multi_buffer.clone(),
+            None,
+            true,
+            window,
+            cx,
+        );
+
+        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        // fold all but the second buffer, so that we test navigating between two
+        // adjacent folded buffers, as well as folded buffers at the start and
+        // end the multibuffer
+        editor.fold_buffer(buffer_ids[0], cx);
+        editor.fold_buffer(buffer_ids[2], cx);
+        editor.fold_buffer(buffer_ids[3], cx);
+
+        editor
+    });
+    cx.simulate_resize(size(px(1000.), px(1000.)));
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇa1
+        b1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        ˇb1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        ˇ[EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("down");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    for _ in 0..5 {
+        cx.simulate_keystroke("down");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            a1
+            b1
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            ˇ[FOLDED]
+            "
+        });
+    }
+
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        b1
+        ˇ[EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        a1
+        ˇb1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("up");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇa1
+        b1
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    for _ in 0..5 {
+        cx.simulate_keystroke("up");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            ˇ[FOLDED]
+            [EXCERPT]
+            a1
+            b1
+            [EXCERPT]
+            [FOLDED]
+            [EXCERPT]
+            [FOLDED]
+            "
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_inline_completion_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -17115,6 +17336,245 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
         ˇ
         </span>
     "});
+}
+
+mod autoclose_tags {
+    use super::*;
+    use language::language_settings::JsxTagAutoCloseSettings;
+    use languages::language;
+
+    async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
+        init_test(cx, |settings| {
+            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+        });
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+
+            buffer.set_language(Some(language), cx)
+        });
+
+        cx
+    }
+
+    macro_rules! check {
+        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
+            #[gpui::test]
+            async fn $name(cx: &mut TestAppContext) {
+                let mut cx = test_setup(cx).await;
+                cx.set_state($initial);
+                cx.run_until_parked();
+
+                cx.update_editor(|editor, window, cx| {
+                    editor.handle_input($input, window, cx);
+                });
+                cx.run_until_parked();
+                cx.assert_editor_state($expected);
+            }
+        };
+    }
+
+    check!(
+        test_basic,
+        "<divˇ" + ">" => "<div>ˇ</div>"
+    );
+
+    check!(
+        test_basic_nested,
+        "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        test_basic_ignore_already_closed,
+        "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        test_doesnt_autoclose_closing_tag,
+        "</divˇ" + ">" => "</div>ˇ"
+    );
+
+    check!(
+        test_jsx_attr,
+        "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
+    );
+
+    check!(
+        test_ignores_closing_tags_in_expr_block,
+        "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
+    );
+
+    check!(
+        test_doesnt_autoclose_on_gt_in_expr,
+        "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
+    );
+
+    check!(
+        test_ignores_closing_tags_with_different_tag_names,
+        "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
+    );
+
+    check!(
+        test_autocloses_in_jsx_expression,
+        "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        test_doesnt_autoclose_already_closed_in_jsx_expression,
+        "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        test_autocloses_fragment,
+        "<ˇ" + ">" => "<>ˇ</>"
+    );
+
+    check!(
+        test_does_not_include_type_argument_in_autoclose_tag_name,
+        "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
+    );
+
+    check!(
+        test_does_not_autoclose_doctype,
+        "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
+    );
+
+    check!(
+        test_does_not_autoclose_comment,
+        "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
+    );
+
+    check!(
+        test_multi_cursor_autoclose_same_tag,
+        r#"
+        <divˇ
+        <divˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div>ˇ</div>
+        "#
+    );
+
+    check!(
+        test_multi_cursor_autoclose_different_tags,
+        r#"
+        <divˇ
+        <spanˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <span>ˇ</span>
+        "#
+    );
+
+    check!(
+        test_multi_cursor_autoclose_some_dont_autoclose_others,
+        r#"
+        <divˇ
+        <div /ˇ
+        <spanˇ</span>
+        <!DOCTYPE htmlˇ
+        </headˇ
+        <Component<T>ˇ
+        ˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div />ˇ
+        <span>ˇ</span>
+        <!DOCTYPE html>ˇ
+        </head>ˇ
+        <Component<T>>ˇ</Component>
+        >ˇ
+        "#
+    );
+
+    check!(
+        test_doesnt_mess_up_trailing_text,
+        "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
+    );
+
+    #[gpui::test]
+    async fn test_multibuffer(cx: &mut TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+        });
+
+        let buffer_a = cx.new(|cx| {
+            let mut buf = language::Buffer::local("<div", cx);
+            buf.set_language(
+                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
+                cx,
+            );
+            buf
+        });
+        let buffer_b = cx.new(|cx| {
+            let mut buf = language::Buffer::local("<pre", cx);
+            buf.set_language(
+                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
+                cx,
+            );
+            buf
+        });
+        let buffer_c = cx.new(|cx| {
+            let buf = language::Buffer::local("<span", cx);
+            buf
+        });
+        let buffer = cx.new(|cx| {
+            let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
+            buf.push_excerpts(
+                buffer_a,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf.push_excerpts(
+                buffer_b,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf.push_excerpts(
+                buffer_c,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf
+        });
+        let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+
+        let mut cx = EditorTestContext::for_editor(editor, cx).await;
+
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(None, window, cx, |selections| {
+                selections.select(vec![
+                    Selection::from_offset(4),
+                    Selection::from_offset(9),
+                    Selection::from_offset(15),
+                ])
+            })
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input(">", window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.assert_editor_state("<div>ˇ</div>\n<pre>ˇ</pre>\n<span>ˇ");
+    }
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

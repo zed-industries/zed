@@ -108,8 +108,8 @@
       "cmd-right": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }],
       "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
-      "cmd-up": "editor::MoveToStartOfExcerpt",
-      "cmd-down": "editor::MoveToEndOfExcerpt",
+      "cmd-up": "editor::MoveToBeginning",
+      "cmd-down": "editor::MoveToEnd",
       "cmd-home": "editor::MoveToBeginning", // Typed via `cmd-fn-left`
       "cmd-end": "editor::MoveToEnd", // Typed via `cmd-fn-right`
       "shift-up": "editor::SelectUp",
@@ -124,8 +124,8 @@
       "alt-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       "ctrl-shift-down": "editor::SelectToEndOfParagraph",
-      "cmd-shift-up": "editor::SelectToStartOfExcerpt",
-      "cmd-shift-down": "editor::SelectToEndOfExcerpt",
+      "cmd-shift-up": "editor::SelectToBeginning",
+      "cmd-shift-down": "editor::SelectToEnd",
       "cmd-a": "editor::SelectAll",
       "cmd-l": "editor::SelectLine",
       "cmd-shift-i": "editor::Format",
@@ -142,8 +142,8 @@
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "git::Restore",
       "cmd-alt-y": "git::ToggleStaged",
-      "cmd-y": ["git::StageAndNext", { "whole_excerpt": false }],
-      "cmd-shift-y": ["git::UnstageAndNext", { "whole_excerpt": false }],
+      "cmd-y": "git::StageAndNext",
+      "cmd-shift-y": "git::UnstageAndNext",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
@@ -170,6 +170,16 @@
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
+    }
+  },
+  {
+    "context": "Editor && multibuffer",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-up": "editor::MoveToStartOfExcerpt",
+      "cmd-down": "editor::MoveToStartOfNextExcerpt",
+      "cmd-shift-up": "editor::SelectToStartOfExcerpt",
+      "cmd-shift-down": "editor::SelectToStartOfNextExcerpt"
     }
   },
   {
@@ -257,10 +267,27 @@
     }
   },
   {
+    "context": "AssistantPanel2 && prompt_editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "assistant2::NewPromptEditor",
+      "cmd-alt-t": "assistant2::NewThread"
+    }
+  },
+  {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat"
+    }
+  },
+  {
+    "context": "EditMessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
     }
   },
   {
@@ -355,8 +382,8 @@
     "context": "Pane",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-cmd-left": "pane::ActivatePrevItem",
-      "cmd-{": "pane::ActivatePrevItem",
+      "alt-cmd-left": "pane::ActivatePreviousItem",
+      "cmd-{": "pane::ActivatePreviousItem",
       "alt-cmd-right": "pane::ActivateNextItem",
       "cmd-}": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
@@ -642,8 +669,8 @@
       "shift-enter": "editor::ExpandExcerpts",
       "cmd-alt-enter": "editor::OpenExcerptsSplit",
       "cmd-shift-e": "pane::RevealInProjectPanel",
-      "cmd-f8": ["editor::GoToHunk", { "center_cursor": true }],
-      "cmd-shift-f8": ["editor::GoToPreviousHunk", { "center_cursor": true }],
+      "cmd-f8": "editor::GoToHunk",
+      "cmd-shift-f8": "editor::GoToPreviousHunk",
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }
@@ -762,6 +789,13 @@
     }
   },
   {
+    "context": "AskPass > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "GitPanel > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -769,7 +803,9 @@
       "cmd-enter": "git::Commit",
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
-      "alt-up": "git_panel::FocusChanges"
+      "alt-up": "git_panel::FocusChanges",
+      "shift-escape": "git::ExpandCommitEditor",
+      "alt-tab": "git::GenerateCommitMessage"
     }
   },
   {
@@ -777,7 +813,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
-      "cmd-enter": "git::Commit"
+      "cmd-enter": "git::Commit",
+      "alt-tab": "git::GenerateCommitMessage"
     }
   },
   {
@@ -806,6 +843,9 @@
     "context": "Picker > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "escape": "menu::Cancel",
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]

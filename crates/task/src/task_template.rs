@@ -343,6 +343,7 @@ impl TaskTemplate {
                 program,
                 show_summary: self.show_summary,
                 show_command: self.show_command,
+                show_rerun: true,
             }),
         })
     }

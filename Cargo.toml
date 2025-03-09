@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/anthropic",
+    "crates/askpass",
     "crates/assets",
     "crates/assistant",
     "crates/assistant2",
@@ -121,6 +122,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/schema_generator",
+    "crates/assistant_scripting",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -171,15 +173,9 @@ members = [
     # Extensions
     #
 
-    "extensions/csharp",
-    "extensions/deno",
-    "extensions/elixir",
     "extensions/emmet",
-    "extensions/erlang",
     "extensions/glsl",
-    "extensions/haskell",
     "extensions/html",
-    "extensions/lua",
     "extensions/perplexity",
     "extensions/proto",
     "extensions/purescript",
@@ -213,6 +209,7 @@ edition = "2021"
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
+askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
@@ -329,6 +326,7 @@ reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
+assistant_scripting = { path = "crates/assistant_scripting" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
@@ -462,6 +460,7 @@ livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "
 ], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
+mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 nanoid = "0.4"
 nbformat = { version = "0.10.0" }
 nix = "0.29"
@@ -547,7 +546,7 @@ tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.2", features = ["wasm"] }
+tree-sitter = { version = "0.25.3", features = ["wasm"] }
 tree-sitter-bash = "0.23"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
@@ -610,9 +609,11 @@ features = [
 version = "0.58"
 features = [
     "implement",
+    "Foundation_Collections",
     "Foundation_Numerics",
     "Storage",
     "System_Threading",
+    "UI_StartScreen",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",

@@ -24,7 +24,16 @@ For more information, see:
 
 Zed has built-in support for predicting multiple edits at a time via its [Zeta model](https://huggingface.co/zed-industries/zeta). Clicking "Introducing: Edit Prediction" on the top right will open a brief prompt setting up this feature.
 
-Edit predictions appear as you type, and you can accept them by pressing `tab`. The `tab` key is already used for accepting language server completions and for indenting. In these cases, `alt-tab` is used instead to accept the prediction. When the completions menu is open, holding `alt` will cause it to temporarily disappear in order to view the prediction within the buffer.
+Edit predictions appear as you type, and most of the time, you can accept them by pressing `tab`.
+
+### Conflict With Other `tab` Actions {#edit-predictions-conflict}
+
+By default, when `tab` would normally perform a different action, Zed requires a modifier key to accept predictions:
+
+1. When the language server completions menu is visible.
+2. When your cursor isn't at the right indentation level.
+
+In these cases, `alt-tab` is used instead to accept the prediction. When the language server completions menu is open, holding `alt` first will cause it to temporarily disappear in order to preview the prediction within the buffer.
 
 On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is provided as the default binding for accepting predictions. `tab` and `alt-tab` also work, but aren't displayed by default.
 
@@ -32,7 +41,7 @@ On Linux, `alt-tab` is often used by the window manager for switching windows, s
 
 See the [Configuring GitHub Copilot](#github-copilot) and [Configuring Supermaven](#supermaven) sections below for configuration of other providers. Only text insertions at the current cursor are supported for these providers, whereas the Zeta model provides multiple predictions including deletions.
 
-## Configuring Edit Prediction Keybindings
+## Configuring Edit Prediction Keybindings {#edit-predictions-keybinding}
 
 By default, `tab` is used to accept edit predictions. You can use another keybinding by inserting this in your keymap:
 
@@ -46,26 +55,39 @@ By default, `tab` is used to accept edit predictions. You can use another keybin
 }
 ```
 
-When you have both a language server completion and an edit prediction on screen at the same time, Zed uses a different context to accept keybindings (`edit_prediction_conflict`). If you want to use a different keybinding, you can insert this in your keymap:
+When there's a [conflict with the `tab` key](#edit-predictions-conflict), Zed uses a different context to accept keybindings (`edit_prediction_conflict`). If you want to use a different one, you can insert this in your keymap:
 
 ```json
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
-    "ctrl-enter": "editor::AcceptEditPrediction"
+    "ctrl-enter": "editor::AcceptEditPrediction" // Example of a modified keybinding
   }
 }
 ```
 
-If your keybinding contains a modifier (`ctrl` in the example), it will be used to preview the edit prediction and temporarily hide the language server completion menu.
+If your keybinding contains a modifier (`ctrl` in the example above), it will also be used to preview the edit prediction and temporarily hide the language server completion menu.
 
-You can also bind a keystroke without a modifier. In that case, Zed will use the default modifier (`alt`) to preview the edit prediction.
+You can also bind this action to keybind without a modifier. In that case, Zed will use the default modifier (`alt`) to preview the edit prediction.
 
 ```json
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
     // Here we bind tab to accept even when there's a language server completion
+    // or the cursor isn't at the correct indentation level
+    "tab": "editor::AcceptEditPrediction"
+  }
+}
+```
+
+To maintain the use of the modifier key for accepting predictions when there is a language server completions menu, but allow `tab` to accept predictions regardless of cursor position, you can specify the context further with `showing_completions`:
+
+```json
+{
+  "context": "Editor && edit_prediction_conflict && !showing_completions",
+  "bindings": {
+    // Here we don't require a modifier unless there's a language server completion
     "tab": "editor::AcceptEditPrediction"
   }
 }
@@ -136,6 +158,40 @@ While `tab` and `alt-tab` are supported on Linux, `alt-l` is displayed instead. 
     }
   },
 ```
+
+### Missing keybind {#edit-predictions-missing-keybinding}
+
+Zed requires at least one keybinding for the {#action editor::AcceptEditPrediction} action in both the `Editor && edit_prediction` and `Editor && edit_prediction_conflict` contexts ([learn more above](#edit-predictions-keybinding)).
+
+If you have previously bound the default keybindings to different actions in the global context, you will not be able to preview or accept edit predictions. For example:
+
+```json
+[
+  // Your keymap
+  {
+    "bindings": {
+      // Binds `alt-tab` to a different action globally
+      "alt-tab": "menu::SelectNext"
+    }
+  }
+]
+```
+
+To fix this, you can specify your own keybinding for accepting edit predictions:
+
+```json
+[
+  // ...
+  {
+    "context": "Editor && edit_prediction_conflict",
+    "bindings": {
+      "alt-l": "editor::AcceptEditPrediction"
+    }
+  }
+]
+```
+
+If you would like to use the default keybinding, you can free it up by either moving yours to a more specific context or changing it to something else.
 
 ## Disabling Automatic Edit Prediction
 

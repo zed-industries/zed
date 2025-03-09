@@ -300,7 +300,7 @@ impl NotificationPanel {
                                         .hover(|style| {
                                             style
                                                 .bg(cx.theme().colors().element_selected)
-                                                .rounded_md()
+                                                .rounded_sm()
                                         })
                                         .child(Label::new(relative_timestamp).color(Color::Muted))
                                         .tooltip(move |_, cx| {

@@ -260,7 +260,7 @@ impl RenderOnce for PastThread {
             .start_slot(
                 div()
                     .max_w_4_5()
-                    .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+                    .child(Label::new(summary).size(LabelSize::Small).truncate()),
             )
             .end_slot(
                 h_flex()
@@ -356,7 +356,7 @@ impl RenderOnce for PastContext {
         .start_slot(
             div()
                 .max_w_4_5()
-                .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+                .child(Label::new(summary).size(LabelSize::Small).truncate()),
         )
         .end_slot(
             h_flex()

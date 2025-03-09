@@ -648,7 +648,7 @@ impl VariableList {
                                         .child(
                                             Label::new(&variable.dap.value)
                                                 .single_line()
-                                                .text_ellipsis()
+                                                .truncate()
                                                 .size(LabelSize::XSmall)
                                                 .color(Color::Muted),
                                         )

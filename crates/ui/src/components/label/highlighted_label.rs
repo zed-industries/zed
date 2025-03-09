@@ -64,8 +64,8 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
-    fn text_ellipsis(mut self) -> Self {
-        self.base = self.base.text_ellipsis();
+    fn truncate(mut self) -> Self {
+        self.base = self.base.truncate();
         self
     }
 

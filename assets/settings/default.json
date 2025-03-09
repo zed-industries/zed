@@ -720,8 +720,8 @@
   "remove_trailing_whitespace_on_save": true,
   // Whether to start a new line with a comment when a previous line is a comment as well.
   "extend_comment_on_newline": true,
-  // Whether or not to ensure there's a single newline at the end of a buffer
-  // when saving it.
+  // Removes any lines containing only whitespace at the end of the file and
+  // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
   //
@@ -837,7 +837,15 @@
       //
       // The minimum column number to show the inline blame information at
       // "min_column": 0
-    }
+    },
+    // How git hunks are displayed visually in the editor.
+    // This setting can take two values:
+    //
+    // 1. Show unstaged hunks with a transparent background (default):
+    //    "hunk_style": "transparent"
+    // 2. Show unstaged hunks with a pattern background:
+    //    "hunk_style": "pattern"
+    "hunk_style": "staged_border"
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
@@ -851,15 +859,7 @@
     // Any addition to this list will be merged with the default list.
     // Globs are matched relative to the worktree root,
     // except when starting with a slash (/) or equivalent in Windows.
-    "disabled_globs": [
-      "**/.env*",
-      "**/*.pem",
-      "**/*.key",
-      "**/*.cert",
-      "**/*.crt",
-      "**/.dev.vars",
-      "**/secrets.yml"
-    ],
+    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
     // 1. Display predictions inline when there are no language server completions available.
@@ -1055,7 +1055,6 @@
   // }
   //
   "file_types": {
-    "Plain Text": ["txt"],
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
@@ -1175,6 +1174,7 @@
       "format_on_save": "off",
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
+      "soft_wrap": "bounded",
       "prettier": {
         "allowed": true
       }
@@ -1297,6 +1297,11 @@
     // "tabWidth": 4,
     // "semi": false,
     // "singleQuote": true
+  },
+  // Settings for auto-closing of JSX tags.
+  "jsx_tag_auto_close": {
+    // // Whether to auto-close JSX tags.
+    // "enabled": true
   },
   // LSP Specific settings.
   "lsp": {

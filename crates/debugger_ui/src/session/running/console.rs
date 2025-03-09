@@ -10,7 +10,7 @@ use editor::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
-use language::{Buffer, CodeLabel, LanguageServerId};
+use language::{Buffer, CodeLabel};
 use menu::Confirm;
 use project::{
     debugger::session::{CompletionsQuery, Session},
@@ -452,11 +452,9 @@ impl ConsoleQueryBarCompletionProvider {
                             text: format!("{} {}", string_match.string.clone(), variable_value),
                             runs: Vec::new(),
                         },
-                        server_id: LanguageServerId(usize::MAX),
                         documentation: None,
-                        lsp_completion: Default::default(),
                         confirm: None,
-                        resolved: true,
+                        source: project::CompletionSource::Custom,
                     })
                 })
                 .collect())
@@ -493,11 +491,9 @@ impl ConsoleQueryBarCompletionProvider {
                         text: completion.label.clone(),
                         runs: Vec::new(),
                     },
-                    server_id: LanguageServerId(usize::MAX),
                     documentation: None,
-                    lsp_completion: Default::default(),
                     confirm: None,
-                    resolved: true,
+                    source: project::CompletionSource::Custom,
                 })
                 .collect())
         })

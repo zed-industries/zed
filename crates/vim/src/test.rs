@@ -6,9 +6,13 @@ use std::time::Duration;
 
 use collections::HashMap;
 use command_palette::CommandPalette;
-use editor::{actions::DeleteLine, display_map::DisplayRow, DisplayPoint};
+use editor::{
+    actions::DeleteLine, display_map::DisplayRow, test::editor_test_context::EditorTestContext,
+    DisplayPoint, Editor, EditorMode, MultiBuffer,
+};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
+use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 pub use vim_test_context::*;
@@ -1706,4 +1710,203 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("heˇo world.");
     cx.simulate_shared_keystrokes("l l escape .").await;
     cx.shared_state().await.assert_eq("hellˇllo world.");
+}
+
+#[gpui::test]
+async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
+    VimTestContext::init(cx);
+    cx.update(|cx| {
+        VimTestContext::init_keybindings(true, cx);
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("111\n222\n333\n444\n", vec![Point::row_range(0..2)]),
+                ("aaa\nbbb\nccc\nddd\n", vec![Point::row_range(0..2)]),
+                ("AAA\nBBB\nCCC\nDDD\n", vec![Point::row_range(0..2)]),
+                ("one\ntwo\nthr\nfou\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        let mut editor = Editor::new(
+            EditorMode::Full,
+            multi_buffer.clone(),
+            None,
+            true,
+            window,
+            cx,
+        );
+
+        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        // fold all but the second buffer, so that we test navigating between two
+        // adjacent folded buffers, as well as folded buffers at the start and
+        // end the multibuffer
+        editor.fold_buffer(buffer_ids[0], cx);
+        editor.fold_buffer(buffer_ids[2], cx);
+        editor.fold_buffer(buffer_ids[3], cx);
+
+        editor
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇaaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        ˇ[EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.simulate_keystroke("k");
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇaaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("shift-g");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        "
+    });
+    cx.simulate_keystrokes("g g");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.update_editor(|editor, _, cx| {
+        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        editor.fold_buffer(buffer_ids[1], cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystrokes("2 j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
 }

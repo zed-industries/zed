@@ -220,7 +220,7 @@ impl TitleBar {
                 // When the collaborator is not followed, still draw this wrapper div, but leave
                 // it transparent, so that it does not shift the layout when following.
                 .when_some(leader_selection_color, |div, color| {
-                    div.rounded_md().bg(color)
+                    div.rounded_sm().bg(color)
                 })
                 .child(
                     Facepile::empty()

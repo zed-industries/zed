@@ -320,7 +320,7 @@ messages!(
     (OpenUncommittedDiff, Foreground),
     (OpenUncommittedDiffResponse, Foreground),
     (GetUsers, Foreground),
-    (GitBranches, Background),
+    (GitGetBranches, Background),
     (GitBranchesResponse, Background),
     (Hello, Foreground),
     (HideToast, Background),
@@ -489,7 +489,15 @@ messages!(
     (DapCompletionResponse, Background),
     (DapThreadsRequest, Background),
     (DapThreadsResponse, Background),
-    (DapTerminateRequest, Background)
+    (DapTerminateRequest, Background),
+    (AskPassRequest, Background),
+    (AskPassResponse, Background),
+    (GitCreateBranch, Background),
+    (GitChangeBranch, Background),
+    (CheckForPushedCommits, Background),
+    (CheckForPushedCommitsResponse, Background),
+    (GitDiff, Background),
+    (GitDiffResponse, Background),
 );
 
 request_messages!(
@@ -613,7 +621,7 @@ request_messages!(
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
-    (GitBranches, GitBranchesResponse),
+    (GitGetBranches, GitBranchesResponse),
     (UpdateGitBranch, Ack),
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
@@ -653,7 +661,12 @@ request_messages!(
     (DapThreadsRequest, DapThreadsResponse),
     (DapTerminateRequest, Ack),
     (ShutdownDebugClient, Ack),
-    (ToggleBreakpoint, Ack)
+    (ToggleBreakpoint, Ack),
+    (AskPassRequest, AskPassResponse),
+    (GitCreateBranch, Ack),
+    (GitChangeBranch, Ack),
+    (CheckForPushedCommits, CheckForPushedCommitsResponse),
+    (GitDiff, GitDiffResponse),
 );
 
 entity_messages!(
@@ -740,7 +753,7 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    GitBranches,
+    GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
     ActivateToolchain,
@@ -757,6 +770,11 @@ entity_messages!(
     Fetch,
     GetRemotes,
     Pull,
+    AskPassRequest,
+    GitChangeBranch,
+    GitCreateBranch,
+    CheckForPushedCommits,
+    GitDiff,
     BreakpointsForFile,
     ToggleBreakpoint,
     ShutdownDebugClient,
@@ -781,7 +799,7 @@ entity_messages!(
     DapEvaluateRequest,
     DapCompletionRequest,
     DapThreadsRequest,
-    DapTerminateRequest
+    DapTerminateRequest,
 );
 
 entity_messages!(

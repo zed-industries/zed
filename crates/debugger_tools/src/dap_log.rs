@@ -22,7 +22,7 @@ use std::{
 use util::maybe;
 use workspace::{
     item::Item,
-    searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     ui::{h_flex, Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu},
     ToolbarItemEvent, ToolbarItemView, Workspace,
 };
@@ -805,12 +805,14 @@ impl SearchableItem for DapLogView {
     }
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        self.editor
-            .update(cx, |e, cx| e.active_match_index(matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.active_match_index(direction, matches, window, cx)
+        })
     }
 }
 

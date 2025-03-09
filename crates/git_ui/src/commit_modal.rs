@@ -2,10 +2,9 @@
 
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
-use git::{Commit, ExpandCommitEditor};
+use git::{Commit, GenerateCommitMessage};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
-use project::Project;
-use ui::{prelude::*, KeybindingHint, PopoverButton, Tooltip, TriggerablePopover};
+use ui::{prelude::*, KeybindingHint, PopoverMenu, Tooltip};
 
 use editor::{Editor, EditorElement};
 use gpui::*;
@@ -110,83 +109,68 @@ struct RestoreDock {
 
 impl CommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
-            let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
-                return;
-            };
-
-            let (can_commit, conflict) = git_panel.update(cx, |git_panel, cx| {
-                let can_commit = git_panel.can_commit();
-                let conflict = git_panel.has_unstaged_conflicts();
-                if can_commit {
-                    git_panel.set_modal_open(true, cx);
-                }
-                (can_commit, conflict)
-            });
-            if !can_commit {
-                let message = if conflict {
-                    "There are still conflicts. You must stage these before committing."
-                } else {
-                    "No changes to commit."
-                };
-                let prompt = window.prompt(PromptLevel::Warning, message, None, &["Ok"], cx);
-                cx.spawn(|_, _| async move {
-                    prompt.await.ok();
-                })
-                .detach();
-                return;
-            }
-
-            let dock = workspace.dock_at_position(git_panel.position(window, cx));
-            let is_open = dock.read(cx).is_open();
-            let active_index = dock.read(cx).active_panel_index();
-            let dock = dock.downgrade();
-            let restore_dock_position = RestoreDock {
-                dock,
-                is_open,
-                active_index,
-            };
-
-            let project = workspace.project().clone();
-            workspace.open_panel::<GitPanel>(window, cx);
-            workspace.toggle_modal(window, cx, move |window, cx| {
-                CommitModal::new(git_panel, restore_dock_position, project, window, cx)
-            })
+        workspace.register_action(|workspace, _: &Commit, window, cx| {
+            CommitModal::toggle(workspace, window, cx);
         });
+    }
+
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<'_, Workspace>) {
+        let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
+            return;
+        };
+
+        git_panel.update(cx, |git_panel, cx| {
+            git_panel.set_modal_open(true, cx);
+        });
+
+        let dock = workspace.dock_at_position(git_panel.position(window, cx));
+        let is_open = dock.read(cx).is_open();
+        let active_index = dock.read(cx).active_panel_index();
+        let dock = dock.downgrade();
+        let restore_dock_position = RestoreDock {
+            dock,
+            is_open,
+            active_index,
+        };
+
+        workspace.open_panel::<GitPanel>(window, cx);
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            CommitModal::new(git_panel, restore_dock_position, window, cx)
+        })
     }
 
     fn new(
         git_panel: Entity<GitPanel>,
         restore_dock: RestoreDock,
-        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
-        let suggested_message = panel.suggest_commit_message();
+        let active_repository = panel.active_repository.clone();
+        let suggested_commit_message = panel.suggest_commit_message();
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
             let buffer = git_panel.commit_message_buffer(cx).clone();
+            let panel_editor = git_panel.commit_editor.clone();
             let project = git_panel.project.clone();
-            cx.new(|cx| commit_message_editor(buffer, None, project.clone(), false, window, cx))
+
+            cx.new(|cx| {
+                let mut editor =
+                    commit_message_editor(buffer, None, project.clone(), false, window, cx);
+                editor.sync_selections(panel_editor, cx).detach();
+
+                editor
+            })
         });
 
         let commit_message = commit_editor.read(cx).text(cx);
 
-        if let Some(suggested_message) = suggested_message {
+        if let Some(suggested_commit_message) = suggested_commit_message {
             if commit_message.is_empty() {
                 commit_editor.update(cx, |editor, cx| {
-                    editor.set_text(suggested_message, window, cx);
-                    editor.select_all(&Default::default(), window, cx);
+                    editor.set_placeholder_text(suggested_commit_message, cx);
                 });
-            } else {
-                if commit_message.as_str().trim() == suggested_message.trim() {
-                    commit_editor.update(cx, |editor, cx| {
-                        // select the message to make it easy to delete
-                        editor.select_all(&Default::default(), window, cx);
-                    });
-                }
             }
         }
 
@@ -206,7 +190,7 @@ impl CommitModal {
         let properties = ModalContainerProperties::new(window, 50);
 
         Self {
-            branch_list: branch_picker::popover(project.clone(), window, cx),
+            branch_list: branch_picker::popover(active_repository.clone(), window, cx),
             git_panel,
             commit_editor,
             restore_dock,
@@ -250,7 +234,7 @@ impl CommitModal {
     pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let git_panel = self.git_panel.clone();
 
-        let (branch, tooltip, commit_label, co_authors) =
+        let (branch, can_commit, tooltip, commit_label, co_authors, generate_commit_message) =
             self.git_panel.update(cx, |git_panel, cx| {
                 let branch = git_panel
                     .active_repository
@@ -262,18 +246,18 @@ impl CommitModal {
                             .map(|b| b.name.clone())
                     })
                     .unwrap_or_else(|| "<no branch>".into());
-                let tooltip = if git_panel.has_staged_changes() {
-                    "Commit staged changes"
-                } else {
-                    "Commit changes to tracked files"
-                };
-                let title = if git_panel.has_staged_changes() {
-                    "Commit"
-                } else {
-                    "Commit All"
-                };
+                let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
+                let title = git_panel.commit_button_title();
                 let co_authors = git_panel.render_co_authors(cx);
-                (branch, tooltip, title, co_authors)
+                let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
+                (
+                    branch,
+                    can_commit,
+                    tooltip,
+                    title,
+                    co_authors,
+                    generate_commit_message,
+                )
             });
 
         let branch_picker_button = panel_button(branch)
@@ -291,12 +275,20 @@ impl CommitModal {
             }))
             .style(ButtonStyle::Transparent);
 
-        let branch_picker = PopoverButton::new(
-            self.branch_list.clone(),
-            Corner::BottomLeft,
-            branch_picker_button,
-            Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
-        );
+        let branch_picker = PopoverMenu::new("popover-button")
+            .menu({
+                let branch_list = self.branch_list.clone();
+                move |_window, _cx| Some(branch_list.clone())
+            })
+            .trigger_with_tooltip(
+                branch_picker_button,
+                Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
+            )
+            .anchor(Corner::BottomLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            });
 
         let close_kb_hint =
             if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
@@ -308,16 +300,19 @@ impl CommitModal {
                 None
             };
 
-        let (panel_editor_focus_handle, can_commit) = git_panel.update(cx, |git_panel, cx| {
-            (git_panel.editor_focus_handle(cx), git_panel.can_commit())
-        });
+        let panel_editor_focus_handle =
+            git_panel.update(cx, |git_panel, cx| git_panel.editor_focus_handle(cx));
 
         let commit_button = panel_filled_button(commit_label)
-            .tooltip(move |window, cx| {
-                Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
+            .tooltip({
+                let panel_editor_focus_handle = panel_editor_focus_handle.clone();
+                move |window, cx| {
+                    Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
+                }
             })
             .disabled(!can_commit)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                telemetry::event!("Git Committed", source = "Git Modal");
                 this.git_panel
                     .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
                 cx.emit(DismissEvent);
@@ -335,7 +330,8 @@ impl CommitModal {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(branch_picker.render(window, cx))
+                    .child(branch_picker)
+                    .children(generate_commit_message)
                     .children(co_authors),
             )
             .child(div().flex_1())
@@ -354,7 +350,9 @@ impl CommitModal {
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
+
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel
             .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
         cx.emit(DismissEvent);
@@ -374,11 +372,24 @@ impl Render for CommitModal {
             .key_context("GitCommit")
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::commit))
+            .on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
+                this.git_panel.update(cx, |panel, cx| {
+                    panel.generate_commit_message(cx);
+                })
+            }))
             .on_action(
                 cx.listener(|this, _: &zed_actions::git::Branch, window, cx| {
-                    this.branch_list.update(cx, |branch_list, cx| {
-                        branch_list.menu_handle(window, cx).toggle(window, cx);
-                    })
+                    toggle_branch_picker(this, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &zed_actions::git::CheckoutBranch, window, cx| {
+                    toggle_branch_picker(this, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &zed_actions::git::Switch, window, cx| {
+                    toggle_branch_picker(this, window, cx);
                 }),
             )
             .elevation_3(cx)
@@ -416,4 +427,14 @@ impl Render for CommitModal {
                     .child(self.render_footer(window, cx)),
             )
     }
+}
+
+fn toggle_branch_picker(
+    this: &mut CommitModal,
+    window: &mut Window,
+    cx: &mut Context<'_, CommitModal>,
+) {
+    this.branch_list.update(cx, |branch_list, cx| {
+        branch_list.popover_handle.toggle(window, cx);
+    })
 }

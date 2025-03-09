@@ -1,5 +1,6 @@
 syntax = "proto3";
 package zed.messages;
+import "google/protobuf/wrappers.proto";
 
 // Looking for a number? Search "// current max"
 
@@ -278,7 +279,6 @@ message Envelope {
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
 
-        GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
         UpdateGitBranch update_git_branch = 272;
@@ -336,44 +336,57 @@ message Envelope {
 
         RemoteMessageResponse remote_message_response = 311;
 
-        UpdateDebugAdapter update_debug_adapter = 312;
-        ShutdownDebugClient shutdown_debug_client = 313;
-        SetDebugClientCapabilities set_debug_client_capabilities = 314;
-        DapNextRequest dap_next_request = 315;
-        DapStepInRequest dap_step_in_request = 316;
-        DapStepOutRequest dap_step_out_request = 317;
-        DapStepBackRequest dap_step_back_request = 318;
-        DapContinueRequest dap_continue_request = 319;
-        DapContinueResponse dap_continue_response = 320;
-        DapPauseRequest dap_pause_request = 321;
-        DapDisconnectRequest dap_disconnect_request = 322;
-        DapTerminateThreadsRequest dap_terminate_threads_request = 323;
-        DapTerminateRequest dap_terminate_request = 324;
-        DapRestartRequest dap_restart_request = 325;
-        UpdateThreadStatus update_thread_status = 326;
-        VariablesRequest variables_request = 327;
-        DapVariables dap_variables = 328;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 329;
-        IgnoreBreakpointState ignore_breakpoint_state = 330;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 331;
-        DapModulesRequest dap_modules_request = 332;
-        DapModulesResponse dap_modules_response = 333;
-        DapLoadedSourcesRequest dap_loaded_sources_request = 334;
-        DapLoadedSourcesResponse dap_loaded_sources_response = 335;
-        DapStackTraceRequest dap_stack_trace_request = 336;
-        DapStackTraceResponse dap_stack_trace_response = 337;
-        DapScopesRequest dap_scopes_request = 338;
-        DapScopesResponse dap_scopes_response = 339;
-        DapSetVariableValueRequest dap_set_variable_value_request = 340;
-        DapSetVariableValueResponse dap_set_variable_value_response = 341;
-        DapEvaluateRequest dap_evaluate_request = 342;
-        DapEvaluateResponse dap_evaluate_response = 343;
-        DapCompletionRequest dap_completion_request = 344;
-        DapCompletionResponse dap_completion_response = 345;
-        DapThreadsRequest dap_threads_request = 346;
-        DapThreadsResponse dap_threads_response = 347;
-        ToggleBreakpoint toggle_breakpoint = 348;
-        BreakpointsForFile breakpoints_for_file = 349; // current max
+        GitGetBranches git_get_branches = 312;
+        GitCreateBranch git_create_branch = 313;
+        GitChangeBranch git_change_branch = 314;
+
+        CheckForPushedCommits check_for_pushed_commits = 315;
+        CheckForPushedCommitsResponse check_for_pushed_commits_response = 316;
+
+        AskPassRequest ask_pass_request = 317;
+        AskPassResponse ask_pass_response = 318;
+
+        GitDiff git_diff = 319;
+        GitDiffResponse git_diff_response = 320;
+
+        UpdateDebugAdapter update_debug_adapter = 321;
+        ShutdownDebugClient shutdown_debug_client = 322;
+        SetDebugClientCapabilities set_debug_client_capabilities = 323;
+        DapNextRequest dap_next_request = 324;
+        DapStepInRequest dap_step_in_request = 325;
+        DapStepOutRequest dap_step_out_request = 326;
+        DapStepBackRequest dap_step_back_request = 327;
+        DapContinueRequest dap_continue_request = 328;
+        DapContinueResponse dap_continue_response = 329;
+        DapPauseRequest dap_pause_request = 330;
+        DapDisconnectRequest dap_disconnect_request = 331;
+        DapTerminateThreadsRequest dap_terminate_threads_request = 332;
+        DapTerminateRequest dap_terminate_request = 333;
+        DapRestartRequest dap_restart_request = 334;
+        UpdateThreadStatus update_thread_status = 335;
+        VariablesRequest variables_request = 336;
+        DapVariables dap_variables = 337;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 338;
+        IgnoreBreakpointState ignore_breakpoint_state = 339;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 340;
+        DapModulesRequest dap_modules_request = 341;
+        DapModulesResponse dap_modules_response = 342;
+        DapLoadedSourcesRequest dap_loaded_sources_request = 343;
+        DapLoadedSourcesResponse dap_loaded_sources_response = 344;
+        DapStackTraceRequest dap_stack_trace_request = 345;
+        DapStackTraceResponse dap_stack_trace_response = 346;
+        DapScopesRequest dap_scopes_request = 347;
+        DapScopesResponse dap_scopes_response = 348;
+        DapSetVariableValueRequest dap_set_variable_value_request = 349;
+        DapSetVariableValueResponse dap_set_variable_value_response = 350;
+        DapEvaluateRequest dap_evaluate_request = 351;
+        DapEvaluateResponse dap_evaluate_response = 352;
+        DapCompletionRequest dap_completion_request = 353;
+        DapCompletionResponse dap_completion_response = 354;
+        DapThreadsRequest dap_threads_request = 355;
+        DapThreadsResponse dap_threads_response = 356;
+        ToggleBreakpoint toggle_breakpoint = 357;
+        BreakpointsForFile breakpoints_for_file = 358; // current max
     }
 
     reserved 87 to 88;
@@ -389,6 +402,7 @@ message Envelope {
     reserved 221;
     reserved 224 to 229;
     reserved 246;
+    reserved 270;
     reserved 247 to 254;
     reserved 255 to 256;
 }
@@ -613,13 +627,23 @@ message JoinProject {
     uint64 project_id = 1;
 }
 
+message ListRemoteDirectoryConfig {
+    bool is_dir = 1;
+}
+
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
     string path = 2;
+    ListRemoteDirectoryConfig config = 3;
+}
+
+message EntryInfo {
+    bool is_dir = 1;
 }
 
 message ListRemoteDirectoryResponse {
     repeated string entries = 1;
+    repeated EntryInfo entry_info = 2;
 }
 
 message JoinProjectResponse {
@@ -1016,6 +1040,12 @@ message Completion {
     uint64 server_id = 4;
     bytes lsp_completion = 5;
     bool resolved = 6;
+    Source source = 7;
+
+    enum Source {
+        Custom = 0;
+        Lsp = 1;
+    }
 }
 
 message GetCodeActions {
@@ -1303,6 +1333,11 @@ message CodeAction {
     Anchor start = 2;
     Anchor end = 3;
     bytes lsp_action = 4;
+    Kind kind = 5;
+    enum Kind {
+        Action = 0;
+        Command = 1;
+    }
 }
 
 message ProjectTransaction {
@@ -3426,6 +3461,7 @@ message Push {
     string remote_name = 4;
     string branch_name = 5;
     optional PushOptions options = 6;
+    uint64 askpass_id = 7;
 
     enum PushOptions {
         SET_UPSTREAM = 0;
@@ -3437,6 +3473,7 @@ message Fetch {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
 }
 
 message GetRemotes {
@@ -3460,9 +3497,68 @@ message Pull {
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
+    uint64 askpass_id = 6;
 }
 
 message RemoteMessageResponse {
     string stdout = 1;
     string stderr = 2;
+}
+
+message AskPassRequest {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
+    string prompt = 5;
+}
+
+message AskPassResponse {
+    string response = 1;
+}
+
+message GitGetBranches {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message GitCreateBranch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string branch_name = 4;
+}
+
+message GitChangeBranch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string branch_name = 4;
+}
+
+message CheckForPushedCommits {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message CheckForPushedCommitsResponse {
+  repeated string pushed_to = 1;
+}
+
+message GitDiff {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    DiffType diff_type = 4;
+
+    enum DiffType {
+        HEAD_TO_WORKTREE = 0;
+        HEAD_TO_INDEX = 1;
+    }
+}
+
+message GitDiffResponse {
+    string diff = 1;
 }

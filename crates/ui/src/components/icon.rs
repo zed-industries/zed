@@ -128,6 +128,7 @@ pub enum IconName {
     AiBedrock,
     AiAnthropicHosted,
     AiDeepSeek,
+    AiEdit,
     AiGoogle,
     AiLmStudio,
     AiMistral,
@@ -342,6 +343,7 @@ pub enum IconName {
     ZedPredictUp,
     ZedPredictDown,
     ZedPredictDisabled,
+    ZedPredictError,
     ZedXCopilot,
 }
 

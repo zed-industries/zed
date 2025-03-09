@@ -2,7 +2,9 @@ use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
+use askpass::{AskPassResult, AskPassSession};
 use collections::{HashMap, HashSet};
+use futures::{select_biased, FutureExt as _};
 use git2::BranchType;
 use gpui::SharedString;
 use parking_lot::Mutex;
@@ -11,8 +13,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::Borrow;
 use std::io::Write as _;
-#[cfg(not(windows))]
-use std::os::unix::fs::PermissionsExt;
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::{
@@ -21,8 +21,10 @@ use std::{
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
-use util::command::new_std_command;
+use util::command::{new_smol_command, new_std_command};
 use util::ResultExt;
+
+pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
@@ -106,6 +108,7 @@ pub struct CommitSummary {
     pub subject: SharedString,
     /// This is a unix timestamp
     pub commit_timestamp: i64,
+    pub has_parent: bool,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -199,10 +202,29 @@ pub trait GitRepository: Send + Sync {
         branch_name: &str,
         upstream_name: &str,
         options: Option<PushOptions>,
+        askpass: AskPassSession,
     ) -> Result<RemoteCommandOutput>;
-    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<RemoteCommandOutput>;
+
+    fn pull(
+        &self,
+        branch_name: &str,
+        upstream_name: &str,
+        askpass: AskPassSession,
+    ) -> Result<RemoteCommandOutput>;
+    fn fetch(&self, askpass: AskPassSession) -> Result<RemoteCommandOutput>;
+
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
-    fn fetch(&self) -> Result<RemoteCommandOutput>;
+
+    /// returns a list of remote branches that contain HEAD
+    fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>>;
+
+    /// Run git diff
+    fn diff(&self, diff: DiffType) -> Result<String>;
+}
+
+pub enum DiffType {
+    HeadToIndex,
+    HeadToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -427,6 +449,15 @@ impl GitRepository for RealGitRepository {
                 true
             })
             .ok();
+        if let Some(oid) = self
+            .repository
+            .lock()
+            .find_reference("CHERRY_PICK_HEAD")
+            .ok()
+            .and_then(|reference| reference.target())
+        {
+            shas.push(oid.to_string())
+        }
         shas
     }
 
@@ -462,6 +493,7 @@ impl GitRepository for RealGitRepository {
         let fields = [
             "%(HEAD)",
             "%(objectname)",
+            "%(parent)",
             "%(refname)",
             "%(upstream)",
             "%(upstream:track)",
@@ -553,6 +585,28 @@ impl GitRepository for RealGitRepository {
         )
     }
 
+    fn diff(&self, diff: DiffType) -> Result<String> {
+        let working_directory = self.working_directory()?;
+        let args = match diff {
+            DiffType::HeadToIndex => Some("--staged"),
+            DiffType::HeadToWorktree => None,
+        };
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["diff"])
+            .args(args)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to run git diff:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
     fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
         let working_directory = self.working_directory()?;
 
@@ -563,7 +617,6 @@ impl GitRepository for RealGitRepository {
                 .args(paths.iter().map(|p| p.as_ref()))
                 .output()?;
 
-            // TODO: Get remote response out of this and show it to the user
             if !output.status.success() {
                 return Err(anyhow!(
                     "Failed to stage paths:\n{}",
@@ -584,7 +637,6 @@ impl GitRepository for RealGitRepository {
                 .args(paths.iter().map(|p| p.as_ref()))
                 .output()?;
 
-            // TODO: Get remote response out of this and show it to the user
             if !output.status.success() {
                 return Err(anyhow!(
                     "Failed to unstage:\n{}",
@@ -610,7 +662,6 @@ impl GitRepository for RealGitRepository {
 
         let output = cmd.output()?;
 
-        // TODO: Get remote response out of this and show it to the user
         if !output.status.success() {
             return Err(anyhow!(
                 "Failed to commit:\n{}",
@@ -625,15 +676,15 @@ impl GitRepository for RealGitRepository {
         branch_name: &str,
         remote_name: &str,
         options: Option<PushOptions>,
+        ask_pass: AskPassSession,
     ) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
-        // We do this on every operation to ensure that the askpass script exists and is executable.
-        #[cfg(not(windows))]
-        let (askpass_script_path, _temp_dir) = setup_askpass()?;
-
-        let mut command = new_std_command("git");
+        let mut command = new_smol_command("git");
         command
+            .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
             .args(["push"])
             .args(options.map(|option| match option {
@@ -641,92 +692,53 @@ impl GitRepository for RealGitRepository {
                 PushOptions::Force => "--force-with-lease",
             }))
             .arg(remote_name)
-            .arg(format!("{}:{}", branch_name, branch_name));
+            .arg(format!("{}:{}", branch_name, branch_name))
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
+        let git_process = command.spawn()?;
 
-        #[cfg(not(windows))]
-        {
-            command.env("GIT_ASKPASS", askpass_script_path);
-        }
-
-        let output = command.output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to push:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        } else {
-            return Ok(RemoteCommandOutput {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            });
-        }
+        run_remote_command(ask_pass, git_process)
     }
 
-    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<RemoteCommandOutput> {
+    fn pull(
+        &self,
+        branch_name: &str,
+        remote_name: &str,
+        ask_pass: AskPassSession,
+    ) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
-        // We do this on every operation to ensure that the askpass script exists and is executable.
-        #[cfg(not(windows))]
-        let (askpass_script_path, _temp_dir) = setup_askpass()?;
-
-        let mut command = new_std_command("git");
+        let mut command = new_smol_command("git");
         command
+            .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
             .args(["pull"])
             .arg(remote_name)
-            .arg(branch_name);
+            .arg(branch_name)
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
+        let git_process = command.spawn()?;
 
-        #[cfg(not(windows))]
-        {
-            command.env("GIT_ASKPASS", askpass_script_path);
-        }
-
-        let output = command.output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to pull:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        } else {
-            return Ok(RemoteCommandOutput {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            });
-        }
+        run_remote_command(ask_pass, git_process)
     }
 
-    fn fetch(&self) -> Result<RemoteCommandOutput> {
+    fn fetch(&self, ask_pass: AskPassSession) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
-        // We do this on every operation to ensure that the askpass script exists and is executable.
-        #[cfg(not(windows))]
-        let (askpass_script_path, _temp_dir) = setup_askpass()?;
-
-        let mut command = new_std_command("git");
+        let mut command = new_smol_command("git");
         command
+            .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force")
             .current_dir(&working_directory)
-            .args(["fetch", "--all"]);
+            .args(["fetch", "--all"])
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
+        let git_process = command.spawn()?;
 
-        #[cfg(not(windows))]
-        {
-            command.env("GIT_ASKPASS", askpass_script_path);
-        }
-
-        let output = command.output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to fetch:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        } else {
-            return Ok(RemoteCommandOutput {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            });
-        }
+        run_remote_command(ask_pass, git_process)
     }
 
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>> {
@@ -770,18 +782,88 @@ impl GitRepository for RealGitRepository {
             ));
         }
     }
+
+    fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>> {
+        let working_directory = self.working_directory()?;
+        let git_cmd = |args: &[&str]| -> Result<String> {
+            let output = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(args)
+                .output()?;
+            if output.status.success() {
+                Ok(String::from_utf8(output.stdout)?)
+            } else {
+                Err(anyhow!(String::from_utf8_lossy(&output.stderr).to_string()))
+            }
+        };
+
+        let head = git_cmd(&["rev-parse", "HEAD"])
+            .context("Failed to get HEAD")?
+            .trim()
+            .to_owned();
+
+        let mut remote_branches = vec![];
+        let mut add_if_matching = |remote_head: &str| {
+            if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]) {
+                if merge_base.trim() == head {
+                    if let Some(s) = remote_head.strip_prefix("refs/remotes/") {
+                        remote_branches.push(s.to_owned().into());
+                    }
+                }
+            }
+        };
+
+        // check the main branch of each remote
+        let remotes = git_cmd(&["remote"]).context("Failed to get remotes")?;
+        for remote in remotes.lines() {
+            if let Ok(remote_head) =
+                git_cmd(&["symbolic-ref", &format!("refs/remotes/{remote}/HEAD")])
+            {
+                add_if_matching(remote_head.trim());
+            }
+        }
+
+        // ... and the remote branch that the checked-out one is tracking
+        if let Ok(remote_head) = git_cmd(&["rev-parse", "--symbolic-full-name", "@{u}"]) {
+            add_if_matching(remote_head.trim());
+        }
+
+        Ok(remote_branches)
+    }
 }
 
-#[cfg(not(windows))]
-fn setup_askpass() -> Result<(PathBuf, tempfile::TempDir), anyhow::Error> {
-    let temp_dir = tempfile::Builder::new()
-        .prefix("zed-git-askpass")
-        .tempdir()?;
-    let askpass_script = "#!/bin/sh\necho ''";
-    let askpass_script_path = temp_dir.path().join("git-askpass.sh");
-    std::fs::write(&askpass_script_path, askpass_script)?;
-    std::fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755))?;
-    Ok((askpass_script_path, temp_dir))
+fn run_remote_command(
+    mut ask_pass: AskPassSession,
+    git_process: smol::process::Child,
+) -> std::result::Result<RemoteCommandOutput, anyhow::Error> {
+    smol::block_on(async {
+        select_biased! {
+            result = ask_pass.run().fuse() => {
+                match result {
+                    AskPassResult::CancelledByUser => {
+                        Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
+                    }
+                    AskPassResult::Timedout => {
+                        Err(anyhow!("Connecting to host timed out"))?
+                    }
+                }
+            }
+            output = git_process.output().fuse() => {
+                let output = output?;
+                if !output.status.success() {
+                    Err(anyhow!(
+                        "Operation failed:\n{}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ))
+                } else {
+                    Ok(RemoteCommandOutput {
+                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                    })
+                }
+            }
+        }
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -799,6 +881,7 @@ pub struct FakeGitRepositoryState {
     pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    pub simulated_index_write_error_message: Option<String>,
 }
 
 impl FakeGitRepository {
@@ -818,6 +901,7 @@ impl FakeGitRepositoryState {
             statuses: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
+            simulated_index_write_error_message: None,
         }
     }
 }
@@ -837,6 +921,9 @@ impl GitRepository for FakeGitRepository {
 
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()> {
         let mut state = self.state.lock();
+        if let Some(message) = state.simulated_index_write_error_message.clone() {
+            return Err(anyhow::anyhow!(message));
+        }
         if let Some(content) = content {
             state.index_contents.insert(path.clone(), content);
         } else {
@@ -972,19 +1059,33 @@ impl GitRepository for FakeGitRepository {
         _branch: &str,
         _remote: &str,
         _options: Option<PushOptions>,
+        _ask_pass: AskPassSession,
     ) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 
-    fn pull(&self, _branch: &str, _remote: &str) -> Result<RemoteCommandOutput> {
+    fn pull(
+        &self,
+        _branch: &str,
+        _remote: &str,
+        _ask_pass: AskPassSession,
+    ) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 
-    fn fetch(&self) -> Result<RemoteCommandOutput> {
+    fn fetch(&self, _ask_pass: AskPassSession) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 
     fn get_remotes(&self, _branch: Option<&str>) -> Result<Vec<Remote>> {
+        unimplemented!()
+    }
+
+    fn check_for_pushed_commit(&self) -> Result<Vec<SharedString>> {
+        unimplemented!()
+    }
+
+    fn diff(&self, _diff: DiffType) -> Result<String> {
         unimplemented!()
     }
 }
@@ -1117,6 +1218,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
         let mut fields = line.split('\x00');
         let is_current_branch = fields.next().context("no HEAD")? == "*";
         let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
+        let parent_sha: SharedString = fields.next().context("no parent")?.to_string().into();
         let ref_name: SharedString = fields
             .next()
             .context("no refname")?
@@ -1140,6 +1242,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
                 sha: head_sha,
                 subject,
                 commit_timestamp: commiterdate,
+                has_parent: !parent_sha.is_empty(),
             }),
             upstream: if upstream_name.is_empty() {
                 None
@@ -1192,7 +1295,7 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
 fn test_branches_parsing() {
     // suppress "help: octal escapes are not supported, `\0` is always null"
     #[allow(clippy::octal_escapes)]
-    let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
+    let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
     assert_eq!(
         parse_branch_input(&input).unwrap(),
         vec![Branch {
@@ -1209,6 +1312,7 @@ fn test_branches_parsing() {
                 sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
                 subject: "generated protobuf".into(),
                 commit_timestamp: 1733187470,
+                has_parent: false,
             })
         }]
     )
