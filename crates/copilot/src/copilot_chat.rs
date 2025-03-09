@@ -213,7 +213,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-fn copilot_chat_config_dir() -> &'static PathBuf {
+pub fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
