@@ -3,7 +3,7 @@ use futures::{
     channel::{mpsc, oneshot},
     pin_mut, SinkExt, StreamExt,
 };
-use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project};
@@ -47,7 +47,7 @@ impl ScriptSession {
         let script = Script {
             id,
             state: ScriptState::Generating,
-            source: String::new(),
+            source: SharedString::new_static(""),
         };
         self.scripts.push(script);
         id
@@ -62,7 +62,7 @@ impl ScriptSession {
         let script = self.get_mut(script_id);
 
         let stdout = Arc::new(Mutex::new(String::new()));
-        script.source = script_src.clone();
+        script.source = script_src.clone().into();
         script.state = ScriptState::Running {
             stdout: stdout.clone(),
         };
@@ -747,7 +747,7 @@ pub struct ScriptId(u32);
 pub struct Script {
     pub id: ScriptId,
     pub state: ScriptState,
-    source: String,
+    pub source: SharedString,
 }
 
 pub enum ScriptState {

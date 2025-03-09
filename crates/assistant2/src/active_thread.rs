@@ -5,7 +5,7 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
     Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, UnderlineStyle,
+    Task, TextStyleRefinement, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -15,6 +15,7 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
+use workspace::Workspace;
 
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
@@ -22,6 +23,7 @@ use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
+    workspace: WeakEntity<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
@@ -42,6 +44,7 @@ struct EditMessageState {
 
 impl ActiveThread {
     pub fn new(
+        workspace: WeakEntity<Workspace>,
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
@@ -54,6 +57,7 @@ impl ActiveThread {
         ];
 
         let mut this = Self {
+            workspace,
             language_registry,
             thread_store,
             thread: thread.clone(),
@@ -766,17 +770,33 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
+                                // TODO: Generate script description
                                 .child(Label::new("Script")),
                         )
                         .child(
-                            Label::new(match script.state {
-                                ScriptState::Generating => "Generating",
-                                ScriptState::Running { .. } => "Running",
-                                ScriptState::Succeeded { .. } => "Finished",
-                                ScriptState::Failed { .. } => "Error",
-                            })
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Label::new(match script.state {
+                                        ScriptState::Generating => "Generating",
+                                        ScriptState::Running { .. } => "Running",
+                                        ScriptState::Succeeded { .. } => "Finished",
+                                        ScriptState::Failed { .. } => "Error",
+                                    })
+                                    .size(LabelSize::XSmall)
+                                    .buffer_font(cx),
+                                )
+                                .child(
+                                    IconButton::new("view-source", IconName::Eye)
+                                        .icon_color(Color::Muted)
+                                        .disabled(matches!(script.state, ScriptState::Generating))
+                                        .on_click(cx.listener({
+                                            let source = script.source.clone();
+                                            move |this, _event, window, cx| {
+                                                this.open_script_source(source.clone(), window, cx);
+                                            }
+                                        })),
+                                ),
                         ),
                 )
                 .when(is_open, |parent| {
@@ -805,6 +825,45 @@ impl ActiveThread {
         );
 
         Some(element.into_any())
+    }
+
+    fn open_script_source(
+        &mut self,
+        source: SharedString,
+        window: &mut Window,
+        cx: &mut Context<'_, ActiveThread>,
+    ) {
+        let language_registry = self.language_registry.clone();
+        let workspace = self.workspace.clone();
+        let source = source.clone();
+
+        cx.spawn_in(window, |_, mut cx| async move {
+            let lua = language_registry.language_for_name("Lua").await.log_err();
+
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                let project = workspace.project().clone();
+
+                let buffer = project.update(cx, |project, cx| {
+                    project.create_local_buffer(&source.trim(), lua, cx)
+                });
+
+                let buffer = cx.new(|cx| {
+                    MultiBuffer::singleton(buffer, cx)
+                        // TODO: Generate script description
+                        .with_title("Assistant script".into())
+                });
+
+                let editor = cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                    editor.set_read_only(true);
+                    editor
+                });
+
+                workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 }
 
