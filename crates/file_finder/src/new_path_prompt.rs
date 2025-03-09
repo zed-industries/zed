@@ -436,8 +436,8 @@ impl PickerDelegate for NewPathDelegate {
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "Type a path...".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("Type a path...".into())
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {

@@ -351,12 +351,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn dismissed(&mut self, _window: &mut Window, _: &mut Context<Picker<Self>>) {}
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if self.workspaces.is_empty() {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.workspaces.is_empty() {
             "Recently opened projects will show up here".into()
         } else {
             "No matches".into()
-        }
+        };
+        Some(text)
     }
 
     fn render_match(
