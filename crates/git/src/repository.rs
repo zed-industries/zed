@@ -162,7 +162,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the list of git statuses, sorted by path
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
-    fn commit_history(&self, skip: i32, limit: i32) -> Result<Arc<Vec<CommitDetails>>>;
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Vec<CommitDetails>>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -473,7 +473,7 @@ impl GitRepository for RealGitRepository {
         GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
     }
 
-    fn commit_history(&self, skip: i32, limit: i32) -> Result<Arc<Vec<CommitDetails>>> {
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Vec<CommitDetails>> {
         let working_directory = self
             .repository
             .lock()
@@ -1006,10 +1006,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn commit_history(&self, skip: i32, limit: i32) -> Result<Arc<Vec<CommitDetails>>> {
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Vec<CommitDetails>> {
         let _ = limit;
         let _ = skip;
-        Ok(Arc::new(Vec::new()))
+        Ok(Vec::new())
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {

@@ -345,7 +345,9 @@ message Envelope {
         AskPassResponse ask_pass_response = 318;
 
         GitDiff git_diff = 319;
-        GitDiffResponse git_diff_response = 320; // current max
+        GitDiffResponse git_diff_response = 320; 
+        GitGetCommitHistory git_get_commit_history = 321;
+        GitCommitHistoryResponse git_commit_history_response = 322; // current max
     }
 
     reserved 87 to 88;
@@ -2709,6 +2711,10 @@ message GitBranchesResponse {
     repeated Branch branches = 1;
 }
 
+message GitCommitHistoryResponse {
+    repeated GitCommitDetails commits = 1;
+}
+
 message UpdateGitBranch {
     uint64 project_id = 1;
     string branch_name = 2;
@@ -2936,4 +2942,12 @@ message GitDiff {
 
 message GitDiffResponse {
     string diff = 1;
+}
+
+message GitGetCommitHistory {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    int32 skip = 4;
+    int32 limit = 5;
 }
