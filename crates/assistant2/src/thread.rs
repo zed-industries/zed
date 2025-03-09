@@ -465,6 +465,7 @@ impl Thread {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
                 let mut script_tag_parser = ScriptTagParser::new();
+                let mut script_id = None;
 
                 while let Some(event) = events.next().await {
                     let event = event?;
@@ -478,9 +479,9 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
-                                let parsed_script = script_tag_parser.parse_chunk(&chunk);
-
                                 if let Some(last_message) = thread.messages.last_mut() {
+                                    let parsed_script_src = script_tag_parser.parse_chunk(&chunk);
+
                                     let message_id = if last_message.role == Role::Assistant {
                                         last_message.text.push_str(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
@@ -497,10 +498,25 @@ impl Thread {
                                         thread.insert_message(Role::Assistant, chunk, cx)
                                     };
 
-                                    if let Some(script_source) = parsed_script {
-                                        let script_id = thread
+                                    if script_id.is_none() && script_tag_parser.found_script() {
+                                        script_id = Some(
+                                            thread
+                                                .script_session
+                                                .update(cx, |session, _cx| session.new_script()),
+                                        );
+                                    }
+
+                                    if let (Some(script_source), Some(script_id)) =
+                                        (parsed_script_src, script_id)
+                                    {
+                                        // TODO: move buffer to script and run as it streams
+                                        thread
                                             .script_session
-                                            .update(cx, |this, cx| this.spawn(script_source, cx));
+                                            .update(cx, |this, cx| {
+                                                this.run_script(script_id, script_source, cx)
+                                            })
+                                            .detach_and_log_err(cx);
+
                                         thread.scripts_by_message.insert(message_id, script_id);
                                     }
                                 }

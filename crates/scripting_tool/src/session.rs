@@ -42,18 +42,29 @@ impl ScriptSession {
         }
     }
 
-    /// Spawn a Lua script in a sandboxed environment and returns an id
-    /// that can be used to consult its state.
-    pub fn spawn(&mut self, script: String, cx: &mut Context<Self>) -> ScriptId {
-        let (stdout, task) = self.run(script, cx);
-
-        let script_id = ScriptId(self.scripts.len() as u32);
-
+    pub fn new_script(&mut self) -> ScriptId {
         let script = Script {
-            state: ScriptState::Running { stdout },
+            state: ScriptState::Generating,
+        };
+        let script_id = ScriptId(self.scripts.len() as u32);
+        self.scripts.push(script);
+        script_id
+    }
+
+    pub fn run_script(
+        &mut self,
+        script_id: ScriptId,
+        script_src: String,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let script = self.get_mut(script_id);
+
+        let stdout = Arc::new(Mutex::new(String::new()));
+        script.state = ScriptState::Running {
+            stdout: stdout.clone(),
         };
 
-        self.scripts.push(script);
+        let task = self.run_lua(script_src, stdout, cx);
 
         cx.emit(ScriptEvent::Spawned(script_id));
 
@@ -72,16 +83,14 @@ impl ScriptSession {
                 cx.emit(ScriptEvent::Exited(script_id))
             })
         })
-        .detach_and_log_err(cx);
-
-        script_id
     }
 
-    fn run(
+    fn run_lua(
         &mut self,
         script: String,
+        stdout: Arc<Mutex<String>>,
         cx: &mut Context<Self>,
-    ) -> (Arc<Mutex<String>>, Task<anyhow::Result<()>>) {
+    ) -> Task<anyhow::Result<()>> {
         const SANDBOX_PREAMBLE: &str = include_str!("sandbox_preamble.lua");
 
         // TODO Remove fs_changes
@@ -96,8 +105,6 @@ impl ScriptSession {
 
         let fs = self.project.read(cx).fs().clone();
         let foreground_fns_tx = self.foreground_fns_tx.clone();
-
-        let stdout = Arc::new(Mutex::new(String::new()));
 
         let task = cx.background_spawn({
             let stdout = stdout.clone();
@@ -144,7 +151,7 @@ impl ScriptSession {
             }
         });
 
-        (stdout, task)
+        task
     }
 
     pub fn get(&self, script_id: ScriptId) -> &Script {
@@ -739,6 +746,7 @@ pub struct Script {
 }
 
 pub enum ScriptState {
+    Generating,
     Running {
         stdout: Arc<Mutex<String>>,
     },
@@ -760,6 +768,7 @@ impl Script {
     /// If exited, returns a message with the output for the LLM
     pub fn output_message_for_llm(&self) -> Option<String> {
         match &self.state {
+            ScriptState::Generating { .. } => None,
             ScriptState::Running { .. } => None,
             ScriptState::Succeeded { stdout } => {
                 format!("Here's the script output:\n{}", stdout).into()
@@ -775,6 +784,7 @@ impl Script {
     /// Get a snapshot of the script's stdout
     pub fn stdout_snapshot(&self) -> String {
         match &self.state {
+            ScriptState::Generating { .. } => String::new(),
             ScriptState::Running { stdout } => stdout.lock().clone(),
             ScriptState::Succeeded { stdout } => stdout.clone(),
             ScriptState::Failed { stdout, .. } => stdout.clone(),
@@ -834,9 +844,16 @@ mod tests {
         let project = Project::test(fs, [Path::new("/")], cx).await;
         let session = cx.new(|cx| ScriptSession::new(project, cx));
 
-        let (stdout, task) = session.update(cx, |session, cx| session.run(source.to_string(), cx));
+        let (script_id, task) = session.update(cx, |session, cx| {
+            let script_id = session.new_script();
+            let task = session.run_script(script_id, source.to_string(), cx);
 
-        task.await.map(|_| stdout.lock().clone())
+            (script_id, task)
+        });
+
+        task.await?;
+
+        Ok(session.read_with(cx, |session, _cx| session.get(script_id).stdout_snapshot()))
     }
 
     fn init_test(cx: &mut TestAppContext) {

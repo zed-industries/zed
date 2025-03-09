@@ -22,6 +22,13 @@ impl ScriptTagParser {
         }
     }
 
+    pub fn found_script(&self) -> bool {
+        match self.state {
+            State::Unstarted => false,
+            State::Streaming | State::Ended => true,
+        }
+    }
+
     pub fn parse_chunk(&mut self, input: &str) -> Option<String> {
         for byte in input.bytes() {
             match self.state {
