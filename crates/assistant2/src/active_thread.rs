@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use assistant_scripting::{ScriptId, ScriptState};
 use collections::{HashMap, HashSet};
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -10,7 +11,6 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
-use scripting_tool::{ScriptId, ScriptState};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};

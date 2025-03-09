@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use assistant_scripting::{
+    Script, ScriptEvent, ScriptId, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT,
+};
 use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -13,9 +16,6 @@ use language_model::{
     Role, StopReason,
 };
 use project::Project;
-use scripting_tool::{
-    Script, ScriptEvent, ScriptId, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT,
-};
 use serde::{Deserialize, Serialize};
 use util::{maybe, post_inc, TryFutureExt as _};
 use uuid::Uuid;
