@@ -1,5 +1,8 @@
-const START_TAG: &[u8] = b"<eval type=\"lua\">";
-const END_TAG: &[u8] = b"</eval>";
+pub const SCRIPT_START_TAG: &str = "<eval type=\"lua\">";
+pub const SCRIPT_END_TAG: &str = "</eval>";
+
+const START_TAG: &[u8] = SCRIPT_START_TAG.as_bytes();
+const END_TAG: &[u8] = SCRIPT_END_TAG.as_bytes();
 
 pub struct ScriptTagParser {
     state: State,

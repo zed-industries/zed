@@ -425,6 +425,9 @@ impl Thread {
 
                         let script_id = self.scripts_by_message.get(&message.id)?;
                         let script = self.script_session.read(cx).get(*script_id);
+
+                        request_message.content.push(script.source_tag().into());
+
                         let message = script.output_message_for_llm()?;
 
                         Some(LanguageModelRequestMessage {

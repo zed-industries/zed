@@ -15,6 +15,8 @@ use std::{
 };
 use util::{paths::PathMatcher, ResultExt};
 
+use crate::{SCRIPT_END_TAG, SCRIPT_START_TAG};
+
 struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptSession>, AsyncApp) + Send>);
 
 pub struct ScriptSession {
@@ -765,6 +767,10 @@ pub enum ScriptState {
 }
 
 impl Script {
+    pub fn source_tag(&self) -> String {
+        format!("{}{}{}", SCRIPT_START_TAG, self.source, SCRIPT_END_TAG)
+    }
+
     /// If exited, returns a message with the output for the LLM
     pub fn output_message_for_llm(&self) -> Option<String> {
         match &self.state {
