@@ -1,6 +1,6 @@
 use crate::repository::CommitDetails;
 use anyhow::{anyhow, Result};
-use std::{path::Path, process::Stdio, sync::Arc};
+use std::{path::Path, process::Stdio};
 
 pub struct CommitHistory {}
 
@@ -10,7 +10,7 @@ impl CommitHistory {
         working_directory: &Path,
         skip: i32,
         limit: i32,
-    ) -> Result<Arc<Vec<CommitDetails>>> {
+    ) -> Result<Vec<CommitDetails>> {
         const COMMIT_WRAPPER_START: &str = "<COMMIT_START>";
         const COMMIT_WRAPPER_END: &str = "<COMMIT_END>";
         const DATA_MARKER: &str = "<DATA_MARKER>";
