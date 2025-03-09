@@ -790,6 +790,16 @@ impl Script {
             ScriptState::Failed { stdout, .. } => stdout.clone(),
         }
     }
+
+    /// Returns the error if the script failed, otherwise None
+    pub fn error(&self) -> Option<&anyhow::Error> {
+        match &self.state {
+            ScriptState::Generating { .. } => None,
+            ScriptState::Running { .. } => None,
+            ScriptState::Succeeded { .. } => None,
+            ScriptState::Failed { error, .. } => Some(error),
+        }
+    }
 }
 
 #[cfg(test)]

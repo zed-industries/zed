@@ -13,6 +13,12 @@ enum State {
     Ended,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct ChunkOutput {
+    pub content: String,
+    pub script_source: Option<String>,
+}
+
 impl ScriptTagParser {
     pub fn new() -> Self {
         Self {
@@ -29,11 +35,21 @@ impl ScriptTagParser {
         }
     }
 
-    pub fn parse_chunk(&mut self, input: &str) -> Option<String> {
+    pub fn parse_chunk(&mut self, input: &str) -> ChunkOutput {
+        let mut content = Vec::with_capacity(input.len());
+
         for byte in input.bytes() {
             match self.state {
                 State::Unstarted => match self.match_tag(byte, START_TAG) {
-                    TagMatch::None | TagMatch::Partial => {}
+                    TagMatch::None => {
+                        if self.tag_match_ix > 0 {
+                            content.extend_from_slice(&START_TAG[..self.tag_match_ix]);
+                            self.tag_match_ix = 0;
+                        }
+
+                        content.push(byte)
+                    }
+                    TagMatch::Partial => {}
                     TagMatch::Complete => {
                         self.state = State::Streaming;
                         self.buffer = Vec::with_capacity(1024);
@@ -43,7 +59,9 @@ impl ScriptTagParser {
                 State::Streaming => {
                     // TODO: find some way to escape tag?
                     match self.match_tag(byte, END_TAG) {
-                        TagMatch::Complete => return Some(self.ended()),
+                        TagMatch::Complete => {
+                            self.state = State::Ended;
+                        }
                         TagMatch::Partial => {}
                         TagMatch::None => {
                             if self.tag_match_ix > 0 {
@@ -53,7 +71,10 @@ impl ScriptTagParser {
 
                                 // tag beginning might match current byte
                                 match self.match_tag(byte, END_TAG) {
-                                    TagMatch::Complete => return Some(self.ended()),
+                                    TagMatch::Complete => {
+                                        self.state = State::Ended;
+                                        continue;
+                                    }
                                     TagMatch::Partial => continue,
                                     TagMatch::None => { /* no match, keep collecting */ }
                                 }
@@ -63,19 +84,24 @@ impl ScriptTagParser {
                         }
                     }
                 }
-                State::Ended => return None,
+                State::Ended => content.push(byte),
             }
         }
 
-        return None;
-    }
+        let content = unsafe { String::from_utf8_unchecked(content) };
 
-    fn ended(&mut self) -> String {
-        self.state = State::Ended;
-        self.tag_match_ix = 0;
+        let script_source = if matches!(self.state, State::Ended) && !self.buffer.is_empty() {
+            let source = unsafe { String::from_utf8_unchecked(std::mem::take(&mut self.buffer)) };
 
-        let buffer = std::mem::take(&mut self.buffer);
-        unsafe { String::from_utf8_unchecked(buffer) }
+            Some(source)
+        } else {
+            None
+        };
+
+        ChunkOutput {
+            content,
+            script_source,
+        }
     }
 
     fn match_tag(&mut self, byte: u8, tag: &[u8]) -> TagMatch {
@@ -109,24 +135,11 @@ mod tests {
         let mut parser = ScriptTagParser::new();
         let input = "<eval type=\"lua\">print(\"Hello, World!\")</eval>";
         let result = parser.parse_chunk(input);
-        assert_eq!(result, Some("print(\"Hello, World!\")".to_string()));
-    }
-
-    #[test]
-    fn test_parse_multiple_chunks() {
-        let mut parser = ScriptTagParser::new();
-
-        // First chunk
-        let result = parser.parse_chunk("<eval type=\"lua\">print(");
-        assert_eq!(result, None);
-
-        // Second chunk
-        let result = parser.parse_chunk("\"Hello, World!\")</eval>");
-        assert_eq!(result, Some("print(\"Hello, World!\")".to_string()));
-
-        // After done
-        let result = parser.parse_chunk("more content");
-        assert_eq!(result, None);
+        assert_eq!(result.content, "");
+        assert_eq!(
+            result.script_source,
+            Some("print(\"Hello, World!\")".to_string())
+        );
     }
 
     #[test]
@@ -134,7 +147,8 @@ mod tests {
         let mut parser = ScriptTagParser::new();
         let input = "No tags here, just plain text";
         let result = parser.parse_chunk(input);
-        assert_eq!(result, None);
+        assert_eq!(result.content, "No tags here, just plain text");
+        assert_eq!(result.script_source, None);
     }
 
     #[test]
@@ -143,13 +157,51 @@ mod tests {
 
         // Start the tag
         let result = parser.parse_chunk("<eval type=\"lua\">let x = '</e");
-        assert_eq!(result, None);
+        assert_eq!(result.content, "");
+        assert_eq!(result.script_source, None);
 
         // Finish with the rest
         let result = parser.parse_chunk("val' + 'not the end';</eval>");
+        assert_eq!(result.content, "");
         assert_eq!(
-            result,
+            result.script_source,
             Some("let x = '</eval' + 'not the end';".to_string())
         );
+    }
+
+    #[test]
+    fn test_text_before_and_after_tag() {
+        let mut parser = ScriptTagParser::new();
+        let input = "Before tag <eval type=\"lua\">print(\"Hello\")</eval> After tag";
+        let result = parser.parse_chunk(input);
+        assert_eq!(result.content, "Before tag  After tag");
+        assert_eq!(result.script_source, Some("print(\"Hello\")".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_chunks_with_surrounding_text() {
+        let mut parser = ScriptTagParser::new();
+
+        // First chunk with text before
+        let result = parser.parse_chunk("Before script <eval type=\"lua\">local x = 10");
+        assert_eq!(result.content, "Before script ");
+        assert_eq!(result.script_source, None);
+
+        // Second chunk with script content
+        let result = parser.parse_chunk("\nlocal y = 20");
+        assert_eq!(result.content, "");
+        assert_eq!(result.script_source, None);
+
+        // Last chunk with text after
+        let result = parser.parse_chunk("\nprint(x + y)</eval> After script");
+        assert_eq!(result.content, " After script");
+        assert_eq!(
+            result.script_source,
+            Some("local x = 10\nlocal y = 20\nprint(x + y)".to_string())
+        );
+
+        let result = parser.parse_chunk(" there's more text");
+        assert_eq!(result.content, " there's more text");
+        assert_eq!(result.script_source, None);
     }
 }

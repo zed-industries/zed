@@ -492,13 +492,13 @@ impl Thread {
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 if let Some(last_message) = thread.messages.last_mut() {
-                                    let parsed_script_src = script_tag_parser.parse_chunk(&chunk);
+                                    let chunk = script_tag_parser.parse_chunk(&chunk);
 
                                     let message_id = if last_message.role == Role::Assistant {
-                                        last_message.text.push_str(&chunk);
+                                        last_message.text.push_str(&chunk.content);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
                                             last_message.id,
-                                            chunk,
+                                            chunk.content,
                                         ));
                                         last_message.id
                                     } else {
@@ -507,7 +507,7 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(Role::Assistant, chunk, cx)
+                                        thread.insert_message(Role::Assistant, chunk.content, cx)
                                     };
 
                                     if script_id.is_none() && script_tag_parser.found_script() {
@@ -520,7 +520,7 @@ impl Thread {
                                     }
 
                                     if let (Some(script_source), Some(script_id)) =
-                                        (parsed_script_src, script_id)
+                                        (chunk.script_source, script_id)
                                     {
                                         // TODO: move buffer to script and run as it streams
                                         thread

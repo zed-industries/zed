@@ -781,16 +781,26 @@ impl ActiveThread {
                 )
                 .when(is_open, |parent| {
                     let stdout = script.stdout_snapshot();
+                    let error = script.error();
 
-                    parent.child(v_flex().p_2().bg(colors.editor_background).child(
-                        if stdout.is_empty() {
-                            Label::new("No output yet")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                        } else {
-                            Label::new(stdout).size(LabelSize::Small).buffer_font(cx)
-                        },
-                    ))
+                    parent.child(
+                        v_flex()
+                            .p_2()
+                            .bg(colors.editor_background)
+                            .gap_2()
+                            .child(if stdout.is_empty() && error.is_none() {
+                                Label::new("No output yet")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                            } else {
+                                Label::new(stdout).size(LabelSize::Small).buffer_font(cx)
+                            })
+                            .children(script.error().map(|err| {
+                                Label::new(err.to_string())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Error)
+                            })),
+                    )
                 }),
         );
 
