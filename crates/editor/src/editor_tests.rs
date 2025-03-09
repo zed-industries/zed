@@ -12334,24 +12334,6 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
         },
     };
 
-    let item_0_out = lsp::CompletionItem {
-        commit_characters: Some(default_commit_characters.clone()),
-        insert_text_format: Some(default_insert_text_format),
-        ..item_0
-    };
-    let items_out = iter::once(item_0_out)
-        .chain(items[1..].iter().map(|item| lsp::CompletionItem {
-            commit_characters: Some(default_commit_characters.clone()),
-            data: Some(default_data.clone()),
-            insert_text_mode: Some(default_insert_text_mode),
-            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                range: default_edit_range,
-                new_text: item.label.clone(),
-            })),
-            ..item.clone()
-        }))
-        .collect::<Vec<lsp::CompletionItem>>();
-
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -12370,10 +12352,11 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
 
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
+    let completion_items = items.clone();
     cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
         let default_data = completion_data.clone();
         let default_commit_characters = completion_characters.clone();
-        let items = items.clone();
+        let items = completion_items.clone();
         async move {
             Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
                 items,
@@ -12422,7 +12405,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
                         .iter()
                         .map(|mat| mat.string.clone())
                         .collect::<Vec<String>>(),
-                    items_out
+                    items
                         .iter()
                         .map(|completion| completion.label.clone())
                         .collect::<Vec<String>>()
@@ -12435,14 +12418,18 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     // with 4 from the end.
     assert_eq!(
         *resolved_items.lock(),
-        [
-            &items_out[0..16],
-            &items_out[items_out.len() - 4..items_out.len()]
-        ]
-        .concat()
-        .iter()
-        .cloned()
-        .collect::<Vec<lsp::CompletionItem>>()
+        [&items[0..16], &items[items.len() - 4..items.len()]]
+            .concat()
+            .iter()
+            .cloned()
+            .map(|mut item| {
+                if item.data.is_none() {
+                    item.data = Some(default_data.clone());
+                }
+                item
+            })
+            .collect::<Vec<lsp::CompletionItem>>(),
+        "Items sent for resolve should be unchanged modulo resolve `data` filled with default if missing"
     );
     resolved_items.lock().clear();
 
@@ -12453,9 +12440,15 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     // Completions that have already been resolved are skipped.
     assert_eq!(
         *resolved_items.lock(),
-        items_out[items_out.len() - 16..items_out.len() - 4]
+        items[items.len() - 16..items.len() - 4]
             .iter()
             .cloned()
+            .map(|mut item| {
+                if item.data.is_none() {
+                    item.data = Some(default_data.clone());
+                }
+                item
+            })
             .collect::<Vec<lsp::CompletionItem>>()
     );
     resolved_items.lock().clear();
