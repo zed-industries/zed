@@ -2,8 +2,9 @@ use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{StackFrameId, VariableReference};
 use editor::Editor;
 use gpui::{
-    actions, anchored, deferred, list, AnyElement, ClickEvent, Context, Entity, FocusHandle,
-    Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription,
+    actions, anchored, deferred, list, AnyElement, ClickEvent, ClipboardItem, Context,
+    DismissEvent, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent,
+    Point, Subscription,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
@@ -61,7 +62,7 @@ impl VariablePath {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Variable {
     dap: dap::Variable,
     path: VariablePath,
@@ -439,6 +440,59 @@ impl VariableList {
         }
     }
 
+    fn deploy_variable_context_menu(
+        &mut self,
+        variable: Variable,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let variable_value = variable.dap.value.clone();
+        let this = cx.entity().clone();
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            menu.entry("Copy name", None, move |_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(variable.dap.name.clone()))
+            })
+            .entry("Copy value", None, {
+                let variable_value = variable_value.clone();
+                move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(variable_value.clone()))
+                }
+            })
+            .entry("Set value", None, move |window, cx| {
+                this.update(cx, |variable_list, cx| {
+                    let editor = cx.new(|cx| {
+                        let mut editor = Editor::single_line(window, cx);
+                        editor.set_text(variable_value.clone(), window, cx);
+                        editor.select_all(&editor::actions::SelectAll, window, cx);
+                        editor
+                    });
+                    editor.focus_handle(cx).focus(window);
+                    variable_list.edited_path = Some((variable.path.clone(), editor));
+
+                    cx.notify();
+                });
+            })
+        });
+
+        cx.focus_view(&context_menu, window);
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                if this.open_context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                }) {
+                    cx.focus_self(window);
+                }
+                this.open_context_menu.take();
+                cx.notify();
+            },
+        );
+
+        self.open_context_menu = Some((context_menu, position, subscription));
+    }
+
     #[track_caller]
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_visual_entries(&self, expected: Vec<&str>) {
@@ -527,19 +581,14 @@ impl VariableList {
                     }))
                 })
                 .on_secondary_mouse_down(cx.listener({
-                    // let scope = scope.clone();
-                    // let variable = variable.clone();
-                    move |_this, _event: &MouseDownEvent, _window, _cx| {
-
-                        // todo(debugger): Get this working
-                        // this.deploy_variable_context_menu(
-                        //     container_reference,
-                        //     &scope,
-                        //     &variable,
-                        //     event.position,
-                        //     window,
-                        //     cx,
-                        // )
+                    let variable = variable.clone();
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        this.deploy_variable_context_menu(
+                            variable.clone(),
+                            event.position,
+                            window,
+                            cx,
+                        )
                     }
                 }))
                 .child(
@@ -566,13 +615,26 @@ impl VariableList {
                                                 .unwrap_or_default(),
                                             |this| {
                                                 let path = variable.path.clone();
+                                                let variable_value = variable.dap.value.clone();
                                                 this.on_click(cx.listener(
                                                     move |this, click: &ClickEvent, window, cx| {
                                                         if click.down.click_count < 2 {
                                                             return;
                                                         }
                                                         let editor = cx.new(|cx| {
-                                                            Editor::single_line(window, cx)
+                                                            let mut editor =
+                                                                Editor::single_line(window, cx);
+                                                            editor.set_text(
+                                                                variable_value.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                            editor.select_all(
+                                                                &editor::actions::SelectAll,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                            editor
                                                         });
                                                         editor.focus_handle(cx).focus(window);
                                                         this.edited_path =
