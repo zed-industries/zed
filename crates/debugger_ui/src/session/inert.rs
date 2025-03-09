@@ -8,7 +8,7 @@ use task::TCPHost;
 use theme::ThemeSettings;
 use ui::{
     h_flex, relative, v_flex, ActiveTheme as _, Button, ButtonCommon, ButtonStyle, Clickable,
-    Context, ContextMenu, Disableable, DropdownMenu, InteractiveElement, IntoElement, Label,
+    Context, ContextMenu, Disableable, DropdownMenu, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, Styled, Window,
 };
 
@@ -21,15 +21,22 @@ pub(crate) struct InertState {
 
 impl InertState {
     pub(super) fn new(default_cwd: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let program_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Program path", cx);
+            editor
+        });
+        let cwd_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.insert(default_cwd, window, cx);
+            editor.set_placeholder_text("Working directory", cx);
+            editor
+        });
         Self {
             focus_handle: cx.focus_handle(),
             selected_debugger: None,
-            program_editor: cx.new(|cx| Editor::single_line(window, cx)),
-            cwd_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.insert(default_cwd, window, cx);
-                editor
-            }),
+            program_editor,
+            cwd_editor,
         }
     }
 }
@@ -59,76 +66,74 @@ impl Render for InertState {
             .track_focus(&self.focus_handle)
             .size_full()
             .gap_1()
-            .p_1()
+            .p_2()
+
             .child(
-                h_flex().child(DropdownMenu::new(
-                    "dap-adapter-picker",
-                    self.selected_debugger
-                        .as_ref()
-                        .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
-                        .clone(),
-                    ContextMenu::build(window, cx, move |this, _, _| {
-                        let setter_for_name = |name: &'static str| {
-                            let weak = weak.clone();
-                            move |_: &mut Window, cx: &mut App| {
-                                let name = name;
-                                (&weak)
-                                    .update(cx, move |this, _| {
-                                        this.selected_debugger = Some(name.into());
-                                    })
-                                    .ok();
-                            }
-                        };
-                        this.entry("GDB", None, setter_for_name("GDB"))
-                            .entry("Delve", None, setter_for_name("Delve"))
-                            .entry("LLDB", None, setter_for_name("LLDB"))
-                            .entry("PHP", None, setter_for_name("PHP"))
-                            .entry("JavaScript", None, setter_for_name("JavaScript"))
-                            .entry("Debugpy", None, setter_for_name("Debugpy"))
-                    }),
-                )),
-            )
-            .child(
-                v_flex()
+                v_flex().gap_1()
                     .child(
                         h_flex()
-                            .w_4_5()
+                            .w_full()
                             .gap_2()
-                            .child(Label::new("Program path"))
-                            .child(Self::render_editor(&self.program_editor, cx)),
+
+                            .child(Self::render_editor(&self.program_editor, cx))
+                            .child(
+                                h_flex().child(DropdownMenu::new(
+                                    "dap-adapter-picker",
+                                    self.selected_debugger
+                                        .as_ref()
+                                        .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
+                                        .clone(),
+                                    ContextMenu::build(window, cx, move |this, _, _| {
+                                        let setter_for_name = |name: &'static str| {
+                                            let weak = weak.clone();
+                                            move |_: &mut Window, cx: &mut App| {
+                                                let name = name;
+                                                (&weak)
+                                                    .update(cx, move |this, _| {
+                                                        this.selected_debugger = Some(name.into());
+                                                    })
+                                                    .ok();
+                                            }
+                                        };
+                                        this.entry("GDB", None, setter_for_name("GDB"))
+                                            .entry("Delve", None, setter_for_name("Delve"))
+                                            .entry("LLDB", None, setter_for_name("LLDB"))
+                                            .entry("PHP", None, setter_for_name("PHP"))
+                                            .entry("JavaScript", None, setter_for_name("JavaScript"))
+                                            .entry("Debugpy", None, setter_for_name("Debugpy"))
+                                    }),
+                                )),
+                            )
                     )
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Label::new("Working directory"))
-                            .child(Self::render_editor(&self.cwd_editor, cx)),
+                        h_flex().gap_2().child(
+                            Self::render_editor(&self.cwd_editor, cx),
+                        ).child(h_flex()
+                            .gap_4()
+                            .pl_2()
+                            .child(
+                                Button::new("launch-dap", "Launch")
+                                    .style(ButtonStyle::Filled)
+                                    .disabled(disable_buttons)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let program = this.program_editor.read(cx).text(cx);
+                                        let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
+                                        let kind = kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| unimplemented!("Automatic selection of a debugger based on users project")));
+                                        cx.emit(InertEvent::Spawned {
+                                            config: DebugAdapterConfig {
+                                                label: "hard coded".into(),
+                                                kind,
+                                                request: DebugRequestType::Launch,
+                                                program: Some(program),
+                                                cwd: Some(cwd),
+                                                initialize_args: None,
+                                                supports_attach: false,
+                                            },
+                                        });
+                                    })),
+                            )
+                            .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled).disabled(disable_buttons)))
                     ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("launch-dap", "Launch")
-                            .style(ButtonStyle::Filled)
-                            .disabled(disable_buttons)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let program = this.program_editor.read(cx).text(cx);
-                                let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
-                                let kind = kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| unimplemented!("Automatic selection of a debugger based on users project")));
-                                cx.emit(InertEvent::Spawned {
-                                    config: DebugAdapterConfig {
-                                        label: "hard coded".into(),
-                                        kind,
-                                        request: DebugRequestType::Launch,
-                                        program: Some(program),
-                                        cwd: Some(cwd),
-                                        initialize_args: None,
-                                        supports_attach: false,
-                                    },
-                                });
-                            })),
-                    )
-                    .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled).disabled(disable_buttons)),
             )
     }
 }
