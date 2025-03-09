@@ -1,9 +1,9 @@
 use editor::Editor;
-use gpui::{Entity, Focusable, FocusHandle, Subscription, Task, WeakEntity};
-use language::{language_settings::language_settings, LanguageName};
+use gpui::{Entity, FocusHandle, Subscription, WeakEntity};
+use language::language_settings::language_settings;
 use settings::{LocalSettingsKind, SettingsStore};
-use std::{num::NonZeroU32, sync::PoisonError, time::Duration};
-use text::{Point, Selection};
+use std::num::NonZeroU32;
+use text::Point;
 use ui::{
     div, BorrowAppContext, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize, ParentElement, Render, Tooltip, Window
 };
