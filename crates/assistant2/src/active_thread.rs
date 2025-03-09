@@ -760,7 +760,7 @@ impl ActiveThread {
                                 .gap_1()
                                 .child(Disclosure::new("script-disclosure", is_open).on_click(
                                     cx.listener({
-                                        let script_id = script.id.clone();
+                                        let script_id = script.id;
                                         move |this, _event, _window, _cx| {
                                             if this.expanded_scripts.contains(&script_id) {
                                                 this.expanded_scripts.remove(&script_id);
