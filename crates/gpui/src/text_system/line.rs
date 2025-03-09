@@ -1,6 +1,6 @@
 use crate::{
     black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
+    SharedString, Size, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
     WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
@@ -92,6 +92,7 @@ pub struct WrappedLine {
     /// The text that was shaped for this line.
     pub text: SharedString,
     pub(crate) decoration_runs: SmallVec<[DecorationRun; 32]>,
+    pub(crate) inline_boxes: SmallVec<[InlineBox; 1]>,
 }
 
 impl WrappedLine {
@@ -130,6 +131,17 @@ impl WrappedLine {
 
         Ok(())
     }
+}
+
+/// An Inline Box used in text layouts.
+#[derive(Debug, Clone)]
+pub struct InlineBox {
+    /// The run index of which this inline box is located
+    pub run_ix: usize,
+    /// The index of the glyph just before the inline box
+    pub glyph_ix: usize,
+    /// The size of the inline box
+    pub size: Size<Pixels>,
 }
 
 #[allow(clippy::too_many_arguments)]

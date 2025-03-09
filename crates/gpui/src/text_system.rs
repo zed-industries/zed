@@ -387,6 +387,7 @@ impl WindowTextSystem {
         text: SharedString,
         font_size: Pixels,
         runs: &[TextRun],
+        inline_boxes: Option<&[InlineBox]>,
         wrap_width: Option<Pixels>,
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
@@ -451,6 +452,7 @@ impl WindowTextSystem {
                 &line_text,
                 font_size,
                 &font_runs,
+                inline_boxes,
                 wrap_width,
                 Some(max_wrap_lines - wrapped_lines),
             );
@@ -459,6 +461,7 @@ impl WindowTextSystem {
             lines.push(WrappedLine {
                 layout,
                 decoration_runs,
+                inline_boxes: inline_boxes.unwrap_or_default().into(),
                 text: line_text,
             });
 
@@ -532,7 +535,7 @@ impl WindowTextSystem {
 
         let layout = self
             .line_layout_cache
-            .layout_line(text, font_size, &font_runs);
+            .layout_line(text, font_size, &font_runs, &[]);
 
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
