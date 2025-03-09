@@ -103,6 +103,7 @@ impl VariableList {
     pub fn new(
         session: Entity<Session>,
         stack_frame_list: Entity<StackFrameList>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_variable_list = cx.weak_entity();
@@ -132,6 +133,10 @@ impl VariableList {
                     _ => {}
                 }
                 this.build_entries(cx);
+            }),
+            cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
+                this.edited_path.take();
+                cx.notify();
             }),
         ];
 
