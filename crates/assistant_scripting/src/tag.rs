@@ -43,48 +43,16 @@ impl ScriptTagParser {
 
         for byte in input.bytes() {
             match self.state {
-                State::Unstarted => match self.match_tag(byte, START_TAG) {
-                    TagMatch::None => {
-                        if self.tag_match_ix > 0 {
-                            content.extend_from_slice(&START_TAG[..self.tag_match_ix]);
-                            self.tag_match_ix = 0;
-                        }
-
-                        content.push(byte)
-                    }
-                    TagMatch::Partial => {}
-                    TagMatch::Complete => {
+                State::Unstarted => {
+                    if collect_until_tag(byte, START_TAG, &mut self.tag_match_ix, &mut content) {
                         self.state = State::Streaming;
                         self.buffer = Vec::with_capacity(1024);
                         self.tag_match_ix = 0;
                     }
-                },
+                }
                 State::Streaming => {
-                    // TODO: find some way to escape tag?
-                    match self.match_tag(byte, END_TAG) {
-                        TagMatch::Complete => {
-                            self.state = State::Ended;
-                        }
-                        TagMatch::Partial => {}
-                        TagMatch::None => {
-                            if self.tag_match_ix > 0 {
-                                // If tag didn't match completely, we assume it's part of the script source
-                                self.buffer.extend_from_slice(&END_TAG[..self.tag_match_ix]);
-                                self.tag_match_ix = 0;
-
-                                // tag beginning might match current byte
-                                match self.match_tag(byte, END_TAG) {
-                                    TagMatch::Complete => {
-                                        self.state = State::Ended;
-                                        continue;
-                                    }
-                                    TagMatch::Partial => continue,
-                                    TagMatch::None => { /* no match, keep collecting */ }
-                                }
-                            }
-
-                            self.buffer.push(byte);
-                        }
+                    if collect_until_tag(byte, END_TAG, &mut self.tag_match_ix, &mut self.buffer) {
+                        self.state = State::Ended;
                     }
                 }
                 State::Ended => content.push(byte),
@@ -106,27 +74,38 @@ impl ScriptTagParser {
             script_source,
         }
     }
+}
 
-    fn match_tag(&mut self, byte: u8, tag: &[u8]) -> TagMatch {
-        if byte == tag[self.tag_match_ix] {
-            self.tag_match_ix += 1;
+fn collect_until_tag(byte: u8, tag: &[u8], tag_match_ix: &mut usize, buffer: &mut Vec<u8>) -> bool {
+    // this can't be a method because it'd require a mutable borrow on both self and self.buffer
 
-            if self.tag_match_ix >= tag.len() {
-                TagMatch::Complete
-            } else {
-                TagMatch::Partial
+    if match_tag_byte(byte, tag, tag_match_ix) {
+        *tag_match_ix >= tag.len()
+    } else {
+        if *tag_match_ix > 0 {
+            // push the partially matched tag to the buffer
+            buffer.extend_from_slice(&tag[..*tag_match_ix]);
+            *tag_match_ix = 0;
+
+            // the tag might start to match again
+            if match_tag_byte(byte, tag, tag_match_ix) {
+                return *tag_match_ix >= tag.len();
             }
-        } else {
-            TagMatch::None
         }
+
+        buffer.push(byte);
+
+        false
     }
 }
 
-#[derive(Debug)]
-enum TagMatch {
-    None,
-    Partial,
-    Complete,
+fn match_tag_byte(byte: u8, tag: &[u8], tag_match_ix: &mut usize) -> bool {
+    if byte == tag[*tag_match_ix] {
+        *tag_match_ix += 1;
+        true
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -207,6 +186,23 @@ mod tests {
         assert_eq!(result.content, " there's more text");
         assert_eq!(result.script_source, None);
     }
+
+    #[test]
+    fn test_partial_start_tag_matching() {
+        let mut parser = ScriptTagParser::new();
+
+        // partial match of start tag...
+        let result = parser.parse_chunk("<ev");
+        assert_eq!(result.content, "");
+
+        // ...that's abandandoned when the < of a real tag is encountered
+        let result = parser.parse_chunk("<eval type=\"lua\">script content</eval>");
+        // ...so it gets pushed to content
+        assert_eq!(result.content, "<ev");
+        // ...and the real tag is parsed correctly
+        assert_eq!(result.script_source, Some("script content".to_string()));
+    }
+
     #[test]
     fn test_random_chunked_parsing() {
         use rand::rngs::StdRng;
