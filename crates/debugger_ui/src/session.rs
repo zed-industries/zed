@@ -1,8 +1,10 @@
+mod failed;
 mod inert;
 pub mod running;
 mod starting;
 
 use dap::client::SessionId;
+use failed::FailedState;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
@@ -22,12 +24,13 @@ use workspace::{
 pub(crate) enum DebugSessionState {
     Inert(Entity<InertState>),
     Starting(Entity<StartingState>),
+    Failed(Entity<FailedState>),
     Running(Entity<running::RunningState>),
 }
 
 impl DebugSessionState {
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn as_running(&self) -> Option<&Entity<running::RunningState>> {
+    fn as_running(&self) -> Option<&Entity<running::RunningState>> {
         match &self {
             DebugSessionState::Running(entity) => Some(entity),
             _ => None,
@@ -115,6 +118,7 @@ impl DebugSession {
         match &self.mode {
             DebugSessionState::Inert(_) => None,
             DebugSessionState::Starting(_) => None,
+            DebugSessionState::Failed(_) => None,
             DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
         }
     }
@@ -123,6 +127,7 @@ impl DebugSession {
         match &self.mode {
             DebugSessionState::Inert(_) => {}
             DebugSessionState::Starting(_entity) => {} // todo(debugger): we need to shutdown the starting process in this case (or recreate it on a breakpoint being hit)
+            DebugSessionState::Failed(_) => {}
             DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
         }
     }
@@ -166,14 +171,15 @@ impl DebugSession {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let StartingEvent::Finished(Ok(session)) = event else {
-            return;
+        if let StartingEvent::Finished(session) = event {
+            let mode =
+                cx.new(|cx| RunningState::new(session.clone(), self.workspace.clone(), window, cx));
+            self.mode = DebugSessionState::Running(mode);
+        } else if let StartingEvent::Failed = event {
+            let mode = cx.new(|cx| FailedState::new(cx));
+            self.mode = DebugSessionState::Failed(mode);
         };
-
-        let mode =
-            cx.new(|cx| RunningState::new(session.clone(), self.workspace.clone(), window, cx));
-
-        self.mode = DebugSessionState::Running(mode);
+        cx.notify();
     }
 }
 impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
@@ -183,6 +189,7 @@ impl Focusable for DebugSession {
         match &self.mode {
             DebugSessionState::Inert(inert_state) => inert_state.focus_handle(cx),
             DebugSessionState::Starting(starting_state) => starting_state.focus_handle(cx),
+            DebugSessionState::Failed(failed_state) => failed_state.focus_handle(cx),
             DebugSessionState::Running(running_state) => running_state.focus_handle(cx),
         }
     }
@@ -194,6 +201,7 @@ impl Item for DebugSession {
         let label = match &self.mode {
             DebugSessionState::Inert(_) => "New Session",
             DebugSessionState::Starting(_) => "Starting",
+            DebugSessionState::Failed(_) => "Failed",
             DebugSessionState::Running(_) => "Running",
         };
         div().child(Label::new(label)).into_any_element()
@@ -274,6 +282,9 @@ impl Render for DebugSession {
             }
             DebugSessionState::Starting(starting_state) => {
                 starting_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
+            }
+            DebugSessionState::Failed(failed_state) => {
+                failed_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
             }
             DebugSessionState::Running(running_state) => {
                 running_state.update(cx, |this, cx| this.render(window, cx).into_any_element())

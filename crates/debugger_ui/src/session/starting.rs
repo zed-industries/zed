@@ -15,7 +15,8 @@ pub(crate) struct StartingState {
 }
 
 pub(crate) enum StartingEvent {
-    Finished(Result<Entity<Session>>),
+    Failed,
+    Finished(Entity<Session>),
 }
 
 impl EventEmitter<StartingEvent> for StartingState {}
@@ -24,8 +25,15 @@ impl StartingState {
     pub(crate) fn new(task: Task<Result<Entity<Session>>>, cx: &mut Context<Self>) -> Self {
         let _notify_parent = cx.spawn(move |this, mut cx| async move {
             let entity = task.await;
-            this.update(&mut cx, |_, cx| cx.emit(StartingEvent::Finished(entity)))
-                .ok();
+
+            this.update(&mut cx, |_, cx| {
+                if let Ok(entity) = entity {
+                    cx.emit(StartingEvent::Finished(entity))
+                } else {
+                    cx.emit(StartingEvent::Failed)
+                }
+            })
+            .ok();
         });
         Self {
             focus_handle: cx.focus_handle(),

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use dap_types::{
     messages::{Message, Response},
     ErrorResponse,
@@ -673,7 +673,7 @@ impl StdioTransport {
             .map(|io_err| Box::new(io_err) as Box<dyn AsyncRead + Unpin + Send>);
 
         if stderr.is_none() {
-            log::error!(
+            bail!(
                 "Failed to connect to stderr for debug adapter command {}",
                 &binary.command
             );
