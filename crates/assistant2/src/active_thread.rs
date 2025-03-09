@@ -460,12 +460,16 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
-        let context = self.thread.read(cx).context_for_message(message_id);
-        let tool_uses = self.thread.read(cx).tool_uses_for_message(message_id);
-        let colors = cx.theme().colors();
+        let thread = self.thread.read(cx);
+
+        let context = thread.context_for_message(message_id);
+        let tool_uses = thread.tool_uses_for_message(message_id);
 
         // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User && self.thread.read(cx).message_has_tool_results(message_id) {
+        if message.role == Role::User
+            && (thread.message_has_tool_results(message_id)
+                || thread.message_has_script_output(message_id))
+        {
             return Empty.into_any();
         }
 
@@ -477,6 +481,8 @@ impl ActiveThread {
             .as_ref()
             .filter(|(id, _)| *id == message_id)
             .map(|(_, state)| state.editor.clone());
+
+        let colors = cx.theme().colors();
 
         let message_content = v_flex()
             .child(

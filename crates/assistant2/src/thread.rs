@@ -17,7 +17,7 @@ use language_model::{
 };
 use project::Project;
 use serde::{Deserialize, Serialize};
-use util::{maybe, post_inc, TryFutureExt as _};
+use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
@@ -78,7 +78,8 @@ pub struct Thread {
     project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
-    scripts_by_message: HashMap<MessageId, ScriptId>,
+    scripts_by_assistant_message: HashMap<MessageId, ScriptId>,
+    script_output_messages: HashSet<MessageId>,
     script_session: Entity<ScriptSession>,
     _script_session_subscription: Subscription,
 }
@@ -106,7 +107,8 @@ impl Thread {
             project,
             tools,
             tool_use: ToolUseState::new(),
-            scripts_by_message: HashMap::default(),
+            scripts_by_assistant_message: HashMap::default(),
+            script_output_messages: HashSet::default(),
             script_session,
             _script_session_subscription: script_session_subscription,
         }
@@ -152,7 +154,8 @@ impl Thread {
             project,
             tools,
             tool_use,
-            scripts_by_message: HashMap::default(),
+            scripts_by_assistant_message: HashMap::default(),
+            script_output_messages: HashSet::default(),
             script_session,
             _script_session_subscription: script_session_subscription,
         }
@@ -240,17 +243,22 @@ impl Thread {
         self.tool_use.message_has_tool_results(message_id)
     }
 
+    pub fn message_has_script_output(&self, message_id: MessageId) -> bool {
+        self.script_output_messages.contains(&message_id)
+    }
+
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
         context: Vec<ContextSnapshot>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> MessageId {
         let message_id = self.insert_message(Role::User, text, cx);
         let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();
         self.context
             .extend(context.into_iter().map(|context| (context.id, context)));
         self.context_by_message.insert(message_id, context_ids);
+        message_id
     }
 
     pub fn insert_message(
@@ -324,7 +332,7 @@ impl Thread {
         message_id: MessageId,
         cx: &'a App,
     ) -> Option<&'a Script> {
-        self.scripts_by_message
+        self.scripts_by_assistant_message
             .get(&message_id)
             .map(|script_id| self.script_session.read(cx).get(*script_id))
     }
@@ -337,7 +345,18 @@ impl Thread {
     ) {
         match event {
             ScriptEvent::Spawned(_) => {}
-            ScriptEvent::Exited(_) => cx.emit(ThreadEvent::ScriptFinished),
+            ScriptEvent::Exited(script_id) => {
+                if let Some(output_message) = self
+                    .script_session
+                    .read(cx)
+                    .get(*script_id)
+                    .output_message_for_llm()
+                {
+                    let message_id = self.insert_user_message(output_message, vec![], cx);
+                    self.script_output_messages.insert(message_id);
+                    cx.emit(ThreadEvent::ScriptFinished)
+                }
+            }
         }
     }
 
@@ -413,38 +432,26 @@ impl Thread {
                     .push(MessageContent::Text(message.text.clone()));
             }
 
-            let script_output_message = match request_kind {
+            match request_kind {
                 RequestKind::Chat => {
                     self.tool_use
                         .attach_tool_uses(message.id, &mut request_message);
 
-                    maybe!({
-                        if !matches!(message.role, Role::Assistant) {
-                            return None;
+                    if matches!(message.role, Role::Assistant) {
+                        if let Some(script_id) = self.scripts_by_assistant_message.get(&message.id)
+                        {
+                            let script = self.script_session.read(cx).get(*script_id);
+
+                            request_message.content.push(script.source_tag().into());
                         }
-
-                        let script_id = self.scripts_by_message.get(&message.id)?;
-                        let script = self.script_session.read(cx).get(*script_id);
-
-                        request_message.content.push(script.source_tag().into());
-
-                        let message = script.output_message_for_llm()?;
-
-                        Some(LanguageModelRequestMessage {
-                            role: Role::User,
-                            content: vec![message.into()],
-                            cache: false,
-                        })
-                    })
+                    }
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
-                    None
                 }
             };
 
             request.messages.push(request_message);
-            request.messages.extend(script_output_message);
         }
 
         if !referenced_context_ids.is_empty() {
@@ -517,7 +524,7 @@ impl Thread {
                                         let id = thread
                                             .script_session
                                             .update(cx, |session, _cx| session.new_script());
-                                        thread.scripts_by_message.insert(message_id, id);
+                                        thread.scripts_by_assistant_message.insert(message_id, id);
 
                                         script_id = Some(id);
                                     }
