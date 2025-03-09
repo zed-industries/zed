@@ -569,7 +569,6 @@ name = "assistant_scripting"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_tool",
  "collections",
  "futures 0.3.31",
  "gpui",
@@ -578,7 +577,6 @@ dependencies = [
  "project",
  "rand 0.8.5",
  "regex",
- "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -16909,7 +16907,6 @@ dependencies = [
  "assistant",
  "assistant2",
  "assistant_context_editor",
- "assistant_scripting",
  "assistant_settings",
  "assistant_tools",
  "async-watch",
