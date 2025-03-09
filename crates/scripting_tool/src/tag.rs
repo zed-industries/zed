@@ -207,4 +207,52 @@ mod tests {
         assert_eq!(result.content, " there's more text");
         assert_eq!(result.script_source, None);
     }
+    #[test]
+    fn test_random_chunked_parsing() {
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let test_inputs = [
+            "Before <eval type=\"lua\">print(\"Hello\")</eval> After",
+            "No tags here at all",
+            "<eval type=\"lua\">local x = 10\nlocal y = 20\nprint(x + y)</eval>",
+            "Text <eval type=\"lua\">if true then\nprint(\"nested </e\")\nend</eval> more",
+        ];
+
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        eprintln!("Using random seed: {}", seed);
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        for test_input in &test_inputs {
+            let mut reference_parser = ScriptTagParser::new();
+            let expected = reference_parser.parse_chunk(test_input);
+
+            let mut chunked_parser = ScriptTagParser::new();
+            let mut remaining = test_input.as_bytes();
+            let mut actual_content = String::new();
+            let mut actual_script = None;
+
+            while !remaining.is_empty() {
+                let chunk_size = rng.gen_range(1..=remaining.len().min(5));
+                let (chunk, rest) = remaining.split_at(chunk_size);
+                remaining = rest;
+
+                let chunk_str = std::str::from_utf8(chunk).unwrap();
+                let result = chunked_parser.parse_chunk(chunk_str);
+
+                actual_content.push_str(&result.content);
+                if result.script_source.is_some() {
+                    actual_script = result.script_source;
+                }
+            }
+
+            assert_eq!(actual_content, expected.content);
+            assert_eq!(actual_script, expected.script_source);
+        }
+    }
 }

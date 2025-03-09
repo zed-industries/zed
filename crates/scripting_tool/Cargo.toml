@@ -32,4 +32,5 @@ util.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }

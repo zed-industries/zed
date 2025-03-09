@@ -11923,6 +11923,7 @@ dependencies = [
  "mlua",
  "parking_lot",
  "project",
+ "rand 0.8.5",
  "regex",
  "schemars",
  "serde",
