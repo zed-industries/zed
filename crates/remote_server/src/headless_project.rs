@@ -9,6 +9,7 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
@@ -81,10 +82,38 @@ impl HeadlessProject {
             store
         });
 
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+
+        let toolchain_store = cx.new(|cx| {
+            ToolchainStore::local(
+                languages.clone(),
+                worktree_store.clone(),
+                environment.clone(),
+                cx,
+            )
+        });
+
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
+        });
+
+        let breakpoint_store =
+            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+
+        let dap_store = cx.new(|cx| {
+            DapStore::new_local(
+                http_client.clone(),
+                node_runtime.clone(),
+                fs.clone(),
+                languages.clone(),
+                environment.clone(),
+                toolchain_store.read(cx).as_language_toolchain_store(),
+                breakpoint_store.clone(),
+                worktree_store.clone(),
+                cx,
+            )
         });
 
         let git_store = cx.new(|cx| {
@@ -96,21 +125,13 @@ impl HeadlessProject {
                 cx,
             )
         });
+
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
-                cx,
-            )
-        });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
-        let toolchain_store = cx.new(|cx| {
-            ToolchainStore::local(
-                languages.clone(),
-                worktree_store.clone(),
-                environment.clone(),
                 cx,
             )
         });
@@ -185,6 +206,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &dap_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
 
@@ -219,6 +241,9 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        DapStore::init(&client);
+        // todo(debugger): Re init breakpoint store when we set it up for collab
+        // BreakpointStore::init(&client);
         GitStore::init(&client);
 
         HeadlessProject {
