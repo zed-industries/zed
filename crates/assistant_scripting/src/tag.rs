@@ -4,6 +4,7 @@ pub const SCRIPT_END_TAG: &str = "</eval>";
 const START_TAG: &[u8] = SCRIPT_START_TAG.as_bytes();
 const END_TAG: &[u8] = SCRIPT_END_TAG.as_bytes();
 
+/// Parses a script tag in an assistant message as it is being streamed.
 pub struct ScriptTagParser {
     state: State,
     buffer: Vec<u8>,
@@ -18,11 +19,14 @@ enum State {
 
 #[derive(Debug, PartialEq)]
 pub struct ChunkOutput {
+    /// The chunk with script tags removed.
     pub content: String,
+    /// The full script tag content. `None` until closed.
     pub script_source: Option<String>,
 }
 
 impl ScriptTagParser {
+    /// Create a new script tag parser.
     pub fn new() -> Self {
         Self {
             state: State::Unstarted,
@@ -31,6 +35,7 @@ impl ScriptTagParser {
         }
     }
 
+    /// Returns true if the parser has found a script tag.
     pub fn found_script(&self) -> bool {
         match self.state {
             State::Unstarted => false,
@@ -38,6 +43,7 @@ impl ScriptTagParser {
         }
     }
 
+    /// Process a new chunk of input, splitting it into surrounding content and script source.
     pub fn parse_chunk(&mut self, input: &str) -> ChunkOutput {
         let mut content = Vec::with_capacity(input.len());
 
