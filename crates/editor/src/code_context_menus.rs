@@ -500,7 +500,7 @@ impl CompletionsMenu {
                                     highlight.font_weight = None;
                                     if completion
                                         .source
-                                        .lsp_completion()
+                                        .lsp_completion(false)
                                         .and_then(|lsp_completion| lsp_completion.deprecated)
                                         .unwrap_or(false)
                                     {
@@ -713,7 +713,7 @@ impl CompletionsMenu {
                 let sort_key = completion.sort_key();
                 let sort_text = completion
                     .source
-                    .lsp_completion()
+                    .lsp_completion(false)
                     .and_then(|lsp_completion| lsp_completion.sort_text.as_deref());
                 let score = Reverse(OrderedFloat(mat.score));
 

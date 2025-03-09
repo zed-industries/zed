@@ -382,6 +382,8 @@ pub enum CompletionSource {
         server_id: LanguageServerId,
         /// The raw completion provided by the language server.
         lsp_completion: Box<lsp::CompletionItem>,
+        /// A set of defaults for this completion item.
+        lsp_defaults: Option<Arc<lsp::CompletionListItemDefaults>>,
         /// Whether this completion has been resolved, to ensure it happens once per completion.
         resolved: bool,
     },
@@ -397,17 +399,15 @@ impl CompletionSource {
         }
     }
 
-    pub fn lsp_completion(&self) -> Option<&lsp::CompletionItem> {
+    pub fn lsp_completion(&self, apply_defaults: bool) -> Option<Cow<lsp::CompletionItem>> {
         if let Self::Lsp { lsp_completion, .. } = self {
-            Some(lsp_completion)
-        } else {
-            None
-        }
-    }
-
-    fn lsp_completion_mut(&mut self) -> Option<&mut lsp::CompletionItem> {
-        if let Self::Lsp { lsp_completion, .. } = self {
-            Some(lsp_completion)
+            if apply_defaults {
+                if let Some(defaults) = &self.lsp_defaults {
+                    // TODO kb extract from `response_from_lsp`
+                    return Some(Cow::Owned(defaults.apply(lsp_completion)));
+                }
+            }
+            Some(Cow::Borrowed(lsp_completion))
         } else {
             None
         }
@@ -4640,7 +4640,8 @@ impl Completion {
         const DEFAULT_KIND_KEY: usize = 2;
         let kind_key = self
             .source
-            .lsp_completion()
+            // `lsp::CompletionListItemDefaults` has no `kind` field
+            .lsp_completion(false)
             .and_then(|lsp_completion| lsp_completion.kind)
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
@@ -4654,7 +4655,8 @@ impl Completion {
     /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
         self.source
-            .lsp_completion()
+            // `lsp::CompletionListItemDefaults` has `insert_text_format` field
+            .lsp_completion(true)
             .map_or(false, |lsp_completion| {
                 lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
             })
@@ -4664,9 +4666,10 @@ impl Completion {
     ///
     /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
     pub fn color(&self) -> Option<Hsla> {
-        let lsp_completion = self.source.lsp_completion()?;
+        // `lsp::CompletionListItemDefaults` has no `kind` field
+        let lsp_completion = self.source.lsp_completion(false)?;
         if lsp_completion.kind? == CompletionItemKind::COLOR {
-            return color_extractor::extract_color(lsp_completion);
+            return color_extractor::extract_color(&lsp_completion);
         }
         None
     }

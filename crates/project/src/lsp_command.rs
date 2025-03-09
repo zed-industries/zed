@@ -1847,7 +1847,6 @@ impl LspCommand for GetCompletions {
         let mut completions = if let Some(completions) = completions {
             match completions {
                 lsp::CompletionResponse::Array(completions) => completions,
-
                 lsp::CompletionResponse::List(mut list) => {
                     let items = std::mem::take(&mut list.items);
                     response_list = Some(list);
@@ -1855,15 +1854,16 @@ impl LspCommand for GetCompletions {
                 }
             }
         } else {
-            Default::default()
+            Vec::new()
         };
 
         let language_server_adapter = lsp_store
             .update(&mut cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
-            .ok_or_else(|| anyhow!("no such language server"))?;
+            .with_context(|| format!("no language server with id {server_id}"))?;
 
+        // TODO kb resolve needs item data from defaults, but othrewise does not need anything else applied to the original LSP response.
         let item_defaults = response_list
             .as_ref()
             .and_then(|list| list.item_defaults.as_ref());

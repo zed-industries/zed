@@ -1000,6 +1000,7 @@ message Completion {
     bytes lsp_completion = 5;
     bool resolved = 6;
     Source source = 7;
+    optional bytes lsp_defaults = 8;
 
     enum Source {
         Custom = 0;
