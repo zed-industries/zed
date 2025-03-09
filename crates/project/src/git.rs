@@ -141,6 +141,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
         client.add_entity_request_handler(Self::handle_git_diff);
+        client.add_entity_request_handler(Self::handle_commit_history);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
@@ -661,6 +662,37 @@ impl GitStore {
             .await??;
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_commit_history(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitGetCommitHistory>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitCommitHistoryResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let commits = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.get_commit_history(envelope.payload.skip, envelope.payload.limit)
+            })?
+            .await??;
+
+        Ok(proto::GitCommitHistoryResponse {
+            commits: commits
+                .clone()
+                .into_iter()
+                .map(|commit| proto::GitCommitDetails {
+                    committer_name: commit.committer_name.into(),
+                    commit_timestamp: commit.commit_timestamp.into(),
+                    committer_email: commit.committer_email.into(),
+                    sha: commit.sha.into(),
+                    message: commit.message.into(),
+                })
+                .collect::<Vec<_>>(),
+        })
     }
 
     async fn handle_show(
@@ -1657,6 +1689,49 @@ impl Repository {
                         .collect();
 
                     Ok(branches)
+                }
+            }
+        })
+    }
+
+    pub fn get_commit_history(
+        &self,
+        skip: i32,
+        limit: i32,
+    ) -> oneshot::Receiver<Result<Vec<CommitDetails>>> {
+        self.send_job(move |repo| async move {
+            match repo {
+                GitRepo::Local(git_repository) => git_repository.commit_history(skip, limit),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => {
+                    let response = client
+                        .request(proto::GitGetCommitHistory {
+                            project_id: project_id.0,
+                            worktree_id: worktree_id.to_proto(),
+                            work_directory_id: work_directory_id.to_proto(),
+                            skip: skip,
+                            limit: limit,
+                        })
+                        .await?;
+
+                    let commits = response
+                        .commits
+                        .clone()
+                        .into_iter()
+                        .map(|commit| CommitDetails {
+                            committer_name: commit.committer_name.into(),
+                            commit_timestamp: commit.commit_timestamp.into(),
+                            committer_email: commit.committer_email.into(),
+                            sha: commit.sha.into(),
+                            message: commit.message.into(),
+                        })
+                        .collect();
+
+                    Ok(commits)
                 }
             }
         })

@@ -1,6 +1,6 @@
 use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
-use crate::{blame::Blame, status::GitStatus};
+use crate::{blame::Blame, commit_history::CommitHistory, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
 use askpass::{AskPassResult, AskPassSession};
 use collections::{HashMap, HashSet};
@@ -161,6 +161,8 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the list of git statuses, sorted by path
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
+
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Vec<CommitDetails>>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -469,6 +471,17 @@ impl GitRepository for RealGitRepository {
             .context("failed to read git work directory")?
             .to_path_buf();
         GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
+    }
+
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Vec<CommitDetails>> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        CommitHistory::list(&self.git_binary_path, &working_directory, skip, limit)
     }
 
     fn branch_exits(&self, name: &str) -> Result<bool> {
@@ -991,6 +1004,12 @@ impl GitRepository for FakeGitRepository {
         Ok(GitStatus {
             entries: entries.into(),
         })
+    }
+
+    fn commit_history(&self, skip: i32, limit: i32) -> Result<Vec<CommitDetails>> {
+        let _ = limit;
+        let _ = skip;
+        Ok(Vec::new())
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
