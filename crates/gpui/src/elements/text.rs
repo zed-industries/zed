@@ -313,7 +313,6 @@ impl TextLayout {
         } else {
             vec![text_style.to_run(text.len())]
         };
-        let inline_boxes = inline_boxes.unwrap_or_default();
 
         let layout_id = window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
@@ -354,6 +353,8 @@ impl TextLayout {
                 }
 
                 let inline_boxes_width = inline_boxes
+                    .as_deref()
+                    .unwrap_or_default()
                     .iter()
                     .fold(px(0.), |width, b| width + b.size.width);
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
@@ -374,7 +375,7 @@ impl TextLayout {
                         text,
                         font_size,
                         &runs,
-                        inline_boxes.clone(),
+                        inline_boxes.as_deref(),
                         wrap_width,            // Wrap if we know the width.
                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
                     )

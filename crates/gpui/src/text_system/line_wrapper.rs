@@ -555,6 +555,7 @@ mod tests {
                         bold.with_len(1),
                         normal.with_len(7),
                     ],
+                    None,
                     Some(px(72.)),
                     None,
                 )

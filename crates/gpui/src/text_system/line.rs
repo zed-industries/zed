@@ -92,7 +92,7 @@ pub struct WrappedLine {
     /// The text that was shaped for this line.
     pub text: SharedString,
     pub(crate) decoration_runs: SmallVec<[DecorationRun; 32]>,
-    pub(crate) inline_boxes: Vec<InlineBox>,
+    pub(crate) inline_boxes: SmallVec<[InlineBox; 1]>,
 }
 
 impl WrappedLine {

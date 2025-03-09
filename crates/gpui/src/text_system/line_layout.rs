@@ -475,7 +475,7 @@ impl LineLayoutCache {
         text: Text,
         font_size: Pixels,
         runs: &[FontRun],
-        inline_boxes: &[InlineBox],
+        inline_boxes: Option<&[InlineBox]>,
         wrap_width: Option<Pixels>,
         max_lines: Option<usize>,
     ) -> Arc<WrappedLineLayout>
@@ -506,8 +506,12 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
             let text = SharedString::from(text);
-            let unwrapped_layout =
-                self.layout_line::<&SharedString>(&text, font_size, runs, inline_boxes);
+            let unwrapped_layout = self.layout_line::<&SharedString>(
+                &text,
+                font_size,
+                runs,
+                inline_boxes.unwrap_or(&[]),
+            );
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
@@ -571,7 +575,7 @@ impl LineLayoutCache {
                 .platform_text_system
                 .layout_line(&text, font_size, runs);
 
-            // Adjust glyph positions to accomodate inline boxes
+            // Adjust glyph positions to accommodate inline boxes
             for (run_ix, run) in text_layout.runs.iter_mut().enumerate() {
                 let mut current_inline_box = inline_boxes.peek();
 
