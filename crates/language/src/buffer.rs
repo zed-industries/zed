@@ -1527,6 +1527,7 @@ impl Buffer {
     }
 
     fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
+        self.was_changed();
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
@@ -1968,7 +1969,12 @@ impl Buffer {
     /// This allows downstream code to check if the buffer's text has changed without
     /// waiting for an effect cycle, which would be required if using eents.
     pub fn record_changes(&mut self, bit: rc::Weak<Cell<bool>>) {
-        self.change_bits.push(bit);
+        if let Err(ix) = self
+            .change_bits
+            .binary_search_by_key(&rc::Weak::as_ptr(&bit), rc::Weak::as_ptr)
+        {
+            self.change_bits.insert(ix, bit);
+        }
     }
 
     fn was_changed(&mut self) {
@@ -2278,7 +2284,7 @@ impl Buffer {
         }
 
         self.reparse(cx);
-
+        self.was_changed();
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);
@@ -2390,7 +2396,6 @@ impl Buffer {
         }
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
-        self.was_changed();
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
