@@ -3,7 +3,7 @@ use dap::{StackFrameId, VariableReference};
 use editor::Editor;
 use gpui::{
     actions, anchored, deferred, list, AnyElement, ClickEvent, Context, Entity, FocusHandle,
-    Focusable, Hsla, ListState, MouseDownEvent, Point, Subscription,
+    Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
@@ -32,12 +32,14 @@ impl VariablePath {
             indices: Arc::new([scope_id]),
         }
     }
+
     fn with_name(&self, name: SharedString) -> Self {
         Self {
             leaf_name: Some(name),
             indices: self.indices.clone(),
         }
     }
+
     /// Create a new child of this variable path
     fn with_child(&self, variable_reference: VariableReference) -> Self {
         Self {
@@ -50,6 +52,7 @@ impl VariablePath {
                 .collect(),
         }
     }
+
     fn parent_reference_id(&self) -> VariableReference {
         self.indices
             .last()
@@ -58,7 +61,7 @@ impl VariablePath {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Variable {
     dap: dap::Variable,
     path: VariablePath,
@@ -215,8 +218,46 @@ impl VariableList {
                 }));
             }
         }
+
+        let old_scroll_top = self.list.logical_scroll_top();
+
         if self.entries.len() != entries.len() {
             self.list.reset(entries.len());
+        }
+
+        let old_entries = &self.entries;
+        if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
+            let new_scroll_top = old_entries
+                .iter()
+                .position(|entry| entry == old_top_entry)
+                .map(|item_ix| ListOffset {
+                    item_ix,
+                    offset_in_item: old_scroll_top.offset_in_item,
+                })
+                .or_else(|| {
+                    let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
+                    let item_ix = entries
+                        .iter()
+                        .position(|entry| entry == entry_after_old_top)?;
+                    Some(ListOffset {
+                        item_ix,
+                        offset_in_item: Pixels::ZERO,
+                    })
+                })
+                .or_else(|| {
+                    let entry_before_old_top =
+                        old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
+                    let item_ix = entries
+                        .iter()
+                        .position(|entry| entry == entry_before_old_top)?;
+                    Some(ListOffset {
+                        item_ix,
+                        offset_in_item: Pixels::ZERO,
+                    })
+                });
+
+            self.list
+                .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
         }
 
         self.entries = entries;
