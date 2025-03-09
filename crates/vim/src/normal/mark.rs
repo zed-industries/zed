@@ -135,14 +135,11 @@ impl Vim {
                         let Some(workspace) = self.workspace(window) else {
                             return;
                         };
-                        let entity_id = workspace.entity_id();
                         workspace.update(cx, |workspace, cx| {
                             let mut panes = workspace.panes().to_vec();
                             panes.insert(0, workspace.active_pane().clone());
-                            let name = text.to_string().clone();
                             for pane in panes {
                                 let mut found = false;
-                                let name = name.clone();
                                 let anchors = anchors.clone();
                                 pane.update(cx, |pane, cx| {
                                     let Some(item_handle) =

@@ -403,7 +403,7 @@ pub struct MarksState {
 
     multibuffer_marks: HashMap<EntityId, HashMap<String, Vec<Anchor>>>,
     buffer_marks: HashMap<BufferId, HashMap<String, Vec<text::Anchor>>>,
-    watched_buffers: HashMap<BufferId, (Arc<Path>, Subscription, Subscription)>,
+    watched_buffers: HashMap<BufferId, (Option<Arc<Path>>, Subscription, Subscription)>,
 
     serialized_marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
     global_marks: HashMap<String, MarkLocation>,
@@ -554,7 +554,7 @@ impl MarksState {
             );
         }
         self.buffer_marks.insert(buffer.remote_id(), loaded_marks);
-        self.watch_buffer(abs_path, buffer_handle, cx)
+        self.watch_buffer(Some(abs_path), buffer_handle, cx)
     }
 
     fn serialize_buffer_marks(
@@ -629,12 +629,19 @@ impl MarksState {
             .is_some_and(|c| c.is_uppercase() || c.is_digit(10))
     }
 
-    fn rename_buffer(&mut self, old_path: Arc<Path>, new_path: Arc<Path>, _cx: &mut Context<Self>) {
-        let old_points = self.serialized_marks.remove(&old_path).unwrap_or_default();
-
-        // todo!() actually write here
-
-        self.serialized_marks.insert(new_path, old_points);
+    fn rename_buffer(
+        &mut self,
+        old_path: Option<Arc<Path>>,
+        new_path: Arc<Path>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(old_path) = old_path {
+            self.serialized_marks.remove(&old_path);
+        }
+        // if there is no old path we assume that
+        // we are giving a previously unnamed buffer a name
+        self.serialize_buffer_marks(new_path, buffer, cx);
     }
 
     fn path_for_buffer(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -669,7 +676,7 @@ impl MarksState {
 
     pub fn watch_buffer(
         &mut self,
-        abs_path: Arc<Path>,
+        abs_path: Option<Arc<Path>>,
         buffer_handle: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
@@ -681,13 +688,14 @@ impl MarksState {
                 }
             }
             BufferEvent::FileHandleChanged => {
+                let buffer_id = buffer.read(cx).remote_id();
                 if let Some(old_path) = this
                     .watched_buffers
-                    .get(&buffer.read(cx).remote_id())
+                    .get(&buffer_id.clone())
                     .map(|(path, _, _)| path.clone())
                 {
                     if let Some(new_path) = this.path_for_buffer(&buffer, cx) {
-                        this.rename_buffer(old_path, new_path, cx)
+                        this.rename_buffer(old_path, new_path, &buffer, cx)
                     }
                 }
             }
@@ -749,13 +757,13 @@ impl MarksState {
             name.clone(),
             MarkLocation::Buffer(buffer_id),
         );
-        let Some(abs_path) = self.path_for_buffer(&buffer_handle, cx) else {
-            return;
-        };
+        let abs_path = self.path_for_buffer(&buffer_handle, cx);
         if !self.watched_buffers.contains_key(&buffer_id) {
             self.watch_buffer(abs_path.clone(), &buffer_handle, cx)
         }
-        self.serialize_buffer_marks(abs_path, &buffer_handle, cx)
+        if let Some(abs_path) = abs_path {
+            self.serialize_buffer_marks(abs_path, &buffer_handle, cx)
+        }
     }
 
     pub fn get_mark(
