@@ -15,6 +15,7 @@ pub(crate) struct RenderSvgParams {
 #[derive(Clone)]
 pub struct SvgRenderer {
     asset_source: Arc<dyn AssetSource>,
+    usvg_options: Arc<usvg::Options<'static>>,
 }
 
 pub enum SvgSize {
@@ -24,7 +25,16 @@ pub enum SvgSize {
 
 impl SvgRenderer {
     pub fn new(asset_source: Arc<dyn AssetSource>) -> Self {
-        Self { asset_source }
+        let mut font_db = usvg::fontdb::Database::new();
+        font_db.load_system_fonts();
+        let options = usvg::Options {
+            fontdb: Arc::new(font_db),
+            ..Default::default()
+        };
+        Self {
+            asset_source,
+            usvg_options: Arc::new(options),
+        }
     }
 
     pub(crate) fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
@@ -49,7 +59,7 @@ impl SvgRenderer {
     }
 
     pub fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
-        let tree = usvg::Tree::from_data(bytes, &usvg::Options::default())?;
+        let tree = usvg::Tree::from_data(bytes, &self.usvg_options)?;
 
         let size = match size {
             SvgSize::Size(size) => size,
