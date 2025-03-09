@@ -43,12 +43,14 @@ impl ScriptSession {
     }
 
     pub fn new_script(&mut self) -> ScriptId {
+        let id = ScriptId(self.scripts.len() as u32);
         let script = Script {
+            id,
             state: ScriptState::Generating,
+            source: String::new(),
         };
-        let script_id = ScriptId(self.scripts.len() as u32);
         self.scripts.push(script);
-        script_id
+        id
     }
 
     pub fn run_script(
@@ -60,6 +62,7 @@ impl ScriptSession {
         let script = self.get_mut(script_id);
 
         let stdout = Arc::new(Mutex::new(String::new()));
+        script.source = script_src.clone();
         script.state = ScriptState::Running {
             stdout: stdout.clone(),
         };
@@ -738,11 +741,13 @@ pub enum ScriptEvent {
 
 impl EventEmitter<ScriptEvent> for ScriptSession {}
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ScriptId(u32);
 
 pub struct Script {
-    state: ScriptState,
+    pub id: ScriptId,
+    pub state: ScriptState,
+    source: String,
 }
 
 pub enum ScriptState {
@@ -760,11 +765,6 @@ pub enum ScriptState {
 }
 
 impl Script {
-    /// Get the current state of the script
-    pub fn state(&self) -> &ScriptState {
-        &self.state
-    }
-
     /// If exited, returns a message with the output for the LLM
     pub fn output_message_for_llm(&self) -> Option<String> {
         match &self.state {

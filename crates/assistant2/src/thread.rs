@@ -13,7 +13,9 @@ use language_model::{
     Role, StopReason,
 };
 use project::Project;
-use scripting_tool::{ScriptEvent, ScriptId, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT};
+use scripting_tool::{
+    Script, ScriptEvent, ScriptId, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT,
+};
 use serde::{Deserialize, Serialize};
 use util::{maybe, post_inc, TryFutureExt as _};
 use uuid::Uuid;
@@ -317,6 +319,16 @@ impl Thread {
         text
     }
 
+    pub fn script_for_message<'a>(
+        &'a self,
+        message_id: MessageId,
+        cx: &'a App,
+    ) -> Option<&'a Script> {
+        self.scripts_by_message
+            .get(&message_id)
+            .map(|script_id| self.script_session.read(cx).get(*script_id))
+    }
+
     fn handle_script_event(
         &mut self,
         _script_session: Entity<ScriptSession>,
@@ -499,11 +511,12 @@ impl Thread {
                                     };
 
                                     if script_id.is_none() && script_tag_parser.found_script() {
-                                        script_id = Some(
-                                            thread
-                                                .script_session
-                                                .update(cx, |session, _cx| session.new_script()),
-                                        );
+                                        let id = thread
+                                            .script_session
+                                            .update(cx, |session, _cx| session.new_script());
+                                        thread.scripts_by_message.insert(message_id, id);
+
+                                        script_id = Some(id);
                                     }
 
                                     if let (Some(script_source), Some(script_id)) =
@@ -516,8 +529,6 @@ impl Thread {
                                                 this.run_script(script_id, script_source, cx)
                                             })
                                             .detach_and_log_err(cx);
-
-                                        thread.scripts_by_message.insert(message_id, script_id);
                                     }
                                 }
                             }
