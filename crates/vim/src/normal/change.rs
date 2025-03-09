@@ -97,13 +97,14 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut objects_found = false;
+
         self.update_editor(window, cx, |vim, editor, window, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        objects_found |= object.expand_selection(map, selection, around);
+                        objects_found |= object.expand_selection(map, selection, around, false);
                     });
                 });
                 if objects_found {
@@ -113,7 +114,6 @@ impl Vim {
                 }
             });
         });
-
         if objects_found {
             self.switch_mode(Mode::Insert, false, window, cx);
         } else {
