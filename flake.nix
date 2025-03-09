@@ -50,12 +50,11 @@
     in
     {
       packages = forAllSystems (pkgs: {
-        zed-editor = pkgs.zed-editor;
         default = pkgs.zed-editor;
       });
 
       devShells = forAllSystems (pkgs: {
-        default = import ./nix/shell.nix { inherit pkgs; };
+        default = pkgs.callPackage ./nix/shell.nix { };
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
