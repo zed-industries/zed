@@ -17017,6 +17017,7 @@ fn snippet_completions(
                             sort_text: Some(char::MAX.to_string()),
                             ..lsp::CompletionItem::default()
                         }),
+                        lsp_defaults: None,
                     },
                     label: CodeLabel {
                         text: matching_prefix.clone(),

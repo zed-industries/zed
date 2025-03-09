@@ -382,6 +382,8 @@ pub enum CompletionSource {
         server_id: LanguageServerId,
         /// The raw completion provided by the language server.
         lsp_completion: Box<lsp::CompletionItem>,
+        /// A set of defaults for this completion item.
+        lsp_defaults: Option<Arc<lsp::CompletionListItemDefaults>>,
         /// Whether this completion has been resolved, to ensure it happens once per completion.
         resolved: bool,
     },
@@ -397,17 +399,76 @@ impl CompletionSource {
         }
     }
 
-    pub fn lsp_completion(&self) -> Option<&lsp::CompletionItem> {
-        if let Self::Lsp { lsp_completion, .. } = self {
-            Some(lsp_completion)
-        } else {
-            None
-        }
-    }
+    pub fn lsp_completion(&self, apply_defaults: bool) -> Option<Cow<lsp::CompletionItem>> {
+        if let Self::Lsp {
+            lsp_completion,
+            lsp_defaults,
+            ..
+        } = self
+        {
+            if apply_defaults {
+                if let Some(lsp_defaults) = lsp_defaults {
+                    let mut completion_with_defaults = *lsp_completion.clone();
+                    let default_commit_characters = lsp_defaults.commit_characters.as_ref();
+                    let default_edit_range = lsp_defaults.edit_range.as_ref();
+                    let default_insert_text_format = lsp_defaults.insert_text_format.as_ref();
+                    let default_insert_text_mode = lsp_defaults.insert_text_mode.as_ref();
 
-    fn lsp_completion_mut(&mut self) -> Option<&mut lsp::CompletionItem> {
-        if let Self::Lsp { lsp_completion, .. } = self {
-            Some(lsp_completion)
+                    if default_commit_characters.is_some()
+                        || default_edit_range.is_some()
+                        || default_insert_text_format.is_some()
+                        || default_insert_text_mode.is_some()
+                    {
+                        if completion_with_defaults.commit_characters.is_none()
+                            && default_commit_characters.is_some()
+                        {
+                            completion_with_defaults.commit_characters =
+                                default_commit_characters.cloned()
+                        }
+                        if completion_with_defaults.text_edit.is_none() {
+                            match default_edit_range {
+                                Some(lsp::CompletionListItemDefaultsEditRange::Range(range)) => {
+                                    completion_with_defaults.text_edit =
+                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                            range: *range,
+                                            new_text: completion_with_defaults.label.clone(),
+                                        }))
+                                }
+                                Some(
+                                    lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                        insert,
+                                        replace,
+                                    },
+                                ) => {
+                                    completion_with_defaults.text_edit =
+                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                            lsp::InsertReplaceEdit {
+                                                new_text: completion_with_defaults.label.clone(),
+                                                insert: *insert,
+                                                replace: *replace,
+                                            },
+                                        ))
+                                }
+                                None => {}
+                            }
+                        }
+                        if completion_with_defaults.insert_text_format.is_none()
+                            && default_insert_text_format.is_some()
+                        {
+                            completion_with_defaults.insert_text_format =
+                                default_insert_text_format.cloned()
+                        }
+                        if completion_with_defaults.insert_text_mode.is_none()
+                            && default_insert_text_mode.is_some()
+                        {
+                            completion_with_defaults.insert_text_mode =
+                                default_insert_text_mode.cloned()
+                        }
+                    }
+                    return Some(Cow::Owned(completion_with_defaults));
+                }
+            }
+            Some(Cow::Borrowed(lsp_completion))
         } else {
             None
         }
@@ -4640,7 +4701,8 @@ impl Completion {
         const DEFAULT_KIND_KEY: usize = 2;
         let kind_key = self
             .source
-            .lsp_completion()
+            // `lsp::CompletionListItemDefaults` has no `kind` field
+            .lsp_completion(false)
             .and_then(|lsp_completion| lsp_completion.kind)
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
@@ -4654,7 +4716,8 @@ impl Completion {
     /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
         self.source
-            .lsp_completion()
+            // `lsp::CompletionListItemDefaults` has `insert_text_format` field
+            .lsp_completion(true)
             .map_or(false, |lsp_completion| {
                 lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
             })
@@ -4664,9 +4727,10 @@ impl Completion {
     ///
     /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
     pub fn color(&self) -> Option<Hsla> {
-        let lsp_completion = self.source.lsp_completion()?;
+        // `lsp::CompletionListItemDefaults` has no `kind` field
+        let lsp_completion = self.source.lsp_completion(false)?;
         if lsp_completion.kind? == CompletionItemKind::COLOR {
-            return color_extractor::extract_color(lsp_completion);
+            return color_extractor::extract_color(&lsp_completion);
         }
         None
     }
