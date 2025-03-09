@@ -1,10 +1,9 @@
-use anyhow::Result;
 use collections::{HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     pin_mut, SinkExt, StreamExt,
 };
-use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
+use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project};
@@ -16,24 +15,23 @@ use std::{
 };
 use util::{paths::PathMatcher, ResultExt};
 
-pub struct ScriptOutput {
-    pub stdout: String,
-}
+use crate::{SCRIPT_END_TAG, SCRIPT_START_TAG};
 
-struct ForegroundFn(Box<dyn FnOnce(WeakEntity<Session>, AsyncApp) + Send>);
+struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptSession>, AsyncApp) + Send>);
 
-pub struct Session {
+pub struct ScriptSession {
     project: Entity<Project>,
     // TODO Remove this
     fs_changes: Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>,
     foreground_fns_tx: mpsc::Sender<ForegroundFn>,
     _invoke_foreground_fns: Task<()>,
+    scripts: Vec<Script>,
 }
 
-impl Session {
+impl ScriptSession {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let (foreground_fns_tx, mut foreground_fns_rx) = mpsc::channel(128);
-        Session {
+        ScriptSession {
             project,
             fs_changes: Arc::new(Mutex::new(HashMap::default())),
             foreground_fns_tx,
@@ -42,15 +40,62 @@ impl Session {
                     foreground_fn.0(this.clone(), cx.clone());
                 }
             }),
+            scripts: Vec::new(),
         }
     }
 
-    /// Runs a Lua script in a sandboxed environment and returns the printed lines
+    pub fn new_script(&mut self) -> ScriptId {
+        let id = ScriptId(self.scripts.len() as u32);
+        let script = Script {
+            id,
+            state: ScriptState::Generating,
+            source: SharedString::new_static(""),
+        };
+        self.scripts.push(script);
+        id
+    }
+
     pub fn run_script(
         &mut self,
-        script: String,
+        script_id: ScriptId,
+        script_src: String,
         cx: &mut Context<Self>,
-    ) -> Task<Result<ScriptOutput>> {
+    ) -> Task<anyhow::Result<()>> {
+        let script = self.get_mut(script_id);
+
+        let stdout = Arc::new(Mutex::new(String::new()));
+        script.source = script_src.clone().into();
+        script.state = ScriptState::Running {
+            stdout: stdout.clone(),
+        };
+
+        let task = self.run_lua(script_src, stdout, cx);
+
+        cx.emit(ScriptEvent::Spawned(script_id));
+
+        cx.spawn(|session, mut cx| async move {
+            let result = task.await;
+
+            session.update(&mut cx, |session, cx| {
+                let script = session.get_mut(script_id);
+                let stdout = script.stdout_snapshot();
+
+                script.state = match result {
+                    Ok(()) => ScriptState::Succeeded { stdout },
+                    Err(error) => ScriptState::Failed { stdout, error },
+                };
+
+                cx.emit(ScriptEvent::Exited(script_id))
+            })
+        })
+    }
+
+    fn run_lua(
+        &mut self,
+        script: String,
+        stdout: Arc<Mutex<String>>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         const SANDBOX_PREAMBLE: &str = include_str!("sandbox_preamble.lua");
 
         // TODO Remove fs_changes
@@ -62,52 +107,64 @@ impl Session {
             .visible_worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).abs_path());
+
         let fs = self.project.read(cx).fs().clone();
         let foreground_fns_tx = self.foreground_fns_tx.clone();
-        cx.background_spawn(async move {
-            let lua = Lua::new();
-            lua.set_memory_limit(2 * 1024 * 1024 * 1024)?; // 2 GB
-            let globals = lua.globals();
-            let stdout = Arc::new(Mutex::new(String::new()));
-            globals.set(
-                "sb_print",
-                lua.create_function({
-                    let stdout = stdout.clone();
-                    move |_, args: MultiValue| Self::print(args, &stdout)
-                })?,
-            )?;
-            globals.set(
-                "search",
-                lua.create_async_function({
-                    let foreground_fns_tx = foreground_fns_tx.clone();
-                    let fs = fs.clone();
-                    move |lua, regex| {
-                        Self::search(lua, foreground_fns_tx.clone(), fs.clone(), regex)
-                    }
-                })?,
-            )?;
-            globals.set(
-                "sb_io_open",
-                lua.create_function({
-                    let fs_changes = fs_changes.clone();
-                    let root_dir = root_dir.clone();
-                    move |lua, (path_str, mode)| {
-                        Self::io_open(&lua, &fs_changes, root_dir.as_ref(), path_str, mode)
-                    }
-                })?,
-            )?;
-            globals.set("user_script", script)?;
 
-            lua.load(SANDBOX_PREAMBLE).exec_async().await?;
+        let task = cx.background_spawn({
+            let stdout = stdout.clone();
 
-            // Drop Lua instance to decrement reference count.
-            drop(lua);
+            async move {
+                let lua = Lua::new();
+                lua.set_memory_limit(2 * 1024 * 1024 * 1024)?; // 2 GB
+                let globals = lua.globals();
+                globals.set(
+                    "sb_print",
+                    lua.create_function({
+                        let stdout = stdout.clone();
+                        move |_, args: MultiValue| Self::print(args, &stdout)
+                    })?,
+                )?;
+                globals.set(
+                    "search",
+                    lua.create_async_function({
+                        let foreground_fns_tx = foreground_fns_tx.clone();
+                        let fs = fs.clone();
+                        move |lua, regex| {
+                            Self::search(lua, foreground_fns_tx.clone(), fs.clone(), regex)
+                        }
+                    })?,
+                )?;
+                globals.set(
+                    "sb_io_open",
+                    lua.create_function({
+                        let fs_changes = fs_changes.clone();
+                        let root_dir = root_dir.clone();
+                        move |lua, (path_str, mode)| {
+                            Self::io_open(&lua, &fs_changes, root_dir.as_ref(), path_str, mode)
+                        }
+                    })?,
+                )?;
+                globals.set("user_script", script)?;
 
-            let stdout = Arc::try_unwrap(stdout)
-                .expect("no more references to stdout")
-                .into_inner();
-            Ok(ScriptOutput { stdout })
-        })
+                lua.load(SANDBOX_PREAMBLE).exec_async().await?;
+
+                // Drop Lua instance to decrement reference count.
+                drop(lua);
+
+                anyhow::Ok(())
+            }
+        });
+
+        task
+    }
+
+    pub fn get(&self, script_id: ScriptId) -> &Script {
+        &self.scripts[script_id.0 as usize]
+    }
+
+    fn get_mut(&mut self, script_id: ScriptId) -> &mut Script {
+        &mut self.scripts[script_id.0 as usize]
     }
 
     /// Sandboxed print() function in Lua.
@@ -678,6 +735,79 @@ impl UserData for FileContent {
     }
 }
 
+#[derive(Debug)]
+pub enum ScriptEvent {
+    Spawned(ScriptId),
+    Exited(ScriptId),
+}
+
+impl EventEmitter<ScriptEvent> for ScriptSession {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ScriptId(u32);
+
+pub struct Script {
+    pub id: ScriptId,
+    pub state: ScriptState,
+    pub source: SharedString,
+}
+
+pub enum ScriptState {
+    Generating,
+    Running {
+        stdout: Arc<Mutex<String>>,
+    },
+    Succeeded {
+        stdout: String,
+    },
+    Failed {
+        stdout: String,
+        error: anyhow::Error,
+    },
+}
+
+impl Script {
+    pub fn source_tag(&self) -> String {
+        format!("{}{}{}", SCRIPT_START_TAG, self.source, SCRIPT_END_TAG)
+    }
+
+    /// If exited, returns a message with the output for the LLM
+    pub fn output_message_for_llm(&self) -> Option<String> {
+        match &self.state {
+            ScriptState::Generating { .. } => None,
+            ScriptState::Running { .. } => None,
+            ScriptState::Succeeded { stdout } => {
+                format!("Here's the script output:\n{}", stdout).into()
+            }
+            ScriptState::Failed { stdout, error } => format!(
+                "The script failed with:\n{}\n\nHere's the output it managed to print:\n{}",
+                error, stdout
+            )
+            .into(),
+        }
+    }
+
+    /// Get a snapshot of the script's stdout
+    pub fn stdout_snapshot(&self) -> String {
+        match &self.state {
+            ScriptState::Generating { .. } => String::new(),
+            ScriptState::Running { stdout } => stdout.lock().clone(),
+            ScriptState::Succeeded { stdout } => stdout.clone(),
+            ScriptState::Failed { stdout, .. } => stdout.clone(),
+        }
+    }
+
+    /// Returns the error if the script failed, otherwise None
+    pub fn error(&self) -> Option<&anyhow::Error> {
+        match &self.state {
+            ScriptState::Generating { .. } => None,
+            ScriptState::Running { .. } => None,
+            ScriptState::Succeeded { .. } => None,
+            ScriptState::Failed { error, .. } => Some(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
@@ -689,35 +819,17 @@ mod tests {
 
     #[gpui::test]
     async fn test_print(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let session = cx.new(|cx| Session::new(project, cx));
         let script = r#"
             print("Hello", "world!")
             print("Goodbye", "moon!")
         "#;
-        let output = session
-            .update(cx, |session, cx| session.run_script(script.to_string(), cx))
-            .await
-            .unwrap();
-        assert_eq!(output.stdout, "Hello\tworld!\nGoodbye\tmoon!\n");
+
+        let output = test_script(script, cx).await.unwrap();
+        assert_eq!(output, "Hello\tworld!\nGoodbye\tmoon!\n");
     }
 
     #[gpui::test]
     async fn test_search(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/",
-            json!({
-                "file1.txt": "Hello world!",
-                "file2.txt": "Goodbye moon!"
-            }),
-        )
-        .await;
-        let project = Project::test(fs, [Path::new("/")], cx).await;
-        let session = cx.new(|cx| Session::new(project, cx));
         let script = r#"
             local results = search("world")
             for i, result in ipairs(results) do
@@ -728,11 +840,36 @@ mod tests {
                 end
             end
         "#;
-        let output = session
-            .update(cx, |session, cx| session.run_script(script.to_string(), cx))
-            .await
-            .unwrap();
-        assert_eq!(output.stdout, "File: /file1.txt\nMatches:\n  world\n");
+
+        let output = test_script(script, cx).await.unwrap();
+        assert_eq!(output, "File: /file1.txt\nMatches:\n  world\n");
+    }
+
+    async fn test_script(source: &str, cx: &mut TestAppContext) -> anyhow::Result<String> {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "file1.txt": "Hello world!",
+                "file2.txt": "Goodbye moon!"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/")], cx).await;
+        let session = cx.new(|cx| ScriptSession::new(project, cx));
+
+        let (script_id, task) = session.update(cx, |session, cx| {
+            let script_id = session.new_script();
+            let task = session.run_script(script_id, source.to_string(), cx);
+
+            (script_id, task)
+        });
+
+        task.await?;
+
+        Ok(session.read_with(cx, |session, _cx| session.get(script_id).stdout_snapshot()))
     }
 
     fn init_test(cx: &mut TestAppContext) {
