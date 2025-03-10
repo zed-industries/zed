@@ -694,10 +694,6 @@ impl GitPanel {
         }
     }
 
-    pub(crate) fn editor_focus_handle(&self, cx: &mut Context<Self>) -> FocusHandle {
-        self.commit_editor.focus_handle(cx).clone()
-    }
-
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx));

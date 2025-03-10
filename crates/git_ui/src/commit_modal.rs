@@ -232,8 +232,6 @@ impl CommitModal {
     }
 
     pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let git_panel = self.git_panel.clone();
-
         let (branch, can_commit, tooltip, commit_label, co_authors, generate_commit_message) =
             self.git_panel.update(cx, |git_panel, cx| {
                 let branch = git_panel
@@ -289,6 +287,7 @@ impl CommitModal {
                 x: px(0.0),
                 y: px(-2.0),
             });
+        let focus_handle = self.focus_handle(cx);
 
         let close_kb_hint =
             if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
@@ -300,12 +299,9 @@ impl CommitModal {
                 None
             };
 
-        let panel_editor_focus_handle =
-            git_panel.update(cx, |git_panel, cx| git_panel.editor_focus_handle(cx));
-
         let commit_button = panel_filled_button(commit_label)
             .tooltip({
-                let panel_editor_focus_handle = panel_editor_focus_handle.clone();
+                let panel_editor_focus_handle = focus_handle.clone();
                 move |window, cx| {
                     Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
                 }
