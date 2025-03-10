@@ -240,7 +240,9 @@ pub struct GitPanel {
     pending_serialization: Task<Option<()>>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
-    scrollbar_state: ScrollbarState,
+    vertical_scrollbar_state: ScrollbarState,
+    horizontal_scrollbar_state: ScrollbarState,
+    max_width_item_index: Option<usize>,
     selected_entry: Option<usize>,
     marked_entries: Vec<usize>,
     show_scrollbar: bool,
@@ -347,7 +349,9 @@ impl GitPanel {
         )
         .detach();
 
-        let scrollbar_state =
+        let vertical_scrollbar_state =
+            ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
+        let horizontal_scrollbar_state =
             ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity());
 
         let mut git_panel = Self {
@@ -373,7 +377,9 @@ impl GitPanel {
             single_tracked_entry: None,
             project,
             scroll_handle,
-            scrollbar_state,
+            vertical_scrollbar_state,
+            horizontal_scrollbar_state,
+            max_width_item_index: None,
             selected_entry: None,
             marked_entries: Vec::new(),
             show_scrollbar: false,
@@ -2660,12 +2666,12 @@ impl GitPanel {
             )
     }
 
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let scroll_bar_style = self.show_scrollbar(cx);
         let show_container = matches!(scroll_bar_style, ShowScrollbar::Always);
 
         if !self.should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
+            || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
         {
             return None;
         }
@@ -2694,7 +2700,7 @@ impl GitPanel {
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| {
-                        if !this.scrollbar_state.is_dragging()
+                        if !this.vertical_scrollbar_state.is_dragging()
                             && !this.focus_handle.contains_focused(window, cx)
                         {
                             this.hide_scrollbar(window, cx);
@@ -2709,7 +2715,74 @@ impl GitPanel {
                 }))
                 .children(Scrollbar::vertical(
                     // percentage as f32..end_offset as f32,
-                    self.scrollbar_state.clone(),
+                    self.vertical_scrollbar_state.clone(),
+                )),
+        )
+    }
+
+    fn render_horizontal_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let scroll_bar_style = self.show_scrollbar(cx);
+        let show_container = matches!(scroll_bar_style, ShowScrollbar::Always);
+
+        if !self.should_show_scrollbar(cx)
+            || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
+        {
+            return None;
+        }
+
+        let scroll_handle = self.scroll_handle.0.borrow();
+        let longest_item_width = scroll_handle
+            .last_item_size
+            .filter(|size| size.contents.width > size.item.width)?
+            .contents
+            .width
+            .0 as f64;
+
+        println!("Longest item width: {}", longest_item_width);
+        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
+            return None;
+        }
+
+        Some(
+            div()
+                .id("git-panel-horizontal-scroll")
+                .occlude()
+                .flex_none()
+                .w_full()
+                .cursor_default()
+                .when(show_container, |this| this.pt_1().pb_1p5())
+                .when(!show_container, |this| {
+                    this.absolute().bottom_1().left_1().right_1().h(px(32.))
+                })
+                .on_mouse_move(cx.listener(|_, _, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        if !this.horizontal_scrollbar_state.is_dragging()
+                            && !this.focus_handle.contains_focused(window, cx)
+                        {
+                            this.hide_scrollbar(window, cx);
+                            cx.notify();
+                        }
+
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                    cx.notify();
+                }))
+                .children(Scrollbar::horizontal(
+                    // percentage as f32..end_offset as f32,
+                    self.horizontal_scrollbar_state.clone(),
                 )),
         )
     }
@@ -2766,9 +2839,10 @@ impl GitPanel {
         let entry_count = self.entries.len();
 
         h_flex()
+            .debug_below()
+            .flex_1()
             .size_full()
-            .flex_grow()
-            .overflow_hidden()
+            .relative()
             .child(
                 uniform_list(cx.entity().clone(), "entries", entry_count, {
                     move |this, range, window, cx| {
@@ -2802,17 +2876,20 @@ impl GitPanel {
                     }
                 })
                 .size_full()
+                .flex_grow()
                 .with_sizing_behavior(ListSizingBehavior::Auto)
+                .with_width_from_item(self.max_width_item_index)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .track_scroll(self.scroll_handle.clone()),
             )
+            .children(self.render_horizontal_scrollbar(cx))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     this.deploy_panel_context_menu(event.position, window, cx)
                 }),
             )
-            .children(self.render_scrollbar(cx))
+            .children(self.render_vertical_scrollbar(cx))
     }
 
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
@@ -3028,15 +3105,14 @@ impl GitPanel {
         h_flex()
             .id(id)
             .h(self.list_item_height())
-            .w_full()
+            .min_w_full()
             .items_center()
             .border_1()
             .when(selected && self.focus_handle.is_focused(window), |el| {
                 el.border_color(cx.theme().colors().border_focused)
             })
             .px(rems(0.75)) // ~12px
-            .overflow_hidden()
-            .flex_none()
+            // .flex_none()
             .gap_1p5()
             .bg(base_bg)
             .hover(|this| this.bg(hover_bg))
