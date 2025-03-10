@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_scripting::{
-    Script, ScriptEvent, ScriptId, ScriptSession, ScriptTagParser, SCRIPTING_PROMPT,
-};
 use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
-use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
+use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -78,21 +75,14 @@ pub struct Thread {
     project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
-    scripts_by_assistant_message: HashMap<MessageId, ScriptId>,
-    script_output_messages: HashSet<MessageId>,
-    script_session: Entity<ScriptSession>,
-    _script_session_subscription: Subscription,
 }
 
 impl Thread {
     pub fn new(
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Self {
-        let script_session = cx.new(|cx| ScriptSession::new(project.clone(), cx));
-        let script_session_subscription = cx.subscribe(&script_session, Self::handle_script_event);
-
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -107,10 +97,6 @@ impl Thread {
             project,
             tools,
             tool_use: ToolUseState::new(),
-            scripts_by_assistant_message: HashMap::default(),
-            script_output_messages: HashSet::default(),
-            script_session,
-            _script_session_subscription: script_session_subscription,
         }
     }
 
@@ -119,7 +105,7 @@ impl Thread {
         saved: SavedThread,
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
             saved
@@ -129,8 +115,6 @@ impl Thread {
                 .unwrap_or(0),
         );
         let tool_use = ToolUseState::from_saved_messages(&saved.messages);
-        let script_session = cx.new(|cx| ScriptSession::new(project.clone(), cx));
-        let script_session_subscription = cx.subscribe(&script_session, Self::handle_script_event);
 
         Self {
             id,
@@ -154,10 +138,6 @@ impl Thread {
             project,
             tools,
             tool_use,
-            scripts_by_assistant_message: HashMap::default(),
-            script_output_messages: HashSet::default(),
-            script_session,
-            _script_session_subscription: script_session_subscription,
         }
     }
 
@@ -243,10 +223,6 @@ impl Thread {
         self.tool_use.message_has_tool_results(message_id)
     }
 
-    pub fn message_has_script_output(&self, message_id: MessageId) -> bool {
-        self.script_output_messages.contains(&message_id)
-    }
-
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
@@ -327,39 +303,6 @@ impl Thread {
         text
     }
 
-    pub fn script_for_message<'a>(
-        &'a self,
-        message_id: MessageId,
-        cx: &'a App,
-    ) -> Option<&'a Script> {
-        self.scripts_by_assistant_message
-            .get(&message_id)
-            .map(|script_id| self.script_session.read(cx).get(*script_id))
-    }
-
-    fn handle_script_event(
-        &mut self,
-        _script_session: Entity<ScriptSession>,
-        event: &ScriptEvent,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            ScriptEvent::Spawned(_) => {}
-            ScriptEvent::Exited(script_id) => {
-                if let Some(output_message) = self
-                    .script_session
-                    .read(cx)
-                    .get(*script_id)
-                    .output_message_for_llm()
-                {
-                    let message_id = self.insert_user_message(output_message, vec![], cx);
-                    self.script_output_messages.insert(message_id);
-                    cx.emit(ThreadEvent::ScriptFinished)
-                }
-            }
-        }
-    }
-
     pub fn send_to_model(
         &mut self,
         model: Arc<dyn LanguageModel>,
@@ -388,7 +331,7 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
-        cx: &App,
+        _cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             messages: vec![],
@@ -396,12 +339,6 @@ impl Thread {
             stop: Vec::new(),
             temperature: None,
         };
-
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::System,
-            content: vec![SCRIPTING_PROMPT.to_string().into()],
-            cache: true,
-        });
 
         let mut referenced_context_ids = HashSet::default();
 
@@ -436,15 +373,6 @@ impl Thread {
                 RequestKind::Chat => {
                     self.tool_use
                         .attach_tool_uses(message.id, &mut request_message);
-
-                    if matches!(message.role, Role::Assistant) {
-                        if let Some(script_id) = self.scripts_by_assistant_message.get(&message.id)
-                        {
-                            let script = self.script_session.read(cx).get(*script_id);
-
-                            request_message.content.push(script.source_tag().into());
-                        }
-                    }
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
@@ -486,8 +414,6 @@ impl Thread {
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
-                let mut script_tag_parser = ScriptTagParser::new();
-                let mut script_id = None;
 
                 while let Some(event) = events.next().await {
                     let event = event?;
@@ -502,44 +428,20 @@ impl Thread {
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 if let Some(last_message) = thread.messages.last_mut() {
-                                    let chunk = script_tag_parser.parse_chunk(&chunk);
-
-                                    let message_id = if last_message.role == Role::Assistant {
-                                        last_message.text.push_str(&chunk.content);
+                                    if last_message.role == Role::Assistant {
+                                        last_message.text.push_str(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
                                             last_message.id,
-                                            chunk.content,
+                                            chunk,
                                         ));
-                                        last_message.id
                                     } else {
                                         // If we won't have an Assistant message yet, assume this chunk marks the beginning
                                         // of a new Assistant response.
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(Role::Assistant, chunk.content, cx)
+                                        thread.insert_message(Role::Assistant, chunk, cx);
                                     };
-
-                                    if script_id.is_none() && script_tag_parser.found_script() {
-                                        let id = thread
-                                            .script_session
-                                            .update(cx, |session, _cx| session.new_script());
-                                        thread.scripts_by_assistant_message.insert(message_id, id);
-
-                                        script_id = Some(id);
-                                    }
-
-                                    if let (Some(script_source), Some(script_id)) =
-                                        (chunk.script_source, script_id)
-                                    {
-                                        // TODO: move buffer to script and run as it streams
-                                        thread
-                                            .script_session
-                                            .update(cx, |this, cx| {
-                                                this.run_script(script_id, script_source, cx)
-                                            })
-                                            .detach_and_log_err(cx);
-                                    }
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {

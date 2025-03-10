@@ -4,7 +4,7 @@ use futures::{
     channel::{mpsc, oneshot},
     pin_mut, SinkExt, StreamExt,
 };
-use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use mlua::{ExternalResult, Lua, MultiValue, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project};
@@ -15,8 +15,6 @@ use std::{
     sync::Arc,
 };
 use util::{paths::PathMatcher, ResultExt};
-
-use crate::{SCRIPT_END_TAG, SCRIPT_START_TAG};
 
 struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptSession>, AsyncApp) + Send>);
 
@@ -45,50 +43,41 @@ impl ScriptSession {
         }
     }
 
-    pub fn new_script(&mut self) -> ScriptId {
-        let id = ScriptId(self.scripts.len() as u32);
-        let script = Script {
-            id,
-            state: ScriptState::Generating,
-            source: SharedString::new_static(""),
-        };
-        self.scripts.push(script);
-        id
-    }
-
     pub fn run_script(
         &mut self,
-        script_id: ScriptId,
         script_src: String,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        let script = self.get_mut(script_id);
+    ) -> (ScriptId, Task<()>) {
+        let id = ScriptId(self.scripts.len() as u32);
 
         let stdout = Arc::new(Mutex::new(String::new()));
-        script.source = script_src.clone().into();
-        script.state = ScriptState::Running {
-            stdout: stdout.clone(),
+
+        let script = Script {
+            state: ScriptState::Running {
+                stdout: stdout.clone(),
+            },
         };
+        self.scripts.push(script);
 
         let task = self.run_lua(script_src, stdout, cx);
 
-        cx.emit(ScriptEvent::Spawned(script_id));
-
-        cx.spawn(|session, mut cx| async move {
+        let task = cx.spawn(|session, mut cx| async move {
             let result = task.await;
 
-            session.update(&mut cx, |session, cx| {
-                let script = session.get_mut(script_id);
-                let stdout = script.stdout_snapshot();
+            session
+                .update(&mut cx, |session, _cx| {
+                    let script = session.get_mut(id);
+                    let stdout = script.stdout_snapshot();
 
-                script.state = match result {
-                    Ok(()) => ScriptState::Succeeded { stdout },
-                    Err(error) => ScriptState::Failed { stdout, error },
-                };
+                    script.state = match result {
+                        Ok(()) => ScriptState::Succeeded { stdout },
+                        Err(error) => ScriptState::Failed { stdout, error },
+                    };
+                })
+                .log_err();
+        });
 
-                cx.emit(ScriptEvent::Exited(script_id))
-            })
-        })
+        (id, task)
     }
 
     fn run_lua(
@@ -808,25 +797,14 @@ impl UserData for FileContent {
     }
 }
 
-#[derive(Debug)]
-pub enum ScriptEvent {
-    Spawned(ScriptId),
-    Exited(ScriptId),
-}
-
-impl EventEmitter<ScriptEvent> for ScriptSession {}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ScriptId(u32);
 
 pub struct Script {
-    pub id: ScriptId,
     pub state: ScriptState,
-    pub source: SharedString,
 }
 
 pub enum ScriptState {
-    Generating,
     Running {
         stdout: Arc<Mutex<String>>,
     },
@@ -840,14 +818,9 @@ pub enum ScriptState {
 }
 
 impl Script {
-    pub fn source_tag(&self) -> String {
-        format!("{}{}{}", SCRIPT_START_TAG, self.source, SCRIPT_END_TAG)
-    }
-
     /// If exited, returns a message with the output for the LLM
     pub fn output_message_for_llm(&self) -> Option<String> {
         match &self.state {
-            ScriptState::Generating { .. } => None,
             ScriptState::Running { .. } => None,
             ScriptState::Succeeded { stdout } => {
                 format!("Here's the script output:\n{}", stdout).into()
@@ -863,20 +836,9 @@ impl Script {
     /// Get a snapshot of the script's stdout
     pub fn stdout_snapshot(&self) -> String {
         match &self.state {
-            ScriptState::Generating { .. } => String::new(),
             ScriptState::Running { stdout } => stdout.lock().clone(),
             ScriptState::Succeeded { stdout } => stdout.clone(),
             ScriptState::Failed { stdout, .. } => stdout.clone(),
-        }
-    }
-
-    /// Returns the error if the script failed, otherwise None
-    pub fn error(&self) -> Option<&anyhow::Error> {
-        match &self.state {
-            ScriptState::Generating { .. } => None,
-            ScriptState::Running { .. } => None,
-            ScriptState::Succeeded { .. } => None,
-            ScriptState::Failed { error, .. } => Some(error),
         }
     }
 }
@@ -933,14 +895,10 @@ mod tests {
         let project = Project::test(fs, [Path::new("/")], cx).await;
         let session = cx.new(|cx| ScriptSession::new(project, cx));
 
-        let (script_id, task) = session.update(cx, |session, cx| {
-            let script_id = session.new_script();
-            let task = session.run_script(script_id, source.to_string(), cx);
+        let (script_id, task) =
+            session.update(cx, |session, cx| session.run_script(source.to_string(), cx));
 
-            (script_id, task)
-        });
-
-        task.await?;
+        task.await;
 
         Ok(session.read_with(cx, |session, _cx| session.get(script_id).stdout_snapshot()))
     }
