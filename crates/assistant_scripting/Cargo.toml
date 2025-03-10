@@ -17,6 +17,7 @@ anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+log.workspace = true
 mlua.workspace = true
 parking_lot.workspace = true
 project.workspace = true
