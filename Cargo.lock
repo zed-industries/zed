@@ -6223,6 +6223,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "history_manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+]
+
+[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
