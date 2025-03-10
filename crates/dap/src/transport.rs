@@ -668,7 +668,7 @@ impl StdioTransport {
             .take()
             .ok_or_else(|| anyhow!("Failed to open stdout"))?;
         let stderr = process
-            .stdout
+            .stderr
             .take()
             .map(|io_err| Box::new(io_err) as Box<dyn AsyncRead + Unpin + Send>);
 
