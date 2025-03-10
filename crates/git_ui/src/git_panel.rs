@@ -199,6 +199,21 @@ pub struct GitStatusEntry {
     pub(crate) staging: StageStatus,
 }
 
+impl GitStatusEntry {
+    fn display_name(&self) -> String {
+        self.worktree_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.worktree_path.to_string_lossy().into_owned())
+    }
+
+    fn parent_dir(&self) -> Option<String> {
+        self.worktree_path
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TargetStatus {
     Staged,
@@ -2001,6 +2016,7 @@ impl GitPanel {
         let mut conflict_entries = Vec::new();
         let mut last_staged = None;
         let mut staged_count = 0;
+        let mut max_width_item: Option<(RepoPath, usize)> = None;
 
         let Some(repo) = self.active_repository.as_ref() else {
             // Just clear entries if no repository is active.
@@ -2044,6 +2060,21 @@ impl GitPanel {
             if staging.has_staged() {
                 staged_count += 1;
                 last_staged = Some(entry.clone());
+            }
+
+            let width_estimate = Self::item_width_estimate(
+                entry.parent_dir().map(|s| s.len()).unwrap_or(0),
+                entry.display_name().len(),
+            );
+
+            match max_width_item.as_mut() {
+                Some((repo_path, estimate)) => {
+                    if width_estimate > *estimate {
+                        *repo_path = entry.repo_path.clone();
+                        *estimate = width_estimate;
+                    }
+                }
+                None => max_width_item = Some((entry.repo_path.clone(), width_estimate)),
             }
 
             if is_conflict {
@@ -2116,6 +2147,15 @@ impl GitPanel {
             }));
             self.entries
                 .extend(new_entries.into_iter().map(GitListEntry::GitStatusEntry));
+        }
+
+        if let Some((repo_path, _)) = max_width_item {
+            self.max_width_item_index = self.entries.iter().position(|entry| match entry {
+                GitListEntry::GitStatusEntry(git_status_entry) => {
+                    git_status_entry.repo_path == repo_path
+                }
+                GitListEntry::Header(_) => false,
+            });
         }
 
         self.update_counts(repo);
@@ -2277,6 +2317,12 @@ impl GitPanel {
 
     pub fn can_unstage_all(&self) -> bool {
         self.has_staged_changes()
+    }
+
+    // eventually we'll need to take depth into account here
+    // if we add a tree view
+    fn item_width_estimate(path: usize, file_name: usize) -> usize {
+        path + file_name
     }
 
     pub(crate) fn render_generate_commit_message_button(
@@ -2724,24 +2770,24 @@ impl GitPanel {
         let scroll_bar_style = self.show_scrollbar(cx);
         let show_container = matches!(scroll_bar_style, ShowScrollbar::Always);
 
-        if !self.should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
-        {
-            return None;
-        }
+        // if !self.should_show_scrollbar(cx)
+        //     || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
+        // {
+        //     return None;
+        // }
 
         let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
+        dbg!(scroll_handle.last_item_size);
+        // let longest_item_width = dbg!(scroll_handle.last_item_size)
+        //     .filter(|size| dbg!(px(10.) * size.contents.width > size.item.width))?
+        //     .contents
+        //     .width
+        //     .0 as f64;
 
-        println!("Longest item width: {}", longest_item_width);
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
+        // println!("Longest item width: {}", longest_item_width);
+        // if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
+        //     return None;
+        // }
 
         Some(
             div()
@@ -2750,10 +2796,15 @@ impl GitPanel {
                 .flex_none()
                 .w_full()
                 .cursor_default()
-                .when(show_container, |this| this.pt_1().pb_1p5())
-                .when(!show_container, |this| {
-                    this.absolute().bottom_1().left_1().right_1().h(px(32.))
-                })
+                .absolute()
+                .bottom_1()
+                .left_1()
+                .right_1()
+                .h(px(32.))
+                // .when(show_container, |this| this.pt_1().pb_1p5())
+                // .when(!show_container, |this| {
+                //     this.bottom_1().left_1().right_1().h(px(32.))
+                // })
                 .on_mouse_move(cx.listener(|_, _, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
@@ -2839,10 +2890,11 @@ impl GitPanel {
         let entry_count = self.entries.len();
 
         h_flex()
-            .debug_below()
+            // .debug_below()
             .flex_1()
             .size_full()
             .relative()
+            .overflow_hidden()
             .child(
                 uniform_list(cx.entity().clone(), "entries", entry_count, {
                     move |this, range, window, cx| {
@@ -2878,18 +2930,18 @@ impl GitPanel {
                 .size_full()
                 .flex_grow()
                 .with_sizing_behavior(ListSizingBehavior::Auto)
-                .with_width_from_item(self.max_width_item_index)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+                .with_width_from_item(self.max_width_item_index)
                 .track_scroll(self.scroll_handle.clone()),
             )
-            .children(self.render_horizontal_scrollbar(cx))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     this.deploy_panel_context_menu(event.position, window, cx)
                 }),
             )
-            .children(self.render_vertical_scrollbar(cx))
+            // .children(self.render_vertical_scrollbar(cx))
+            .children(self.render_horizontal_scrollbar(cx))
     }
 
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
@@ -3015,11 +3067,7 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let display_name = entry
-            .worktree_path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| entry.worktree_path.to_string_lossy().into_owned());
+        let display_name = entry.display_name();
 
         let worktree_path = entry.worktree_path.clone();
         let selected = self.selected_entry == Some(ix);
@@ -3105,7 +3153,7 @@ impl GitPanel {
         h_flex()
             .id(id)
             .h(self.list_item_height())
-            .min_w_full()
+            .w_full()
             .items_center()
             .border_1()
             .when(selected && self.focus_handle.is_focused(window), |el| {
@@ -3212,12 +3260,12 @@ impl GitPanel {
             .child(
                 h_flex()
                     .items_center()
-                    .overflow_hidden()
-                    .when_some(worktree_path.parent(), |this, parent| {
-                        let parent_str = parent.to_string_lossy();
-                        if !parent_str.is_empty() {
+                    .flex_1()
+                    // .overflow_hidden()
+                    .when_some(entry.parent_dir(), |this, parent| {
+                        if !parent.is_empty() {
                             this.child(
-                                self.entry_label(format!("{}/", parent_str), path_color)
+                                self.entry_label(format!("{}/", parent), path_color)
                                     .when(status.is_deleted(), |this| this.strikethrough()),
                             )
                         } else {
