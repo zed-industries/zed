@@ -120,11 +120,7 @@ impl ThreadStore {
                         let all_tool_uses = thread
                             .tool_uses_for_message(message.id)
                             .into_iter()
-                            .chain(
-                                thread
-                                    .scripting_tool_uses_for_message(message.id)
-                                    .into_iter(),
-                            )
+                            .chain(thread.scripting_tool_uses_for_message(message.id))
                             .map(|tool_use| SavedToolUse {
                                 id: tool_use.id,
                                 name: tool_use.name,
@@ -134,11 +130,7 @@ impl ThreadStore {
                         let all_tool_results = thread
                             .tool_results_for_message(message.id)
                             .into_iter()
-                            .chain(
-                                thread
-                                    .scripting_tool_results_for_message(message.id)
-                                    .into_iter(),
-                            )
+                            .chain(thread.scripting_tool_results_for_message(message.id))
                             .map(|tool_result| SavedToolResult {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
