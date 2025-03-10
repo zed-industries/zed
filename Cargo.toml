@@ -67,6 +67,7 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
+    "crates/history_manager",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -272,6 +273,7 @@ gpui = { path = "crates/gpui", default-features = false, features = [
 ] }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
+history_manager = { path = "crates/history_manager" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
@@ -400,8 +402,12 @@ async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1.2.2", features = ["hardcoded-credentials"] }
-aws-sdk-bedrockruntime = { version = "1.80.0", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.2", features = [
+    "hardcoded-credentials",
+] }
+aws-sdk-bedrockruntime = { version = "1.80.0", features = [
+    "behavior-version-latest",
+] }
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
