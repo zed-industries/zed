@@ -2947,6 +2947,11 @@ impl GitPanel {
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry.status;
+        let modifiers = self.current_modifiers;
+        let shift_held = modifiers.shift;
+
+        println!("Shift held: {}", shift_held);
+
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
@@ -3098,13 +3103,31 @@ impl GitPanel {
                                 })
                             })
                             .tooltip(move |window, cx| {
-                                let tooltip_name = if entry_staging.is_fully_staged() {
-                                    "Unstage"
+                                let is_staged = entry_staging.is_fully_staged();
+
+                                let action = if is_staged { "Unstage" } else { "Stage" };
+                                let tooltip_name = if shift_held {
+                                    format!("{} section", action)
                                 } else {
-                                    "Stage"
+                                    action.to_string()
                                 };
 
-                                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+                                let meta = if shift_held {
+                                    format!(
+                                        "Release shift to {} single entry",
+                                        action.to_lowercase()
+                                    )
+                                } else {
+                                    format!("Shift click to {} section", action.to_lowercase())
+                                };
+
+                                Tooltip::with_meta(
+                                    tooltip_name,
+                                    Some(&ToggleStaged),
+                                    meta,
+                                    window,
+                                    cx,
+                                )
                             }),
                     ),
             )
