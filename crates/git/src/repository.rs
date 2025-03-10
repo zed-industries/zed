@@ -1,5 +1,4 @@
 use crate::status::FileStatus;
-use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
 use askpass::{AskPassResult, AskPassSession};
@@ -263,19 +262,13 @@ impl std::fmt::Debug for dyn GitRepository {
 pub struct RealGitRepository {
     pub repository: Mutex<git2::Repository>,
     pub git_binary_path: PathBuf,
-    hosting_provider_registry: Arc<GitHostingProviderRegistry>,
 }
 
 impl RealGitRepository {
-    pub fn new(
-        repository: git2::Repository,
-        git_binary_path: Option<PathBuf>,
-        hosting_provider_registry: Arc<GitHostingProviderRegistry>,
-    ) -> Self {
+    pub fn new(repository: git2::Repository, git_binary_path: Option<PathBuf>) -> Self {
         Self {
             repository: Mutex::new(repository),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
-            hosting_provider_registry,
         }
     }
 
@@ -617,7 +610,6 @@ impl GitRepository for RealGitRepository {
             path,
             &content,
             remote_url,
-            self.hosting_provider_registry.clone(),
         )
     }
 
