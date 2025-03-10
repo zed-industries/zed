@@ -76,7 +76,7 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, motion.linewise(), cx);
+                vim.copy_selections_content(editor, motion.linewise(), window, cx);
                 editor.insert("", window, cx);
                 editor.refresh_inline_completion(true, false, window, cx);
             });
@@ -107,7 +107,7 @@ impl Vim {
                     });
                 });
                 if objects_found {
-                    vim.copy_selections_content(editor, false, cx);
+                    vim.copy_selections_content(editor, false, window, cx);
                     editor.insert("", window, cx);
                     editor.refresh_inline_completion(true, false, window, cx);
                 }

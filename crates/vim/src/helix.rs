@@ -254,7 +254,7 @@ impl Vim {
                 });
             });
 
-            vim.copy_selections_content(editor, false, cx);
+            vim.copy_selections_content(editor, false, window, cx);
             editor.insert("", window, cx);
         });
     }
