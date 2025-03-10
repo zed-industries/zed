@@ -48,6 +48,7 @@ cargo build --config 'profile.dev.debug="full"'
 ## GDB/LLDB
 
 ### Background
+
 When installing rust through rustup, (the recommended way to do so when developing Zed, see the documentation for getting started on your platform [here](../development.md))
 a few additional scripts are installed and put on your path to assist with debugging binaries compiled with rust.
 
