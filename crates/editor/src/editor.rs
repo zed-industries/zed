@@ -17498,6 +17498,10 @@ impl EditorSnapshot {
         let folded = self.is_line_folded(buffer_row);
         let mut is_foldable = false;
 
+        if self.is_empty_block(buffer_row) {
+            return None;
+        }
+
         if let Some(crease) = self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
