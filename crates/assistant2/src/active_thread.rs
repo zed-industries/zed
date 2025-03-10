@@ -76,6 +76,16 @@ impl ActiveThread {
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
             this.push_message(&message.id, message.text.clone(), window, cx);
+
+            for tool_use in thread.read(cx).scripting_tool_uses_for_message(message.id) {
+                this.render_scripting_tool_use_markdown(
+                    tool_use.id.clone(),
+                    tool_use.name.as_ref(),
+                    tool_use.input.clone(),
+                    window,
+                    cx,
+                );
+            }
         }
 
         this
@@ -242,6 +252,32 @@ impl ActiveThread {
         })
     }
 
+    /// Renders the input of a scripting tool use to Markdown.
+    ///
+    /// Does nothing if the tool use does not correspond to the scripting tool.
+    fn render_scripting_tool_use_markdown(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: &str,
+        tool_input: serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if tool_name != ScriptingTool::NAME {
+            return;
+        }
+
+        let lua_script = serde_json::from_value::<ScriptingToolInput>(tool_input)
+            .map(|input| input.lua_script)
+            .unwrap_or_default();
+
+        let lua_script =
+            self.render_markdown(format!("```lua\n{lua_script}\n```").into(), window, cx);
+
+        self.rendered_scripting_tool_uses
+            .insert(tool_use_id, lua_script);
+    }
+
     fn handle_thread_event(
         &mut self,
         _thread: &Entity<Thread>,
@@ -303,21 +339,13 @@ impl ActiveThread {
                 pending_tool_use, ..
             } => {
                 if let Some(tool_use) = pending_tool_use {
-                    if tool_use.name.as_ref() == ScriptingTool::NAME {
-                        let lua_script =
-                            serde_json::from_value::<ScriptingToolInput>(tool_use.input.clone())
-                                .map(|input| input.lua_script)
-                                .unwrap_or_default();
-
-                        let lua_script = self.render_markdown(
-                            format!("```lua\n{lua_script}\n```").into(),
-                            window,
-                            cx,
-                        );
-
-                        self.rendered_scripting_tool_uses
-                            .insert(tool_use.id.clone(), lua_script.clone());
-                    }
+                    self.render_scripting_tool_use_markdown(
+                        tool_use.id.clone(),
+                        tool_use.name.as_ref(),
+                        tool_use.input.clone(),
+                        window,
+                        cx,
+                    );
                 }
 
                 if self.thread.read(cx).all_tools_finished() {
@@ -837,8 +865,13 @@ impl ActiveThread {
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
                                     .child(Label::new("Input:"))
-                                    .children(lua_script_markdown.map(|lua_script| {
-                                        div().p_2p5().text_ui(cx).child(lua_script)
+                                    .child(div().p_2p5().text_ui(cx).map(|parent| {
+                                        if let Some(markdown) = lua_script_markdown {
+                                            parent.child(markdown)
+                                        } else {
+                                            parent
+                                                .child("Failed to render script input to Markdown")
+                                        }
                                     })),
                             )
                             .map(|parent| match tool_use.status {
