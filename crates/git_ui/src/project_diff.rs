@@ -7,7 +7,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent,
 };
-use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use git::{
     repository::Branch, status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged,
@@ -64,16 +63,13 @@ const NEW_NAMESPACE: &'static str = "2";
 
 impl ProjectDiff {
     pub(crate) fn register(
-        _: &mut Workspace,
-        window: Option<&mut Window>,
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(window) = window else { return };
-        cx.when_flag_enabled::<feature_flags::GitUiFeatureFlag>(window, |workspace, _, _cx| {
-            workspace.register_action(Self::deploy);
-            workspace.register_action(|workspace, _: &Add, window, cx| {
-                Self::deploy(workspace, &Diff, window, cx);
-            });
+        workspace.register_action(Self::deploy);
+        workspace.register_action(|workspace, _: &Add, window, cx| {
+            Self::deploy(workspace, &Diff, window, cx);
         });
 
         workspace::register_serializable_item::<ProjectDiff>(cx);
