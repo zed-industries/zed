@@ -2384,6 +2384,33 @@ impl GitPanel {
         })
     }
 
+    pub fn render_panel_header(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        self.panel_header_container(window, cx)
+            .child(
+                Button::new("diff", "Open diff")
+                    .tooltip(Tooltip::for_action_title("Open diff", &Diff))
+                    .on_click(|_, _, cx| {
+                        cx.defer(|cx| {
+                            cx.dispatch_action(&Diff);
+                        })
+                    }),
+            )
+            .child(div().flex_grow()) // spacer
+            .child(
+                Button::new("stage-unstage-all", "+/-")
+                    .tooltip(Tooltip::for_action_title("Open diff", &Diff))
+                    .on_click(|_, _, cx| {
+                        cx.defer(|cx| {
+                            cx.dispatch_action(&Diff);
+                        })
+                    }),
+            )
+    }
+
     pub fn render_footer(
         &self,
         window: &mut Window,
