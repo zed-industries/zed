@@ -25,7 +25,7 @@ use crate::{
 
 pub struct ContextStrip {
     context_store: Entity<ContextStore>,
-    pub context_picker: Entity<ContextPicker>,
+    context_picker: Entity<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
