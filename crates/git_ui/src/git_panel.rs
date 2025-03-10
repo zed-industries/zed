@@ -41,7 +41,8 @@ use language_model::{
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
 use panel::{
-    panel_editor_container, panel_editor_style, panel_filled_button, panel_icon_button, PanelHeader,
+    panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
+    panel_icon_button, PanelHeader,
 };
 use project::{
     git::{GitEvent, Repository},
@@ -2424,8 +2425,10 @@ impl GitPanel {
         }
 
         self.panel_header_container(window, cx)
+            .px_2()
             .child(
-                Button::new("diff", "Open diff")
+                panel_button("Open Diff")
+                    .color(Color::Muted)
                     .tooltip(Tooltip::for_action_title("Open diff", &Diff))
                     .on_click(|_, _, cx| {
                         cx.defer(|cx| {
@@ -2435,7 +2438,7 @@ impl GitPanel {
             )
             .child(div().flex_grow()) // spacer
             .child(
-                Button::new("stage-unstage-all", text)
+                panel_filled_button(text)
                     .tooltip(Tooltip::for_action_title(tooltip, action.as_ref()))
                     .on_click(move |_, _, cx| {
                         let action = action.boxed_clone();
@@ -2588,15 +2591,14 @@ impl GitPanel {
                 .items_center()
                 .py_2()
                 .px(px(8.))
-                // .bg(cx.theme().colors().background)
-                // .border_t_1()
                 .border_color(cx.theme().colors().border)
                 .gap_1p5()
                 .child(
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .max_w(relative(0.6))
+                        .items_center()
+                        .max_w(relative(0.85))
                         .h_full()
                         .child(
                             Label::new(commit.subject.clone())
@@ -2949,6 +2951,9 @@ impl GitPanel {
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry.status;
+        let modifiers = self.current_modifiers;
+        let shift_held = modifiers.shift;
+
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
@@ -3034,7 +3039,7 @@ impl GitPanel {
             .px(rems(0.75)) // ~12px
             .overflow_hidden()
             .flex_none()
-            .gap(DynamicSpacing::Base04.rems(cx))
+            .gap_1p5()
             .bg(base_bg)
             .hover(|this| this.bg(hover_bg))
             .active(|this| this.bg(active_bg))
@@ -3079,6 +3084,7 @@ impl GitPanel {
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
+                    .ml_neg_0p5()
                     .child(
                         Checkbox::new(checkbox_id, is_staged)
                             .disabled(!has_write_access)
@@ -3100,17 +3106,35 @@ impl GitPanel {
                                 })
                             })
                             .tooltip(move |window, cx| {
-                                let tooltip_name = if entry_staging.is_fully_staged() {
-                                    "Unstage"
+                                let is_staged = entry_staging.is_fully_staged();
+
+                                let action = if is_staged { "Unstage" } else { "Stage" };
+                                let tooltip_name = if shift_held {
+                                    format!("{} section", action)
                                 } else {
-                                    "Stage"
+                                    action.to_string()
                                 };
 
-                                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+                                let meta = if shift_held {
+                                    format!(
+                                        "Release shift to {} single entry",
+                                        action.to_lowercase()
+                                    )
+                                } else {
+                                    format!("Shift click to {} section", action.to_lowercase())
+                                };
+
+                                Tooltip::with_meta(
+                                    tooltip_name,
+                                    Some(&ToggleStaged),
+                                    meta,
+                                    window,
+                                    cx,
+                                )
                             }),
                     ),
             )
-            .child(git_status_icon(status, cx))
+            .child(git_status_icon(status))
             .child(
                 h_flex()
                     .items_center()
@@ -3518,7 +3542,11 @@ impl RenderOnce for PanelRepoFooter {
                         div().child(
                             Icon::new(IconName::GitBranchSmall)
                                 .size(IconSize::Small)
-                                .color(Color::Muted),
+                                .color(if single_repo {
+                                    Color::Disabled
+                                } else {
+                                    Color::Muted
+                                }),
                         ),
                     )
                     .child(repo_selector)
