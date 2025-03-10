@@ -2279,12 +2279,13 @@ impl Buffer {
     }
 
     fn did_edit(&mut self, old_version: &clock::Global, was_dirty: bool, cx: &mut Context<Self>) {
+        self.was_changed();
+
         if self.edits_since::<usize>(old_version).next().is_none() {
             return;
         }
 
         self.reparse(cx);
-        self.was_changed();
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);
