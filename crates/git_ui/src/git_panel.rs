@@ -3573,6 +3573,7 @@ impl RenderOnce for PanelRepoFooter {
             .h(px(36.))
             .items_center()
             .justify_between()
+            .gap_1()
             .child(
                 h_flex()
                     .flex_1()
