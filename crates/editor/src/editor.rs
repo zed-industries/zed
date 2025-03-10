@@ -8210,7 +8210,6 @@ impl Editor {
 
     fn add_edit_breakpoint_block(
         &mut self,
-        row: DisplayRow,
         anchor: text::Anchor,
         kind: &BreakpointKind,
         window: &mut Window,
