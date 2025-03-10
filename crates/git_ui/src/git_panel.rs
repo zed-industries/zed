@@ -2589,19 +2589,19 @@ impl GitPanel {
                 .items_center()
                 .py_2()
                 .px(px(8.))
-                // .bg(cx.theme().colors().background)
-                // .border_t_1()
                 .border_color(cx.theme().colors().border)
                 .gap_1p5()
                 .child(
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .max_w(relative(0.6))
+                        // .max_w(relative(0.6))
                         .h_full()
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
+                                .single_line()
+                                .line_height_style(LineHeightStyle::UiLabel)
                                 .truncate(),
                         )
                         .id("commit-msg-hover")
