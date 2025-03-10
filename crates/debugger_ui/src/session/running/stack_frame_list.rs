@@ -225,7 +225,7 @@ impl StackFrameList {
                 })??
                 .await?;
             let position = buffer.update(&mut cx, |this, _| {
-                this.snapshot().anchor_after(Point::new(row, 0))
+                this.snapshot().anchor_after(PointUtf16::new(row, 0))
             })?;
             this.update_in(&mut cx, |this, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {

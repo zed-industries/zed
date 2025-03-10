@@ -8274,7 +8274,7 @@ impl Editor {
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
-            .summary_for_anchor::<Point>(&breakpoint_position)
+            .summary_for_anchor::<PointUtf16>(&breakpoint_position)
             .row;
 
         let bp = self
@@ -8290,7 +8290,7 @@ impl Editor {
                     )
                     .next()
                     .filter(|(anchor, _)| {
-                        buffer_snapshot.summary_for_anchor::<Point>(anchor).row == row
+                        buffer_snapshot.summary_for_anchor::<PointUtf16>(anchor).row == row
                     })
                     .cloned()
             });
@@ -8330,7 +8330,7 @@ impl Editor {
             .map(|buffer| buffer.read(cx))
         {
             let row = buffer
-                .summary_for_anchor::<Point>(&anchor)
+                .summary_for_anchor::<PointUtf16>(&anchor)
                 .to_display_point(&self.snapshot(window, cx))
                 .row();
 
