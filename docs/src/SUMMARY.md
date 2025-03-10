@@ -136,5 +136,6 @@
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
   - [Local Collaboration](./development/local-collaboration.md)
+  - [Using Debuggers](./development/debuggers.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
