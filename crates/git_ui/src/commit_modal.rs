@@ -316,7 +316,14 @@ impl CommitModal {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(branch_picker)
+                    .flex_shrink()
+                    .overflow_x_hidden()
+                    .child(
+                        h_flex()
+                            .flex_shrink()
+                            .overflow_x_hidden()
+                            .child(branch_picker),
+                    )
                     .children(generate_commit_message)
                     .children(co_authors),
             )
