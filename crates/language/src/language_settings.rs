@@ -308,24 +308,39 @@ pub struct AllLanguageSettingsContent {
     pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
-/// TODO kb docs
+/// Controls how completions are processed for this language.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettings {
+    /// Controls how words are completed.
+    /// For large documents, not all words may be fetched for completion.
+    ///
+    /// Default: `fallback`
     #[serde(default = "default_words_completion_mode")]
     pub words: WordsCompletionMode,
+    /// Whether to fetch LSP completions or not.
+    ///
+    /// Default: true
     #[serde(default = "default_true")]
     pub lsp: bool,
+    /// When fetching LSP completions, determines how long to wait for a response of a particular server.
+    /// When set to 0, waits indefinitely.
+    ///
+    /// Default: 500
     #[serde(default = "lsp_fetch_timeout_ms")]
     pub lsp_fetch_timeout_ms: u64,
 }
 
-/// TODO kb docs
+/// Controls how document's words are completed.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WordsCompletionMode {
+    /// Always fetch document's words for completions.
     Enabled,
+    /// Only if LSP response errors/times out/is empty,
+    /// use document's words to show completions.
     Fallback,
+    /// Never fetch or complete document's words for completions.
     Disabled,
 }
 
@@ -509,7 +524,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub show_completion_documentation: Option<bool>,
-    /// TODO kb docs
+    /// Controls how completions are processed for this language.
     pub completions: Option<CompletionSettings>,
 }
 
