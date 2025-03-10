@@ -263,14 +263,16 @@ impl VariableList {
         self.build_entries(cx);
     }
 
-    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(variable) = self.entries.first() {
             self.selection = Some(variable.path.clone());
             cx.notify();
         }
     }
 
-    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(variable) = self.entries.last() {
             self.selection = Some(variable.path.clone());
             cx.notify();
@@ -278,6 +280,7 @@ impl VariableList {
     }
 
     fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
             if let Some(var_ix) = self.entries.iter().enumerate().find_map(|(ix, var)| {
                 if &var.path == selection {
@@ -299,6 +302,7 @@ impl VariableList {
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
             if let Some(var_ix) = self.entries.iter().enumerate().find_map(|(ix, var)| {
                 if &var.path == selection {
