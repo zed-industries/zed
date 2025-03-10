@@ -17589,6 +17589,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace-hack",
+ "windows 0.58.0",
  "zed_actions",
 ]
 
