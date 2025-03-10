@@ -8,7 +8,7 @@ use gpui::{
     WeakEntity,
 };
 
-use language::Point;
+use language::PointUtf16;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{prelude::*, Tooltip};

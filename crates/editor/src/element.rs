@@ -2053,7 +2053,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
-        breakpoints: HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
+        breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -2100,7 +2100,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
-        breakpoints: &mut HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
+        breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -2195,7 +2195,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        breakpoint_points: &mut HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
+        breakpoint_points: &mut HashMap<DisplayRow, (Anchor, Breakpoint)>,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         window: &mut Window,
         cx: &mut App,
@@ -7076,14 +7076,15 @@ impl Element for EditorElement {
                             breakpoint_rows
                                 .entry(gutter_breakpoint_point.row())
                                 .or_insert_with(|| {
-                                    let position = snapshot.display_point_to_breakpoint_anchor(
+                                    let position = snapshot.display_point_to_anchor(
                                         gutter_breakpoint_point,
+                                        Bias::Left,
                                     );
                                     let breakpoint = Breakpoint {
                                         kind: BreakpointKind::Standard,
                                     };
 
-                                    (position.text_anchor, breakpoint)
+                                    (position, breakpoint)
                                 });
                         }
                     }
