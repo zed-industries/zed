@@ -2950,8 +2950,6 @@ impl GitPanel {
         let modifiers = self.current_modifiers;
         let shift_held = modifiers.shift;
 
-        println!("Shift held: {}", shift_held);
-
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
@@ -3037,7 +3035,7 @@ impl GitPanel {
             .px(rems(0.75)) // ~12px
             .overflow_hidden()
             .flex_none()
-            .gap(DynamicSpacing::Base04.rems(cx))
+            .gap_1p5()
             .bg(base_bg)
             .hover(|this| this.bg(hover_bg))
             .active(|this| this.bg(active_bg))
@@ -3131,7 +3129,7 @@ impl GitPanel {
                             }),
                     ),
             )
-            .child(git_status_icon(status, cx))
+            .child(git_status_icon(status))
             .child(
                 h_flex()
                     .items_center()
