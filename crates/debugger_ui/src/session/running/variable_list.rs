@@ -3,13 +3,13 @@ use dap::{StackFrameId, VariableReference};
 use editor::Editor;
 use gpui::{
     actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription,
-    TextStyleRefinement, UniformListScrollHandle,
+    DismissEvent, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point,
+    Stateful, Subscription, TextStyleRefinement, UniformListScrollHandle,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{prelude::*, ContextMenu, ListItem};
+use ui::{prelude::*, ContextMenu, ListItem, Scrollbar, ScrollbarState};
 use util::{debug_panic, maybe};
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
@@ -93,7 +93,8 @@ pub struct VariableList {
     entries: Vec<Variable>,
     variable_states: HashMap<VariablePath, VariableState>,
     selected_stack_frame_id: Option<StackFrameId>,
-    list_state: UniformListScrollHandle,
+    list_handle: UniformListScrollHandle,
+    scrollbar_state: ScrollbarState,
     session: Entity<Session>,
     selection: Option<VariablePath>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -132,7 +133,8 @@ impl VariableList {
         let list_state = UniformListScrollHandle::default();
 
         Self {
-            list_state,
+            scrollbar_state: ScrollbarState::new(list_state.clone()),
+            list_handle: list_state,
             session,
             focus_handle,
             _subscriptions,
@@ -609,6 +611,39 @@ impl VariableList {
             )
             .into_any()
     }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("variable-list-vertical-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+    }
 }
 
 impl Focusable for VariableList {
@@ -644,7 +679,7 @@ impl Render for VariableList {
                     self.entries.len(),
                     move |this, range, window, cx| this.render_entries(range, window, cx),
                 )
-                .track_scroll(self.list_state.clone())
+                .track_scroll(self.list_handle.clone())
                 .gap_1_5()
                 .size_full()
                 .flex_grow(),
@@ -658,6 +693,7 @@ impl Render for VariableList {
                 )
                 .with_priority(1)
             }))
+            .child(self.render_vertical_scrollbar(cx))
     }
 }
 
