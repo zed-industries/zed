@@ -16,12 +16,16 @@ tell you what the output was. Note that `io` only has `open`, and then the file
 it returns only has the methods read, write, and close - it doesn't have popen
 or anything else.
 
-There will be a global called `search` which accepts a regex (it's implemented
+There is a function called `search` which accepts a regex (it's implemented
 using Rust's regex crate, so use that regex syntax) and runs that regex on the
 contents of every file in the code base (aside from gitignored files), then
 returns an array of tables with two fields: "path" (the path to the file that
 had the matches) and "matches" (an array of strings, with each string being a
 match that was found within the file).
+
+There is a function called `outline` which accepts the path to a source file,
+and returns a string where each line is a declaration. These lines are indented
+with 2 spaces to indicate when a declaration is inside another.
 
 When I send you the script output, do not thank me for running it,
 act as if you ran it yourself.

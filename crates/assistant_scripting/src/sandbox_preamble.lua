@@ -13,7 +13,10 @@ sandbox.tostring = tostring
 sandbox.tonumber = tonumber
 sandbox.pairs = pairs
 sandbox.ipairs = ipairs
+
+-- Access to custom functions
 sandbox.search = search
+sandbox.outline = outline
 
 -- Create a sandboxed version of LuaFileIO
 local io = {}

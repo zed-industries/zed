@@ -572,6 +572,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "log",
  "mlua",
  "parking_lot",
  "project",
