@@ -29,6 +29,9 @@ impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
     pub fn for_action(action: &dyn Action, window: &mut Window, cx: &App) -> Option<Self> {
+        if let Some(focused) = window.focused(cx) {
+            return Self::for_action_in(action, &focused, window, cx);
+        }
         let key_binding =
             gpui::Keymap::binding_to_display_from_bindings(&window.bindings_for_action(action))
                 .cloned()?;
