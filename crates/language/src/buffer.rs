@@ -20,14 +20,13 @@ use anyhow::{anyhow, Context as _, Result};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
     SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
 };
-use itertools::Itertools;
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
@@ -4147,12 +4146,10 @@ impl BufferSnapshot {
         }
     }
 
-    // TODO kb move it into the completions_menu module within editor crate?
-    // TODO kb limit parameter?
     // TODO kb settings to enable/disable LSP and word-based completions
-    pub fn words_in_range(&self, query: Option<&str>, range: Range<usize>) -> Vec<String> {
+    pub fn words_in_range(&self, query: Option<&str>, range: Range<usize>) -> HashSet<String> {
         if query.map_or(false, |query| query.is_empty()) {
-            return Vec::new();
+            return HashSet::default();
         }
 
         let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
@@ -4160,17 +4157,11 @@ impl BufferSnapshot {
             override_id: None,
         }));
 
-        // TODO kb cases:
-        // * query is together in the text
-        // * query matches case of the text
-        // * query is closer to the beginning of the word
-        // * ??? multiple queries can match in the same word
-        let mut score = 0;
         let mut query_ix = 0;
         let query = query.map(|query| query.chars().collect::<Vec<_>>());
         let query_len = query.as_ref().map_or(0, |query| query.len());
 
-        let mut words = HashMap::default();
+        let mut words = HashSet::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = range.start;
         for chunk in self.chunks(range, false) {
@@ -4195,25 +4186,15 @@ impl BufferSnapshot {
                     }
                 } else if let Some(word_start) = current_word_start_ix.take() {
                     if query_ix == query_len {
-                        words.insert(
-                            self.text_for_range(word_start..ix).collect::<String>(),
-                            score,
-                        );
+                        words.insert(self.text_for_range(word_start..ix).collect::<String>());
                     }
                 }
-                score = 0;
                 query_ix = 0;
             }
             chunk_ix += chunk.text.len();
         }
 
         words
-            .into_iter()
-            .sorted_by(|(word_a, score_a), (word_b, score_b)| {
-                score_b.cmp(score_a).then_with(|| word_b.cmp(&word_a))
-            })
-            .map(|(word, _)| word)
-            .collect()
     }
 }
 
