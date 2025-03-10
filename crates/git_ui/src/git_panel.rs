@@ -2,7 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::Diff;
-use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
+use crate::remote_output_toast::{self, RemoteAction, SuccessMessage};
 use crate::repository_selector::filtered_repository_entries;
 use crate::{branch_picker, render_remote_button};
 use crate::{
@@ -64,6 +64,7 @@ use ui::{
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{AppState, OpenOptions, OpenVisible};
 
+use notifications::status_toast::{StatusToast, ToastIcon};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId},
@@ -1611,28 +1612,35 @@ impl GitPanel {
         telemetry::event!("Git Fetched");
         let guard = self.start_remote_operation();
         let askpass = self.askpass_delegate("git fetch", window, cx);
-        cx.spawn(|this, mut cx| async move {
-            let fetch = repo.update(&mut cx, |repo, cx| repo.fetch(askpass, cx))?;
+        let this = cx.weak_entity();
+        window
+            .spawn(cx, |mut cx| async move {
+                let fetch = repo.update(&mut cx, |repo, cx| repo.fetch(askpass, cx))?;
 
-            let remote_message = fetch.await?;
-            drop(guard);
-            this.update(&mut cx, |this, cx| {
-                match remote_message {
-                    Ok(remote_message) => {
-                        this.show_remote_output(RemoteAction::Fetch, remote_message, cx);
+                let remote_message = fetch.await?;
+                drop(guard);
+                this.update_in(&mut cx, |this, window, cx| {
+                    match remote_message {
+                        Ok(remote_message) => {
+                            this.show_remote_output(
+                                RemoteAction::Fetch,
+                                remote_message,
+                                window,
+                                cx,
+                            );
+                        }
+                        Err(e) => {
+                            log::error!("Error while fetching {:?}", e);
+                            this.show_err_toast(e, cx);
+                        }
                     }
-                    Err(e) => {
-                        log::error!("Error while fetching {:?}", e);
-                        this.show_err_toast(e, cx);
-                    }
-                }
 
+                    anyhow::Ok(())
+                })
+                .ok();
                 anyhow::Ok(())
             })
-            .ok();
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     pub(crate) fn pull(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1677,9 +1685,9 @@ impl GitPanel {
             let remote_message = pull.await?;
             drop(guard);
 
-            this.update(&mut cx, |this, cx| match remote_message {
+            this.update_in(&mut cx, |this, window, cx| match remote_message {
                 Ok(remote_message) => {
-                    this.show_remote_output(RemoteAction::Pull, remote_message, cx)
+                    this.show_remote_output(RemoteAction::Pull(remote), remote_message, window, cx)
                 }
                 Err(err) => {
                     log::error!("Error while pull {:?}", err);
@@ -1747,9 +1755,9 @@ impl GitPanel {
             let remote_output = push.await?;
             drop(guard);
 
-            this.update(&mut cx, |this, cx| match remote_output {
+            this.update_in(&mut cx, |this, window, cx| match remote_output {
                 Ok(remote_message) => {
-                    this.show_remote_output(RemoteAction::Push(remote), remote_message, cx);
+                    this.show_remote_output(RemoteAction::Push(branch.name, remote), remote_message, window, cx);
                 }
                 Err(e) => {
                     log::error!("Error while pushing {:?}", e);
@@ -2265,19 +2273,49 @@ impl GitPanel {
         });
     }
 
-    fn show_remote_output(&self, action: RemoteAction, info: RemoteCommandOutput, cx: &mut App) {
+    fn show_remote_output(
+        &self,
+        action: RemoteAction,
+        info: RemoteCommandOutput,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
-        let notification_id = NotificationId::Named("git-remote-info".into());
-
         workspace.update(cx, |workspace, cx| {
-            workspace.show_notification(notification_id.clone(), cx, |cx| {
-                let workspace = cx.weak_entity();
-                cx.new(|cx| RemoteOutputToast::new(action, info, notification_id, workspace, cx))
+            let SuccessMessage { message, style } =
+                remote_output_toast::format_output(action, info);
+            let workspace_weak = cx.weak_entity();
+
+
+            let status_toast = StatusToast::new(message, window, cx, move |this, _, cx| {
+                use remote_output_toast::SuccessStyle::*;
+                match style {
+                    Toast { .. } => this,
+                    ToastWithLog { output } => this
+                        .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        .action("View Log", move | _, window, cx| {
+                            let output = output.clone();
+                            workspace_weak.update(cx, |workspace, cx| {
+                                Self::open_output(workspace, output, window, cx)
+                            }).ok();
+                        }),
+                    PushPrLink { link } => this
+                        .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        .action(
+                            "Open Pull Request",
+                            cx.listener(move |_, _, _, cx| cx.open_url(&link)),
+                        ),
+                }
             });
+            workspace.toggle_status_toast(window, cx, status_toast)
         });
+    }
+
+    fn open_output(workspace: &mut Workspace, output: RemoteCommandOutput, window: &Window, cx: &mut Context<Workspace>) {
+        dbg!(output);
     }
 
     pub fn render_spinner(&self) -> Option<impl IntoElement> {

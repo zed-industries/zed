@@ -84,7 +84,7 @@ impl UpstreamTracking {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RemoteCommandOutput {
     pub stdout: String,
     pub stderr: String,
