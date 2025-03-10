@@ -865,10 +865,13 @@ impl Session {
                         self.modules.push(event.module);
                     }
                     dap::ModuleEventReason::Changed => {
-                        self.modules
+                        if let Some(module) = self
+                            .modules
                             .iter_mut()
                             .find(|other| event.module.id == other.id)
-                            .map(|module| *module = event.module);
+                        {
+                            *module = event.module;
+                        }
                     }
                     dap::ModuleEventReason::Removed => {
                         self.modules.retain(|other| event.module.id != other.id);

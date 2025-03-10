@@ -498,6 +498,8 @@ messages!(
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
     (GitDiffResponse, Background),
+    (DapLocationsRequest, Background),
+    (DapLocationsResponse, Background)
 );
 
 request_messages!(
@@ -667,6 +669,7 @@ request_messages!(
     (GitChangeBranch, Ack),
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
+    (DapLocationsRequest, DapLocationsResponse),
 );
 
 entity_messages!(
@@ -800,6 +803,7 @@ entity_messages!(
     DapCompletionRequest,
     DapThreadsRequest,
     DapTerminateRequest,
+    DapLocationsRequest,
 );
 
 entity_messages!(

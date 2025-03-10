@@ -126,6 +126,7 @@ impl DapStore {
         // client.add_entity_request_handler(Self::handle_dap_command::<RestartStackFrameCommand>);
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub fn new_local(
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
@@ -595,8 +596,7 @@ impl DapStore {
 
         let supports_set_expression = self
             .capabilities_by_id(session_id, cx)
-            .map(|caps| caps.supports_set_expression)
-            .flatten()
+            .and_then(|caps| caps.supports_set_expression)
             .unwrap_or_default();
 
         cx.background_executor().spawn(async move {

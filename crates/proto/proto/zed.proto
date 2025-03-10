@@ -386,7 +386,9 @@ message Envelope {
         DapThreadsRequest dap_threads_request = 355;
         DapThreadsResponse dap_threads_response = 356;
         ToggleBreakpoint toggle_breakpoint = 357;
-        BreakpointsForFile breakpoints_for_file = 358; // current max
+        BreakpointsForFile breakpoints_for_file = 358;
+         DapLocationsRequest dap_locations_request = 359;
+         DapLocationsResponse dap_locations_response = 360; // current max
     }
 
     reserved 87 to 88;
@@ -2777,6 +2779,20 @@ enum SteppingGranularity {
     Statement = 0;
     Line = 1;
     Instruction = 2;
+}
+
+message DapLocationsRequest {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    uint64 location_reference = 3;
+}
+
+message DapLocationsResponse {
+    DapSource source = 1;
+    uint64 line = 2;
+    optional uint64 column = 3;
+    optional uint64 end_line = 4;
+    optional uint64 end_column = 5;
 }
 
 enum DapEvaluateContext {

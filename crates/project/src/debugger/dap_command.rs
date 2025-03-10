@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Ok, Result};
+use anyhow::{anyhow, Ok, Result};
 use dap::{
     client::SessionId,
     proto_conversions::ProtoConversion,
@@ -1383,7 +1383,7 @@ impl DapCommand for super::session::CompletionsQuery {
             frame_id: self.frame_id,
             query: self.query.clone(),
             column: self.column,
-            line: self.line.map(u64::from),
+            line: self.line,
         }
     }
 
@@ -1707,32 +1707,53 @@ impl LocalDapCommand for LocationsCommand {
 }
 
 impl DapCommand for LocationsCommand {
-    type ProtoRequest = proto::DapThreadsRequest;
+    type ProtoRequest = proto::DapLocationsRequest;
     const CACHEABLE: bool = true;
 
-    fn client_id_from_proto(_: &Self::ProtoRequest) -> SessionId {
-        todo!()
+    fn client_id_from_proto(message: &Self::ProtoRequest) -> SessionId {
+        SessionId::from_proto(message.session_id)
     }
 
-    fn from_proto(_: &Self::ProtoRequest) -> Self {
-        todo!()
+    fn from_proto(message: &Self::ProtoRequest) -> Self {
+        Self {
+            reference: message.location_reference,
+        }
     }
 
-    fn to_proto(&self, _: SessionId, _: u64) -> Self::ProtoRequest {
-        todo!()
+    fn to_proto(&self, session_id: SessionId, project_id: u64) -> Self::ProtoRequest {
+        proto::DapLocationsRequest {
+            project_id,
+            session_id: session_id.to_proto(),
+            location_reference: self.reference,
+        }
     }
 
     fn response_to_proto(
         _: SessionId,
-        _: Self::Response,
+        response: Self::Response,
     ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
-        todo!()
+        proto::DapLocationsResponse {
+            source: Some(response.source.to_proto()),
+            line: response.line,
+            column: response.column,
+            end_line: response.end_line,
+            end_column: response.end_column,
+        }
     }
 
     fn response_from_proto(
         &self,
-        _: <Self::ProtoRequest as proto::RequestMessage>::Response,
+        response: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
-        todo!()
+        Ok(dap::LocationsResponse {
+            source: response
+                .source
+                .map(<dap::Source as ProtoConversion>::from_proto)
+                .ok_or_else(|| anyhow!("Missing `source` field in Locations proto"))?,
+            line: response.line,
+            column: response.column,
+            end_line: response.end_line,
+            end_column: response.end_column,
+        })
     }
 }
