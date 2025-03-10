@@ -731,14 +731,16 @@
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
       "enter": "menu::Confirm",
+      "alt-y": "git::StageFile",
+      "alt-shift-y": "git::UnstageFile",
+      "ctrl-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
-      "ctrl-space": "git::StageAll",
-      "ctrl-shift-space": "git::UnstageAll",
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
-      "alt-enter": "menu::SecondaryConfirm"
+      "alt-enter": "menu::SecondaryConfirm",
+      "backspace": "git::RestoreFile"
     }
   },
   {
@@ -750,9 +752,26 @@
     }
   },
   {
+    "context": "GitPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-g ctrl-g": "git::Fetch",
+      "ctrl-g up": "git::Push",
+      "ctrl-g down": "git::Pull",
+      "ctrl-g shift-up": "git::ForcePush",
+      "ctrl-g d": "git::Diff",
+      "ctrl-g backspace": "git::RestoreTrackedFiles",
+      "ctrl-g shift-backspace": "git::TrashUntrackedFiles",
+      "ctrl-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll"
+    }
+  },
+  {
     "context": "GitDiff > Editor",
     "bindings": {
-      "ctrl-enter": "git::Commit"
+      "ctrl-enter": "git::Commit",
+      "ctrl-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll"
     }
   },
   {
