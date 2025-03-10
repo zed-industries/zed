@@ -17,7 +17,6 @@ echo "Generating cargo licenses"
 set -x
 cargo about generate \
     --fail \
-    --frozen \
     -c script/licenses/zed-licenses.toml \
     $TEMPLATE_FILE \
     | awk 'NR==1{print;next} NF{print | "sort"}' \
