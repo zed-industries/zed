@@ -1,4 +1,5 @@
 pub mod dock;
+pub mod history_manager;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -42,6 +43,7 @@ use gpui::{
     Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
     WindowBounds, WindowHandle, WindowId, WindowOptions,
 };
+pub use history_manager::*;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
@@ -384,6 +386,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
     theme_preview::init(cx);
+    history_manager::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -1185,6 +1188,7 @@ impl Workspace {
 
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
+            let is_new_workspace = serialized_workspace.is_none();
 
             let workspace_location = serialized_workspace
                 .as_ref()
@@ -1308,7 +1312,24 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, _| window.activate_window())
+                .update(&mut cx, |workspace, window, cx| {
+                    window.activate_window();
+                    if let Some(manager) = HistoryManager::global(cx) {
+                        let task = workspace.serialize_workspace_internal(window, cx);
+                        window
+                            .spawn(cx, |mut cx| async move {
+                                task.await;
+                                if is_new_workspace {
+                                    manager
+                                        .update(&mut cx, |_, cx| {
+                                            cx.emit(HistoryManagerEvent::Update)
+                                        })
+                                        .log_err();
+                                }
+                            })
+                            .detach();
+                    }
+                })
                 .log_err();
             Ok((window, opened_items))
         })

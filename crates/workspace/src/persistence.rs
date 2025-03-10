@@ -539,7 +539,7 @@ impl WorkspaceDb {
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                .context("Clearing old panes")?;
+                    .context("Clearing old panes")?;
 
                 match workspace.location {
                     SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
