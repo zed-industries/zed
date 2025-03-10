@@ -1,12 +1,6 @@
-use std::path::Path;
-
-use db::smol;
 use gpui::{AppContext, Entity, EventEmitter, Global};
 use ui::{App, Context};
-use util::{
-    paths::{PathExt, SanitizedPath},
-    ResultExt,
-};
+use util::{paths::PathExt, ResultExt};
 
 use crate::{WorkspaceId, WORKSPACE_DB};
 
