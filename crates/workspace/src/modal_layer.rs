@@ -120,7 +120,7 @@ impl ModalLayer {
             return false;
         };
 
-        match dbg!(active_modal.modal.on_before_dismiss(window, cx)) {
+        match active_modal.modal.on_before_dismiss(window, cx) {
             DismissDecision::Dismiss(dismiss) => {
                 self.dismiss_on_focus_lost = !dismiss;
                 if !dismiss {
