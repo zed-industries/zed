@@ -64,6 +64,22 @@ pub fn init(cx: &mut App) {
                 panel.pull(window, cx);
             });
         });
+        workspace.register_action(|workspace, action: &git::StageAll, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stage_all(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, action: &git::UnstageAll, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.unstage_all(action, window, cx);
+            });
+        });
     })
     .detach();
 }
