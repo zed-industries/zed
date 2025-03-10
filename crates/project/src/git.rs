@@ -56,6 +56,7 @@ pub struct GitStore {
 pub struct Repository {
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
+    project_environment: Option<WeakEntity<ProjectEnvironment>>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
     pub dot_git_abs_path: PathBuf,
@@ -229,6 +230,10 @@ impl GitStore {
                             existing_handle
                         } else {
                             cx.new(|_| Repository {
+                                project_environment: self
+                                    .environment
+                                    .as_ref()
+                                    .map(|env| env.downgrade()),
                                 git_store: this.clone(),
                                 worktree_id,
                                 askpass_delegates: Default::default(),
@@ -1404,18 +1409,16 @@ impl Repository {
         &self,
         cx: &mut App,
     ) -> impl Future<Output = HashMap<String, String>> + 'static {
-        let task = self
-            .git_store()
-            .and_then(|git_store| git_store.read(cx).environment.clone())
-            .map(|env| {
-                env.update(cx, |env, cx| {
-                    env.get_environment(
-                        Some(self.worktree_id),
-                        Some(self.worktree_abs_path.clone()),
-                        cx,
-                    )
-                })
-            });
+        let task = self.project_environment.as_ref().and_then(|env| {
+            env.update(cx, |env, cx| {
+                env.get_environment(
+                    Some(self.worktree_id),
+                    Some(self.worktree_abs_path.clone()),
+                    cx,
+                )
+            })
+            .ok()
+        });
         async move { OptionFuture::from(task).await.flatten().unwrap_or_default() }
     }
 
