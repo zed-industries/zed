@@ -965,7 +965,7 @@ impl Terminal {
                             if prev_is_digit && !next_is_digit {
                                 let stripped_len = file_path.len() - last_index;
                                 word_match = Match::new(
-                                    word_match.start().clone(),
+                                    *word_match.start(),
                                     word_match.end().sub(term, Boundary::Cursor, stripped_len),
                                 );
                                 file_path = file_path[0..last_index].to_owned();
