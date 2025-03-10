@@ -115,6 +115,7 @@
 - [Rust](./languages/rust.md)
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
+- [Shell Script](./languages/sh.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [Tailwind CSS](./languages/tailwindcss.md)
