@@ -41,7 +41,8 @@ use language_model::{
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
 use panel::{
-    panel_editor_container, panel_editor_style, panel_filled_button, panel_icon_button, PanelHeader,
+    panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
+    panel_icon_button, PanelHeader,
 };
 use project::{
     git::{GitEvent, Repository},
@@ -2422,8 +2423,10 @@ impl GitPanel {
         }
 
         self.panel_header_container(window, cx)
+            .px_2()
             .child(
-                Button::new("diff", "Open diff")
+                panel_button("Open Diff")
+                    .color(Color::Muted)
                     .tooltip(Tooltip::for_action_title("Open diff", &Diff))
                     .on_click(|_, _, cx| {
                         cx.defer(|cx| {
@@ -2433,7 +2436,7 @@ impl GitPanel {
             )
             .child(div().flex_grow()) // spacer
             .child(
-                Button::new("stage-unstage-all", text)
+                panel_filled_button(text)
                     .tooltip(Tooltip::for_action_title(tooltip, action.as_ref()))
                     .on_click(move |_, _, cx| {
                         let action = action.boxed_clone();
