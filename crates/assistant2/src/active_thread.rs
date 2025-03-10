@@ -457,9 +457,13 @@ impl ActiveThread {
 
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
+        let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
 
         // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User && thread.message_has_tool_results(message_id) {
+        if message.role == Role::User
+            && (thread.message_has_tool_results(message_id)
+                || thread.message_has_scripting_tool_results(message_id))
+        {
             return Empty.into_any();
         }
 
@@ -609,16 +613,22 @@ impl ActiveThread {
                 .id(("message-container", ix))
                 .child(message_content)
                 .map(|parent| {
-                    if tool_uses.is_empty() {
+                    if tool_uses.is_empty() && scripting_tool_uses.is_empty() {
                         return parent;
                     }
 
                     parent.child(
-                        v_flex().children(
-                            tool_uses
-                                .into_iter()
-                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                        ),
+                        v_flex()
+                            .children(
+                                tool_uses
+                                    .into_iter()
+                                    .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                            )
+                            .children(
+                                scripting_tool_uses
+                                    .into_iter()
+                                    .map(|tool_use| self.render_scripting_tool_use(tool_use, cx)),
+                            ),
                     )
                 }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
@@ -726,6 +736,15 @@ impl ActiveThread {
                     )
                 }),
         )
+    }
+
+    fn render_scripting_tool_use(
+        &self,
+        tool_use: ToolUse,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // TODO: Add custom rendering for scripting tool uses.
+        self.render_tool_use(tool_use, cx)
     }
 }
 

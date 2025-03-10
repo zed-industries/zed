@@ -14,7 +14,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-assistant_tool.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
