@@ -213,12 +213,9 @@ craneLib.buildPackage (
       echo nightly > crates/zed/RELEASE_CHANNEL
     '';
 
-    # TODO: try craneLib.cargoNextest separate output and doCheck=false
-    # do we even care about running our test suite in the nix sandbox?
-
-    # see crane bug: https://github.com/ipetkov/crane/issues/808
-    doNotRemoveReferencesToRustToolchain = true;
-    doNotRemoveReferencesToVendorDir = true;
+    # TODO: try craneLib.cargoNextest separate output
+    # for now we're not worried about running our test suite in the nix sandbox
+    doCheck = false;
 
     installPhase =
       if stdenv.hostPlatform.isDarwin then
