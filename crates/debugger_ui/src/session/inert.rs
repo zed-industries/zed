@@ -132,7 +132,22 @@ impl Render for InertState {
                                         });
                                     })),
                             )
-                            .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled).disabled(disable_buttons)))
+                            .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled).disabled(disable_buttons).on_click(cx.listener(|this, _, _, cx| {
+                                let program = this.program_editor.read(cx).text(cx).parse::<u32>().unwrap_or(0);
+                                let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
+                                let kind = kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| unimplemented!("Automatic selection of a debugger based on users project")));
+                                cx.emit(InertEvent::Spawned {
+                                    config: DebugAdapterConfig {
+                                        label: "hard coded attach".into(),
+                                        kind,
+                                        request: DebugRequestType::Attach(task::AttachConfig { process_id: Some(program) }),
+                                        program: None,
+                                        cwd: Some(cwd),
+                                        initialize_args: None,
+                                        supports_attach: true,
+                                    },
+                                });
+                            }))))
                     ),
             )
     }

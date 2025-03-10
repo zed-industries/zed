@@ -1657,6 +1657,29 @@ impl LocalDapCommand for Launch {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) struct Attach {
+    pub(super) raw: Value,
+}
+
+impl LocalDapCommand for Attach {
+    type Response = ();
+    type DapRequest = dap::requests::Attach;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::AttachRequestArguments {
+            raw: self.raw.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
 pub(super) struct SetBreakpoints {
     pub(super) source: dap::Source,
     pub(super) breakpoints: Vec<SourceBreakpoint>,

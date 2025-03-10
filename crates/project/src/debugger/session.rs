@@ -362,7 +362,15 @@ impl LocalMode {
         );
 
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
-        let launch = this.request(Launch { raw }, cx.background_executor().clone());
+        let launch = match &this.config.request {
+            dap::DebugRequestType::Launch => {
+                this.request(Launch { raw }, cx.background_executor().clone())
+            }
+            dap::DebugRequestType::Attach(_) => this.request(
+                super::dap_command::Attach { raw },
+                cx.background_executor().clone(),
+            ),
+        };
         let that = this.clone();
 
         let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
