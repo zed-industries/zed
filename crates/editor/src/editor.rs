@@ -70,7 +70,7 @@ pub use element::{
 };
 use futures::{
     future::{self, Shared},
-    join, FutureExt,
+    FutureExt,
 };
 use fuzzy::StringMatchCandidate;
 
@@ -101,6 +101,7 @@ use itertools::Itertools;
 use language::{
     language_settings::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
+        WordsCompletionMode,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
     Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
@@ -4050,10 +4051,25 @@ impl Editor {
         } else {
             (buffer_position..buffer_position, None)
         };
-        let words = cx.background_spawn(async move {
-            // TODO kb cap for long buffers
-            buffer_snapshot.words_in_range(None, 0..buffer_snapshot.len())
-        });
+
+        let completion_settings = language_settings(
+            buffer_snapshot
+                .language_at(buffer_position)
+                .map(|language| language.name()),
+            buffer_snapshot.file(),
+            cx,
+        )
+        .completions;
+
+        let words = match completion_settings.words {
+            WordsCompletionMode::Disabled => Task::ready(HashSet::default()),
+            WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => {
+                cx.background_spawn(async move {
+                    // TODO kb cap for long buffers
+                    buffer_snapshot.words_in_range(None, 0..buffer_snapshot.len())
+                })
+            }
+        };
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
@@ -4062,22 +4078,45 @@ impl Editor {
                 editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
-                // TODO kb timeouts for both searches
-                let (completions, words) = join!(completions, words);
-                let mut completions = completions.log_err().unwrap_or_default();
-                completions.extend(
-                    words
-                        .into_iter()
-                        .filter(|word| word_to_exclude.as_ref() != Some(word))
-                        .map(|word| Completion {
-                            old_range: old_range.clone(),
-                            new_text: word.clone(),
-                            label: CodeLabel::plain(word, None),
-                            documentation: None,
-                            source: CompletionSource::Custom,
-                            confirm: None,
-                        }),
-                );
+                let mut completions = completions.await.log_err().unwrap_or_default();
+
+                match completion_settings.words {
+                    WordsCompletionMode::Enabled => {
+                        completions.extend(
+                            words
+                                .await
+                                .into_iter()
+                                .filter(|word| word_to_exclude.as_ref() != Some(word))
+                                .map(|word| Completion {
+                                    old_range: old_range.clone(),
+                                    new_text: word.clone(),
+                                    label: CodeLabel::plain(word, None),
+                                    documentation: None,
+                                    source: CompletionSource::Custom,
+                                    confirm: None,
+                                }),
+                        );
+                    }
+                    WordsCompletionMode::Fallback => {
+                        if completions.is_empty() {
+                            completions.extend(
+                                words
+                                    .await
+                                    .into_iter()
+                                    .filter(|word| word_to_exclude.as_ref() != Some(word))
+                                    .map(|word| Completion {
+                                        old_range: old_range.clone(),
+                                        new_text: word.clone(),
+                                        label: CodeLabel::plain(word, None),
+                                        documentation: None,
+                                        source: CompletionSource::Custom,
+                                        confirm: None,
+                                    }),
+                            );
+                        }
+                    }
+                    WordsCompletionMode::Disabled => {}
+                }
 
                 let menu = if completions.is_empty() {
                     None
