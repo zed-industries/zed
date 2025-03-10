@@ -749,6 +749,7 @@ impl GitPanel {
                             .as_ref()
                     {
                         project_diff.focus_handle(cx).focus(window);
+                        project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
                         return None;
                     }
                 }

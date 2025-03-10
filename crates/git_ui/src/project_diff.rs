@@ -125,6 +125,12 @@ impl ProjectDiff {
         }
     }
 
+    pub fn autoscroll(&self, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.request_autoscroll(Autoscroll::fit(), cx);
+        })
+    }
+
     fn new(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
