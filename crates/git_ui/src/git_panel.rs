@@ -3540,7 +3540,11 @@ impl RenderOnce for PanelRepoFooter {
                         div().child(
                             Icon::new(IconName::GitBranchSmall)
                                 .size(IconSize::Small)
-                                .color(Color::Muted),
+                                .color(if single_repo {
+                                    Color::Disabled
+                                } else {
+                                    Color::Muted
+                                }),
                         ),
                     )
                     .child(repo_selector)
