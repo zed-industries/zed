@@ -15,18 +15,18 @@ use util::{debug_panic, maybe};
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct VariableState {
+pub(crate) struct EntryState {
     depth: usize,
     is_expanded: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub(crate) struct VariablePath {
+pub(crate) struct EntryPath {
     pub leaf_name: Option<SharedString>,
     pub indices: Arc<[VariableReference]>,
 }
 
-impl VariablePath {
+impl EntryPath {
     fn for_scope(scope_id: VariableReference) -> Self {
         Self {
             leaf_name: None,
@@ -82,12 +82,19 @@ impl EntryKind {
             _ => None,
         }
     }
+
+    fn name(&self) -> &str {
+        match self {
+            EntryKind::Variable(dap) => &dap.name,
+            EntryKind::Scope(dap) => &dap.name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct ListEntry {
     dap_kind: EntryKind,
-    path: VariablePath,
+    path: EntryPath,
 }
 
 impl ListEntry {
@@ -127,15 +134,15 @@ impl ListEntry {
 
 pub struct VariableList {
     entries: Vec<ListEntry>,
-    variable_states: HashMap<VariablePath, VariableState>,
+    entry_states: HashMap<EntryPath, EntryState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     session: Entity<Session>,
-    selection: Option<VariablePath>,
+    selection: Option<EntryPath>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
-    edited_path: Option<(VariablePath, Entity<Editor>)>,
+    edited_path: Option<(EntryPath, Entity<Editor>)>,
     disabled: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -154,7 +161,7 @@ impl VariableList {
             cx.subscribe(&session, |this, _, event, cx| {
                 match event {
                     SessionEvent::Stopped => {
-                        this.variable_states.clear();
+                        this.entry_states.clear();
                     }
                     _ => {}
                 }
@@ -180,7 +187,7 @@ impl VariableList {
             disabled: false,
             edited_path: None,
             entries: Default::default(),
-            variable_states: Default::default(),
+            entry_states: Default::default(),
         }
     }
 
@@ -207,7 +214,7 @@ impl VariableList {
             .map(|scope| {
                 (
                     scope.variables_reference,
-                    VariablePath::for_scope(scope.variables_reference),
+                    EntryPath::for_scope(scope.variables_reference),
                     EntryKind::Scope(scope),
                 )
             })
@@ -217,13 +224,10 @@ impl VariableList {
             if let Some(dap) = &dap_kind.as_variable() {
                 path = path.with_name(dap.name.clone().into());
             }
-            let var_state = self
-                .variable_states
-                .entry(path.clone())
-                .or_insert(VariableState {
-                    depth: path.indices.len() + path.leaf_name.is_some() as usize,
-                    is_expanded: dap_kind.as_variable().is_none(),
-                });
+            let var_state = self.entry_states.entry(path.clone()).or_insert(EntryState {
+                depth: path.indices.len() + path.leaf_name.is_some() as usize,
+                is_expanded: dap_kind.as_variable().is_none(),
+            });
 
             entries.push(ListEntry {
                 dap_kind,
@@ -285,7 +289,7 @@ impl VariableList {
                 let (entry, state) = self
                     .entries
                     .get(ix)
-                    .and_then(|entry| Some(entry).zip(self.variable_states.get(&entry.path)))?;
+                    .and_then(|entry| Some(entry).zip(self.entry_states.get(&entry.path)))?;
 
                 match &entry.dap_kind {
                     EntryKind::Variable(_) => Some(self.render_variable(entry, *state, window, cx)),
@@ -295,8 +299,8 @@ impl VariableList {
             .collect()
     }
 
-    pub(crate) fn toggle_entry(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
-        let Some(entry) = self.variable_states.get_mut(var_path) else {
+    pub(crate) fn toggle_entry(&mut self, var_path: &EntryPath, cx: &mut Context<Self>) {
+        let Some(entry) = self.entry_states.get_mut(var_path) else {
             log::error!("Could not find variable list entry state to toggle");
             return;
         };
@@ -406,7 +410,7 @@ impl VariableList {
         cx: &mut Context<Self>,
     ) {
         if let Some(ref selected_entry) = self.selection {
-            let Some(entry_state) = self.variable_states.get_mut(selected_entry) else {
+            let Some(entry_state) = self.entry_states.get_mut(selected_entry) else {
                 debug_panic!("Trying to toggle variable in variable list that has an no state");
                 return;
             };
@@ -423,7 +427,7 @@ impl VariableList {
         cx: &mut Context<Self>,
     ) {
         if let Some(ref selected_entry) = self.selection {
-            let Some(entry_state) = self.variable_states.get_mut(selected_entry) else {
+            let Some(entry_state) = self.entry_states.get_mut(selected_entry) else {
                 debug_panic!("Trying to toggle variable in variable list that has an no state");
                 return;
             };
@@ -494,17 +498,17 @@ impl VariableList {
 
         let entries = &self.entries;
         let mut visual_entries = Vec::with_capacity(entries.len());
-        for variable in entries {
+        for entry in entries {
             let state = self
-                .variable_states
-                .get(&variable.path)
+                .entry_states
+                .get(&entry.path)
                 .expect("If there's a variable entry there has to be a state that goes with it");
 
             visual_entries.push(format!(
                 "{}{} {}",
                 INDENT.repeat(state.depth),
                 if state.is_expanded { "v" } else { ">" },
-                dap.name,
+                entry.dap_kind.name,
             ));
         }
 
@@ -536,7 +540,7 @@ impl VariableList {
     fn render_scope(
         &self,
         entry: &ListEntry,
-        state: VariableState,
+        state: EntryState,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(scope) = entry.as_scope() else {
@@ -597,7 +601,7 @@ impl VariableList {
     fn render_variable(
         &self,
         variable: &ListEntry,
-        state: VariableState,
+        state: EntryState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
