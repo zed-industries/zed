@@ -4176,6 +4176,7 @@ impl MultiBufferSnapshot {
         let region = cursor.region()?;
         let overshoot = offset - region.range.start;
         let buffer_offset = region.buffer_range.start + overshoot;
+        let buffer_offset = buffer_offset.min(region.buffer.len());
         Some((region.buffer, buffer_offset))
     }
 
