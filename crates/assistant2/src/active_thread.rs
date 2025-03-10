@@ -865,14 +865,15 @@ impl ActiveThread {
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
                                     .child(Label::new("Input:"))
-                                    .child(div().p_2p5().text_ui(cx).map(|parent| {
+                                    .map(|parent| {
                                         if let Some(markdown) = lua_script_markdown {
                                             parent.child(markdown)
                                         } else {
-                                            parent
-                                                .child("Failed to render script input to Markdown")
+                                            parent.child(Label::new(
+                                                "Failed to render script input to Markdown",
+                                            ))
                                         }
-                                    })),
+                                    }),
                             )
                             .map(|parent| match tool_use.status {
                                 ToolUseStatus::Finished(output) => parent.child(
