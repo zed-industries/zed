@@ -746,6 +746,7 @@
   {
     "context": "GitCommit > Editor",
     "bindings": {
+      "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
       "alt-l": "git::GenerateCommitMessage"
