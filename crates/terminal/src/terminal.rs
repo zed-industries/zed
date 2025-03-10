@@ -338,6 +338,7 @@ impl TerminalBuilder {
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        debug_terminal: bool,
         cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -474,6 +475,7 @@ impl TerminalBuilder {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
+            debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
         };
@@ -630,6 +632,7 @@ pub struct Terminal {
     word_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
+    debug_terminal: bool,
     is_ssh_terminal: bool,
 }
 
@@ -1731,6 +1734,10 @@ impl Terminal {
 
     pub fn task(&self) -> Option<&TaskState> {
         self.task.as_ref()
+    }
+
+    pub fn debug_terminal(&self) -> bool {
+        self.debug_terminal
     }
 
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
