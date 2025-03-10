@@ -326,6 +326,7 @@ fn main() {
             .or_else(read_proxy_from_env);
         let http = {
             let _guard = Tokio::handle(cx).enter();
+
             ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
                 .expect("could not start HTTP client")
         };
@@ -475,7 +476,6 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
-        scripting_tool::init(cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,

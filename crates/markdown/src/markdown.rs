@@ -736,7 +736,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        _ => log::error!("unsupported markdown tag {:?}", tag),
+                        _ => log::debug!("unsupported markdown tag {:?}", tag),
                     }
                 }
                 MarkdownEvent::End(tag) => match tag {
@@ -853,7 +853,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::TableCell => {
                         builder.pop_div();
                     }
-                    _ => log::error!("unsupported markdown tag end: {:?}", tag),
+                    _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text(parsed) => {
                     builder.push_text(parsed, range.start);

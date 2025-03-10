@@ -84,7 +84,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1-dev"
-source = "git+https://github.com/zed-industries/alacritty.git?rev=03c2907b44b4189aac5fdeaea331f5aab5c7072e#03c2907b44b4189aac5fdeaea331f5aab5c7072e"
+source = "git+https://github.com/zed-industries/alacritty.git?branch=add-hush-login-flag#828457c9ff1f7ea0a0469337cc8a37ee3a1b0590"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.8.0",
@@ -450,6 +450,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_context_editor",
+ "assistant_scripting",
  "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
@@ -564,6 +565,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant_scripting"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "log",
+ "mlua",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
+ "regex",
+ "serde",
+ "serde_json",
+ "settings",
+ "util",
+]
+
+[[package]]
 name = "assistant_settings"
 version = "0.1.0"
 dependencies = [
@@ -658,9 +679,9 @@ dependencies = [
  "derive_more",
  "gpui",
  "parking_lot",
+ "project",
  "serde",
  "serde_json",
- "workspace",
 ]
 
 [[package]]
@@ -675,7 +696,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "workspace",
 ]
 
 [[package]]
@@ -3047,6 +3067,7 @@ name = "component_preview"
 version = "0.1.0"
 dependencies = [
  "client",
+ "collections",
  "component",
  "gpui",
  "languages",
@@ -3139,7 +3160,6 @@ dependencies = [
  "smol",
  "url",
  "util",
- "workspace",
 ]
 
 [[package]]
@@ -4536,6 +4556,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "convert_case 0.8.0",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -8134,6 +8155,7 @@ checksum = "d3f763c1041eff92ffb5d7169968a327e1ed2ebfe425dac0ee5a35f29082534b"
 dependencies = [
  "bstr",
  "either",
+ "futures-util",
  "mlua-sys",
  "num-traits",
  "parking_lot",
@@ -11908,21 +11930,6 @@ name = "scratch"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3cf7c11c38cb994f3d40e8a8cde3bbd1f72a435e4c49e85d6553d8312306152"
-
-[[package]]
-name = "scripting_tool"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant_tool",
- "gpui",
- "mlua",
- "regex",
- "schemars",
- "serde",
- "serde_json",
- "workspace",
-]
 
 [[package]]
 name = "scrypt"
@@ -16978,7 +16985,6 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
- "scripting_tool",
  "search",
  "serde",
  "serde_json",
@@ -17059,13 +17065,6 @@ dependencies = [
 [[package]]
 name = "zed_glsl"
 version = "0.1.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_haskell"
-version = "0.1.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

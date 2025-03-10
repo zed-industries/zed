@@ -35,7 +35,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
+    action_as, actions, canvas, deferred, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
     Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
@@ -879,8 +879,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe_in(&project, window, |_, _, _, cx| cx.notify())
-            .detach();
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
                 project::Event::RemoteIdChanged(_) => {
@@ -5546,7 +5544,7 @@ impl Render for Workspace {
                                 .children(self.render_notifications(window, cx)),
                         )
                         .child(self.status_bar.clone())
-                        .child(self.modal_layer.clone())
+                        .child(deferred(self.modal_layer.clone()))
                         .child(self.toast_layer.clone()),
                 ),
             window,

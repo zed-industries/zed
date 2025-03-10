@@ -8,6 +8,7 @@ members = [
     "crates/assistant",
     "crates/assistant2",
     "crates/assistant_context_editor",
+    "crates/assistant_scripting",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -118,7 +119,6 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/schema_generator",
-    "crates/scripting_tool",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -171,7 +171,6 @@ members = [
 
     "extensions/emmet",
     "extensions/glsl",
-    "extensions/haskell",
     "extensions/html",
     "extensions/perplexity",
     "extensions/proto",
@@ -319,7 +318,7 @@ reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-scripting_tool = { path = "crates/scripting_tool" }
+assistant_scripting = { path = "crates/assistant_scripting" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
@@ -371,7 +370,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", rev = "03c2907b44b4189aac5fdeaea331f5aab5c7072e" }
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -452,7 +451,7 @@ livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "
 ], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
+mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 nanoid = "0.4"
 nbformat = { version = "0.10.0" }
 nix = "0.29"

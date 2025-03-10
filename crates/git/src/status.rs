@@ -54,6 +54,39 @@ impl From<TrackedStatus> for FileStatus {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StageStatus {
+    Staged,
+    Unstaged,
+    PartiallyStaged,
+}
+
+impl StageStatus {
+    pub fn is_fully_staged(&self) -> bool {
+        matches!(self, StageStatus::Staged)
+    }
+
+    pub fn is_fully_unstaged(&self) -> bool {
+        matches!(self, StageStatus::Unstaged)
+    }
+
+    pub fn has_staged(&self) -> bool {
+        matches!(self, StageStatus::Staged | StageStatus::PartiallyStaged)
+    }
+
+    pub fn has_unstaged(&self) -> bool {
+        matches!(self, StageStatus::Unstaged | StageStatus::PartiallyStaged)
+    }
+
+    pub fn as_bool(self) -> Option<bool> {
+        match self {
+            StageStatus::Staged => Some(true),
+            StageStatus::Unstaged => Some(false),
+            StageStatus::PartiallyStaged => None,
+        }
+    }
+}
+
 impl FileStatus {
     pub const fn worktree(worktree_status: StatusCode) -> Self {
         FileStatus::Tracked(TrackedStatus {
@@ -106,15 +139,15 @@ impl FileStatus {
         Ok(status)
     }
 
-    pub fn is_staged(self) -> Option<bool> {
+    pub fn staging(self) -> StageStatus {
         match self {
             FileStatus::Untracked | FileStatus::Ignored | FileStatus::Unmerged { .. } => {
-                Some(false)
+                StageStatus::Unstaged
             }
             FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Unmodified, _) => Some(false),
-                (_, StatusCode::Unmodified) => Some(true),
-                _ => None,
+                (StatusCode::Unmodified, _) => StageStatus::Unstaged,
+                (_, StatusCode::Unmodified) => StageStatus::Staged,
+                _ => StageStatus::PartiallyStaged,
             },
         }
     }
