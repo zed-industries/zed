@@ -2595,13 +2595,12 @@ impl GitPanel {
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        // .max_w(relative(0.6))
+                        .items_center()
+                        .max_w(relative(0.85))
                         .h_full()
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
-                                .single_line()
-                                .line_height_style(LineHeightStyle::UiLabel)
                                 .truncate(),
                         )
                         .id("commit-msg-hover")
