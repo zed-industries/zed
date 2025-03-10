@@ -7,7 +7,7 @@ use crate::{
 };
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement::{self, FindRange},
+    movement::{self, line_beginning, line_end, FindRange},
     Bias, DisplayPoint, Editor, ToOffset,
 };
 use gpui::{actions, impl_actions, Window};
@@ -556,10 +556,23 @@ impl Object {
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         around: bool,
+        include_trailing_newline: bool,
     ) -> bool {
         if let Some(range) = self.range(map, selection.clone(), around) {
             selection.start = range.start;
             selection.end = range.end;
+            if self.target_visual_mode(Mode::Normal, around) == Mode::VisualLine {
+                selection.start = line_beginning(map, selection.start, false);
+                if include_trailing_newline && self != Object::Paragraph {
+                    if selection.end.row() == map.max_point().row() {
+                        selection.end = map.max_point()
+                    } else {
+                        selection.end = DisplayPoint::new(selection.end.row() + 1, 0);
+                    }
+                } else {
+                    selection.end = line_end(map, selection.end, false)
+                }
+            }
             true
         } else {
             false
