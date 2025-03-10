@@ -16980,7 +16980,8 @@ fn snippet_completions(
                     new_text: snippet.body.clone(),
                     source: CompletionSource::Lsp {
                         server_id: LanguageServerId(usize::MAX),
-                        resolved: true,
+                        // Despite usize::MAX server_id above, snippets may need to be resolved
+                        resolved: false,
                         lsp_completion: Box::new(lsp::CompletionItem {
                             label: snippet.prefix.first().unwrap().clone(),
                             kind: Some(CompletionItemKind::SNIPPET),
