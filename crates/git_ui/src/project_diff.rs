@@ -474,7 +474,10 @@ impl ProjectDiff {
                     })?;
                 }
             }
-            this.update(&mut cx, |this, _| this.pending_scroll.take())?;
+            this.update(&mut cx, |this, cx| {
+                this.pending_scroll.take();
+                cx.notify();
+            })?;
         }
 
         Ok(())
