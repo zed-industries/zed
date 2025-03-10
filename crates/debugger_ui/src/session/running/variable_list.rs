@@ -4,7 +4,7 @@ use editor::Editor;
 use gpui::{
     actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
     DismissEvent, Entity, FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription,
-    UniformListScrollHandle,
+    TextStyleRefinement, UniformListScrollHandle,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
@@ -406,13 +406,7 @@ impl VariableList {
             })
             .entry("Set value", None, move |window, cx| {
                 this.update(cx, |variable_list, cx| {
-                    let editor = cx.new(|cx| {
-                        let mut editor = Editor::single_line(window, cx);
-                        editor.set_text(variable_value.clone(), window, cx);
-                        editor.select_all(&editor::actions::SelectAll, window, cx);
-                        editor
-                    });
-                    editor.focus_handle(cx).focus(window);
+                    let editor = Self::create_variable_editor(&variable_value, window, cx);
                     variable_list.edited_path = Some((variable.path.clone(), editor));
 
                     cx.notify();
@@ -462,6 +456,27 @@ impl VariableList {
         pretty_assertions::assert_eq!(expected, visual_entries);
     }
 
+    fn create_variable_editor(default: &str, window: &mut Window, cx: &mut App) -> Entity<Editor> {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+
+            let refinement = TextStyleRefinement {
+                font_size: Some(
+                    TextSize::XSmall
+                        .rems(cx)
+                        .to_pixels(window.rem_size())
+                        .into(),
+                ),
+                ..Default::default()
+            };
+            editor.set_text_style_refinement(refinement);
+            editor.set_text(default, window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor
+        });
+        editor.focus_handle(cx).focus(window);
+        editor
+    }
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
@@ -567,22 +582,11 @@ impl VariableList {
                                                         if click.down.click_count < 2 {
                                                             return;
                                                         }
-                                                        let editor = cx.new(|cx| {
-                                                            let mut editor =
-                                                                Editor::single_line(window, cx);
-                                                            editor.set_text(
-                                                                variable_value.clone(),
-                                                                window,
-                                                                cx,
-                                                            );
-                                                            editor.select_all(
-                                                                &editor::actions::SelectAll,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                            editor
-                                                        });
-                                                        editor.focus_handle(cx).focus(window);
+                                                        let editor = Self::create_variable_editor(
+                                                            &variable_value,
+                                                            window,
+                                                            cx,
+                                                        );
                                                         this.edited_path =
                                                             Some((path.clone(), editor));
 
