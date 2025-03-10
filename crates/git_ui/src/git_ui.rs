@@ -29,41 +29,43 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         let project = workspace.project().read(cx);
-        if project.is_via_collab() {
+        if project.is_read_only(cx) {
             return;
         }
-        workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
-            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
-                return;
-            };
-            panel.update(cx, |panel, cx| {
-                panel.fetch(window, cx);
+        if !project.is_via_collab() {
+            workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.fetch(window, cx);
+                });
             });
-        });
-        workspace.register_action(|workspace, _: &git::Push, window, cx| {
-            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
-                return;
-            };
-            panel.update(cx, |panel, cx| {
-                panel.push(false, window, cx);
+            workspace.register_action(|workspace, _: &git::Push, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.push(false, window, cx);
+                });
             });
-        });
-        workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
-            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
-                return;
-            };
-            panel.update(cx, |panel, cx| {
-                panel.push(true, window, cx);
+            workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.push(true, window, cx);
+                });
             });
-        });
-        workspace.register_action(|workspace, _: &git::Pull, window, cx| {
-            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
-                return;
-            };
-            panel.update(cx, |panel, cx| {
-                panel.pull(window, cx);
+            workspace.register_action(|workspace, _: &git::Pull, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.pull(window, cx);
+                });
             });
-        });
+        }
         workspace.register_action(|workspace, action: &git::StageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
@@ -173,6 +175,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ArrowCircle),
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Fetch), cx);
             },
@@ -200,6 +203,7 @@ mod remote_button {
             ahead as usize,
             0,
             None,
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -228,6 +232,7 @@ mod remote_button {
             ahead as usize,
             behind as usize,
             None,
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Pull), cx);
             },
@@ -254,6 +259,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ArrowUpFromLine),
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -280,6 +286,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ArrowUpFromLine),
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -321,7 +328,10 @@ mod remote_button {
         }
     }
 
-    fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
+    fn render_git_action_menu(
+        id: impl Into<ElementId>,
+        keybinding_target: Option<FocusHandle>,
+    ) -> impl IntoElement {
         PopoverMenu::new(id.into())
             .trigger(
                 ui::ButtonLike::new_rounded_right("split-button-right")
@@ -336,6 +346,9 @@ mod remote_button {
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
+                        .when_some(keybinding_target.clone(), |el, keybinding_target| {
+                            el.context(keybinding_target.clone())
+                        })
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
                         .separator()
@@ -353,12 +366,14 @@ mod remote_button {
     }
 
     impl SplitButton {
+        #[allow(clippy::too_many_arguments)]
         fn new(
             id: impl Into<SharedString>,
             left_label: impl Into<SharedString>,
             ahead_count: usize,
             behind_count: usize,
             left_icon: Option<IconName>,
+            keybinding_target: Option<FocusHandle>,
             left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
             tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
         ) -> Self {
@@ -416,9 +431,10 @@ mod remote_button {
             .on_click(left_on_click)
             .tooltip(tooltip);
 
-            let right = render_git_action_menu(ElementId::Name(
-                format!("split-button-right-{}", id).into(),
-            ))
+            let right = render_git_action_menu(
+                ElementId::Name(format!("split-button-right-{}", id).into()),
+                keybinding_target,
+            )
             .into_any_element();
 
             Self { left, right }
