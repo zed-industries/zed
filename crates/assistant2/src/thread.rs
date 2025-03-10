@@ -117,8 +117,10 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use = ToolUseState::from_saved_messages(&saved.messages);
-        let scripting_tool_use = ToolUseState::new();
+        let tool_use =
+            ToolUseState::from_saved_messages(&saved.messages, |name| name != ScriptingTool::NAME);
+        let scripting_tool_use =
+            ToolUseState::from_saved_messages(&saved.messages, |name| name == ScriptingTool::NAME);
 
         Self {
             id,
