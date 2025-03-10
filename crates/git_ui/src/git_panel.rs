@@ -1453,6 +1453,10 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
+        if !self.can_commit() {
+            return;
+        }
+
         let model = match current_language_model(cx) {
             Some(value) => value,
             None => return,
@@ -2291,14 +2295,28 @@ impl GitPanel {
                     .into_any_element();
             }
 
+            let can_commit = self.can_commit();
+            let editor_focus_handle = self.commit_editor.focus_handle(cx);
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
                 .icon_color(Color::Muted)
-                .tooltip(Tooltip::for_action_title_in(
-                    "Generate Commit Message",
-                    &git::GenerateCommitMessage,
-                    &self.commit_editor.focus_handle(cx),
-                ))
+                .tooltip(move |window, cx| {
+                    if can_commit {
+                        Tooltip::for_action_in(
+                            "Generate Commit Message",
+                            &git::GenerateCommitMessage,
+                            &editor_focus_handle,
+                            window,
+                            cx,
+                        )
+                    } else {
+                        Tooltip::simple(
+                            "You must have either staged changes or tracked files to generate a commit message",
+                            cx,
+                        )
+                    }
+                })
+                .disabled(!can_commit)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.generate_commit_message(cx);
                 }))
