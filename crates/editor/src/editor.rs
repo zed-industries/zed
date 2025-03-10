@@ -11639,7 +11639,7 @@ impl Editor {
     fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_or_before_position(
+        self.go_to_hunk_before_or_after_position(
             &snapshot,
             selection.head(),
             Direction::Next,
@@ -11648,7 +11648,7 @@ impl Editor {
         );
     }
 
-    fn go_to_hunk_after_or_before_position(
+    fn go_to_hunk_before_or_after_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
@@ -11699,7 +11699,7 @@ impl Editor {
     ) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_or_before_position(
+        self.go_to_hunk_before_or_after_position(
             &snapshot,
             selection.head(),
             Direction::Prev,
