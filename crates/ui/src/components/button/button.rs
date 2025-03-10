@@ -6,9 +6,7 @@ use crate::{
     prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding,
     KeybindingPosition, TintColor,
 };
-use crate::{
-    ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
-};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label};
 
 use super::button_icon::ButtonIcon;
 

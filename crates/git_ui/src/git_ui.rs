@@ -1,13 +1,13 @@
 use ::settings::Settings;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
-    status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
+    status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
 use gpui::{App, Entity, FocusHandle};
 use project::Project;
 use project_diff::ProjectDiff;
-use ui::{prelude::*, Checkbox};
+use ui::prelude::*;
 use workspace::Workspace;
 
 mod askpass_modal;
