@@ -4061,12 +4061,20 @@ impl Editor {
         )
         .completions;
 
+        let buffer_row = text::ToPoint::to_point(&buffer_position, &buffer_snapshot).row;
+        let min_word_search =
+            buffer_snapshot.clip_point(Point::new(buffer_row.saturating_sub(5_000), 0), Bias::Left);
+        let max_word_search = buffer_snapshot.clip_point(
+            Point::new(buffer_row + 5_000, 0).min(buffer_snapshot.max_point()),
+            Bias::Right,
+        );
+        let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
+            ..buffer_snapshot.point_to_offset(max_word_search);
         let words = match completion_settings.words {
             WordsCompletionMode::Disabled => Task::ready(HashSet::default()),
             WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => {
                 cx.background_spawn(async move {
-                    // TODO kb cap for long buffers
-                    buffer_snapshot.words_in_range(None, 0..buffer_snapshot.len())
+                    buffer_snapshot.words_in_range(None, word_search_range)
                 })
             }
         };
