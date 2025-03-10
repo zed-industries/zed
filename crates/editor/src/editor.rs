@@ -11639,7 +11639,7 @@ impl Editor {
     fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_or_before_position(
+        self.go_to_hunk_before_or_after_position(
             &snapshot,
             selection.head(),
             Direction::Next,
@@ -11648,7 +11648,7 @@ impl Editor {
         );
     }
 
-    fn go_to_hunk_after_or_before_position(
+    fn go_to_hunk_before_or_after_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
@@ -11699,7 +11699,7 @@ impl Editor {
     ) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_or_before_position(
+        self.go_to_hunk_before_or_after_position(
             &snapshot,
             selection.head(),
             Direction::Prev,
@@ -13861,21 +13861,6 @@ impl Editor {
             return;
         }
 
-        let snapshot = self.snapshot(window, cx);
-        let newest_range = self.selections.newest::<Point>(cx).range();
-
-        let run_twice = snapshot
-            .hunks_for_ranges([newest_range])
-            .first()
-            .is_some_and(|hunk| {
-                let next_line = Point::new(hunk.row_range.end.0 + 1, 0);
-                self.hunk_after_position(&snapshot, next_line)
-                    .is_some_and(|other| other.row_range == hunk.row_range)
-            });
-
-        if run_twice {
-            self.go_to_next_hunk(&GoToHunk, window, cx);
-        }
         self.stage_or_unstage_diff_hunks(stage, ranges, cx);
         self.go_to_next_hunk(&GoToHunk, window, cx);
     }

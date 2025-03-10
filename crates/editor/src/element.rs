@@ -9014,7 +9014,7 @@ fn diff_hunk_controls(
                                     let snapshot = editor.snapshot(window, cx);
                                     let position =
                                         hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                                    editor.go_to_hunk_after_or_before_position(
+                                    editor.go_to_hunk_before_or_after_position(
                                         &snapshot,
                                         position,
                                         Direction::Next,
@@ -9050,7 +9050,7 @@ fn diff_hunk_controls(
                                     let snapshot = editor.snapshot(window, cx);
                                     let point =
                                         hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                    editor.go_to_hunk_after_or_before_position(
+                                    editor.go_to_hunk_before_or_after_position(
                                         &snapshot,
                                         point,
                                         Direction::Prev,
