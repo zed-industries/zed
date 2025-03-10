@@ -16,6 +16,9 @@ extend-exclude = [
     "crates/google_ai/src/supported_countries.rs",
     "crates/open_ai/src/supported_countries.rs",
 
+    # Fuzzy matching tests contain odd queries
+    "crates/language/src/buffer_tests.rs",
+
     # Some crate names are flagged as typos.
     "crates/indexed_docs/src/providers/rustdoc/popular_crates.txt",
 
