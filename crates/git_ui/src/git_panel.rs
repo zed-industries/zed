@@ -2,7 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::Diff;
-use crate::remote_output_toast::{self, RemoteAction, SuccessMessage};
+use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::repository_selector::filtered_repository_entries;
 use crate::{branch_picker, render_remote_button};
 use crate::{
@@ -949,7 +949,7 @@ impl GitPanel {
                 }
                 result
                     .map_err(|e| {
-                        this.show_err_toast(e, cx);
+                        this.show_error_notif(e, cx);
                     })
                     .ok();
             })
@@ -1201,7 +1201,7 @@ impl GitPanel {
                     }
                     result
                         .map_err(|e| {
-                            this.show_err_toast(e, cx);
+                            this.show_error_notif(e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -1358,7 +1358,7 @@ impl GitPanel {
                         this.commit_editor
                             .update(cx, |editor, cx| editor.clear(window, cx));
                     }
-                    Err(e) => this.show_err_toast(e, cx),
+                    Err(e) => this.show_error_notif(e, cx),
                 }
             })
             .ok();
@@ -1400,7 +1400,7 @@ impl GitPanel {
                             editor.set_text(prior_commit.message, window, cx)
                         });
                     }
-                    Err(e) => this.show_err_toast(e, cx),
+                    Err(e) => this.show_error_notif(e, cx),
                 }
             })
             .ok();
@@ -1620,18 +1620,14 @@ impl GitPanel {
                 let remote_message = fetch.await?;
                 drop(guard);
                 this.update_in(&mut cx, |this, window, cx| {
+                    let action = RemoteAction::Fetch;
                     match remote_message {
                         Ok(remote_message) => {
-                            this.show_remote_output(
-                                RemoteAction::Fetch,
-                                remote_message,
-                                window,
-                                cx,
-                            );
+                            this.show_remote_output(action, remote_message, window, cx)
                         }
                         Err(e) => {
                             log::error!("Error while fetching {:?}", e);
-                            this.show_err_toast(e, cx);
+                            this.show_error_toast(action, e, window, cx)
                         }
                     }
 
@@ -1664,7 +1660,7 @@ impl GitPanel {
                 }
                 Err(e) => {
                     log::error!("Failed to get current remote: {}", e);
-                    this.update(&mut cx, |this, cx| this.show_err_toast(e, cx))
+                    this.update(&mut cx, |this, cx| this.show_error_notif(e, cx))
                         .ok();
                     return Ok(());
                 }
@@ -1685,13 +1681,12 @@ impl GitPanel {
             let remote_message = pull.await?;
             drop(guard);
 
+            let action = RemoteAction::Pull(remote);
             this.update_in(&mut cx, |this, window, cx| match remote_message {
-                Ok(remote_message) => {
-                    this.show_remote_output(RemoteAction::Pull(remote), remote_message, window, cx)
-                }
-                Err(err) => {
-                    log::error!("Error while pull {:?}", err);
-                    this.show_err_toast(err, cx)
+                Ok(remote_message) => this.show_remote_output(action, remote_message, window, cx),
+                Err(e) => {
+                    log::error!("Error while pulling {:?}", e);
+                    this.show_error_toast(action, e, window, cx)
                 }
             })
             .ok();
@@ -1728,7 +1723,7 @@ impl GitPanel {
                 }
                 Err(e) => {
                     log::error!("Failed to get current remote: {}", e);
-                    this.update(&mut cx, |this, cx| this.show_err_toast(e, cx))
+                    this.update(&mut cx, |this, cx| this.show_error_notif(e, cx))
                         .ok();
                     return Ok(());
                 }
@@ -1755,13 +1750,12 @@ impl GitPanel {
             let remote_output = push.await?;
             drop(guard);
 
+            let action = RemoteAction::Push(branch.name, remote);
             this.update_in(&mut cx, |this, window, cx| match remote_output {
-                Ok(remote_message) => {
-                    this.show_remote_output(RemoteAction::Push(branch.name, remote), remote_message, window, cx);
-                }
+                Ok(remote_message) => this.show_remote_output(action, remote_message, window, cx),
                 Err(e) => {
                     log::error!("Error while pushing {:?}", e);
-                    this.show_err_toast(e, cx);
+                    this.show_error_toast(action, e, window, cx)
                 }
             })?;
 
@@ -2249,7 +2243,7 @@ impl GitPanel {
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
 
-    fn show_err_toast(&self, e: anyhow::Error, cx: &mut App) {
+    fn show_error_notif(&self, e: anyhow::Error, cx: &mut App) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -2285,22 +2279,34 @@ impl GitPanel {
         };
 
         workspace.update(cx, |workspace, cx| {
-            let SuccessMessage { message, style } =
-                remote_output_toast::format_output(action, info);
+            let SuccessMessage { message, style } = remote_output::format_output(&action, info);
             let workspace_weak = cx.weak_entity();
-
+            let action_name = action.name();
 
             let status_toast = StatusToast::new(message, window, cx, move |this, _, cx| {
-                use remote_output_toast::SuccessStyle::*;
+                use remote_output::SuccessStyle::*;
+                let project = self.project.clone();
                 match style {
                     Toast { .. } => this,
                     ToastWithLog { output } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                        .action("View Log", move | _, window, cx| {
+                        .action("View Log", move |_, window, cx| {
                             let output = output.clone();
-                            workspace_weak.update(cx, |workspace, cx| {
-                                Self::open_output(workspace, output, window, cx)
-                            }).ok();
+                            let project = project.clone();
+                            let output =
+                                format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    Self::open_output(
+                                        project,
+                                        action_name,
+                                        workspace,
+                                        &output,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .ok();
                         }),
                     PushPrLink { link } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
@@ -2314,8 +2320,71 @@ impl GitPanel {
         });
     }
 
-    fn open_output(workspace: &mut Workspace, output: RemoteCommandOutput, window: &Window, cx: &mut Context<Workspace>) {
-        dbg!(output);
+    fn show_error_toast(
+        &self,
+        action: RemoteAction,
+        err: anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let workspace_weak = cx.weak_entity();
+            let action_name = action.name();
+            let content = err.to_string();
+
+            let status_toast = StatusToast::new(
+                &format!("git {action_name} failed..."),
+                window,
+                cx,
+                move |this, _, cx| {
+                    let project = self.project.clone();
+                    let content = content.clone();
+                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Muted))
+                        .action("View Log", move |_, window, cx| {
+                            let project = project.clone();
+                            let content = content.clone();
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    Self::open_output(
+                                        project,
+                                        action_name,
+                                        workspace,
+                                        &content,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                        })
+                },
+            );
+            workspace.toggle_status_toast(window, cx, status_toast)
+        });
+    }
+
+    fn open_output(
+        project: Entity<Project>,
+        action_name: &'static str,
+        workspace: &mut Workspace,
+        output: &str,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let buffer = cx.new(|cx| Buffer::local(output, cx));
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+            editor.buffer().update(cx, |buffer, cx| {
+                buffer.set_title(format!("Output from git {action_name}"), cx);
+            });
+            editor.set_read_only(true);
+            editor
+        });
+
+        workspace.add_item_to_center(Box::new(editor), window, cx);
     }
 
     pub fn render_spinner(&self) -> Option<impl IntoElement> {
