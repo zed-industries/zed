@@ -149,7 +149,12 @@ pub trait GitRepository: Send + Sync {
     /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
-    fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()>;
+    fn set_index_text(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+        env: &HashMap<String, String>,
+    ) -> anyhow::Result<()>;
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
@@ -167,8 +172,13 @@ pub trait GitRepository: Send + Sync {
     fn create_branch(&self, _: &str) -> Result<()>;
     fn branch_exits(&self, _: &str) -> Result<bool>;
 
-    fn reset(&self, commit: &str, mode: ResetMode) -> Result<()>;
-    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()>;
+    fn reset(&self, commit: &str, mode: ResetMode, env: &HashMap<String, String>) -> Result<()>;
+    fn checkout_files(
+        &self,
+        commit: &str,
+        paths: &[RepoPath],
+        env: &HashMap<String, String>,
+    ) -> Result<()>;
 
     fn show(&self, commit: &str) -> Result<CommitDetails>;
 
@@ -189,13 +199,18 @@ pub trait GitRepository: Send + Sync {
     /// Updates the index to match the worktree at the given paths.
     ///
     /// If any of the paths have been deleted from the worktree, they will be removed from the index if found there.
-    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+    fn stage_paths(&self, paths: &[RepoPath], env: &HashMap<String, String>) -> Result<()>;
     /// Updates the index to match HEAD at the given paths.
     ///
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
-    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+    fn unstage_paths(&self, paths: &[RepoPath], env: &HashMap<String, String>) -> Result<()>;
 
-    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
+    fn commit(
+        &self,
+        message: &str,
+        name_and_email: Option<(&str, &str)>,
+        env: &HashMap<String, String>,
+    ) -> Result<()>;
 
     fn push(
         &self,
@@ -203,6 +218,7 @@ pub trait GitRepository: Send + Sync {
         upstream_name: &str,
         options: Option<PushOptions>,
         askpass: AskPassSession,
+        env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput>;
 
     fn pull(
@@ -210,8 +226,13 @@ pub trait GitRepository: Send + Sync {
         branch_name: &str,
         upstream_name: &str,
         askpass: AskPassSession,
+        env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput>;
-    fn fetch(&self, askpass: AskPassSession) -> Result<RemoteCommandOutput>;
+    fn fetch(
+        &self,
+        askpass: AskPassSession,
+        env: &HashMap<String, String>,
+    ) -> Result<RemoteCommandOutput>;
 
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
 
@@ -308,7 +329,7 @@ impl GitRepository for RealGitRepository {
         Ok(details)
     }
 
-    fn reset(&self, commit: &str, mode: ResetMode) -> Result<()> {
+    fn reset(&self, commit: &str, mode: ResetMode, env: &HashMap<String, String>) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         let mode_flag = match mode {
@@ -317,6 +338,7 @@ impl GitRepository for RealGitRepository {
         };
 
         let output = new_std_command(&self.git_binary_path)
+            .envs(env)
             .current_dir(&working_directory)
             .args(["reset", mode_flag, commit])
             .output()?;
@@ -329,7 +351,12 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()> {
+    fn checkout_files(
+        &self,
+        commit: &str,
+        paths: &[RepoPath],
+        env: &HashMap<String, String>,
+    ) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -337,6 +364,7 @@ impl GitRepository for RealGitRepository {
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
+            .envs(env)
             .args(["checkout", commit, "--"])
             .args(paths.iter().map(|path| path.as_ref()))
             .output()?;
@@ -385,11 +413,17 @@ impl GitRepository for RealGitRepository {
         Some(content)
     }
 
-    fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()> {
+    fn set_index_text(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+        env: &HashMap<String, String>,
+    ) -> anyhow::Result<()> {
         let working_directory = self.working_directory()?;
         if let Some(content) = content {
             let mut child = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
+                .envs(env)
                 .args(["hash-object", "-w", "--stdin"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -402,6 +436,7 @@ impl GitRepository for RealGitRepository {
 
             let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
+                .envs(env)
                 .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
                 .arg(path.as_ref())
                 .output()?;
@@ -415,6 +450,7 @@ impl GitRepository for RealGitRepository {
         } else {
             let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
+                .envs(env)
                 .args(["update-index", "--force-remove"])
                 .arg(path.as_ref())
                 .output()?;
@@ -607,12 +643,13 @@ impl GitRepository for RealGitRepository {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+    fn stage_paths(&self, paths: &[RepoPath], env: &HashMap<String, String>) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         if !paths.is_empty() {
             let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
+                .envs(env)
                 .args(["update-index", "--add", "--remove", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
                 .output()?;
@@ -627,12 +664,13 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+    fn unstage_paths(&self, paths: &[RepoPath], env: &HashMap<String, String>) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         if !paths.is_empty() {
             let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
+                .envs(env)
                 .args(["reset", "--quiet", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
                 .output()?;
@@ -647,11 +685,17 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(
+        &self,
+        message: &str,
+        name_and_email: Option<(&str, &str)>,
+        env: &HashMap<String, String>,
+    ) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         let mut cmd = new_std_command(&self.git_binary_path);
         cmd.current_dir(&working_directory)
+            .envs(env)
             .args(["commit", "--quiet", "-m"])
             .arg(message)
             .arg("--cleanup=strip");
@@ -677,11 +721,13 @@ impl GitRepository for RealGitRepository {
         remote_name: &str,
         options: Option<PushOptions>,
         ask_pass: AskPassSession,
+        env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
         let mut command = new_smol_command("git");
         command
+            .envs(env)
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force")
@@ -705,11 +751,13 @@ impl GitRepository for RealGitRepository {
         branch_name: &str,
         remote_name: &str,
         ask_pass: AskPassSession,
+        env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
         let mut command = new_smol_command("git");
         command
+            .envs(env)
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force")
@@ -724,11 +772,16 @@ impl GitRepository for RealGitRepository {
         run_remote_command(ask_pass, git_process)
     }
 
-    fn fetch(&self, ask_pass: AskPassSession) -> Result<RemoteCommandOutput> {
+    fn fetch(
+        &self,
+        ask_pass: AskPassSession,
+        env: &HashMap<String, String>,
+    ) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
         let mut command = new_smol_command("git");
         command
+            .envs(env)
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force")
@@ -919,7 +972,12 @@ impl GitRepository for FakeGitRepository {
         state.head_contents.get(path.as_ref()).cloned()
     }
 
-    fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()> {
+    fn set_index_text(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+        _env: &HashMap<String, String>,
+    ) -> anyhow::Result<()> {
         let mut state = self.state.lock();
         if let Some(message) = state.simulated_index_write_error_message.clone() {
             return Err(anyhow::anyhow!(message));
@@ -952,11 +1010,11 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn reset(&self, _: &str, _: ResetMode) -> Result<()> {
+    fn reset(&self, _: &str, _: ResetMode, _: &HashMap<String, String>) -> Result<()> {
         unimplemented!()
     }
 
-    fn checkout_files(&self, _: &str, _: &[RepoPath]) -> Result<()> {
+    fn checkout_files(&self, _: &str, _: &[RepoPath], _: &HashMap<String, String>) -> Result<()> {
         unimplemented!()
     }
 
@@ -1042,15 +1100,20 @@ impl GitRepository for FakeGitRepository {
             .cloned()
     }
 
-    fn stage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+    fn stage_paths(&self, _paths: &[RepoPath], _env: &HashMap<String, String>) -> Result<()> {
         unimplemented!()
     }
 
-    fn unstage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+    fn unstage_paths(&self, _paths: &[RepoPath], _env: &HashMap<String, String>) -> Result<()> {
         unimplemented!()
     }
 
-    fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(
+        &self,
+        _message: &str,
+        _name_and_email: Option<(&str, &str)>,
+        _env: &HashMap<String, String>,
+    ) -> Result<()> {
         unimplemented!()
     }
 
@@ -1060,6 +1123,7 @@ impl GitRepository for FakeGitRepository {
         _remote: &str,
         _options: Option<PushOptions>,
         _ask_pass: AskPassSession,
+        _env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
@@ -1069,11 +1133,16 @@ impl GitRepository for FakeGitRepository {
         _branch: &str,
         _remote: &str,
         _ask_pass: AskPassSession,
+        _env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 
-    fn fetch(&self, _ask_pass: AskPassSession) -> Result<RemoteCommandOutput> {
+    fn fetch(
+        &self,
+        _ask_pass: AskPassSession,
+        _env: &HashMap<String, String>,
+    ) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 

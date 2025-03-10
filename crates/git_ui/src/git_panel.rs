@@ -901,13 +901,14 @@ impl GitPanel {
             let buffers = futures::future::join_all(tasks).await;
 
             active_repository
-                .update(&mut cx, |repo, _| {
+                .update(&mut cx, |repo, cx| {
                     repo.checkout_files(
                         "HEAD",
                         entries
                             .iter()
                             .map(|entries| entries.repo_path.clone())
                             .collect(),
+                        cx,
                     )
                 })?
                 .await??;
@@ -1289,7 +1290,8 @@ impl GitPanel {
 
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
-            let commit_task = active_repository.read(cx).commit(message.into(), None);
+            let commit_task =
+                active_repository.update(cx, |repo, cx| repo.commit(message.into(), None, cx));
             cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
@@ -1310,7 +1312,7 @@ impl GitPanel {
             cx.spawn(|_, mut cx| async move {
                 stage_task.await?;
                 let commit_task = active_repository
-                    .update(&mut cx, |repo, _| repo.commit(message.into(), None))?;
+                    .update(&mut cx, |repo, cx| repo.commit(message.into(), None, cx))?;
                 commit_task.await?
             })
         };
@@ -1346,7 +1348,7 @@ impl GitPanel {
                 if let Ok(true) = confirmation.await {
                     let prior_head = prior_head.await?;
 
-                    repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
+                    repo.update(&mut cx, |repo, cx| repo.reset("HEAD^", ResetMode::Soft, cx))?
                         .await??;
 
                     Ok(Some(prior_head))

@@ -1,7 +1,7 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Project, ProjectItem, ProjectPath,
+    Project, ProjectEnvironment, ProjectItem, ProjectPath,
 };
 use anyhow::{Context as _, Result};
 use askpass::{AskPassDelegate, AskPassSession};
@@ -10,6 +10,7 @@ use client::ProjectId;
 use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
+    future::OptionFuture,
     StreamExt as _,
 };
 use git::repository::DiffType;
@@ -43,6 +44,7 @@ use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
 
 pub struct GitStore {
     buffer_store: Entity<BufferStore>,
+    environment: Option<Entity<ProjectEnvironment>>,
     pub(super) project_id: Option<ProjectId>,
     pub(super) client: AnyProtoClient,
     repositories: Vec<Entity<Repository>>,
@@ -54,6 +56,7 @@ pub struct GitStore {
 pub struct Repository {
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
+    project_environment: Option<WeakEntity<ProjectEnvironment>>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
     pub dot_git_abs_path: PathBuf,
@@ -101,6 +104,7 @@ impl GitStore {
     pub fn new(
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
+        environment: Option<Entity<ProjectEnvironment>>,
         client: AnyProtoClient,
         project_id: Option<ProjectId>,
         cx: &mut Context<'_, Self>,
@@ -115,6 +119,7 @@ impl GitStore {
             project_id,
             client,
             buffer_store,
+            environment,
             repositories: Vec::new(),
             active_index: None,
             update_sender,
@@ -225,6 +230,10 @@ impl GitStore {
                             existing_handle
                         } else {
                             cx.new(|_| Repository {
+                                project_environment: self
+                                    .environment
+                                    .as_ref()
+                                    .map(|env| env.downgrade()),
                                 git_store: this.clone(),
                                 worktree_id,
                                 askpass_delegates: Default::default(),
@@ -282,9 +291,13 @@ impl GitStore {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some((repo, path)) = this.repository_and_path_for_buffer_id(buffer_id, cx) {
-                let recv = repo
-                    .read(cx)
-                    .set_index_text(&path, new_index_text.as_ref().map(|rope| rope.to_string()));
+                let recv = repo.update(cx, |repo, cx| {
+                    repo.set_index_text(
+                        &path,
+                        new_index_text.as_ref().map(|rope| rope.to_string()),
+                        cx,
+                    )
+                });
                 let diff = diff.downgrade();
                 cx.spawn(|this, mut cx| async move {
                     if let Some(result) = cx.background_spawn(async move { recv.await.ok() }).await
@@ -542,10 +555,11 @@ impl GitStore {
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
+            .update(&mut cx, |repository_handle, cx| {
                 repository_handle.set_index_text(
                     &RepoPath::from_str(&envelope.payload.path),
                     envelope.payload.text,
+                    cx,
                 )
             })?
             .await??;
@@ -567,8 +581,8 @@ impl GitStore {
         let email = envelope.payload.email.map(SharedString::from);
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.commit(message, name.zip(email))
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.commit(message, name.zip(email), cx)
             })?
             .await??;
         Ok(proto::Ack {})
@@ -703,8 +717,8 @@ impl GitStore {
         };
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.reset(&envelope.payload.commit, mode)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.reset(&envelope.payload.commit, mode, cx)
             })?
             .await??;
         Ok(proto::Ack {})
@@ -727,8 +741,8 @@ impl GitStore {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.checkout_files(&envelope.payload.commit, paths)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
             })?
             .await??;
         Ok(proto::Ack {})
@@ -1115,11 +1129,14 @@ impl Repository {
         &self,
         commit: &str,
         paths: Vec<RepoPath>,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let commit = commit.to_string();
+        let env = self.worktree_environment(cx);
+
         self.send_job(|git_repo| async move {
             match git_repo {
-                GitRepo::Local(repo) => repo.checkout_files(&commit, &paths),
+                GitRepo::Local(repo) => repo.checkout_files(&commit, &paths, &env.await),
                 GitRepo::Remote {
                     project_id,
                     client,
@@ -1145,11 +1162,20 @@ impl Repository {
         })
     }
 
-    pub fn reset(&self, commit: &str, reset_mode: ResetMode) -> oneshot::Receiver<Result<()>> {
+    pub fn reset(
+        &self,
+        commit: &str,
+        reset_mode: ResetMode,
+        cx: &mut App,
+    ) -> oneshot::Receiver<Result<()>> {
         let commit = commit.to_string();
+        let env = self.worktree_environment(cx);
         self.send_job(|git_repo| async move {
             match git_repo {
-                GitRepo::Local(git_repo) => git_repo.reset(&commit, reset_mode),
+                GitRepo::Local(git_repo) => {
+                    let env = env.await;
+                    git_repo.reset(&commit, reset_mode, &env)
+                }
                 GitRepo::Remote {
                     project_id,
                     client,
@@ -1219,6 +1245,7 @@ impl Repository {
         if entries.is_empty() {
             return Task::ready(Ok(()));
         }
+        let env = self.worktree_environment(cx);
 
         let mut save_futures = Vec::new();
         if let Some(buffer_store) = self.buffer_store(cx) {
@@ -1245,11 +1272,12 @@ impl Repository {
             for save_future in save_futures {
                 save_future.await?;
             }
+            let env = env.await;
 
             this.update(&mut cx, |this, _| {
                 this.send_job(|git_repo| async move {
                     match git_repo {
-                        GitRepo::Local(repo) => repo.stage_paths(&entries),
+                        GitRepo::Local(repo) => repo.stage_paths(&entries, &env),
                         GitRepo::Remote {
                             project_id,
                             client,
@@ -1288,6 +1316,7 @@ impl Repository {
         if entries.is_empty() {
             return Task::ready(Ok(()));
         }
+        let env = self.worktree_environment(cx);
 
         let mut save_futures = Vec::new();
         if let Some(buffer_store) = self.buffer_store(cx) {
@@ -1314,11 +1343,12 @@ impl Repository {
             for save_future in save_futures {
                 save_future.await?;
             }
+            let env = env.await;
 
             this.update(&mut cx, |this, _| {
                 this.send_job(|git_repo| async move {
                     match git_repo {
-                        GitRepo::Local(repo) => repo.unstage_paths(&entries),
+                        GitRepo::Local(repo) => repo.unstage_paths(&entries, &env),
                         GitRepo::Remote {
                             project_id,
                             client,
@@ -1375,19 +1405,42 @@ impl Repository {
         self.repository_entry.status_len()
     }
 
+    fn worktree_environment(
+        &self,
+        cx: &mut App,
+    ) -> impl Future<Output = HashMap<String, String>> + 'static {
+        let task = self.project_environment.as_ref().and_then(|env| {
+            env.update(cx, |env, cx| {
+                env.get_environment(
+                    Some(self.worktree_id),
+                    Some(self.worktree_abs_path.clone()),
+                    cx,
+                )
+            })
+            .ok()
+        });
+        async move { OptionFuture::from(task).await.flatten().unwrap_or_default() }
+    }
+
     pub fn commit(
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
+        let env = self.worktree_environment(cx);
         self.send_job(|git_repo| async move {
             match git_repo {
-                GitRepo::Local(repo) => repo.commit(
-                    message.as_ref(),
-                    name_and_email
-                        .as_ref()
-                        .map(|(name, email)| (name.as_ref(), email.as_ref())),
-                ),
+                GitRepo::Local(repo) => {
+                    let env = env.await;
+                    repo.commit(
+                        message.as_ref(),
+                        name_and_email
+                            .as_ref()
+                            .map(|(name, email)| (name.as_ref(), email.as_ref())),
+                        &env,
+                    )
+                }
                 GitRepo::Remote {
                     project_id,
                     client,
@@ -1416,17 +1469,19 @@ impl Repository {
     pub fn fetch(
         &mut self,
         askpass: AskPassDelegate,
-        cx: &App,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+        let env = self.worktree_environment(cx);
 
         self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
-                    git_repository.fetch(askpass)
+                    let env = env.await;
+                    git_repository.fetch(askpass, &env)
                 }
                 GitRepo::Remote {
                     project_id,
@@ -1465,17 +1520,19 @@ impl Repository {
         remote: SharedString,
         options: Option<PushOptions>,
         askpass: AskPassDelegate,
-        cx: &App,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+        let env = self.worktree_environment(cx);
 
         self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
+                    let env = env.await;
                     let askpass = AskPassSession::new(&executor, askpass).await?;
-                    git_repository.push(&branch, &remote, options, askpass)
+                    git_repository.push(&branch, &remote, options, askpass, &env)
                 }
                 GitRepo::Remote {
                     project_id,
@@ -1518,16 +1575,19 @@ impl Repository {
         branch: SharedString,
         remote: SharedString,
         askpass: AskPassDelegate,
-        cx: &App,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+        let env = self.worktree_environment(cx);
+
         self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
-                    git_repository.pull(&branch, &remote, askpass)
+                    let env = env.await;
+                    git_repository.pull(&branch, &remote, askpass, &env)
                 }
                 GitRepo::Remote {
                     project_id,
@@ -1565,13 +1625,16 @@ impl Repository {
         &self,
         path: &RepoPath,
         content: Option<String>,
+        cx: &mut App,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let path = path.clone();
+        let env = self.worktree_environment(cx);
+
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
             |git_repo| async move {
                 match git_repo {
-                    GitRepo::Local(repo) => repo.set_index_text(&path, content),
+                    GitRepo::Local(repo) => repo.set_index_text(&path, content, &env.await),
                     GitRepo::Remote {
                         project_id,
                         client,
