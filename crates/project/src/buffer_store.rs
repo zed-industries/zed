@@ -803,8 +803,7 @@ impl LocalBufferStore {
             let Some(buffer) = buffer.upgrade() else {
                 continue;
             };
-            let buffer = buffer.read(cx);
-            let Some(file) = File::from_dyn(buffer.file()) else {
+            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
                 continue;
             };
             if file.worktree != worktree_handle {
@@ -815,7 +814,6 @@ impl LocalBufferStore {
                 .iter()
                 .any(|(work_dir, _)| file.path.starts_with(work_dir))
             {
-                let snapshot = buffer.text_snapshot();
                 let has_unstaged_diff = diff_state
                     .unstaged_diff
                     .as_ref()
@@ -825,7 +823,7 @@ impl LocalBufferStore {
                     .as_ref()
                     .is_some_and(|set| set.is_upgradable());
                 diff_state_updates.push((
-                    snapshot.clone(),
+                    buffer,
                     file.path.clone(),
                     has_unstaged_diff.then(|| diff_state.index_text.clone()),
                     has_uncommitted_diff.then(|| diff_state.head_text.clone()),
@@ -844,36 +842,33 @@ impl LocalBufferStore {
                 .background_spawn(async move {
                     diff_state_updates
                         .into_iter()
-                        .filter_map(
-                            |(buffer_snapshot, path, current_index_text, current_head_text)| {
-                                let local_repo = snapshot.local_repo_for_path(&path)?;
-                                let relative_path = local_repo.relativize(&path).ok()?;
-                                let index_text = if current_index_text.is_some() {
-                                    local_repo.repo().load_index_text(&relative_path)
-                                } else {
-                                    None
-                                };
-                                let head_text = if current_head_text.is_some() {
-                                    local_repo.repo().load_committed_text(&relative_path)
-                                } else {
-                                    None
-                                };
+                        .filter_map(|(buffer, path, current_index_text, current_head_text)| {
+                            let local_repo = snapshot.local_repo_for_path(&path)?;
+                            let relative_path = local_repo.relativize(&path).ok()?;
+                            let index_text = if current_index_text.is_some() {
+                                local_repo.repo().load_index_text(&relative_path)
+                            } else {
+                                None
+                            };
+                            let head_text = if current_head_text.is_some() {
+                                local_repo.repo().load_committed_text(&relative_path)
+                            } else {
+                                None
+                            };
 
-                                // Avoid triggering a diff update if the base text has not changed.
-                                if let Some((current_index, current_head)) =
-                                    current_index_text.as_ref().zip(current_head_text.as_ref())
+                            // Avoid triggering a diff update if the base text has not changed.
+                            if let Some((current_index, current_head)) =
+                                current_index_text.as_ref().zip(current_head_text.as_ref())
+                            {
+                                if current_index.as_deref() == index_text.as_ref()
+                                    && current_head.as_deref() == head_text.as_ref()
                                 {
-                                    if current_index.as_deref() == index_text.as_ref()
-                                        && current_head.as_deref() == head_text.as_ref()
-                                    {
-                                        return None;
-                                    }
+                                    return None;
                                 }
+                            }
 
-                                let diff_bases_change = match (
-                                    current_index_text.is_some(),
-                                    current_head_text.is_some(),
-                                ) {
+                            let diff_bases_change =
+                                match (current_index_text.is_some(), current_head_text.is_some()) {
                                     (true, true) => Some(if index_text == head_text {
                                         DiffBasesChange::SetBoth(head_text)
                                     } else {
@@ -886,17 +881,17 @@ impl LocalBufferStore {
                                     (false, true) => Some(DiffBasesChange::SetHead(head_text)),
                                     (false, false) => None,
                                 };
-                                Some((buffer_snapshot, diff_bases_change))
-                            },
-                        )
+
+                            Some((buffer, diff_bases_change))
+                        })
                         .collect::<Vec<_>>()
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                for (buffer_snapshot, diff_bases_change) in diff_bases_changes_by_buffer {
+                for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
                     let Some(OpenBuffer::Complete { diff_state, .. }) =
-                        this.opened_buffers.get_mut(&buffer_snapshot.remote_id())
+                        this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
                     else {
                         continue;
                     };
@@ -907,8 +902,9 @@ impl LocalBufferStore {
                     diff_state.update(cx, |diff_state, cx| {
                         use proto::update_diff_bases::Mode;
 
+                        let buffer = buffer.read(cx);
                         if let Some((client, project_id)) = this.downstream_client.as_ref() {
-                            let buffer_id = buffer_snapshot.remote_id().to_proto();
+                            let buffer_id = buffer.remote_id().to_proto();
                             let (staged_text, committed_text, mode) = match diff_bases_change
                                 .clone()
                             {
@@ -932,8 +928,11 @@ impl LocalBufferStore {
                             client.send(message).log_err();
                         }
 
-                        let _ =
-                            diff_state.diff_bases_changed(buffer_snapshot, diff_bases_change, cx);
+                        let _ = diff_state.diff_bases_changed(
+                            buffer.text_snapshot(),
+                            diff_bases_change,
+                            cx,
+                        );
                     });
                 }
             })
