@@ -636,7 +636,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.create_branch(branch_name)
+                repository_handle.create_branch(&branch_name)
             })?
             .await??;
 
@@ -656,7 +656,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.change_branch(branch_name)
+                repository_handle.change_branch(&branch_name)
             })?
             .await??;
 
@@ -1695,7 +1695,8 @@ impl Repository {
         })
     }
 
-    pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn create_branch(&self, branch_name: &str) -> oneshot::Receiver<Result<()>> {
+        let branch_name = branch_name.to_owned();
         self.send_job(|repo| async move {
             match repo {
                 GitRepo::Local(git_repository) => git_repository.create_branch(&branch_name),
@@ -1720,7 +1721,8 @@ impl Repository {
         })
     }
 
-    pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn change_branch(&self, branch_name: &str) -> oneshot::Receiver<Result<()>> {
+        let branch_name = branch_name.to_owned();
         self.send_job(|repo| async move {
             match repo {
                 GitRepo::Local(git_repository) => git_repository.change_branch(&branch_name),

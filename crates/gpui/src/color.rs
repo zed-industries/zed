@@ -683,11 +683,11 @@ impl Default for Background {
 }
 
 /// Creates a hash pattern background
-pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
+pub fn pattern_slash(color: Hsla, height: f32) -> Background {
     Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
-        gradient_angle_or_pattern_height: thickness,
+        gradient_angle_or_pattern_height: height,
         ..Default::default()
     }
 }
