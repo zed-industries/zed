@@ -1948,6 +1948,13 @@ impl Interactivity {
                             if pending_mouse_down.is_some() && hitbox.is_hovered(window) {
                                 captured_mouse_down = pending_mouse_down.take();
                                 window.refresh();
+                            } else if pending_mouse_down.is_some() {
+                                // Clear the pending mouse (without fire click handlers) if the
+                                // hitbox is not being hovered.
+                                // This avoid dragging elements that changed its position
+                                // immediately after being clicked.
+                                let _capt = pending_mouse_down.take();
+                                window.refresh();
                             }
                         }
                         // Fire click handlers during the bubble phase.
