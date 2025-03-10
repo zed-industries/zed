@@ -2770,24 +2770,24 @@ impl GitPanel {
         let scroll_bar_style = self.show_scrollbar(cx);
         let show_container = matches!(scroll_bar_style, ShowScrollbar::Always);
 
-        // if !self.should_show_scrollbar(cx)
-        //     || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
-        // {
-        //     return None;
-        // }
+        if !self.should_show_scrollbar(cx)
+            || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
+        {
+            return None;
+        }
 
         let scroll_handle = self.scroll_handle.0.borrow();
-        dbg!(scroll_handle.last_item_size);
-        // let longest_item_width = dbg!(scroll_handle.last_item_size)
-        //     .filter(|size| dbg!(px(10.) * size.contents.width > size.item.width))?
-        //     .contents
-        //     .width
-        //     .0 as f64;
+
+        let longest_item_width = dbg!(scroll_handle.last_item_size)
+            .filter(|size| size.contents.width > size.item.width)?
+            .contents
+            .width
+            .0 as f64;
 
         // println!("Longest item width: {}", longest_item_width);
-        // if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-        //     return None;
-        // }
+        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
+            return None;
+        }
 
         Some(
             div()
@@ -2797,14 +2797,16 @@ impl GitPanel {
                 .w_full()
                 .cursor_default()
                 .absolute()
-                .bottom_1()
-                .left_1()
-                .right_1()
-                .h(px(32.))
-                // .when(show_container, |this| this.pt_1().pb_1p5())
-                // .when(!show_container, |this| {
-                //     this.bottom_1().left_1().right_1().h(px(32.))
-                // })
+                .bottom_0()
+                .left_0()
+                .right_0()
+                .px_0p5()
+                .when(show_container, |this| {
+                    this.pt_1p5()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                })
+                .when(!show_container, |this| this)
                 .on_mouse_move(cx.listener(|_, _, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
@@ -2940,7 +2942,7 @@ impl GitPanel {
                     this.deploy_panel_context_menu(event.position, window, cx)
                 }),
             )
-            // .children(self.render_vertical_scrollbar(cx))
+            .children(self.render_vertical_scrollbar(cx))
             .children(self.render_horizontal_scrollbar(cx))
     }
 
