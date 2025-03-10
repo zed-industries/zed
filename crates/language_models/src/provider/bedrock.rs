@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use crate::ui::InstructionListItem;
 use anyhow::{anyhow, Context as _, Result};
+use aws_config::default_provider::credentials::{default_provider};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
-use aws_config::Region;
+use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
 use bedrock::bedrock_client::types::{
@@ -38,6 +39,7 @@ use settings::{Settings, SettingsStore};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
+use bedrock::bedrock_client::config::timeout::TimeoutConfig;
 use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
@@ -320,22 +322,25 @@ impl BedrockModel {
             return Err(anyhow!("App state dropped"));
         };
 
-        let runtime_client = bedrock_client::Client::from_conf(
-            Config::builder()
-                .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-                .credentials_provider(Credentials::new(
-                    access_key_id,
-                    secret_access_key,
-                    None,
-                    None,
-                    "Keychain",
-                ))
-                .region(Region::new(region))
-                .http_client(self.http_client.clone())
-                .build(),
-        );
-
         let owned_handle = self.handler.clone();
+
+        let config = owned_handle.block_on(aws_config::defaults(BehaviorVersion::latest())
+            .http_client(self.http_client.clone())
+            .region(Region::new(region))
+            .timeout_config(
+                TimeoutConfig::disabled()
+            )
+            .load());
+
+        // let client_config = Config::builder()
+        //     .behavior_version_latest()
+        //     .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+        //     .region(Region::new(region))
+        //     .credentials_provider(owned_handle.block_on(default_provider()))
+        //     .http_client(self.http_client.clone())
+        //     .build();
+
+        let runtime_client = bedrock_client::Client::new(&config);
 
         Ok(async move {
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
