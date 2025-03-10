@@ -1,5 +1,9 @@
 # Using a debugger
 
+> **DISCLAIMER**: This is not documentation for the [planned debugger support in Zed](https://github.com/zed-industries/zed/issues/5065).
+> Rather, it is intended to provide information on how to use an external debugger while developing Zed itself to both Zed employees and external contributors.
+> Once debugger support is implemented, this section will be updated to provide information on how to use the built-in debugger as part of Zed development.
+
 ## Build profile considerations
 
 By default, builds using the dev and release profiles (release is the profile used for production builds, i.e. nightly, preview, and stable) include limited debug info.
