@@ -3,7 +3,6 @@ use crate::{
     tests::{rust_lang, TestServer},
 };
 use call::ActiveCall;
-use collections::HashMap;
 use editor::{
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
