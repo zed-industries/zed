@@ -8,8 +8,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct ScriptingToolInput {
-    lua_script: String,
+pub struct ScriptingToolInput {
+    pub lua_script: String,
 }
 
 pub struct ScriptingTool;
