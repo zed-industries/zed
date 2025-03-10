@@ -255,30 +255,31 @@ impl WindowsPlatform {
     }
 
     fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
-        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
-        let items = jump_list.Items()?;
-        items.Clear()?;
+        // let jump_list = JumpList::LoadCurrentAsync()?.get()?;
+        // let items = jump_list.Items()?;
+        // items.Clear()?;
         let mut actions = Vec::new();
         for item in menus.into_iter() {
-            let item = match item {
-                MenuItem::Separator => JumpListItem::CreateSeparator()?,
-                MenuItem::Submenu(_) => {
-                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
-                    continue;
-                }
+            match item {
+                // MenuItem::Separator => JumpListItem::CreateSeparator()?,
+                // MenuItem::Submenu(_) => {
+                //     log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
+                //     continue;
+                // }
                 MenuItem::Action { name, action, .. } => {
                     let idx = actions.len();
                     actions.push(action.boxed_clone());
-                    let item_args = format!("--dock-action {}", idx);
-                    JumpListItem::CreateWithArguments(
-                        &HSTRING::from(item_args),
-                        &HSTRING::from(name.as_ref()),
-                    )?
+                    // let item_args = format!("--dock-action {}", idx);
+                    // JumpListItem::CreateWithArguments(
+                    //     &HSTRING::from(item_args),
+                    //     &HSTRING::from(name.as_ref()),
+                    // )?
                 }
-            };
-            items.Append(&item)?;
+                _ => {}
+            }
+            // items.Append(&item)?;
         }
-        jump_list.SaveAsync()?.get()?;
+        // jump_list.SaveAsync()?.get()?;
         self.state.borrow_mut().dock_menu_actions = actions;
         Ok(())
     }
