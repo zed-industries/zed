@@ -35,7 +35,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    action_as, actions, canvas, deferred, impl_action_as, impl_actions, point, relative, size,
+    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
     Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
@@ -1019,10 +1019,12 @@ impl Workspace {
         });
 
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
+        let modal_layer = cx.new(|_| ModalLayer::new());
+        let toast_layer = cx.new(|_| ToastLayer::new());
 
-        let left_dock = Dock::new(DockPosition::Left, window, cx);
-        let bottom_dock = Dock::new(DockPosition::Bottom, window, cx);
-        let right_dock = Dock::new(DockPosition::Right, window, cx);
+        let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
+        let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
+        let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
@@ -1033,9 +1035,6 @@ impl Workspace {
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
             status_bar
         });
-
-        let modal_layer = cx.new(|_| ModalLayer::new());
-        let toast_layer = cx.new(|_| ToastLayer::new());
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
@@ -5542,7 +5541,7 @@ impl Render for Workspace {
                                 .children(self.render_notifications(window, cx)),
                         )
                         .child(self.status_bar.clone())
-                        .child(deferred(self.modal_layer.clone()))
+                        .child(self.modal_layer.clone())
                         .child(self.toast_layer.clone()),
                 ),
             window,
