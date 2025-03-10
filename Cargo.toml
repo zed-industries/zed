@@ -67,7 +67,6 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
-    "crates/history_manager",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -272,7 +271,6 @@ gpui = { path = "crates/gpui", default-features = false, features = [
 ] }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
-history_manager = { path = "crates/history_manager" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
