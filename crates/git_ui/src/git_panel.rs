@@ -104,13 +104,13 @@ enum TrashCancel {
 }
 
 fn git_panel_context_menu(
-    focus_handle: Option<FocusHandle>,
+    focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
     ContextMenu::build(window, cx, |context_menu, _, _| {
         context_menu
-            .when_some(focus_handle, |el, focus_handle| el.context(focus_handle))
+            .context(focus_handle)
             .action("Stage All", StageAll.boxed_clone())
             .action("Unstage All", UnstageAll.boxed_clone())
             .separator()
@@ -2311,13 +2311,14 @@ impl GitPanel {
     }
 
     fn render_overflow_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
         PopoverMenu::new(id.into())
             .trigger(
                 IconButton::new("overflow-menu-trigger", IconName::EllipsisVertical)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted),
             )
-            .menu(move |window, cx| Some(git_panel_context_menu(window, cx)))
+            .menu(move |window, cx| Some(git_panel_context_menu(focus_handle.clone(), window, cx)))
             .anchor(Corner::TopRight)
     }
 
@@ -2966,7 +2967,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = git_panel_context_menu(Some(self.focus_handle.clone()), window, cx);
+        let context_menu = git_panel_context_menu(self.focus_handle.clone(), window, cx);
         self.set_context_menu(context_menu, position, window, cx);
     }
 
