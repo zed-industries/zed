@@ -1,6 +1,7 @@
 use gpui::{AnyView, DismissEvent, Entity, FocusHandle, Focusable as _, ManagedView, Subscription};
 use ui::prelude::*;
 
+#[derive(Debug)]
 pub enum DismissDecision {
     Dismiss(bool),
     Pending,
@@ -74,6 +75,7 @@ impl ModalLayer {
         if let Some(active_modal) = &self.active_modal {
             let is_close = active_modal.modal.view().downcast::<V>().is_ok();
             let did_close = self.hide_modal(window, cx);
+            dbg!(is_close, did_close);
             if is_close || !did_close {
                 return;
             }
@@ -118,7 +120,7 @@ impl ModalLayer {
             return false;
         };
 
-        match active_modal.modal.on_before_dismiss(window, cx) {
+        match dbg!(active_modal.modal.on_before_dismiss(window, cx)) {
             DismissDecision::Dismiss(dismiss) => {
                 self.dismiss_on_focus_lost = !dismiss;
                 if !dismiss {

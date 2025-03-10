@@ -253,6 +253,7 @@ fn show_menu<M: ManagedView>(
     cx: &mut App,
 ) {
     let Some(new_menu) = (builder)(window, cx) else {
+        dbg!("oops");
         return;
     };
     let menu2 = menu.clone();
