@@ -4590,7 +4590,7 @@ impl Workspace {
         }
     }
 
-    fn serialize_workspace_internal(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
+    fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
