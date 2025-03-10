@@ -162,6 +162,7 @@ impl Render for ModalLayer {
         };
 
         div()
+            .occlude()
             .absolute()
             .size_full()
             .top_0()
