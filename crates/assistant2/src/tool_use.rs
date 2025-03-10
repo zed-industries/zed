@@ -267,6 +267,7 @@ impl ToolUseState {
 pub struct PendingToolUse {
     pub id: LanguageModelToolUseId,
     /// The ID of the Assistant message in which the tool use was requested.
+    #[allow(unused)]
     pub assistant_message_id: MessageId,
     pub name: Arc<str>,
     pub input: serde_json::Value,

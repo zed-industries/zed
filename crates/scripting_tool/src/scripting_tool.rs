@@ -3,40 +3,29 @@ mod session;
 use project::Project;
 use session::*;
 
-use assistant_tool::{Tool, ToolRegistry};
 use gpui::{App, AppContext as _, Entity, Task};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::sync::Arc;
-
-pub fn init(cx: &App) {
-    let registry = ToolRegistry::global(cx);
-    registry.register_tool(ScriptingTool);
-}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ScriptingToolInput {
     lua_script: String,
 }
 
-struct ScriptingTool;
+pub struct ScriptingTool;
 
-impl Tool for ScriptingTool {
-    fn name(&self) -> String {
-        "lua-interpreter".into()
-    }
+impl ScriptingTool {
+    pub const NAME: &str = "lua-interpreter";
 
-    fn description(&self) -> String {
-        include_str!("scripting_tool_description.txt").into()
-    }
+    pub const DESCRIPTION: &str = include_str!("scripting_tool_description.txt");
 
-    fn input_schema(&self) -> serde_json::Value {
+    pub fn input_schema() -> serde_json::Value {
         let schema = schemars::schema_for!(ScriptingToolInput);
         serde_json::to_value(&schema).unwrap()
     }
 
-    fn run(
-        self: Arc<Self>,
+    pub fn run(
+        &self,
         input: serde_json::Value,
         project: Entity<Project>,
         cx: &mut App,
