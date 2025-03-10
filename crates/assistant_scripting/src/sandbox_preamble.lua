@@ -3,6 +3,16 @@
 -- Create a sandbox environment
 local sandbox = {}
 
+-- For now, add all globals to `sandbox` (so there effectively is no sandbox).
+-- We still need the logic below so that we can do things like overriding print() to write
+-- to our in-memory log rather than to stdout, we will delete this loop (and re-enable
+-- the I/O module being sandboxed below) to have things be sandboxed again.
+for k, v in pairs(_G) do
+  if sandbox[k] == nil then
+    sandbox[k] = v
+  end
+end
+
 -- Allow access to standard libraries (safe subset)
 sandbox.string = string
 sandbox.table = table
@@ -25,8 +35,7 @@ local io = {}
 io.open = sb_io_open
 
 -- Add the sandboxed io library to the sandbox environment
-sandbox.io = io
-
+-- sandbox.io = io -- Uncomment this line to re-enable sandboxed file I/O.
 
 -- Load the script with the sandbox environment
 local user_script_fn, err = load(user_script, nil, "t", sandbox)
