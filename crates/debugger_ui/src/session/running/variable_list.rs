@@ -63,15 +63,48 @@ impl VariablePath {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Variable {
-    dap: dap::Variable,
+enum EntryKind {
+    Variable(dap::Variable),
+    Scope(dap::Scope),
+}
+
+impl EntryKind {
+    fn as_variable(&self) -> Option<&dap::Variable> {
+        match self {
+            EntryKind::Variable(dap) => Some(dap),
+            _ => None,
+        }
+    }
+
+    fn as_scope(&self) -> Option<&dap::Scope> {
+        match self {
+            EntryKind::Scope(dap) => Some(dap),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ListEntry {
+    dap_kind: EntryKind,
     path: VariablePath,
 }
 
-impl Variable {
+impl ListEntry {
+    fn as_variable(&self) -> Option<&dap::Variable> {
+        self.dap_kind.as_variable()
+    }
+
+    fn as_scope(&self) -> Option<&dap::Scope> {
+        self.dap_kind.as_scope()
+    }
+
     fn item_id(&self) -> ElementId {
         use std::fmt::Write;
-        let mut id = format!("variable-{}", self.dap.name);
+        let mut id = match &self.dap_kind {
+            EntryKind::Variable(dap) => format!("variable-{}", dap.name),
+            EntryKind::Scope(dap) => format!("scope-{}", dap.name),
+        };
         for index in self.path.indices.iter() {
             _ = write!(id, "-{}", index);
         }
@@ -80,7 +113,10 @@ impl Variable {
 
     fn item_value_id(&self) -> ElementId {
         use std::fmt::Write;
-        let mut id = format!("variable-{}", self.dap.name);
+        let mut id = match &self.dap_kind {
+            EntryKind::Variable(dap) => format!("variable-{}", dap.name),
+            EntryKind::Scope(dap) => format!("scope-{}", dap.name),
+        };
         for index in self.path.indices.iter() {
             _ = write!(id, "-{}", index);
         }
@@ -90,7 +126,7 @@ impl Variable {
 }
 
 pub struct VariableList {
-    entries: Vec<Variable>,
+    entries: Vec<ListEntry>,
     variable_states: HashMap<VariablePath, VariableState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list_handle: UniformListScrollHandle,
@@ -171,14 +207,14 @@ impl VariableList {
             .map(|scope| {
                 (
                     scope.variables_reference,
-                    None::<dap::Variable>,
                     VariablePath::for_scope(scope.variables_reference),
+                    EntryKind::Scope(scope),
                 )
             })
             .collect::<Vec<_>>();
 
-        while let Some((variable_reference, dap, mut path)) = stack.pop() {
-            if let Some(dap) = &dap {
+        while let Some((variable_reference, mut path, dap_kind)) = stack.pop() {
+            if let Some(dap) = &dap_kind.as_variable() {
                 path = path.with_name(dap.name.clone().into());
             }
             let var_state = self
@@ -186,14 +222,13 @@ impl VariableList {
                 .entry(path.clone())
                 .or_insert(VariableState {
                     depth: path.indices.len() + path.leaf_name.is_some() as usize,
-                    is_expanded: dap.is_none(),
+                    is_expanded: dap_kind.as_variable().is_none(),
                 });
-            if let Some(dap) = dap {
-                entries.push(Variable {
-                    dap,
-                    path: path.clone(),
-                });
-            }
+
+            entries.push(ListEntry {
+                dap_kind,
+                path: path.clone(),
+            });
 
             if var_state.is_expanded {
                 let children = self
@@ -202,8 +237,8 @@ impl VariableList {
                 stack.extend(children.into_iter().rev().map(|child| {
                     (
                         child.variables_reference,
-                        Some(child),
                         path.with_child(variable_reference),
+                        EntryKind::Variable(child),
                     )
                 }));
             }
@@ -232,7 +267,10 @@ impl VariableList {
     pub fn completion_variables(&self, _cx: &mut Context<Self>) -> Vec<dap::Variable> {
         self.entries
             .iter()
-            .map(|variable| variable.dap.clone())
+            .filter_map(|entry| match &entry.dap_kind {
+                EntryKind::Variable(dap) => Some(dap.clone()),
+                EntryKind::Scope(_) => None,
+            })
             .collect()
     }
 
@@ -248,14 +286,18 @@ impl VariableList {
                     .entries
                     .get(ix)
                     .and_then(|entry| Some(entry).zip(self.variable_states.get(&entry.path)))?;
-                Some(self.render_variable(entry, *state, window, cx))
+
+                match &entry.dap_kind {
+                    EntryKind::Variable(_) => Some(self.render_variable(entry, *state, window, cx)),
+                    EntryKind::Scope(_) => Some(self.render_scope(entry, *state, cx)),
+                }
             })
             .collect()
     }
 
-    pub(crate) fn toggle_variable(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_entry(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
         let Some(entry) = self.variable_states.get_mut(var_path) else {
-            debug_panic!("Trying to toggle variable in variable list that has an no state");
+            log::error!("Could not find variable list entry state to toggle");
             return;
         };
 
@@ -393,16 +435,23 @@ impl VariableList {
 
     fn deploy_variable_context_menu(
         &mut self,
-        variable: Variable,
+        variable: ListEntry,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let variable_value = variable.dap.value.clone();
+        let Some(dap_var) = variable.as_variable() else {
+            debug_panic!("Trying to open variable context menu on a scope");
+            return;
+        };
+
+        let variable_value = dap_var.value.clone();
+        let variable_name = dap_var.name.clone();
         let this = cx.entity().clone();
+
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.entry("Copy name", None, move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(variable.dap.name.clone()))
+                cx.write_to_clipboard(ClipboardItem::new_string(variable_name.clone()))
             })
             .entry("Copy value", None, {
                 let variable_value = variable_value.clone();
@@ -455,7 +504,7 @@ impl VariableList {
                 "{}{} {}",
                 INDENT.repeat(state.depth),
                 if state.is_expanded { "v" } else { ">" },
-                variable.dap.name,
+                dap.name,
             ));
         }
 
@@ -483,15 +532,83 @@ impl VariableList {
         editor.focus_handle(cx).focus(window);
         editor
     }
+
+    fn render_scope(
+        &self,
+        entry: &ListEntry,
+        state: VariableState,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(scope) = entry.as_scope() else {
+            debug_panic!("Called render scope on non scope variable list entry variant");
+            return div().into_any_element();
+        };
+
+        let var_ref = scope.variables_reference;
+        let is_selected = self
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection == &entry.path);
+
+        let colors = get_entry_color(cx);
+        let bg_hover_color = if !is_selected {
+            colors.hover
+        } else {
+            colors.default
+        };
+        let border_color = if is_selected {
+            colors.marked_active
+        } else {
+            colors.default
+        };
+
+        div()
+            .id(var_ref as usize)
+            .group("variable_list_entry")
+            .border_1()
+            .border_r_2()
+            .border_color(border_color)
+            .flex()
+            .w_full()
+            .h_full()
+            .hover(|style| style.bg(bg_hover_color))
+            .on_click(cx.listener({
+                move |_this, _, _window, cx| {
+                    cx.notify();
+                }
+            }))
+            .child(
+                ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
+                    .selectable(false)
+                    .indent_level(1)
+                    .indent_step_size(px(20.))
+                    .always_show_disclosure_icon(true)
+                    .toggle(state.is_expanded)
+                    .on_toggle({
+                        let var_path = entry.path.clone();
+                        cx.listener(move |this, _, _, cx| this.toggle_entry(&var_path, cx))
+                    })
+                    .child(div().text_ui(cx).w_full().child(scope.name.clone())),
+            )
+            .into_any()
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
-        variable: &Variable,
+        variable: &ListEntry,
         state: VariableState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let var_ref = variable.dap.variables_reference;
+        let dap = match &variable.dap_kind {
+            EntryKind::Variable(dap) => dap,
+            EntryKind::Scope(_) => {
+                debug_panic!("Called render variable on variable list entry kind scope");
+                return div().into_any_element();
+            }
+        };
+        let var_ref = dap.variables_reference;
         let colors = get_entry_color(cx);
         let is_selected = self
             .selection
@@ -527,7 +644,7 @@ impl VariableList {
             .child(
                 ListItem::new(SharedString::from(format!(
                     "variable-item-{}-{}",
-                    variable.dap.name, state.depth
+                    dap.name, state.depth
                 )))
                 .disabled(self.disabled)
                 .selectable(false)
@@ -542,7 +659,7 @@ impl VariableList {
                                 session.variables(var_ref, cx);
                             });
 
-                            this.toggle_variable(&var_path, cx);
+                            this.toggle_entry(&var_path, cx);
                             cx.notify();
                         }
                     }))
@@ -563,8 +680,8 @@ impl VariableList {
                         .gap_1()
                         .text_ui_sm(cx)
                         .w_full()
-                        .child(variable.dap.name.clone())
-                        .when(!variable.dap.value.is_empty(), |this| {
+                        .child(dap.name.clone())
+                        .when(!dap.value.is_empty(), |this| {
                             this.child(div().w_full().id(variable.item_value_id()).map(|this| {
                                 if let Some((_, editor)) = self
                                     .edited_path
@@ -582,7 +699,7 @@ impl VariableList {
                                                 .unwrap_or_default(),
                                             |this| {
                                                 let path = variable.path.clone();
-                                                let variable_value = variable.dap.value.clone();
+                                                let variable_value = dap.value.clone();
                                                 this.on_click(cx.listener(
                                                     move |this, click: &ClickEvent, window, cx| {
                                                         if click.down.click_count < 2 {
@@ -602,7 +719,7 @@ impl VariableList {
                                             },
                                         )
                                         .child(
-                                            Label::new(&variable.dap.value)
+                                            Label::new(&dap.value)
                                                 .single_line()
                                                 .truncate()
                                                 .size(LabelSize::XSmall)
