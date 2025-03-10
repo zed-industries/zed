@@ -366,6 +366,7 @@ mod remote_button {
     }
 
     impl SplitButton {
+        #[allow(clippy::too_many_arguments)]
         fn new(
             id: impl Into<SharedString>,
             left_label: impl Into<SharedString>,
