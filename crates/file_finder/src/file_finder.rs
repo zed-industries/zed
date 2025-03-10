@@ -653,7 +653,6 @@ impl FileSearchQuery {
 }
 
 impl FileFinderDelegate {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         file_finder: WeakEntity<FileFinder>,
         workspace: WeakEntity<Workspace>,
