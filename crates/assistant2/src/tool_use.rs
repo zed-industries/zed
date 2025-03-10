@@ -202,7 +202,7 @@ impl ToolUseState {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         output: Result<String>,
-    ) {
+    ) -> Option<PendingToolUse> {
         match output {
             Ok(output) => {
                 self.tool_results.insert(
@@ -213,7 +213,7 @@ impl ToolUseState {
                         is_error: false,
                     },
                 );
-                self.pending_tool_uses_by_id.remove(&tool_use_id);
+                self.pending_tool_uses_by_id.remove(&tool_use_id)
             }
             Err(err) => {
                 self.tool_results.insert(
@@ -228,6 +228,8 @@ impl ToolUseState {
                 if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
                     tool_use.status = PendingToolUseStatus::Error(err.to_string().into());
                 }
+
+                self.pending_tool_uses_by_id.get(&tool_use_id).cloned()
             }
         }
     }
