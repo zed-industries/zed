@@ -64,6 +64,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+rich_text.workspace = true
 streaming_diff.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true

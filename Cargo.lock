@@ -490,6 +490,7 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.8.5",
+ "rich_text",
  "rope",
  "serde",
  "serde_json",

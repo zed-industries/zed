@@ -1,8 +1,7 @@
-use std::sync::Arc;
-
 use assistant_scripting::{ScriptId, ScriptState};
 use collections::{HashMap, HashSet};
 use editor::{Editor, MultiBuffer};
+use futures::FutureExt;
 use gpui::{
     list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
     Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
@@ -12,6 +11,8 @@ use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
+use std::ops::Range;
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
@@ -21,6 +22,8 @@ use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
+use gpui::{HighlightStyle, StyledText};
+use rich_text::{self, Highlight};
 
 pub struct ActiveThread {
     workspace: WeakEntity<Workspace>,
@@ -809,11 +812,63 @@ impl ActiveThread {
                     let stdout = script.stdout_snapshot();
                     let error = script.error();
 
+                    let lua_language =
+                        async { self.language_registry.language_for_name("Lua").await.ok() }
+                            .now_or_never()
+                            .flatten();
+
+                    let source_display = if let Some(lua_language) = &lua_language {
+                        let mut highlights = Vec::new();
+                        let mut buf = String::new();
+
+                        rich_text::render_code(
+                            &mut buf,
+                            &mut highlights,
+                            &script.source,
+                            lua_language,
+                        );
+
+                        let theme = cx.theme();
+                        let gpui_highlights: Vec<(Range<usize>, HighlightStyle)> = highlights
+                            .iter()
+                            .map(|(range, highlight)| {
+                                let style = match highlight {
+                                    Highlight::Code => Default::default(),
+                                    Highlight::Id(id) => {
+                                        id.style(theme.syntax()).unwrap_or_default()
+                                    }
+                                    Highlight::InlineCode(_) => Default::default(),
+                                    Highlight::Highlight(highlight) => *highlight,
+                                    _ => HighlightStyle::default(),
+                                };
+                                (range.clone(), style)
+                            })
+                            .collect();
+
+                        StyledText::new(buf)
+                            .with_highlights(gpui_highlights)
+                            .into_any_element()
+                    } else {
+                        Label::new(script.source.clone())
+                            .size(LabelSize::Small)
+                            .buffer_font(cx)
+                            .into_any_element()
+                    };
+
                     parent.child(
                         v_flex()
                             .p_2()
                             .bg(colors.editor_background)
                             .gap_2()
+                            .child(
+                                div()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .p_2()
+                                    .bg(colors.editor_foreground.opacity(0.025))
+                                    .rounded_md()
+                                    .child(source_display),
+                            )
                             .child(if stdout.is_empty() && error.is_none() {
                                 Label::new("No output yet")
                                     .size(LabelSize::Small)
