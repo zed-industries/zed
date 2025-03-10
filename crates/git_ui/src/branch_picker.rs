@@ -10,7 +10,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::git::Repository;
 use std::sync::Arc;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip};
+use ui::{
+    prelude::*, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
+};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -419,7 +421,11 @@ impl PickerDelegate for BranchListDelegate {
         )
     }
 
-    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
         let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
         let handle = cx.weak_entity();
         Some(
@@ -437,6 +443,11 @@ impl PickerDelegate for BranchListDelegate {
                                 "create-branch",
                                 format!("Create branch '{new_branch_name}'",),
                             )
+                            .key_binding(KeyBinding::for_action(
+                                &menu::SecondaryConfirm,
+                                window,
+                                cx,
+                            ))
                             .toggle_state(
                                 self.modifiers.secondary()
                                     || (self.selected_index == 0 && self.matches.len() == 0),
