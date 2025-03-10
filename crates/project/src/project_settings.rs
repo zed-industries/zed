@@ -212,10 +212,15 @@ pub enum GitHunkStyleSetting {
     Transparent,
     /// Show unstaged hunks with a pattern background
     Pattern,
+    /// Show unstaged hunks with a border background
+    Border,
+
     /// Show staged hunks with a pattern background
     StagedPattern,
     /// Show staged hunks with a pattern background
     StagedTransparent,
+    /// Show staged hunks with a pattern background
+    StagedBorder,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
