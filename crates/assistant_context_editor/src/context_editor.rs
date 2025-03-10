@@ -6,6 +6,8 @@ use assistant_slash_commands::{
     FileSlashCommand,
 };
 use client::{proto, zed_urls};
+use text::Bias;
+use gpui::AppContext;
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
@@ -572,6 +574,8 @@ impl ContextEditor {
             ContextEvent::MessagesEdited => {
                 self.update_message_headers(cx);
                 self.update_image_blocks(cx);
+                self.update_shell_command_buttons(cx);
+                
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
@@ -2609,6 +2613,43 @@ impl ContextEditor {
             )
             .into_any()
     }
+
+    // Add this new function to impl ContextEditor
+    fn update_shell_command_buttons(&mut self, cx: &mut Context<Self>) {
+        // Get the editor entity before updating
+        let editor_entity = self.editor.clone();
+        
+        self.editor.update(cx, |editor, cx| {
+            // Use a public getter method for shell_commands (you'll need to add this to AssistantContext)
+            let commands = self.context.read(cx).get_shell_commands();
+            
+            let creases = commands.into_iter().map(|command| {
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
+                
+                let start = buffer.anchor_in_excerpt(excerpt_id, command.range.start).unwrap();
+                let end = buffer.anchor_in_excerpt(excerpt_id, command.range.end).unwrap();
+                
+                Crease::inline(
+                    start..end,
+                    FoldPlaceholder {
+                        render: render_shell_command_run_button(
+                            editor_entity.downgrade(),
+                            self.workspace.clone(),
+                            IconName::Play,
+                            "Run".into(),
+                        ),
+                        merge_adjacent: false,
+                        ..Default::default()
+                    },
+                    render_slash_command_output_toggle,
+                    |_, _, _, _| Empty.into_any(),
+                )
+            }).collect::<Vec<_>>();
+
+            editor.insert_creases(creases, cx);
+        });
+    }
 }
 
 /// Returns the contents of the *outermost* fenced code block that contains the given offset.
@@ -2665,9 +2706,12 @@ fn render_shell_command_run_button(
 
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(icon))
-            .child(Label::new(label.clone()).single_line())
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(Icon::new(icon).size(IconSize::Small))
+                    .child(Label::new(label.clone()))
+            )
             .on_click(move |_, window, cx| {
                 // Get the text content of the fold (shell command)
                 let command_text = editor.update(cx, |editor, cx| {

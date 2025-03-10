@@ -569,6 +569,7 @@ pub enum XmlTagKind {
 }
 
 // Simple structure to represent a shell command in the text
+#[derive(Clone)]
 pub struct ShellCommand {
     pub command: String,
     pub range: Range<text::Anchor>,
@@ -3018,6 +3019,11 @@ impl AssistantContext {
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
     }
+
+    // Add this public getter method
+    pub fn get_shell_commands(&self) -> Vec<ShellCommand> {
+        self.shell_commands.clone()
+    }
 }
 
 fn trimmed_text_in_range(buffer: &BufferSnapshot, range: Range<text::Anchor>) -> String {
@@ -3406,10 +3412,9 @@ fn format_shell_code_blocks(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
         }
     }
     
+    // Remove text modification - we'll handle this visually with the button instead
     for (start, end, command) in blocks.iter().rev() {
-        // Add a visual play button character (▶) at the beginning of the command
-        let formatted = format!("▶ {}", command);
-        buffer.edit([(*start..*end, formatted)], None, cx);
+        buffer.edit([(*start..*end, command.to_string())], None, cx);
     }
 }
 

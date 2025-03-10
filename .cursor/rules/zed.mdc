@@ -1,0 +1,124 @@
+---
+description: Any code changes to the zed repo
+globs: 
+alwaysApply: false
+---
+
+# Your rule content
+
+Overview
+Zed is a high-performance, collaborative code editor built in Rust. The repository is organized into multiple crates that handle different aspects of the editor's functionality, from the core GUI framework to language support and collaborative features.
+
+Core Crates
+gpui
+Path: /crates/gpui
+
+Description: The GUI framework that powers Zed's interface. It uses a global context pattern similar to Bevy for managing state and components1.
+
+zed
+Path: /crates/zed
+
+Description: The main crate that ties everything together and serves as the entry point for the application1.
+
+extension_api
+Path: /crates/extension_api
+
+Description: Defines the API that extensions use to interact with Zed. Contains the zed::Extension trait and related types that extensions must implement3.
+
+extensions_cli
+Path: /crates/extensions_cli
+
+Description: Command-line tool used to compile extensions from Rust to WebAssembly3.
+
+Language Support
+language
+Path: /crates/language
+
+Description: Provides core language functionality including syntax highlighting and parsing.
+
+tree_sitter
+Path: /crates/tree_sitter
+
+Description: Integration with the Tree-sitter parsing library for syntax highlighting and code navigation3.
+
+lsp
+Path: /crates/lsp
+
+Description: Implementation of the Language Server Protocol for providing IDE-like features.
+
+Editor Features
+editor
+Path: /crates/editor
+
+Description: Core text editing functionality.
+
+workspace
+Path: /crates/workspace
+
+Description: Manages workspaces, projects, and file navigation.
+
+terminal
+Path: /crates/terminal
+
+Description: Integrated terminal functionality4.
+
+Collaboration
+collab
+Path: /crates/collab
+
+Description: Handles real-time collaboration features.
+
+channel
+Path: /crates/channel
+
+Description: Communication channels for collaborative editing.
+
+Extension System
+extension
+Path: /crates/extension
+
+Description: Manages loading and running extensions. Extensions are compiled to WebAssembly and executed in a sandboxed environment38.
+
+wit_bindgen
+Path: /crates/wit_bindgen
+
+Description: Used for generating bindings between Rust and WebAssembly using the WIT (WebAssembly Interface Types) format3.
+
+AI Integration
+ai
+Path: /crates/ai
+
+Description: Integration with AI assistants like GitHub Copilot. Currently not implemented as an extension due to API limitations7.
+
+Utility Crates
+util
+Path: /crates/util
+
+Description: Common utility functions used throughout the codebase.
+
+settings
+Path: /crates/settings
+
+Description: Handles user settings and preferences.
+
+theme
+Path: /crates/theme
+
+Description: Theming system for customizing the editor's appearance.
+
+Build System
+build
+Path: /crates/build
+
+Description: Build scripts and tools for compiling Zed.
+
+Architecture Notes
+Zed uses a component-based architecture with a global context pattern similar to Bevy12.
+
+Extensions are written in Rust and compiled to WebAssembly using the WIT format for interface definition38.
+
+The editor is designed to be fast and minimal, focusing on performance and reliability6.
+
+The extension system is still maturing, with current limitations primarily around editor-related capabilities rather than language capabilities7.
+
+The codebase is designed to be modular, allowing for potential future extraction of functionality into extensions7.
