@@ -91,6 +91,7 @@ impl ToolUseState {
                         for tool_result in &message.tool_results {
                             let tool_use_id = tool_result.tool_use_id.clone();
                             let Some(tool_use) = tool_names_by_id.get(&tool_use_id) else {
+                                log::warn!("no tool name found for tool use: {tool_use_id:?}");
                                 continue;
                             };
 
