@@ -4,7 +4,7 @@ use util::{paths::PathExt, ResultExt};
 
 use crate::{WorkspaceId, WORKSPACE_DB};
 
-pub fn init(cx: &mut App) -> Entity<HistoryManager> {
+pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
     HistoryManager::set_global(manager.clone(), cx);
     cx.subscribe(&manager, |manager, event, cx| match event {
@@ -54,10 +54,6 @@ pub fn init(cx: &mut App) -> Entity<HistoryManager> {
         _ => {}
     })
     .detach();
-    // ret.update(cx, update)
-    // let x = ret.downgrade();
-    // ret
-    manager
 }
 
 pub struct HistoryManager;
