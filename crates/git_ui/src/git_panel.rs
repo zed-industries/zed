@@ -2472,8 +2472,8 @@ impl GitPanel {
         }
 
         let change_string = match self.entry_count {
-            0 => format!("No Changes"),
-            1 => format!("1 Change"),
+            0 => "No Changes".to_string(),
+            1 => "1 Change".to_string(),
             _ => format!("{} Changes", self.entry_count),
         };
 
