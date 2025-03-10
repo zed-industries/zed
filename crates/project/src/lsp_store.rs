@@ -23,13 +23,13 @@ use client::{proto, TypedEnvelope};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use futures::{
     future::{join_all, Shared},
-    select,
+    select, select_biased,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt,
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString, Task,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString, Task,
     WeakEntity,
 };
 use http_client::HttpClient;
@@ -4325,6 +4325,15 @@ impl LspStore {
             let offset = position.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
             let language = snapshot.language().cloned();
+            let completion_settings = language_settings(
+                language.as_ref().map(|language| language.name()),
+                buffer.read(cx).file(),
+                cx,
+            )
+            .completions;
+            if !completion_settings.lsp {
+                return Task::ready(Ok(Vec::new()));
+            }
 
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
                 local
@@ -4341,23 +4350,52 @@ impl LspStore {
             });
 
             let buffer = buffer.clone();
+            let lsp_timeout = completion_settings.lsp_fetch_timeout_ms;
+            let lsp_timeout = if lsp_timeout > 0 {
+                Some(Duration::from_millis(lsp_timeout))
+            } else {
+                None
+            };
             cx.spawn(move |this, mut cx| async move {
                 let mut tasks = Vec::with_capacity(server_ids.len());
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |lsp_store, cx| {
                     for server_id in server_ids {
-                        let lsp_adapter = this.language_server_adapter_for_id(server_id);
-                        tasks.push((
-                            lsp_adapter,
-                            this.request_lsp(
-                                buffer.clone(),
-                                LanguageServerToQuery::Other(server_id),
-                                GetCompletions {
-                                    position,
-                                    context: context.clone(),
+                        let lsp_adapter = lsp_store.language_server_adapter_for_id(server_id);
+                        let lsp_timeout = lsp_timeout
+                            .map(|lsp_timeout| cx.background_executor().timer(lsp_timeout));
+                        let mut timeout = cx.background_spawn(async move {
+                            match lsp_timeout {
+                                Some(lsp_timeout) => {
+                                    lsp_timeout.await;
+                                    true
                                 },
-                                cx,
-                            ),
-                        ));
+                                None => false,
+                            }
+                        }).fuse();
+                        let mut lsp_request = lsp_store.request_lsp(
+                            buffer.clone(),
+                            LanguageServerToQuery::Other(server_id),
+                            GetCompletions {
+                                position,
+                                context: context.clone(),
+                            },
+                            cx,
+                        ).fuse();
+                        let new_task = cx.background_spawn(async move {
+                            select_biased! {
+                                response = lsp_request => response,
+                                timeout_happened = timeout => {
+                                    if timeout_happened {
+                                        log::warn!("Fetching completions from server {server_id} timed out, timeout ms: {}", completion_settings.lsp_fetch_timeout_ms);
+                                        return anyhow::Ok(Vec::new())
+                                    } else {
+                                        lsp_request.await
+                                    }
+
+                                },
+                            }
+                        });
+                        tasks.push((lsp_adapter, new_task));
                     }
                 })?;
 

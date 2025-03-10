@@ -4146,7 +4146,6 @@ impl BufferSnapshot {
         }
     }
 
-    // TODO kb settings to enable/disable LSP and word-based completions
     pub fn words_in_range(&self, query: Option<&str>, range: Range<usize>) -> HashSet<String> {
         if query.map_or(false, |query| query.is_empty()) {
             return HashSet::default();

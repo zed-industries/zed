@@ -1085,6 +1085,13 @@
   "auto_install_extensions": {
     "html": true
   },
+  // TODO kb docs
+  "completions": {
+    // "enabled", "fallback", "disabled"
+    "words": "fallback",
+    "lsp": true,
+    "lsp_fetch_timeout_ms": 500
+  },
   // Different settings for specific languages.
   "languages": {
     "Astro": {
