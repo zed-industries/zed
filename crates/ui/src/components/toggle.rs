@@ -1,6 +1,5 @@
 use gpui::{
-    div, hsla, prelude::*, AnyElement, AnyView, CursorStyle, ElementId, Hsla, IntoElement, Styled,
-    Window,
+    div, hsla, prelude::*, AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window,
 };
 use std::sync::Arc;
 
@@ -147,8 +146,8 @@ impl Checkbox {
     }
 
     /// container size
-    pub fn container_size(cx: &App) -> Rems {
-        DynamicSpacing::Base20.rems(cx)
+    pub fn container_size() -> Pixels {
+        px(20.0)
     }
 }
 
@@ -182,7 +181,7 @@ impl RenderOnce for Checkbox {
         let border_color = self.border_color(cx);
         let hover_border_color = border_color.alpha(0.7);
 
-        let size = Self::container_size(cx);
+        let size = Self::container_size();
 
         let checkbox = h_flex()
             .id(self.id.clone())
