@@ -83,6 +83,7 @@ impl EntryKind {
         }
     }
 
+    #[allow(dead_code)]
     fn name(&self) -> &str {
         match self {
             EntryKind::Variable(dap) => &dap.name,
@@ -597,7 +598,6 @@ impl VariableList {
             .into_any()
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
         variable: &ListEntry,
