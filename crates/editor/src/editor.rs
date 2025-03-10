@@ -70,7 +70,7 @@ pub use element::{
 };
 use futures::{
     future::{self, Shared},
-    FutureExt,
+    join, FutureExt,
 };
 use fuzzy::StringMatchCandidate;
 
@@ -4012,9 +4012,8 @@ impl Editor {
             } else {
                 return;
             };
-        let show_completion_documentation = buffer
-            .read(cx)
-            .snapshot()
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let show_completion_documentation = buffer_snapshot
             .settings_at(buffer_position, cx)
             .show_completion_documentation;
 
@@ -4038,6 +4037,23 @@ impl Editor {
         };
         let completions =
             provider.completions(&buffer, buffer_position, completion_context, window, cx);
+        let (old_range, word_kind) = buffer_snapshot.surrounding_word(buffer_position);
+        let (old_range, word_to_exclude) = if word_kind == Some(CharKind::Word) {
+            let word_to_exclude = buffer_snapshot
+                .text_for_range(old_range.clone())
+                .collect::<String>();
+            (
+                buffer_snapshot.anchor_before(old_range.start)
+                    ..buffer_snapshot.anchor_after(old_range.end),
+                Some(word_to_exclude),
+            )
+        } else {
+            (buffer_position..buffer_position, None)
+        };
+        let words = cx.background_spawn(async move {
+            // TODO kb cap for long buffers
+            buffer_snapshot.words_in_range(None, 0..buffer_snapshot.len())
+        });
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
@@ -4046,8 +4062,26 @@ impl Editor {
                 editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
-                let completions = completions.await.log_err();
-                let menu = if let Some(completions) = completions {
+                // TODO kb timeouts for both searches
+                let (completions, words) = join!(completions, words);
+                let mut completions = completions.log_err().unwrap_or_default();
+                completions.extend(
+                    words
+                        .into_iter()
+                        .filter(|word| word_to_exclude.as_ref() != Some(word))
+                        .map(|word| Completion {
+                            old_range: old_range.clone(),
+                            new_text: word.clone(),
+                            label: CodeLabel::plain(word, None),
+                            documentation: None,
+                            source: CompletionSource::Custom,
+                            confirm: None,
+                        }),
+                );
+
+                let menu = if completions.is_empty() {
+                    None
+                } else {
                     let mut menu = CompletionsMenu::new(
                         id,
                         sort_completions,
@@ -4061,8 +4095,6 @@ impl Editor {
                         .await;
 
                     menu.visible().then_some(menu)
-                } else {
-                    None
                 };
 
                 editor.update_in(&mut cx, |editor, window, cx| {

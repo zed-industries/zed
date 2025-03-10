@@ -205,13 +205,13 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
-            completions: RefCell::new(completions).into(),
+            completions: Rc::new(RefCell::new(completions)),
             match_candidates,
-            entries: RefCell::new(Vec::new()).into(),
+            entries: Rc::default(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
-            last_rendered_range: RefCell::new(None).into(),
+            last_rendered_range: Rc::default(),
             markdown_element: None,
         }
     }
@@ -637,8 +637,6 @@ impl CompletionsMenu {
         )
     }
 
-    // TODO kb here, filter the buffer words too? Those can be fetched along with the buffer
-    // Consider debouncing menu creations?
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(

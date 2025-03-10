@@ -13,6 +13,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
+use std::collections::BTreeSet;
 use std::{
     env,
     ops::Range,
@@ -3153,14 +3154,65 @@ fn test_words_in_range(cx: &mut gpui::App) {
         buffer
     });
 
-    // TODO kb
     buffer.update(cx, |buffer, _| {
         let snapshot = buffer.snapshot();
-        dbg!(snapshot.words_in_range(Some("piz"), 0..snapshot.len()));
-        dbg!(snapshot.words_in_range(Some("fo"), 0..snapshot.len()));
-        dbg!(snapshot.words_in_range(Some("o"), 0..snapshot.len()));
-        dbg!(snapshot.words_in_range(Some(""), 0..snapshot.len()));
-        dbg!(snapshot.words_in_range(None, 0..snapshot.len()));
+        assert_eq!(
+            BTreeSet::from_iter(["Pizza".to_string()]),
+            snapshot
+                .words_in_range(Some("piz"), 0..snapshot.len())
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "foo".to_string(),
+                "Foo".to_string(),
+                "FoO".to_string(),
+                "FOO".to_string(),
+            ]),
+            snapshot
+                .words_in_range(Some("fo"), 0..snapshot.len())
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "foo".to_string(),
+                "Foo".to_string(),
+                "FoO".to_string(),
+                "FOO".to_string(),
+                "word".to_string(),
+                "word2".to_string(),
+            ]),
+            snapshot
+                .words_in_range(Some("o"), 0..snapshot.len())
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(Some(""), 0..snapshot.len())
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "bar".to_string(),
+                "foo".to_string(),
+                "Foo".to_string(),
+                "FoO".to_string(),
+                "FOO".to_string(),
+                "let".to_string(),
+                "Pizza".to_string(),
+                "word".to_string(),
+                "word2".to_string(),
+            ]),
+            snapshot
+                .words_in_range(None, 0..snapshot.len())
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
     });
 }
 
