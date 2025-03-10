@@ -2,13 +2,13 @@ use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{StackFrameId, VariableReference};
 use editor::Editor;
 use gpui::{
-    actions, anchored, deferred, list, AnyElement, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent,
-    Point, Subscription,
+    actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
+    DismissEvent, Entity, FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription,
+    UniformListScrollHandle,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{prelude::*, ContextMenu, ListItem};
 use util::{debug_panic, maybe};
 
@@ -93,7 +93,7 @@ pub struct VariableList {
     entries: Vec<Variable>,
     variable_states: HashMap<VariablePath, VariableState>,
     selected_stack_frame_id: Option<StackFrameId>,
-    list: ListState,
+    list_state: UniformListScrollHandle,
     session: Entity<Session>,
     selection: Option<VariablePath>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -110,22 +110,7 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let weak_variable_list = cx.weak_entity();
         let focus_handle = cx.focus_handle();
-
-        let list = ListState::new(
-            0,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, window, cx| {
-                weak_variable_list
-                    .upgrade()
-                    .map(|var_list| {
-                        var_list.update(cx, |this, cx| this.render_entry(ix, window, cx))
-                    })
-                    .unwrap_or(div().into_any())
-            },
-        );
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
@@ -144,8 +129,10 @@ impl VariableList {
             }),
         ];
 
+        let list_state = UniformListScrollHandle::default();
+
         Self {
-            list,
+            list_state,
             session,
             focus_handle,
             _subscriptions,
@@ -220,47 +207,6 @@ impl VariableList {
             }
         }
 
-        let old_scroll_top = self.list.logical_scroll_top();
-
-        if self.entries.len() != entries.len() {
-            self.list.reset(entries.len());
-        }
-
-        let old_entries = &self.entries;
-        if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-            let new_scroll_top = old_entries
-                .iter()
-                .position(|entry| entry == old_top_entry)
-                .map(|item_ix| ListOffset {
-                    item_ix,
-                    offset_in_item: old_scroll_top.offset_in_item,
-                })
-                .or_else(|| {
-                    let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-                    let item_ix = entries
-                        .iter()
-                        .position(|entry| entry == entry_after_old_top)?;
-                    Some(ListOffset {
-                        item_ix,
-                        offset_in_item: Pixels::ZERO,
-                    })
-                })
-                .or_else(|| {
-                    let entry_before_old_top =
-                        old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-                    let item_ix = entries
-                        .iter()
-                        .position(|entry| entry == entry_before_old_top)?;
-                    Some(ListOffset {
-                        item_ix,
-                        offset_in_item: Pixels::ZERO,
-                    })
-                });
-
-            self.list
-                .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
-        }
-
         self.entries = entries;
         cx.notify();
     }
@@ -288,22 +234,21 @@ impl VariableList {
             .collect()
     }
 
-    fn render_entry(
+    fn render_entries(
         &mut self,
-        ix: usize,
+        ix: Range<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some((entry, state)) = self
-            .entries
-            .get(ix)
-            .and_then(|entry| Some(entry).zip(self.variable_states.get(&entry.path)))
-        else {
-            debug_panic!("Trying to render entry in variable list that has an out of bounds index");
-            return div().into_any_element();
-        };
-
-        self.render_variable(entry, *state, window, cx)
+    ) -> Vec<AnyElement> {
+        ix.into_iter()
+            .filter_map(|ix| {
+                let (entry, state) = self
+                    .entries
+                    .get(ix)
+                    .and_then(|entry| Some(entry).zip(self.variable_states.get(&entry.path)))?;
+                Some(self.render_variable(entry, *state, window, cx))
+            })
+            .collect()
     }
 
     pub(crate) fn toggle_variable(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
@@ -571,12 +516,13 @@ impl VariableList {
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
                         let var_path = variable.path.clone();
-                        move |this, _, _window, cx| {
+                        move |this, _, _, cx| {
                             this.session.update(cx, |session, cx| {
                                 session.variables(var_ref, cx);
                             });
 
                             this.toggle_variable(&var_path, cx);
+                            cx.notify();
                         }
                     }))
                 })
@@ -687,7 +633,18 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::cancel_variable_edit))
             .on_action(cx.listener(Self::confirm_variable_edit))
             //
-            .child(list(self.list.clone()).gap_1_5().size_full().flex_grow())
+            .child(
+                uniform_list(
+                    cx.entity().clone(),
+                    "variable-list",
+                    self.entries.len(),
+                    move |this, range, window, cx| this.render_entries(range, window, cx),
+                )
+                .track_scroll(self.list_state.clone())
+                .gap_1_5()
+                .size_full()
+                .flex_grow(),
+            )
             .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()
