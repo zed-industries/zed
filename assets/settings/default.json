@@ -80,6 +80,8 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
+  // Layout mode of the bottom dock. Defaults to "contained"
+  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
