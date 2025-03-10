@@ -24,8 +24,8 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace,
-    WorkspaceId,
+    CloseIntent, DeleteSource, HistoryManager, HistoryManagerEvent, ModalView, OpenOptions,
+    SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -553,7 +553,12 @@ impl RecentProjectsDelegate {
                         .delegate
                         .set_selected_index(ix.saturating_sub(1), window, cx);
                     picker.delegate.reset_selected_match_index = false;
-                    picker.update_matches(picker.query(cx), window, cx)
+                    picker.update_matches(picker.query(cx), window, cx);
+                    if let Some(history_manager) = HistoryManager::global(cx) {
+                        history_manager.update(cx, |_, cx| {
+                            cx.emit(HistoryManagerEvent::Delete(DeleteSource::User))
+                        });
+                    }
                 })
             })
             .detach();
