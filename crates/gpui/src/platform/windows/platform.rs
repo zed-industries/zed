@@ -70,12 +70,12 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let dock_menu_actions = Vec::new();
+        let dock_menus = Vec::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
-            dock_menus: dock_menu_actions,
+            dock_menus,
             current_cursor,
             menus: Vec::new(),
         }
