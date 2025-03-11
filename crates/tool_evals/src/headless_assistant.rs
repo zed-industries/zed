@@ -12,8 +12,102 @@ use project::{Project, RealFs};
 use prompt_store::PromptBuilder;
 use settings::SettingsStore;
 use smol::channel;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use workspace::AppState;
+
+pub struct HeadlessAssistant {
+    pub project: Entity<Project>,
+    pub thread: Entity<Thread>,
+    pub done_tx: channel::Sender<anyhow::Result<()>>,
+    _subscription: Subscription,
+}
+
+impl HeadlessAssistant {
+    pub fn new(
+        app_state: Arc<AppState>,
+        cx: &mut App,
+    ) -> anyhow::Result<(Entity<Self>, channel::Receiver<anyhow::Result<()>>)> {
+        let env = None;
+        let project = Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            env,
+            cx,
+        );
+
+        let tools = Arc::new(ToolWorkingSet::default());
+        let thread_store = ThreadStore::new(project.clone(), tools, cx)?;
+
+        let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
+
+        let (done_tx, done_rx) = channel::unbounded::<anyhow::Result<()>>();
+
+        let headless_thread = cx.new(move |cx| Self {
+            _subscription: cx.subscribe(&thread, Self::handle_thread_event),
+            thread,
+            project,
+            done_tx,
+        });
+
+        Ok((headless_thread, done_rx))
+    }
+
+    fn handle_thread_event(
+        &mut self,
+        thread: Entity<Thread>,
+        event: &ThreadEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ThreadEvent::ShowError(err) => self
+                .done_tx
+                .send_blocking(Err(anyhow!("{:?}", err)))
+                .unwrap(),
+            ThreadEvent::DoneStreaming => {
+                if thread.read(cx).all_tools_finished() {
+                    self.done_tx.send_blocking(Ok(())).unwrap()
+                }
+            }
+            ThreadEvent::UsePendingTools => {
+                thread.update(cx, |thread, cx| {
+                    thread.use_pending_tools(cx);
+                });
+            }
+            ThreadEvent::ToolFinished { .. } => {
+                if thread.read(cx).all_tools_finished() {
+                    let model_registry = LanguageModelRegistry::read_global(cx);
+                    if let Some(model) = model_registry.active_model() {
+                        thread.update(cx, |thread, cx| {
+                            thread.send_tool_results_to_model(model, cx);
+                        });
+                    }
+                }
+            }
+            ThreadEvent::ScriptFinished { .. } => {
+                let model_registry = LanguageModelRegistry::read_global(cx);
+                if let Some(model) = model_registry.active_model() {
+                    thread.update(cx, |thread, cx| {
+                        // TODO: this was copied from active_thread.rs - why is use_tools false?
+                        let use_tools = false;
+                        thread.send_to_model(model, RequestKind::Chat, use_tools, cx);
+                    });
+                }
+            }
+            ThreadEvent::StreamedCompletion
+            | ThreadEvent::SummaryChanged
+            | ThreadEvent::StreamedAssistantText(_, _)
+            | ThreadEvent::MessageAdded(_)
+            | ThreadEvent::MessageEdited(_)
+            | ThreadEvent::MessageDeleted(_) => {}
+        }
+    }
+}
 
 pub fn init(cx: &mut App) -> Arc<AppState> {
     gpui_tokio::init(cx);
@@ -98,157 +192,4 @@ pub fn authenticate_model_provider(
     let model_registry = LanguageModelRegistry::read_global(cx);
     let model_provider = model_registry.provider(&provider_id).unwrap();
     model_provider.authenticate(cx)
-}
-
-pub struct HeadlessThread {
-    thread: Entity<Thread>,
-    done_tx: channel::Sender<anyhow::Result<()>>,
-    _subscription: Subscription,
-}
-
-pub struct Eval {
-    pub system_prompt: Option<String>,
-    pub user_query: String,
-    pub provider_id: String,
-    pub model_name: String,
-}
-
-impl HeadlessThread {
-    pub fn new(
-        app_state: Arc<AppState>,
-        cx: &mut App,
-    ) -> anyhow::Result<(Entity<Self>, channel::Receiver<anyhow::Result<()>>)> {
-        let env = None;
-        let project = Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            env,
-            cx,
-        );
-        let tools = Arc::new(ToolWorkingSet::default());
-        let thread_store = ThreadStore::new(project, tools, cx)?;
-
-        let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
-
-        let (done_tx, done_rx) = channel::unbounded::<anyhow::Result<()>>();
-
-        let headless_thread = cx.new(move |cx| Self {
-            _subscription: cx.subscribe(&thread, Self::handle_thread_event),
-            thread,
-            done_tx,
-        });
-
-        Ok((headless_thread, done_rx))
-    }
-
-    fn handle_thread_event(
-        &mut self,
-        thread: Entity<Thread>,
-        event: &ThreadEvent,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            ThreadEvent::ShowError(err) => self
-                .done_tx
-                .send_blocking(Err(anyhow!("{:?}", err)))
-                .unwrap(),
-            ThreadEvent::DoneStreaming => {
-                if thread.read(cx).all_tools_finished() {
-                    self.done_tx.send_blocking(Ok(())).unwrap()
-                }
-            }
-            ThreadEvent::UsePendingTools => {
-                thread.update(cx, |thread, cx| {
-                    thread.use_pending_tools(cx);
-                });
-            }
-            ThreadEvent::ToolFinished { .. } => {
-                if thread.read(cx).all_tools_finished() {
-                    let model_registry = LanguageModelRegistry::read_global(cx);
-                    if let Some(model) = model_registry.active_model() {
-                        thread.update(cx, |thread, cx| {
-                            thread.send_tool_results_to_model(model, cx);
-                        });
-                    }
-                }
-            }
-            ThreadEvent::ScriptFinished { .. } => {
-                let model_registry = LanguageModelRegistry::read_global(cx);
-                if let Some(model) = model_registry.active_model() {
-                    thread.update(cx, |thread, cx| {
-                        // TODO: this was copied from active_thread.rs - why is use_tools false?
-                        let use_tools = false;
-                        thread.send_to_model(model, RequestKind::Chat, use_tools, cx);
-                    });
-                }
-            }
-            ThreadEvent::StreamedCompletion
-            | ThreadEvent::SummaryChanged
-            | ThreadEvent::StreamedAssistantText(_, _)
-            | ThreadEvent::MessageAdded(_)
-            | ThreadEvent::MessageEdited(_)
-            | ThreadEvent::MessageDeleted(_) => {}
-        }
-    }
-}
-
-impl Eval {
-    /// Runs the eval. Note that this cannot be run concurrently because
-    /// LanguageModelRegistry.active_model is global state.
-    pub fn run(
-        &self,
-        app_state: Arc<AppState>,
-        cx: &mut App,
-    ) -> Task<anyhow::Result<Vec<Message>>> {
-        let model = match find_model(&self.model_name, cx) {
-            Ok(model) => model,
-            Err(err) => return Task::ready(Err(err)),
-        };
-
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_active_model(Some(model.clone()), cx);
-        });
-
-        let provider_id = LanguageModelProviderId(self.provider_id.clone().into());
-        let authenticate_task = authenticate_model_provider(provider_id, cx);
-
-        let system_prompt = self.system_prompt.clone();
-        let user_query = self.user_query.clone();
-
-        cx.spawn(move |mut cx| async move {
-            authenticate_task.await?;
-
-            let (headless_thread, done_rx) =
-                cx.update(|cx| HeadlessThread::new(app_state.clone(), cx))??;
-
-            headless_thread.update(&mut cx, |headless_thread, cx| {
-                headless_thread.thread.update(cx, |thread, cx| {
-                    let context = vec![];
-                    if let Some(system_prompt) = system_prompt {
-                        thread.insert_message(
-                            language_model::Role::System,
-                            system_prompt.clone(),
-                            cx,
-                        );
-                    }
-                    thread.insert_user_message(user_query.clone(), context, cx);
-                    thread.send_to_model(model, RequestKind::Chat, true, cx);
-                });
-            })?;
-
-            done_rx.recv().await??;
-
-            headless_thread.update(&mut cx, |headless_thread, cx| {
-                headless_thread
-                    .thread
-                    .read(cx)
-                    .messages()
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-        })
-    }
 }

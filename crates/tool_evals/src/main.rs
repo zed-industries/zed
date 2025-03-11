@@ -1,10 +1,11 @@
+mod eval;
 mod headless_assistant;
 
+use eval::Eval;
 use gpui::Application;
-use headless_assistant::Eval;
 use language_model::ANTHROPIC_PROVIDER_ID;
 use reqwest_client::ReqwestClient;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 fn main() {
     let http_client = Arc::new(ReqwestClient::new());
@@ -14,6 +15,7 @@ fn main() {
         let app_state = headless_assistant::init(cx);
 
         let eval = Eval {
+            repo_path: PathBuf::from("todo!"),
             system_prompt: Some("You are a helpful assistant.".to_string()),
             user_query: "write me a Limerick about code editors".to_string(),
             provider_id: ANTHROPIC_PROVIDER_ID.to_string(),
