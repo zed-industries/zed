@@ -22,4 +22,4 @@ had the matches) and "matches" (an array of strings, with each string being a
 match that was found within the file).
 
 
-Please also include a concise English summary of what your Lua script does in the "summary" field. This summary will be displayed alongside your script to provide context about what the script is doing.
+Please also include an extremely terse English summary of what your Lua script does in the "summary" field. This summary will be displayed alongside your script to provide context about what the script is doing. There isn't much room in the display, so make it extremely concise.

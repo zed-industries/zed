@@ -205,7 +205,7 @@ impl ActiveThread {
                     right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 },
-                background: Some(colors.editor_background.into()),
+                background: Some(colors.terminal_background.into()), 
                 border_color: Some(colors.border_variant),
                 border_widths: EdgesRefinement {
                     top: Some(AbsoluteLength::Pixels(Pixels(1.))),
