@@ -816,9 +816,17 @@ impl ScriptingSession {
     }
 
     fn parse_abs_path_in_root_dir(root_dir: &Path, path_str: &str) -> anyhow::Result<PathBuf> {
+        // Sometimes the model produces a path that has quotation marks around it.
+        // If we encounter that, trim off the quotation marks.
+        let path = if path_str.starts_with('"') && path_str.ends_with('"') {
+            Path::new(&path_str[1..path_str.len() - 1]).canonicalize()
+        } else {
+            Path::new(&path_str).canonicalize()
+        };
+
         // Get the canonical absolute path (including resolving symlinks)
         // and then make that path relative to the root_dir if possible.
-        if let Ok(absolute) = Path::new(&path_str).canonicalize() {
+        if let Ok(absolute) = path {
             if let Ok(relative) = absolute.strip_prefix(&root_dir) {
                 debug_assert!(
                     relative.is_relative(),
