@@ -103,7 +103,7 @@ impl RemoveJob {
         for old_file in self.0.into_iter() {
             if !old_file.exists() {
                 log::warn!("Old file not found: {}", old_file.display());
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             } else if let Err(error) = std::fs::remove_file(&old_file) {
                 log::error!(
                     "Failed to remove old file {}: {:?}",
@@ -113,7 +113,7 @@ impl RemoveJob {
                 jobs.push(old_file);
             } else {
                 log::info!("Removed old file: {}", old_file.display());
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             }
         }
         if jobs.is_empty() {
@@ -128,7 +128,7 @@ impl RemoveJob {
         for old_file in self.0.into_iter() {
             log::info!("Removed old file: {}", old_file.display());
             std::thread::sleep(std::time::Duration::from_secs(1));
-            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
         }
         Ok(None)
     }
@@ -141,7 +141,7 @@ impl CopyJob {
         for details in self.0.into_iter() {
             if !details.from.exists() {
                 log::warn!("New file not found: {}", details.from.display());
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             } else if let Err(error) = std::fs::copy(&details.from, &details.to) {
                 log::error!(
                     "Failed to copy new file {} to {}: {:?}",
@@ -156,7 +156,7 @@ impl CopyJob {
                     details.from.display(),
                     details.to.display()
                 );
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             }
         }
         if jobs.is_empty() {
@@ -175,7 +175,7 @@ impl CopyJob {
                 details.to.display()
             );
             std::thread::sleep(std::time::Duration::from_secs(1));
-            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
         }
         Ok(None)
     }
@@ -188,7 +188,7 @@ impl CleanupJob {
         for cleanup in self.0.into_iter() {
             if !cleanup.exists() {
                 log::warn!("Directory not found: {}", cleanup.display());
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             } else if let Err(error) = std::fs::remove_dir_all(&cleanup) {
                 log::error!(
                     "Failed to remove directory {}: {:?}",
@@ -198,7 +198,7 @@ impl CleanupJob {
                 jobs.push(cleanup);
             } else {
                 log::info!("Removed directory: {}", cleanup.display());
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             }
         }
         if jobs.is_empty() {
@@ -213,7 +213,7 @@ impl CleanupJob {
         for cleanup in self.0.into_iter() {
             log::info!("Removed directory: {}", cleanup.display());
             std::thread::sleep(std::time::Duration::from_secs(1));
-            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
         }
         Ok(None)
     }

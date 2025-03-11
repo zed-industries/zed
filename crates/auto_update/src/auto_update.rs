@@ -241,7 +241,7 @@ struct InstallerDir(tempfile::TempDir);
 
 #[cfg(not(target_os = "windows"))]
 impl InstallerDir {
-    fn new() -> Result<Self> {
+    async fn new() -> Result<Self> {
         Ok(Self(
             tempfile::Builder::new()
                 .prefix("zed-auto-update")
@@ -259,15 +259,15 @@ struct InstallerDir(PathBuf);
 
 #[cfg(target_os = "windows")]
 impl InstallerDir {
-    fn new() -> Result<Self> {
+    async fn new() -> Result<Self> {
         let installer_dir = std::env::current_exe()?
             .parent()
             .context("No parent dir for Zed.exe")?
             .join("updates");
-        if installer_dir.exists() {
-            std::fs::remove_dir_all(&installer_dir)?;
+        if smol::fs::metadata(&installer_dir).await.is_ok() {
+            smol::fs::remove_dir_all(&installer_dir).await?;
         }
-        std::fs::create_dir(&installer_dir)?;
+        smol::fs::create_dir(&installer_dir).await?;
         Ok(Self(installer_dir))
     }
 
@@ -508,7 +508,7 @@ impl AutoUpdater {
             cx.notify();
         })?;
 
-        let installer_dir = InstallerDir::new()?;
+        let installer_dir = InstallerDir::new().await?;
         let filename = match OS {
             "macos" => Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),

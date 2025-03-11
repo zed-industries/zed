@@ -1238,7 +1238,7 @@ dependencies = [
  "anyhow",
  "log",
  "simplelog",
- "windows 0.58.0",
+ "windows 0.60.0",
  "winresource",
 ]
 
