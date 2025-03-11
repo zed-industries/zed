@@ -5469,6 +5469,7 @@ dependencies = [
  "telemetry",
  "theme",
  "time",
+ "time_format",
  "ui",
  "unindent",
  "util",
