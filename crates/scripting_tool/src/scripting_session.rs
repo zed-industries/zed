@@ -931,7 +931,6 @@ impl Script {
 
 #[cfg(test)]
 mod tests {
-    use buffer_diff::DiffHunk;
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
@@ -985,9 +984,7 @@ mod tests {
         let test_session = TestSession::init(cx).await;
         let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Content:\tHello world!\n");
-
-        // Only read, should not be marked as changed
-        assert!(!test_session.was_marked_changed("file1.txt", cx));
+        assert_eq!(test_session.diff(cx), Vec::new());
     }
 
     #[gpui::test]
@@ -1007,12 +1004,14 @@ mod tests {
         let test_session = TestSession::init(cx).await;
         let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Written content:\tThis is new content\n");
-        assert!(test_session.was_marked_changed("file1.txt", cx));
         assert_eq!(
-            test_session.diff_hunks_for_path("file1.txt", cx),
+            test_session.diff(cx),
             vec![(
-                "Hello world!".to_string(),
-                "This is new content".to_string()
+                PathBuf::from("file1.txt"),
+                vec![(
+                    "Hello world!\n".to_string(),
+                    "This is new content".to_string()
+                )]
             )]
         );
     }
@@ -1042,7 +1041,16 @@ mod tests {
             output,
             "Full content:\tFirst line\nSecond line\nThird line\n"
         );
-        assert!(test_session.was_marked_changed("multiwrite.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("multiwrite.txt"),
+                vec![(
+                    "".to_string(),
+                    "First line\nSecond line\nThird line".to_string()
+                )]
+            )]
+        );
     }
 
     #[gpui::test]
@@ -1071,29 +1079,33 @@ mod tests {
             output,
             "Final content:\tContent written by second handle\n\n"
         );
-        assert!(test_session.was_marked_changed("multi_open.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("multi_open.txt"),
+                vec![(
+                    "".to_string(),
+                    "Content written by second handle\n".to_string()
+                )]
+            )]
+        );
     }
 
     #[gpui::test]
     async fn test_append_mode(cx: &mut TestAppContext) {
         let script = r#"
-            -- Test append mode
-            local file = io.open("append.txt", "w")
-            file:write("Initial content\n")
-            file:close()
-
             -- Append more content
-            file = io.open("append.txt", "a")
+            file = io.open("file1.txt", "a")
             file:write("Appended content\n")
             file:close()
 
             -- Add even more
-            file = io.open("append.txt", "a")
+            file = io.open("file1.txt", "a")
             file:write("More appended content")
             file:close()
 
             -- Read back to verify
-            local read_file = io.open("append.txt", "r")
+            local read_file = io.open("file1.txt", "r")
             local content = read_file:read("*a")
             print("Content after appends:", content)
             read_file:close()
@@ -1103,9 +1115,18 @@ mod tests {
         let output = test_session.test_success(script, cx).await;
         assert_eq!(
             output,
-            "Content after appends:\tInitial content\nAppended content\nMore appended content\n"
+            "Content after appends:\tHello world!\nAppended content\nMore appended content\n"
         );
-        assert!(test_session.was_marked_changed("append.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("file1.txt"),
+                vec![(
+                    "".to_string(),
+                    "Appended content\nMore appended content".to_string()
+                )]
+            )]
+        );
     }
 
     #[gpui::test]
@@ -1155,7 +1176,13 @@ mod tests {
         assert!(output.contains("Line with newline length:\t7"));
         assert!(output.contains("Last char:\t10")); // LF
         assert!(output.contains("5 bytes:\tLine "));
-        assert!(test_session.was_marked_changed("multiline.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("multiline.txt"),
+                vec![("".to_string(), "Line 1\nLine 2\nLine 3".to_string())]
+            )]
+        );
     }
 
     // helpers
@@ -1175,8 +1202,8 @@ mod tests {
             fs.insert_tree(
                 "/",
                 json!({
-                    "file1.txt": "Hello world!",
-                    "file2.txt": "Goodbye moon!"
+                    "file1.txt": "Hello world!\n",
+                    "file2.txt": "Goodbye moon!\n"
                 }),
             )
             .await;
@@ -1202,42 +1229,28 @@ mod tests {
             })
         }
 
-        fn was_marked_changed(&self, path_str: &str, cx: &mut TestAppContext) -> bool {
+        fn diff(&self, cx: &mut TestAppContext) -> Vec<(PathBuf, Vec<(String, String)>)> {
             self.session.read_with(cx, |session, cx| {
-                let count_changed = session
-                    .changes_by_buffer
-                    .keys()
-                    .filter(|buffer| buffer.read(cx).file().unwrap().path().ends_with(path_str))
-                    .count();
-
-                assert!(count_changed < 2, "Multiple buffers matched for same path");
-
-                count_changed > 0
-            })
-        }
-
-        fn diff_hunks_for_path(
-            &self,
-            path_str: &str,
-            cx: &mut TestAppContext,
-        ) -> Vec<(String, String)> {
-            self.session.read_with(cx, |session, cx| {
-                let (buffer, changes) = session
+                session
                     .changes_by_buffer
                     .iter()
-                    .find(|(buffer, _)| buffer.read(cx).file().unwrap().path().ends_with(path_str))
-                    .unwrap();
-                let snapshot = buffer.read(cx).snapshot();
-                let diff = changes.diff.read(cx);
-                let hunks = diff.hunks(&snapshot, cx);
-                hunks
-                    .map(|hunk| {
-                        let old_text = diff
-                            .base_text()
-                            .text_for_range(hunk.diff_base_byte_range)
-                            .collect::<String>();
-                        let new_text = snapshot.text_for_range(hunk.range).collect::<String>();
-                        (old_text, new_text)
+                    .map(|(buffer, changes)| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let diff = changes.diff.read(cx);
+                        let hunks = diff.hunks(&snapshot, cx);
+                        let path = buffer.read(cx).file().unwrap().path().clone();
+                        let diffs = hunks
+                            .map(|hunk| {
+                                let old_text = diff
+                                    .base_text()
+                                    .text_for_range(hunk.diff_base_byte_range)
+                                    .collect::<String>();
+                                let new_text =
+                                    snapshot.text_for_range(hunk.range).collect::<String>();
+                                (old_text, new_text)
+                            })
+                            .collect();
+                        (path.to_path_buf(), diffs)
                     })
                     .collect()
             })
