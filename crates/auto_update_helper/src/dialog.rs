@@ -72,7 +72,7 @@ pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWN
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             class_name,
-            windows::core::w!("Progress Bar demo"),
+            windows::core::w!("Zed Editor"),
             WS_VISIBLE | WS_POPUP | WS_CAPTION,
             rect.right / 2 - width / 2,
             rect.bottom / 2 - height / 2,
