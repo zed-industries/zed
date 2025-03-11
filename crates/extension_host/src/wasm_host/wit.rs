@@ -108,8 +108,6 @@ impl Extension {
         let _ = release_channel;
 
         if version >= latest::MIN_VERSION {
-            authorize_access_to_unreleased_wasm_api_version(release_channel)?;
-
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
