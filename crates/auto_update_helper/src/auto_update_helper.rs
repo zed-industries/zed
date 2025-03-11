@@ -34,7 +34,6 @@ mod windows_impl {
         },
     };
 
-    pub(crate) const TOTAL_JOBS: usize = 6;
     pub(crate) const WM_JOB_UPDATED: u32 = WM_USER + 1;
     pub(crate) const WM_TERMINATE: u32 = WM_USER + 2;
 
