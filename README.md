@@ -6,6 +6,7 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 ---
 
+
 ### Installation
 
 <a href="https://repology.org/project/zed-editor/versions">
