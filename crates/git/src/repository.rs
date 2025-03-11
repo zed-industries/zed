@@ -92,7 +92,7 @@ impl UpstreamTracking {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RemoteCommandOutput {
     pub stdout: String,
     pub stderr: String,
@@ -912,7 +912,7 @@ fn run_remote_command(
                 let output = output?;
                 if !output.status.success() {
                     Err(anyhow!(
-                        "Operation failed:\n{}",
+                        "{}",
                         String::from_utf8_lossy(&output.stderr)
                     ))
                 } else {

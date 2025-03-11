@@ -5460,6 +5460,7 @@ dependencies = [
  "log",
  "menu",
  "multi_buffer",
+ "notifications",
  "panel",
  "picker",
  "postage",
