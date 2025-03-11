@@ -816,20 +816,18 @@ impl ScriptingSession {
     }
 
     fn parse_abs_path_in_root_dir(root_dir: &Path, path_str: &str) -> anyhow::Result<PathBuf> {
-        let path = Path::new(&path_str);
-        if path.is_absolute() {
-            // Check if path starts with root_dir prefix without resolving symlinks
-            if path.starts_with(&root_dir) {
-                Ok(path.to_path_buf())
+        // Get the canonical absolute path (including resolving symlinks)
+        // and then make that path relative to the root_dir if possible.
+        if let Ok(absolute) = Path::new(&path_str).canonicalize() {
+            if let Ok(relative) = absolute.strip_prefix(&root_dir) {
+                Ok(relative.to_path_buf())
             } else {
-                Err(anyhow!(
-                    "Error: Absolute path {} is outside the current working directory",
-                    path_str
-                ))
+                // todo-sandbox: In the future, sandbox this by prompting the user for
+                // accessing a file outside the project.
+                Ok(absolute.to_path_buf())
             }
         } else {
-            // TODO: Does use of `../` break sandbox - is path canonicalization needed?
-            Ok(root_dir.join(path))
+            Err(anyhow!("Invalid path: {path_str}"))
         }
     }
 }
