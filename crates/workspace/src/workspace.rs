@@ -4568,7 +4568,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Set the parameter `update` to `true` if the action changes the hisotry of the workspace.
+    /// Set the parameter `update` to `true` if the action changes the history of the workspace.
     /// Typically, there are three cases that change the history:
     /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
     /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
@@ -4589,7 +4589,7 @@ impl Workspace {
         }
     }
 
-    /// Set the parameter `update` to `true` if the action changes the hisotry of the workspace.
+    /// Set the parameter `update` to `true` if the action changes the history of the workspace.
     /// Typically, there are three cases that change the history:
     /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
     /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
