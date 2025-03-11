@@ -8,7 +8,7 @@ use dap_types::{
     requests::Request,
 };
 use futures::{channel::oneshot, select, FutureExt as _};
-use gpui::{App, AsyncApp, BackgroundExecutor};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor};
 use smol::channel::{Receiver, Sender};
 use std::{
     hash::Hash,
@@ -45,7 +45,7 @@ pub struct DebugAdapterClient {
     transport_delegate: TransportDelegate,
 }
 
-pub type DapMessageHandler = Box<dyn FnMut(Message, &mut App) + 'static + Send + Sync>;
+pub type DapMessageHandler = Box<dyn FnMut(Message) + 'static + Send + Sync>;
 
 impl DebugAdapterClient {
     pub async fn start(
@@ -68,24 +68,16 @@ impl DebugAdapterClient {
         let client_id = this.id;
 
         // start handling events/reverse requests
-        cx.update(|cx| {
-            cx.spawn({
-                let server_tx = server_tx.clone();
-                |mut cx| async move {
-                    Self::handle_receive_messages(
-                        client_id,
-                        server_rx,
-                        server_tx,
-                        message_handler,
-                        &mut cx,
-                    )
-                    .await
-                }
-            })
-            .detach_and_log_err(cx);
 
-            this
-        })
+        cx.background_spawn(Self::handle_receive_messages(
+            client_id,
+            server_rx,
+            server_tx.clone(),
+            message_handler,
+        ))
+        .detach();
+
+        Ok(this)
     }
 
     pub async fn reconnect(
@@ -118,7 +110,6 @@ impl DebugAdapterClient {
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
         mut message_handler: DapMessageHandler,
-        cx: &mut AsyncApp,
     ) -> Result<()> {
         let result = loop {
             let message = match server_rx.recv().await {
@@ -126,20 +117,16 @@ impl DebugAdapterClient {
                 Err(e) => break Err(e.into()),
             };
 
-            if let Err(e) = match message {
+            match message {
                 Message::Event(ev) => {
                     log::debug!("Client {} received event `{}`", client_id.0, &ev);
 
-                    cx.update(|cx| message_handler(Message::Event(ev), cx))
+                    message_handler(Message::Event(ev))
                 }
-                Message::Request(req) => cx.update(|cx| message_handler(Message::Request(req), cx)),
+                Message::Request(req) => message_handler(Message::Request(req)),
                 Message::Response(response) => {
                     log::debug!("Received response after request timeout: {:#?}", response);
-
-                    Ok(())
                 }
-            } {
-                break Err(e);
             }
 
             smol::future::yield_now().await;

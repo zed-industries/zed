@@ -31,6 +31,7 @@ use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::any::TypeId;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::u64;
 use std::{
@@ -214,7 +215,7 @@ impl LocalMode {
 
         let (initialized_tx, initialized_rx) = oneshot::channel();
         let mut initialized_tx = Some(initialized_tx);
-        let message_handler = Box::new(move |message, _cx: &mut App| {
+        let message_handler = Box::new(move |message| {
             let Message::Event(event) = &message else {
                 messages_tx.unbounded_send(message).ok();
                 return;
@@ -497,6 +498,8 @@ impl ThreadStates {
     }
 }
 
+#[derive(Default, PartialEq, PartialOrd, Eq, Ord)]
+pub struct OutputToken(usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
@@ -507,6 +510,7 @@ pub struct Session {
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
     last_processed_output: usize,
+    //output_token: OutputToken,
     output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
