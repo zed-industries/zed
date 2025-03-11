@@ -13855,7 +13855,37 @@ impl Editor {
         }
 
         self.stage_or_unstage_diff_hunks(stage, ranges, cx);
-        self.go_to_next_hunk(&GoToHunk, window, cx);
+        let snapshot = self.snapshot(window, cx);
+        let position = self.selections.newest::<Point>(cx).head();
+        let mut row = snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
+            .find(|hunk| hunk.row_range.start.0 > position.row)
+            .map(|hunk| hunk.row_range.start);
+
+        let all_diff_hunks_expanded = self.buffer().read(cx).all_diff_hunks_expanded();
+        // Outside of the project diff editor, wrap around to the beginning.
+        if !all_diff_hunks_expanded {
+            row = row.or_else(|| {
+                snapshot
+                    .buffer_snapshot
+                    .diff_hunks_in_range(Point::zero()..position)
+                    .find(|hunk| hunk.row_range.end.0 < position.row)
+                    .map(|hunk| hunk.row_range.start)
+            });
+        }
+
+        if let Some(row) = row {
+            let destination = Point::new(row.0, 0);
+            let autoscroll = Autoscroll::center();
+
+            self.unfold_ranges(&[destination..destination], false, false, cx);
+            self.change_selections(Some(autoscroll), window, cx, |s| {
+                s.select_ranges([destination..destination]);
+            });
+        } else if all_diff_hunks_expanded {
+            window.dispatch_action(::git::ExpandCommitEditor.boxed_clone(), cx);
+        }
     }
 
     fn do_stage_or_unstage(
