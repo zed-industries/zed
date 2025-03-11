@@ -1651,7 +1651,12 @@ impl Repository {
             Some(GitJobKey::WriteIndex(path.clone())),
             |git_repo| async move {
                 match git_repo {
-                    GitRepo::Local(repo) => repo.set_index_text(&path, content, &env.await),
+                    GitRepo::Local(repo) => {
+                        dbg!("set_index_text >>>");
+                        let result = repo.set_index_text(&path, content, &env.await);
+                        dbg!("set_index_text <<<");
+                        result
+                    }
                     GitRepo::Remote {
                         project_id,
                         client,

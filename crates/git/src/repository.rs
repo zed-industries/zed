@@ -427,7 +427,11 @@ impl GitRepository for RealGitRepository {
         content: Option<String>,
         env: &HashMap<String, String>,
     ) -> anyhow::Result<()> {
-        let working_directory = self.working_directory()?;
+        let repo = self.repository.lock();
+        let working_directory = repo
+            .workdir()
+            .context("failed to read git work directory")
+            .map(Path::to_path_buf)?;
         if let Some(content) = content {
             let mut child = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)

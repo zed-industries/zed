@@ -143,7 +143,7 @@ impl BufferDiffState {
         Some(rx)
     }
 
-    pub fn diff_bases_changed(
+    fn diff_bases_changed(
         &mut self,
         buffer: text::BufferSnapshot,
         diff_bases_change: DiffBasesChange,
@@ -834,7 +834,6 @@ impl LocalBufferStore {
         }
 
         cx.spawn(move |this, mut cx| async move {
-            git_store.wait_for_pending_index_writes().await;
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_changes_by_buffer = cx
@@ -844,11 +843,13 @@ impl LocalBufferStore {
                         .filter_map(|(buffer, path, current_index_text, current_head_text)| {
                             let local_repo = snapshot.local_repo_for_path(&path)?;
                             let relative_path = local_repo.relativize(&path).ok()?;
+                            dbg!("start loading index text {:?}", &relative_path);
                             let index_text = if current_index_text.is_some() {
                                 local_repo.repo().load_index_text(&relative_path)
                             } else {
                                 None
                             };
+                            dbg!("start loading head text {:?}", &relative_path);
                             let head_text = if current_head_text.is_some() {
                                 local_repo.repo().load_committed_text(&relative_path)
                             } else {

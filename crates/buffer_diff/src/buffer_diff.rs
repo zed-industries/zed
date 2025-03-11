@@ -835,12 +835,12 @@ impl BufferDiff {
 
     pub fn start_pending_op(&mut self) {
         self.pending_ops += 1;
-        dbg!(("start", self.pending_ops));
+        dbg!("start_pending_op", self.pending_ops);
     }
 
     pub fn end_pending_op(&mut self, result: &Option<anyhow::Result<()>>, cx: &mut Context<Self>) {
         self.pending_ops = self.pending_ops.saturating_sub(1);
-        dbg!("end", self.pending_ops);
+        dbg!("end_pending_op", self.pending_ops);
         if let Some(Err(_)) = result {
             if let Some(changed_range) = self.clear_pending_hunks() {
                 cx.emit(BufferDiffEvent::DiffChanged {
