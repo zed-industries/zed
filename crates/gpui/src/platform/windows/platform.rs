@@ -251,6 +251,7 @@ impl WindowsPlatform {
         false
     }
 
+    /// You have to call `update_jump_list` to show the button after calling this method.
     fn set_dock_menus(&self, menus: Vec<MenuItem>) {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
