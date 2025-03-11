@@ -2823,7 +2823,7 @@ impl GitPanel {
             None => return false,
         };
 
-        longest_item_width < px(scroll_handle.base_handle.bounds().size.width.0)
+        longest_item_width > px(scroll_handle.base_handle.bounds().size.width.0)
     }
 
     /// Renders the horizontal scrollbar.
@@ -2929,36 +2929,31 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entry_count = self.entries.len();
-        // let show_vertical_scrollbar_container =
-        //     matches!(Self::show_vertical_scrollbar(cx), ShowScrollbar::Always);
+        let show_vertical_scrollbar_container =
+            matches!(Self::show_vertical_scrollbar(cx), ShowScrollbar::Always);
 
-        // let show_horizontal_scrollbar_container =
-        //     matches!(Self::show_horizontal_scrollbar(cx), ShowScrollbar::Always);
-        let show_vertical_scrollbar_container = true;
+        let show_horizontal_scrollbar_container =
+            matches!(Self::show_horizontal_scrollbar(cx), ShowScrollbar::Always);
 
-        let show_horizontal_scrollbar_container = true;
+        let show_vertical_scrollbar = if !Self::should_show_vertical_scrollbar(cx)
+            || !(self.show_vertical_scrollbar || self.vertical_scrollbar_state.is_dragging())
+        {
+            false
+        } else {
+            true
+        };
 
-        // let show_vertical_scrollbar = if !Self::should_show_vertical_scrollbar(cx)
-        //     || !(self.show_vertical_scrollbar || self.vertical_scrollbar_state.is_dragging())
-        // {
-        //     false
-        // } else {
-        //     true
-        // };
-
-        // let show_horizontal_scrollbar = if !Self::should_show_horizontal_scrollbar(cx)
-        //     || !(self.show_horizontal_scrollbar || self.horizontal_scrollbar_state.is_dragging())
-        //     || !self.horizontal_scroll_needed()
-        // {
-        //     false
-        // } else {
-        //     true
-        // };
-        let show_vertical_scrollbar = true;
-
-        let show_horizontal_scrollbar = true;
+        let show_horizontal_scrollbar = if !Self::should_show_horizontal_scrollbar(cx)
+            || !(self.show_horizontal_scrollbar || self.horizontal_scrollbar_state.is_dragging())
+            || !self.horizontal_scroll_needed()
+        {
+            false
+        } else {
+            true
+        };
 
         let scroll_track_size = px(16.);
+
         let h_scroll_offset = if show_vertical_scrollbar {
             // magic number
             px(3.)
