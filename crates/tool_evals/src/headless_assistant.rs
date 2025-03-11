@@ -143,6 +143,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
     let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
+    language::init(cx);
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     assistant_tools::init(cx);
