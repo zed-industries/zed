@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use assistant_tool::Tool;
-use gpui::{App, Entity, Task, Window};
+use gpui::{App, Entity, Task};
+use project::Project;
 
 use crate::manager::ContextServerManager;
 use crate::types;
@@ -49,12 +50,11 @@ impl Tool for ContextServerTool {
     }
 
     fn run(
-        self: std::sync::Arc<Self>,
+        self: Arc<Self>,
         input: serde_json::Value,
-        _workspace: gpui::WeakEntity<workspace::Workspace>,
-        _: &mut Window,
+        _project: Entity<Project>,
         cx: &mut App,
-    ) -> gpui::Task<gpui::Result<String>> {
+    ) -> Task<Result<String>> {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             cx.foreground_executor().spawn({
                 let tool_name = self.tool.name.clone();

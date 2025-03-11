@@ -7,10 +7,10 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent,
 };
-use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use git::{
-    status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
+    repository::Branch, status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged,
+    UnstageAll, UnstageAndNext,
 };
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
@@ -24,27 +24,27 @@ use project::{
 };
 use std::any::{Any, TypeId};
 use theme::ActiveTheme;
-use ui::{prelude::*, vertical_divider, Tooltip};
+use ui::{prelude::*, vertical_divider, KeyBinding, Tooltip};
 use util::ResultExt as _;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::SearchableItemHandle,
-    ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace,
 };
 
-actions!(git, [Diff]);
+actions!(git, [Diff, Add]);
 
 pub struct ProjectDiff {
+    project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    project: Entity<Project>,
     git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
-
+    current_branch: Option<Branch>,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -63,13 +63,13 @@ const NEW_NAMESPACE: &'static str = "2";
 
 impl ProjectDiff {
     pub(crate) fn register(
-        _: &mut Workspace,
-        window: Option<&mut Window>,
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(window) = window else { return };
-        cx.when_flag_enabled::<feature_flags::GitUiFeatureFlag>(window, |workspace, _, _cx| {
-            workspace.register_action(Self::deploy);
+        workspace.register_action(Self::deploy);
+        workspace.register_action(|workspace, _: &Add, window, cx| {
+            Self::deploy(workspace, &Diff, window, cx);
         });
 
         workspace::register_serializable_item::<ProjectDiff>(cx);
@@ -119,6 +119,12 @@ impl ProjectDiff {
                 project_diff.move_to_entry(entry, window, cx);
             })
         }
+    }
+
+    pub fn autoscroll(&self, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.request_autoscroll(Autoscroll::fit(), cx);
+        })
     }
 
     fn new(
@@ -179,6 +185,7 @@ impl ProjectDiff {
             multibuffer,
             pending_scroll: None,
             update_needed: send,
+            current_branch: None,
             _task: worker,
             _subscription: git_store_subscription,
         }
@@ -444,6 +451,20 @@ impl ProjectDiff {
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
+            this.update(&mut cx, |this, cx| {
+                let new_branch =
+                    this.git_store
+                        .read(cx)
+                        .active_repository()
+                        .and_then(|active_repository| {
+                            active_repository.read(cx).current_branch().cloned()
+                        });
+                if new_branch != this.current_branch {
+                    this.current_branch = new_branch;
+                    cx.notify();
+                }
+            })?;
+
             let buffers_to_load = this.update(&mut cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
@@ -453,7 +474,10 @@ impl ProjectDiff {
                     })?;
                 }
             }
-            this.update(&mut cx, |this, _| this.pending_scroll.take())?;
+            this.update(&mut cx, |this, cx| {
+                this.pending_scroll.take();
+                cx.notify();
+            })?;
         }
 
         Ok(())
@@ -642,8 +666,10 @@ impl Item for ProjectDiff {
 }
 
 impl Render for ProjectDiff {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+
+        let can_push_and_pull = crate::can_push_and_pull(&self.project, cx);
 
         div()
             .track_focus(&self.focus_handle)
@@ -654,7 +680,61 @@ impl Render for ProjectDiff {
             .justify_center()
             .size_full()
             .when(is_empty, |el| {
-                el.child(Label::new("No uncommitted changes"))
+                el.child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .justify_around()
+                                .child(Label::new("No uncommitted changes")),
+                        )
+                        .when(can_push_and_pull, |this_div| {
+                            let keybinding_focus_handle = self.focus_handle(cx);
+
+                            this_div.when_some(self.current_branch.as_ref(), |this_div, branch| {
+                                let remote_button = crate::render_remote_button(
+                                    "project-diff-remote-button",
+                                    branch,
+                                    Some(keybinding_focus_handle.clone()),
+                                    false,
+                                );
+
+                                match remote_button {
+                                    Some(button) => {
+                                        this_div.child(h_flex().justify_around().child(button))
+                                    }
+                                    None => this_div.child(
+                                        h_flex()
+                                            .justify_around()
+                                            .child(Label::new("Remote up to date")),
+                                    ),
+                                }
+                            })
+                        })
+                        .map(|this| {
+                            let keybinding_focus_handle = self.focus_handle(cx).clone();
+
+                            this.child(
+                                h_flex().justify_around().mt_1().child(
+                                    Button::new("project-diff-close-button", "Close")
+                                        // .style(ButtonStyle::Transparent)
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &CloseActiveItem::default(),
+                                            &keybinding_focus_handle,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(move |_, window, cx| {
+                                            window.focus(&keybinding_focus_handle);
+                                            window.dispatch_action(
+                                                Box::new(CloseActiveItem::default()),
+                                                cx,
+                                            );
+                                        }),
+                                ),
+                            )
+                        }),
+                )
             })
             .when(!is_empty, |el| el.child(self.editor.clone()))
     }

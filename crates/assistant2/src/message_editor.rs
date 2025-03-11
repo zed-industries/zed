@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
+use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
@@ -15,8 +16,8 @@ use std::time::Duration;
 use text::Bias;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Switch,
-    Tooltip,
+    prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
+    Switch, Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
@@ -39,6 +40,7 @@ pub struct MessageEditor {
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
     use_tools: bool,
+    edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -117,6 +119,7 @@ impl MessageEditor {
                 )
             }),
             use_tools: false,
+            edits_expanded: false,
             _subscriptions: subscriptions,
         }
     }
@@ -303,6 +306,9 @@ impl Render for MessageEditor {
             px(64.)
         };
 
+        let changed_buffers = self.thread.read(cx).scripting_changed_buffers(cx);
+        let changed_buffers_count = changed_buffers.len();
+
         v_flex()
             .size_full()
             .when(is_streaming_completion, |parent| {
@@ -361,6 +367,109 @@ impl Render for MessageEditor {
                                     }),
                             ),
                     ),
+                )
+            })
+            .when(changed_buffers_count > 0, |parent| {
+                parent.child(
+                    v_flex()
+                        .mx_2()
+                        .bg(cx.theme().colors().element_background)
+                        .border_1()
+                        .border_b_0()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_t_md()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .p_2()
+                                .child(
+                                    Disclosure::new("edits-disclosure", self.edits_expanded)
+                                        .on_click(cx.listener(|this, _ev, _window, cx| {
+                                            this.edits_expanded = !this.edits_expanded;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    Label::new("Edits")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(
+                                        "{} {}",
+                                        changed_buffers_count,
+                                        if changed_buffers_count == 1 {
+                                            "file"
+                                        } else {
+                                            "files"
+                                        }
+                                    ))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                                ),
+                        )
+                        .when(self.edits_expanded, |parent| {
+                            parent.child(
+                                v_flex().bg(cx.theme().colors().editor_background).children(
+                                    changed_buffers.enumerate().flat_map(|(index, buffer)| {
+                                        let file = buffer.read(cx).file()?;
+                                        let path = file.path();
+
+                                        let parent_label = path.parent().and_then(|parent| {
+                                            let parent_str = parent.to_string_lossy();
+
+                                            if parent_str.is_empty() {
+                                                None
+                                            } else {
+                                                Some(
+                                                    Label::new(format!(
+                                                        "{}{}",
+                                                        parent_str,
+                                                        std::path::MAIN_SEPARATOR_STR
+                                                    ))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                                )
+                                            }
+                                        });
+
+                                        let name_label = path.file_name().map(|name| {
+                                            Label::new(name.to_string_lossy().to_string())
+                                                .size(LabelSize::Small)
+                                        });
+
+                                        let file_icon = FileIcons::get_icon(&path, cx)
+                                            .map(Icon::from_path)
+                                            .unwrap_or_else(|| Icon::new(IconName::File));
+
+                                        let element = div()
+                                            .p_2()
+                                            .when(index + 1 < changed_buffers_count, |parent| {
+                                                parent
+                                                    .border_color(cx.theme().colors().border)
+                                                    .border_b_1()
+                                            })
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(file_icon)
+                                                    .child(
+                                                        // TODO: handle overflow
+                                                        h_flex()
+                                                            .children(parent_label)
+                                                            .children(name_label),
+                                                    )
+                                                    // TODO: show lines changed
+                                                    .child(Label::new("+").color(Color::Created))
+                                                    .child(Label::new("-").color(Color::Deleted)),
+                                            );
+
+                                        Some(element)
+                                    }),
+                                ),
+                            )
+                        }),
                 )
             })
             .child(

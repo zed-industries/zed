@@ -843,7 +843,6 @@ impl Pane {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
@@ -928,7 +927,6 @@ impl Pane {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn add_item_inner(
         &mut self,
         item: Box<dyn ItemHandle>,
@@ -2424,14 +2422,10 @@ impl Pane {
                     .child(label),
             );
 
-        let single_entry_to_resolve = {
-            let item_entries = self.items[ix].project_entry_ids(cx);
-            if item_entries.len() == 1 {
-                Some(item_entries[0])
-            } else {
-                None
-            }
-        };
+        let single_entry_to_resolve = self.items[ix]
+            .is_singleton(cx)
+            .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
+            .flatten();
 
         let total_items = self.items.len();
         let has_items_to_left = ix > 0;

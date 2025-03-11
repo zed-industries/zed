@@ -1,6 +1,6 @@
 use crate::persistence::model::DockData;
 use crate::{status_bar::StatusItemView, Workspace};
-use crate::{DraggedDock, Event, Pane};
+use crate::{DraggedDock, Event, ModalLayer, Pane};
 use client::proto;
 use gpui::{
     deferred, div, px, Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter,
@@ -189,7 +189,8 @@ pub struct Dock {
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
     pub(crate) serialized_dock: Option<DockData>,
-    resizeable: bool,
+    zoom_layer_open: bool,
+    modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -236,6 +237,7 @@ pub struct PanelButtons {
 impl Dock {
     pub fn new(
         position: DockPosition,
+        modal_layer: Entity<ModalLayer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -251,7 +253,7 @@ impl Dock {
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
                 if matches!(e, Event::ZoomChanged) {
                     let is_zoomed = workspace.read(cx).zoomed.is_some();
-                    dock.resizeable = !is_zoomed;
+                    dock.zoom_layer_open = is_zoomed;
                 }
             });
             Self {
@@ -263,7 +265,8 @@ impl Dock {
                 focus_handle: focus_handle.clone(),
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
-                resizeable: true,
+                zoom_layer_open: false,
+                modal_layer,
             }
         });
 
@@ -318,6 +321,10 @@ impl Dock {
 
     pub fn is_open(&self) -> bool {
         self.is_open
+    }
+
+    fn resizable(&self, cx: &App) -> bool {
+        !(self.zoom_layer_open || self.modal_layer.read(cx).has_active_modal())
     }
 
     pub fn panel<T: Panel>(&self) -> Option<Entity<T>> {
@@ -777,7 +784,9 @@ impl Render for Dock {
                                 .cached(StyleRefinement::default().v_flex().size_full()),
                         ),
                 )
-                .when(self.resizeable, |this| this.child(create_resize_handle()))
+                .when(self.resizable(cx), |this| {
+                    this.child(create_resize_handle())
+                })
         } else {
             div()
                 .key_context(dispatch_context)

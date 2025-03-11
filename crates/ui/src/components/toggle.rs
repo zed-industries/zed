@@ -1,6 +1,5 @@
 use gpui::{
-    div, hsla, prelude::*, AnyElement, AnyView, CursorStyle, ElementId, Hsla, IntoElement, Styled,
-    Window,
+    div, hsla, prelude::*, AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window,
 };
 use std::sync::Arc;
 
@@ -141,14 +140,14 @@ impl Checkbox {
 
         match self.style.clone() {
             ToggleStyle::Ghost => cx.theme().colors().border,
-            ToggleStyle::ElevationBased(elevation) => elevation.on_elevation_bg(cx),
+            ToggleStyle::ElevationBased(_) => cx.theme().colors().border,
             ToggleStyle::Custom(color) => color.opacity(0.3),
         }
     }
 
     /// container size
-    pub fn container_size(cx: &App) -> Rems {
-        DynamicSpacing::Base20.rems(cx)
+    pub fn container_size() -> Pixels {
+        px(20.0)
     }
 }
 
@@ -157,21 +156,21 @@ impl RenderOnce for Checkbox {
         let group_id = format!("checkbox_group_{:?}", self.id);
         let color = if self.disabled {
             Color::Disabled
-        } else if self.placeholder {
-            Color::Placeholder
         } else {
             Color::Selected
         };
         let icon = match self.toggle_state {
-            ToggleState::Selected => Some(if self.placeholder {
-                Icon::new(IconName::Circle)
-                    .size(IconSize::XSmall)
-                    .color(color)
-            } else {
-                Icon::new(IconName::Check)
-                    .size(IconSize::Small)
-                    .color(color)
-            }),
+            ToggleState::Selected => {
+                if self.placeholder {
+                    None
+                } else {
+                    Some(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(color),
+                    )
+                }
+            }
             ToggleState::Indeterminate => {
                 Some(Icon::new(IconName::Dash).size(IconSize::Small).color(color))
             }
@@ -180,8 +179,9 @@ impl RenderOnce for Checkbox {
 
         let bg_color = self.bg_color(cx);
         let border_color = self.border_color(cx);
+        let hover_border_color = border_color.alpha(0.7);
 
-        let size = Self::container_size(cx);
+        let size = Self::container_size();
 
         let checkbox = h_flex()
             .id(self.id.clone())
@@ -195,22 +195,27 @@ impl RenderOnce for Checkbox {
                     .flex_none()
                     .justify_center()
                     .items_center()
-                    .m(DynamicSpacing::Base04.px(cx))
-                    .size(DynamicSpacing::Base16.rems(cx))
+                    .m_1()
+                    .size_4()
                     .rounded_xs()
                     .bg(bg_color)
                     .border_1()
                     .border_color(border_color)
-                    .when(self.disabled, |this| {
-                        this.cursor(CursorStyle::OperationNotAllowed)
-                    })
+                    .when(self.disabled, |this| this.cursor_not_allowed())
                     .when(self.disabled, |this| {
                         this.bg(cx.theme().colors().element_disabled.opacity(0.6))
                     })
                     .when(!self.disabled, |this| {
-                        this.group_hover(group_id.clone(), |el| {
-                            el.bg(cx.theme().colors().element_hover)
-                        })
+                        this.group_hover(group_id.clone(), |el| el.border_color(hover_border_color))
+                    })
+                    .when(self.placeholder, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .rounded_full()
+                                .bg(color.color(cx).alpha(0.5))
+                                .size(px(4.)),
+                        )
                     })
                     .children(icon),
             );
@@ -520,6 +525,12 @@ impl ComponentPreview for Checkbox {
                         single_example(
                             "Unselected",
                             Checkbox::new("checkbox_unselected", ToggleState::Unselected)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Placeholder",
+                            Checkbox::new("checkbox_indeterminate", ToggleState::Selected)
+                                .placeholder(true)
                                 .into_any_element(),
                         ),
                         single_example(
