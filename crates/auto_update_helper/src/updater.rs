@@ -62,6 +62,11 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
     }
 }
 
+pub(crate) fn total_jobs_count() -> usize {
+    let (remove_job, copy_job, cleanup_job) = collect_jobs(std::path::Path::new("temp"));
+    remove_job.0.len() + copy_job.0.len() + cleanup_job.0.len()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct RemoveJob(Vec<PathBuf>);
 
