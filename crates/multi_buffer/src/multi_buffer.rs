@@ -4175,6 +4175,9 @@ impl MultiBufferSnapshot {
         let region = cursor.region()?;
         let overshoot = offset - region.range.start;
         let buffer_offset = region.buffer_range.start + overshoot;
+        if buffer_offset > region.buffer.len() {
+            return None;
+        }
         Some((region.buffer, buffer_offset))
     }
 
@@ -4183,8 +4186,11 @@ impl MultiBufferSnapshot {
         cursor.seek(&point);
         let region = cursor.region()?;
         let overshoot = point - region.range.start;
-        let buffer_offset = region.buffer_range.start + overshoot;
-        Some((region.buffer, buffer_offset, region.is_main_buffer))
+        let buffer_point = region.buffer_range.start + overshoot;
+        if buffer_point > region.buffer.max_point() {
+            return None;
+        }
+        Some((region.buffer, buffer_point, region.is_main_buffer))
     }
 
     pub fn suggested_indents(
