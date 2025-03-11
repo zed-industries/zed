@@ -349,11 +349,14 @@ impl Thread {
 
         if use_tools {
             let mut tools = Vec::new();
-            tools.push(LanguageModelRequestTool {
-                name: ScriptingTool::NAME.into(),
-                description: ScriptingTool::DESCRIPTION.into(),
-                input_schema: ScriptingTool::input_schema(),
-            });
+
+            if self.tools.is_scripting_tool_enabled() {
+                tools.push(LanguageModelRequestTool {
+                    name: ScriptingTool::NAME.into(),
+                    description: ScriptingTool::DESCRIPTION.into(),
+                    input_schema: ScriptingTool::input_schema(),
+                });
+            }
 
             tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
                 LanguageModelRequestTool {
