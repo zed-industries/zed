@@ -12,7 +12,7 @@ use project::git::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{prelude::*, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -169,6 +169,7 @@ impl Render for BranchList {
 struct BranchEntry {
     branch: Branch,
     positions: Vec<usize>,
+    is_new: bool,
 }
 
 pub struct BranchListDelegate {
@@ -192,10 +193,6 @@ impl BranchListDelegate {
             last_query: Default::default(),
             modifiers: Default::default(),
         }
-    }
-
-    fn has_exact_match(&self, target: &str) -> bool {
-        self.matches.iter().any(|entry| entry.branch.name == target)
     }
 
     fn create_branch(
@@ -257,13 +254,14 @@ impl PickerDelegate for BranchListDelegate {
 
         const RECENT_BRANCHES_COUNT: usize = 10;
         cx.spawn_in(window, move |picker, mut cx| async move {
-            let matches = if query.is_empty() {
+            let mut matches: Vec<BranchEntry> = if query.is_empty() {
                 all_branches
                     .into_iter()
                     .take(RECENT_BRANCHES_COUNT)
                     .map(|branch| BranchEntry {
                         branch,
                         positions: Vec::new(),
+                        is_new: false,
                     })
                     .collect()
             } else {
@@ -286,11 +284,29 @@ impl PickerDelegate for BranchListDelegate {
                 .map(|candidate| BranchEntry {
                     branch: all_branches[candidate.candidate_id].clone(),
                     positions: candidate.positions,
+                    is_new: false,
                 })
                 .collect()
             };
             picker
                 .update(&mut cx, |picker, _| {
+                    #[allow(clippy::nonminimal_bool)]
+                    if !query.is_empty()
+                        && !matches
+                            .first()
+                            .is_some_and(|entry| entry.branch.name == query)
+                    {
+                        matches.push(BranchEntry {
+                            branch: Branch {
+                                name: query.clone().into(),
+                                is_head: false,
+                                upstream: None,
+                                most_recent_commit: None,
+                            },
+                            positions: Vec::new(),
+                            is_new: true,
+                        })
+                    }
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
@@ -305,19 +321,14 @@ impl PickerDelegate for BranchListDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
-        if !new_branch_name.is_empty()
-            && !self.has_exact_match(&new_branch_name)
-            && ((self.selected_index == 0 && self.matches.len() == 0) || secondary)
-        {
-            self.create_branch(new_branch_name, window, cx);
-            return;
-        }
-
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
+        if entry.is_new {
+            self.create_branch(entry.branch.name.clone(), window, cx);
+            return;
+        }
 
         let current_branch = self.repo.as_ref().map(|repo| {
             repo.update(cx, |repo, _| {
@@ -377,16 +388,16 @@ impl PickerDelegate for BranchListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = &self.matches[ix];
 
-        let (commit_time, commit_message) = entry
+        let (commit_time, subject) = entry
             .branch
             .most_recent_commit
             .as_ref()
             .map(|commit| {
-                let commit_message = commit.subject.clone();
+                let subject = commit.subject.clone();
                 let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                     .unwrap_or_else(|_| OffsetDateTime::now_utc());
                 let formatted_time = format_local_timestamp(
@@ -394,14 +405,9 @@ impl PickerDelegate for BranchListDelegate {
                     OffsetDateTime::now_utc(),
                     time_format::TimestampFormat::Relative,
                 );
-                (formatted_time, commit_message)
+                (Some(formatted_time), Some(subject))
             })
-            .unwrap_or_else(|| {
-                (
-                    "Unknown Date".to_string(),
-                    SharedString::from("No commit message available"),
-                )
-            });
+            .unwrap_or_else(|| (None, None));
 
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
@@ -422,89 +428,53 @@ impl PickerDelegate for BranchListDelegate {
                                 .overflow_x_hidden()
                                 .gap_2()
                                 .justify_between()
-                                .child(
-                                    div().flex_shrink().overflow_x_hidden().child(
+                                .child(div().flex_shrink().overflow_x_hidden().child(
+                                    if entry.is_new {
+                                        Label::new(format!(
+                                            "Create branch \"{}\"…",
+                                            entry.branch.name
+                                        ))
+                                        .into_any_element()
+                                    } else {
                                         HighlightedLabel::new(
                                             entry.branch.name.clone(),
                                             entry.positions.clone(),
                                         )
-                                        .truncate(),
-                                    ),
-                                )
-                                .child(
-                                    Label::new(commit_time)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_element(),
-                                ),
+                                        .truncate()
+                                        .into_any_element()
+                                    },
+                                ))
+                                .when_some(commit_time, |el, commit_time| {
+                                    el.child(
+                                        Label::new(commit_time)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .into_element(),
+                                    )
+                                }),
                         )
                         .when(self.style == BranchListStyle::Modal, |el| {
-                            el.child(
-                                div().max_w_96().child(
-                                    Label::new(
-                                        commit_message
-                                            .split('\n')
-                                            .next()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                    )
+                            el.child(div().max_w_96().child({
+                                let message = if entry.is_new {
+                                    if let Some(current_branch) =
+                                        self.repo.as_ref().and_then(|repo| {
+                                            repo.read(cx).current_branch().map(|b| b.name.clone())
+                                        })
+                                    {
+                                        format!("based off {}", current_branch)
+                                    } else {
+                                        "based off the current branch".to_string()
+                                    }
+                                } else {
+                                    subject.unwrap_or("no commits found".into()).to_string()
+                                };
+                                Label::new(message)
                                     .size(LabelSize::Small)
                                     .truncate()
-                                    .color(Color::Muted),
-                                ),
-                            )
+                                    .color(Color::Muted)
+                            }))
                         }),
                 ),
-        )
-    }
-
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
-        let new_branch_name = SharedString::from(self.last_query.trim().replace(" ", "-"));
-        let handle = cx.weak_entity();
-        Some(
-            h_flex()
-                .w_full()
-                .p_2()
-                .gap_2()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .when(
-                    !new_branch_name.is_empty() && !self.has_exact_match(&new_branch_name),
-                    |el| {
-                        el.child(
-                            Button::new(
-                                "create-branch",
-                                format!("Create branch '{new_branch_name}'",),
-                            )
-                            .key_binding(KeyBinding::for_action(
-                                &menu::SecondaryConfirm,
-                                window,
-                                cx,
-                            ))
-                            .toggle_state(
-                                self.modifiers.secondary()
-                                    || (self.selected_index == 0 && self.matches.len() == 0),
-                            )
-                            .tooltip(Tooltip::for_action_title(
-                                "Create branch",
-                                &menu::SecondaryConfirm,
-                            ))
-                            .on_click(move |_, window, cx| {
-                                let new_branch_name = new_branch_name.clone();
-                                if let Some(picker) = handle.upgrade() {
-                                    picker.update(cx, |picker, cx| {
-                                        picker.delegate.create_branch(new_branch_name, window, cx)
-                                    });
-                                }
-                            }),
-                        )
-                    },
-                )
-                .into_any(),
         )
     }
 
