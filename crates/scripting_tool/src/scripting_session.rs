@@ -252,7 +252,7 @@ impl ScriptingSession {
 
         let path = match Self::parse_abs_path_in_root_dir(&root_dir, &path_str) {
             Ok(path) => path,
-            Err(err) => return Ok((None, format!("{err}"))),
+            Err(err) => return Ok((None, err.to_string())),
         };
 
         let project_path = ProjectPath {
