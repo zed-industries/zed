@@ -455,7 +455,7 @@ impl ScriptSession {
         }
 
         let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
-        let mut position = file_userdata.get::<usize>("__position")?;
+        let position = file_userdata.get::<usize>("__position")?;
         let content_ref = content.borrow::<FileContent>()?;
         let content = content_ref.0.lock();
 
@@ -463,114 +463,101 @@ impl ScriptSession {
             return Ok(None); // EOF
         }
 
-        let result = match format {
-            Some(mlua::Value::String(s)) => {
-                let lossy_string = s.to_string_lossy();
-                let format_str: &str = lossy_string.as_ref();
-
-                // Only consider the first 2 bytes, since it's common to pass e.g. "*all"  instead of "*a"
-                match &format_str[0..2] {
-                    "*a" => {
-                        // Read entire file from current position
-                        let result = content[position..].to_vec();
-                        position = content.len();
-                        file_userdata.set("__position", position)?;
-                        Ok(Some(result))
-                    }
-                    "*l" => {
-                        if let Some(next_newline_ix) =
-                            content[position..].iter().position(|c| *c == b'\n')
-                        {
-                            let mut line = content[position..position + next_newline_ix].to_vec();
-                            if line.ends_with(b"\r") {
-                                line.pop();
-                            }
-                            position += next_newline_ix + 1;
-                            file_userdata.set("__position", position)?;
-
-                            Ok(Some(line))
-                        } else if position < content.len() {
-                            let line = content[position..].to_vec();
-                            position = content.len();
-                            file_userdata.set("__position", position)?;
-                            Ok(Some(line))
-                        } else {
-                            Ok(None) // EOF
-                        }
-                    }
-                    "*n" => {
-                        // Try to parse as a number (number of bytes to read)
-                        match format_str.parse::<usize>() {
-                            Ok(n) => {
-                                let end = std::cmp::min(position + n, content.len());
-                                let result = content[position..end].to_vec();
-                                position = end;
-                                file_userdata.set("__position", position)?;
-                                Ok(Some(result))
-                            }
-                            Err(_) => Err(mlua::Error::runtime(format!(
-                                "Invalid format: {}",
-                                format_str
-                            ))),
-                        }
-                    }
-                    "*L" => {
-                        if position < content.len() {
-                            let next_line_ix = content[position..]
-                                .iter()
-                                .position(|c| *c == b'\n')
-                                .map_or(content.len(), |ix| position + ix + 1);
-                            let line = content[position..next_line_ix].to_vec();
-                            position = next_line_ix;
-                            file_userdata.set("__position", position)?;
-                            Ok(Some(line))
-                        } else {
-                            Ok(None) // EOF
-                        }
-                    }
-                    _ => Err(mlua::Error::runtime(format!(
-                        "Unsupported format: {}",
-                        format_str
-                    ))),
-                }
+        let (result, new_position) = match Self::io_file_read_format(format)? {
+            FileReadFormat::All => {
+                // Read entire file from current position
+                let result = content[position..].to_vec();
+                (Some(result), content.len())
             }
-            Some(mlua::Value::Number(n)) => {
-                // Read n bytes
-                let n = n as usize;
-                let end = std::cmp::min(position + n, content.len());
-                let result = content[position..end].to_vec();
-                position = end;
-                file_userdata.set("__position", position)?;
-                Ok(Some(result))
-            }
-            Some(_) => Err(mlua::Error::runtime("Invalid format")),
-            None => {
+            FileReadFormat::Line => {
                 if let Some(next_newline_ix) = content[position..].iter().position(|c| *c == b'\n')
                 {
                     let mut line = content[position..position + next_newline_ix].to_vec();
                     if line.ends_with(b"\r") {
                         line.pop();
                     }
-                    position += next_newline_ix + 1;
-                    file_userdata.set("__position", position)?;
-
-                    Ok(Some(line))
+                    (Some(line), position + next_newline_ix + 1)
                 } else if position < content.len() {
                     let line = content[position..].to_vec();
-                    position = content.len();
-                    file_userdata.set("__position", position)?;
-                    Ok(Some(line))
+                    (Some(line), content.len())
                 } else {
-                    Ok(None) // EOF
+                    (None, position) // EOF
                 }
+            }
+            FileReadFormat::LineWithLineFeed => {
+                if position < content.len() {
+                    let next_line_ix = content[position..]
+                        .iter()
+                        .position(|c| *c == b'\n')
+                        .map_or(content.len(), |ix| position + ix + 1);
+                    let line = content[position..next_line_ix].to_vec();
+                    (Some(line), next_line_ix)
+                } else {
+                    (None, position) // EOF
+                }
+            }
+            FileReadFormat::Bytes(n) => {
+                let end = std::cmp::min(position + n, content.len());
+                let result = content[position..end].to_vec();
+                (Some(result), end)
             }
         };
 
-        match result {
-            Ok(Some(content)) => Ok(Some(lua.create_string(content)?)),
-            Ok(None) => Ok(None),
-            Err(err) => Err(err),
+        // Update the position in the file userdata
+        if new_position != position {
+            file_userdata.set("__position", new_position)?;
         }
+
+        // Convert the result to a Lua string
+        match result {
+            Some(bytes) => Ok(Some(lua.create_string(bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn io_file_read_format(format: Option<mlua::Value>) -> mlua::Result<FileReadFormat> {
+        let format = match format {
+            Some(mlua::Value::String(s)) => {
+                let lossy_string = s.to_string_lossy();
+                let format_str: &str = lossy_string.as_ref();
+
+                // Only consider the first 2 bytes, since it's common to pass e.g. "*all"  instead of "*a"
+                match &format_str[0..2] {
+                    "*a" => FileReadFormat::All,
+                    "*l" => FileReadFormat::Line,
+                    "*L" => FileReadFormat::LineWithLineFeed,
+                    "*n" => {
+                        // Try to parse as a number (number of bytes to read)
+                        match format_str.parse::<usize>() {
+                            Ok(n) => FileReadFormat::Bytes(n),
+                            Err(_) => {
+                                return Err(mlua::Error::runtime(format!(
+                                    "Invalid format: {}",
+                                    format_str
+                                )))
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(mlua::Error::runtime(format!(
+                            "Unsupported format: {}",
+                            format_str
+                        )))
+                    }
+                }
+            }
+            Some(mlua::Value::Number(n)) => FileReadFormat::Bytes(n as usize),
+            Some(mlua::Value::Integer(n)) => FileReadFormat::Bytes(n as usize),
+            Some(value) => {
+                return Err(mlua::Error::runtime(format!(
+                    "Invalid file format {:?}",
+                    value
+                )))
+            }
+            None => FileReadFormat::Line, // Default is to read a line
+        };
+
+        Ok(format)
     }
 
     fn io_file_write(
@@ -829,6 +816,13 @@ impl ScriptSession {
     }
 }
 
+enum FileReadFormat {
+    All,
+    Line,
+    LineWithLineFeed,
+    Bytes(usize),
+}
+
 struct FileContent(Arc<Mutex<Vec<u8>>>);
 
 impl UserData for FileContent {
@@ -844,6 +838,7 @@ pub struct Script {
     pub state: ScriptState,
 }
 
+#[derive(Debug)]
 pub enum ScriptState {
     Running {
         stdout: Arc<Mutex<String>>,
@@ -957,6 +952,54 @@ mod tests {
         assert_eq!(output, "Written content:\tThis is new content\n");
     }
 
+    #[gpui::test]
+    async fn test_read_formats(cx: &mut TestAppContext) {
+        let script = r#"
+            local file = io.open("multiline.txt", "w")
+            file:write("Line 1\nLine 2\nLine 3")
+            file:close()
+
+            -- Test "*a" (all)
+            local f = io.open("multiline.txt", "r")
+            local all = f:read("*a")
+            print("All:", all)
+            f:close()
+
+            -- Test "*l" (line)
+            f = io.open("multiline.txt", "r")
+            local line1 = f:read("*l")
+            local line2 = f:read("*l")
+            local line3 = f:read("*l")
+            print("Line 1:", line1)
+            print("Line 2:", line2)
+            print("Line 3:", line3)
+            f:close()
+
+            -- Test "*L" (line with newline)
+            f = io.open("multiline.txt", "r")
+            local line_with_nl = f:read("*L")
+            print("Line with newline length:", #line_with_nl)
+            print("Last char:", string.byte(line_with_nl, #line_with_nl))
+            f:close()
+
+            -- Test number of bytes
+            f = io.open("multiline.txt", "r")
+            local bytes5 = f:read(5)
+            print("5 bytes:", bytes5)
+            f:close()
+        "#;
+
+        let output = test_script(script, cx).await.unwrap();
+        println!("{}", &output);
+        assert!(output.contains("All:\tLine 1\nLine 2\nLine 3"));
+        assert!(output.contains("Line 1:\tLine 1"));
+        assert!(output.contains("Line 2:\tLine 2"));
+        assert!(output.contains("Line 3:\tLine 3"));
+        assert!(output.contains("Line with newline length:\t7"));
+        assert!(output.contains("Last char:\t10")); // LF
+        assert!(output.contains("5 bytes:\tLine "));
+    }
+
     // helpers
 
     async fn test_script(source: &str, cx: &mut TestAppContext) -> anyhow::Result<String> {
@@ -979,7 +1022,16 @@ mod tests {
 
         task.await;
 
-        Ok(session.read_with(cx, |session, _cx| session.get(script_id).stdout_snapshot()))
+        Ok(session.read_with(cx, |session, _cx| {
+            let script = session.get(script_id);
+            let stdout = script.stdout_snapshot();
+
+            if let ScriptState::Failed { error, .. } = &script.state {
+                panic!("Script failed:\n{}\n\n{}", error, stdout);
+            }
+
+            stdout
+        }))
     }
 
     fn init_test(cx: &mut TestAppContext) {
