@@ -24,6 +24,7 @@ settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
+assets.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
 util.workspace = true
@@ -38,3 +39,7 @@ stories = ["dep:story"]
 # cargo-machete doesn't understand that linkme is used in the component macro
 [package.metadata.cargo-machete]
 ignored = ["linkme"]
+
+[[example]]
+name = "hello_ui"
+path = "examples/hello_ui.rs"
