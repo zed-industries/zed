@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use util::ResultExt;
 use windows::{
     core::{Interface, GUID, HSTRING, PROPVARIANT},
@@ -40,9 +41,9 @@ impl DockMenuItem {
 }
 
 pub(crate) fn update_jump_list(
-    entries: &[&str],
+    entries: &[&Vec<String>],
     dock_menus: &[DockMenuItem],
-) -> Option<Vec<String>> {
+) -> Option<Vec<Vec<String>>> {
     update_jump_list_inner(entries, dock_menus)
         .log_err()
         .flatten()
@@ -50,9 +51,9 @@ pub(crate) fn update_jump_list(
 
 #[inline]
 fn update_jump_list_inner(
-    entries: &[&str],
+    entries: &[&Vec<String>],
     dock_menus: &[DockMenuItem],
-) -> anyhow::Result<Option<Vec<String>>> {
+) -> anyhow::Result<Option<Vec<Vec<String>>>> {
     let (list, removed) = create_destination_list()?;
     add_recent_folders(&list, entries, removed.as_ref())?;
     add_dock_menu(&list, dock_menus)?;
@@ -70,7 +71,7 @@ const PKEY_LINK_ARGS: PROPERTYKEY = PROPERTYKEY {
     pid: 100,
 };
 
-fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<Vec<String>>)> {
+fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<Vec<Vec<String>>>)> {
     let list: ICustomDestinationList =
         unsafe { CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER) }?;
     let mut pcminslots = 0;
@@ -85,7 +86,17 @@ fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<V
                 let shell_link: IShellLinkW = unsafe { user_removed.GetAt(i)? };
                 let store: IPropertyStore = shell_link.cast()?;
                 let argument = unsafe { store.GetValue(&PKEY_LINK_ARGS)? };
-                let args = argument.to_string();
+                let args = {
+                    let args = argument.to_string();
+                    args.split_whitespace()
+                        .map(|s| {
+                            s.trim_start_matches("\"")
+                                .trim_end_matches("\"")
+                                .to_string()
+                        })
+                        .collect_vec()
+                };
+                println!("User removed args: {:?}", args);
                 removed.push(args);
             }
             Some(removed)
@@ -112,21 +123,33 @@ fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> 
 
 fn add_recent_folders(
     list: &ICustomDestinationList,
-    entries: &[&str],
-    removed: Option<&Vec<String>>,
+    entries: &[&Vec<String>],
+    removed: Option<&Vec<Vec<String>>>,
 ) -> anyhow::Result<()> {
     unsafe {
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
         for folder_path in entries.iter() {
             if !is_item_in_array(folder_path, removed) {
-                let argument = HSTRING::from(*folder_path);
-                let description = HSTRING::from(*folder_path);
+                let argument = {
+                    let mut argument = "".to_string();
+                    for path in folder_path.iter() {
+                        let path_string = format!("\"{}\" ", path);
+                        argument.push_str(&path_string);
+                    }
+                    HSTRING::from(argument.trim())
+                };
+                let description = HSTRING::from(folder_path.join("\n"));
                 let icon = HSTRING::from("explorer.exe");
-                let display = std::path::Path::new(folder_path)
-                    .file_name()
-                    .map(|os_str| os_str.to_string_lossy().to_string())
-                    .unwrap_or(folder_path.to_string());
+                let display = folder_path
+                    .iter()
+                    .map(|p| {
+                        std::path::Path::new(p)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or(p.to_string())
+                    })
+                    .join(", ");
                 let link = create_shell_link(argument, description, Some(icon), &display)?;
                 tasks.AddObject(&link)?;
             }
@@ -137,14 +160,14 @@ fn add_recent_folders(
 }
 
 #[inline]
-fn is_item_in_array(item: &str, removed: Option<&Vec<String>>) -> bool {
-    if let Some(removed) = removed {
-        removed
-            .iter()
-            .any(|removed_item| removed_item.to_lowercase() == item.to_lowercase())
+fn is_item_in_array(item: &Vec<String>, removed: Option<&Vec<Vec<String>>>) -> bool {
+    let ret = if let Some(removed) = removed {
+        removed.iter().any(|removed_item| removed_item == item)
     } else {
         false
-    }
+    };
+    println!("is_item_in_array {}: {:?} {:?}", ret, item, removed);
+    ret
 }
 
 fn create_shell_link(
