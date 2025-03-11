@@ -480,26 +480,22 @@ impl GitPanel {
         self.vertical_scrollbar.hide(window, cx);
     }
 
-    fn update_scrollbar_properties(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let editor_scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-        let git_panel_scrollbar_settings = GitPanelSettings::get_global(cx).scrollbar;
-        let git_panel_show = git_panel_scrollbar_settings.show;
-
-        dbg!(editor_scrollbar_settings);
-        dbg!(git_panel_scrollbar_settings);
-
+    fn update_scrollbar_properties(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // TODO: This PR should have defined Editor's `scrollbar.axis`
         // as an Option<ScrollbarAxis>, not a ScrollbarAxes as it would allow you to
         // `.unwrap_or(EditorSettings::get_global(cx).scrollbar.show)`.
         //
         // Once this is fixed we can extend the GitPanelSettings with a `scrollbar.axis`
-        // so we don't have to inherit from Editor's settings.
+        // so we can show each axis based on the settings.
         //
         // We should fix this. PR: https://github.com/zed-industries/zed/pull/19495
 
-        let horizontal_setting = git_panel_show.unwrap_or(editor_scrollbar_settings.show);
+        let show_setting = GitPanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or(EditorSettings::get_global(cx).scrollbar.show);
 
-        let vertical_setting = git_panel_show.unwrap_or(editor_scrollbar_settings.show);
+        let scroll_handle = self.scroll_handle.0.borrow();
 
         let autohide = |show: ShowScrollbar, cx: &mut Context<Self>| match show {
             ShowScrollbar::Auto => true,
@@ -510,34 +506,40 @@ impl GitPanel {
             ShowScrollbar::Never => false,
         };
 
-        // is there an item long enough that we should show a horizontal scrollbar?
-        let need_horizontal_scrollbar = self.horizontal_scroll_needed();
+        let longest_item_width = scroll_handle.last_item_size.and_then(|size| {
+            (size.contents.width > size.item.width).then_some(size.contents.width)
+        });
 
-        let show_horizontal = match (horizontal_setting, need_horizontal_scrollbar) {
-            (ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always, true) => true,
-            // Even if horizontal scroll bar is set to ShowScrollbar::Always, we _still_
-            // don't want to show it if there is not enough content to horizontally scroll
-            _ => false,
+        // is there an item long enough that we should show a horizontal scrollbar?
+        let item_wider_than_container = if let Some(longest_item_width) = longest_item_width {
+            longest_item_width > px(scroll_handle.base_handle.bounds().size.width.0)
+        } else {
+            true
         };
 
-        let show_vertical = match vertical_setting {
+        let show_horizontal = match (show_setting, item_wider_than_container) {
+            (_, false) => false,
+            (ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always, true) => true,
+            (ShowScrollbar::Never, true) => false,
+        };
+
+        let show_vertical = match show_setting {
             ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
             ShowScrollbar::Never => false,
         };
 
         let show_horizontal_track =
-            show_horizontal && matches!(horizontal_setting, ShowScrollbar::Always);
+            show_horizontal && matches!(show_setting, ShowScrollbar::Always);
 
         // TODO: we probably should hide the scroll track when the list doesn't need to scroll
-        let show_vertical_track =
-            show_vertical && matches!(vertical_setting, ShowScrollbar::Always);
+        let show_vertical_track = show_vertical && matches!(show_setting, ShowScrollbar::Always);
 
         self.vertical_scrollbar = ScrollbarProperties {
             axis: self.vertical_scrollbar.axis,
             state: self.vertical_scrollbar.state.clone(),
             show_scrollbar: show_vertical,
             show_track: show_vertical_track,
-            auto_hide: autohide(vertical_setting, cx),
+            auto_hide: autohide(show_setting, cx),
             hide_task: None,
         };
 
@@ -546,12 +548,9 @@ impl GitPanel {
             state: self.horizontal_scrollbar.state.clone(),
             show_scrollbar: show_horizontal,
             show_track: show_horizontal_track,
-            auto_hide: autohide(horizontal_setting, cx),
+            auto_hide: autohide(show_setting, cx),
             hide_task: None,
         };
-
-        dbg!(&self.vertical_scrollbar);
-        dbg!(&self.horizontal_scrollbar);
 
         cx.notify();
     }
@@ -2859,20 +2858,6 @@ impl GitPanel {
                 // percentage as f32..end_offset as f32,
                 self.vertical_scrollbar.state.clone(),
             ))
-    }
-
-    fn horizontal_scroll_needed(&self) -> bool {
-        let scroll_handle = self.scroll_handle.0.borrow();
-
-        let longest_item_width = match scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)
-        {
-            Some(size) => size.contents.width,
-            None => return false,
-        };
-
-        longest_item_width > px(scroll_handle.base_handle.bounds().size.width.0)
     }
 
     /// Renders the horizontal scrollbar.
