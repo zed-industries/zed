@@ -2361,10 +2361,7 @@ impl GitPanel {
                             cx,
                         )
                     } else {
-                        Tooltip::simple(
-                            "You must have either staged changes or tracked files to generate a commit message",
-                            cx,
-                        )
+                        Tooltip::simple("No changes to commit", cx)
                     }
                 })
                 .disabled(!can_commit)
@@ -2414,10 +2411,7 @@ impl GitPanel {
         if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
         } else if !self.has_staged_changes() && !self.has_tracked_changes() {
-            (
-                false,
-                "You must have either staged changes or tracked files to commit",
-            )
+            (false, "No changes to commit")
         } else if self.pending_commit.is_some() {
             (false, "Commit in progress")
         } else if self.custom_or_suggested_commit_message(cx).is_none() {
@@ -3579,6 +3573,7 @@ impl RenderOnce for PanelRepoFooter {
             .h(px(36.))
             .items_center()
             .justify_between()
+            .gap_1()
             .child(
                 h_flex()
                     .flex_1()

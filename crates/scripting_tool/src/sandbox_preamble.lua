@@ -8,9 +8,9 @@ local sandbox = {}
 -- to our in-memory log rather than to stdout, we will delete this loop (and re-enable
 -- the I/O module being sandboxed below) to have things be sandboxed again.
 for k, v in pairs(_G) do
-  if sandbox[k] == nil then
-    sandbox[k] = v
-  end
+    if sandbox[k] == nil then
+        sandbox[k] = v
+    end
 end
 
 -- Allow access to standard libraries (safe subset)
@@ -29,24 +29,27 @@ sandbox.search = search
 sandbox.outline = outline
 
 -- Create a sandboxed version of LuaFileIO
-local io = {}
+-- local io = {};
+--
+-- For now we are using unsandboxed io
+local io = _G.io;
 
 -- File functions
 io.open = sb_io_open
 
 -- Add the sandboxed io library to the sandbox environment
--- sandbox.io = io -- Uncomment this line to re-enable sandboxed file I/O.
+sandbox.io = io
 
 -- Load the script with the sandbox environment
 local user_script_fn, err = load(user_script, nil, "t", sandbox)
 
 if not user_script_fn then
-  error("Failed to load user script: " .. tostring(err))
+    error("Failed to load user script: " .. tostring(err))
 end
 
 -- Execute the user script within the sandbox
 local success, result = pcall(user_script_fn)
 
 if not success then
-  error("Error executing user script: " .. tostring(result))
+    error("Error executing user script: " .. tostring(result))
 end
