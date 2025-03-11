@@ -342,18 +342,19 @@ impl Thread {
         &mut self,
         model: Arc<dyn LanguageModel>,
         request_kind: RequestKind,
-        use_tools: bool,
         cx: &mut Context<Self>,
     ) {
         let mut request = self.to_completion_request(request_kind, cx);
-
-        if use_tools {
+        request.tools = {
             let mut tools = Vec::new();
-            tools.push(LanguageModelRequestTool {
-                name: ScriptingTool::NAME.into(),
-                description: ScriptingTool::DESCRIPTION.into(),
-                input_schema: ScriptingTool::input_schema(),
-            });
+
+            if self.tools.is_scripting_tool_enabled() {
+                tools.push(LanguageModelRequestTool {
+                    name: ScriptingTool::NAME.into(),
+                    description: ScriptingTool::DESCRIPTION.into(),
+                    input_schema: ScriptingTool::input_schema(),
+                });
+            }
 
             tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
                 LanguageModelRequestTool {
@@ -363,8 +364,8 @@ impl Thread {
                 }
             }));
 
-            request.tools = tools;
-        }
+            tools
+        };
 
         self.stream_completion(request, model, cx);
     }
@@ -755,7 +756,7 @@ impl Thread {
             Vec::new(),
             cx,
         );
-        self.send_to_model(model, RequestKind::Chat, true, cx);
+        self.send_to_model(model, RequestKind::Chat, cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.

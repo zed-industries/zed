@@ -2147,6 +2147,7 @@ impl MultiBuffer {
         }
 
         self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
+        self.buffer_changed_since_sync.replace(true);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
