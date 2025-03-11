@@ -480,7 +480,7 @@ impl GitPanel {
         self.vertical_scrollbar.hide(window, cx);
     }
 
-    fn update_scrollbar_properties(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_scrollbar_properties(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         // TODO: This PR should have defined Editor's `scrollbar.axis`
         // as an Option<ScrollbarAxis>, not a ScrollbarAxes as it would allow you to
         // `.unwrap_or(EditorSettings::get_global(cx).scrollbar.show)`.
