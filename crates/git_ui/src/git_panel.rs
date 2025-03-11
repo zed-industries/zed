@@ -2244,27 +2244,71 @@ impl GitPanel {
     }
 
     fn show_error_notif(&self, e: anyhow::Error, cx: &mut App) {
+        // after this size, fall back to a simple toast with a "show output" button
+        const MAX_LINES: usize = 10;
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
         let notif_id = NotificationId::Named("git-operation-error".into());
 
         let message = e.to_string().trim().to_string();
-        let toast;
         if message
             .matches(git::repository::REMOTE_CANCELLED_BY_USER)
             .next()
             .is_some()
         {
             return; // Hide the cancelled by user message
+        } else if message.lines().count() > MAX_LINES {
+            // TODO: switch to this style of toast, need to get a window handle somehow?
+            // workspace.update_in(cx, |workspace, window, cx| {
+            //     let workspace_weak = cx.weak_entity();
+            //     let toast =
+            //         StatusToast::new("Git operation failed...", window, cx, |this, window, cx| {
+            //             this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+            //                 .action("Open Output", move |_, window, cx| {
+            //                     let message = message.clone();
+            //                     workspace_weak
+            //                         .update(cx, move |workspace, cx| {
+            //                             Self::open_output(
+            //                                 self.project.clone(),
+            //                                 "command",
+            //                                 workspace,
+            //                                 &message,
+            //                                 window,
+            //                                 cx,
+            //                             )
+            //                         })
+            //                         .ok();
+            //                 });
+            //             this
+            //         });
+            //     workspace.toggle_status_toast(window, cx, toast)
+            // });
+            let workspace_weak = self.workspace.clone();
+            let project = self.project.clone();
+            let toast = Toast::new(notif_id, "Git operation failed...").on_click(
+                "Open Output",
+                move |window, cx| {
+                    let message = &message;
+                    let project = project.clone();
+                    workspace_weak
+                        .update(cx, move |workspace, cx| {
+                            Self::open_output(project, "command", workspace, message, window, cx)
+                        })
+                        .ok();
+                },
+            );
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(toast, cx);
+            });
         } else {
-            toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
+            let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
                 window.dispatch_action(workspace::OpenLog.boxed_clone(), cx);
             });
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(toast, cx);
+            });
         }
-        workspace.update(cx, |workspace, cx| {
-            workspace.show_toast(toast, cx);
-        });
     }
 
     fn show_remote_output(
@@ -2281,7 +2325,7 @@ impl GitPanel {
         workspace.update(cx, |workspace, cx| {
             let SuccessMessage { message, style } = remote_output::format_output(&action, info);
             let workspace_weak = cx.weak_entity();
-            let action_name = action.name();
+            let operation = action.name();
 
             let status_toast = StatusToast::new(message, window, cx, move |this, _, cx| {
                 use remote_output::SuccessStyle::*;
@@ -2298,12 +2342,7 @@ impl GitPanel {
                             workspace_weak
                                 .update(cx, move |workspace, cx| {
                                     Self::open_output(
-                                        project,
-                                        action_name,
-                                        workspace,
-                                        &output,
-                                        window,
-                                        cx,
+                                        project, operation, workspace, &output, window, cx,
                                     )
                                 })
                                 .ok();
@@ -2340,10 +2379,9 @@ impl GitPanel {
                 &format!("git {action_name} failed..."),
                 window,
                 cx,
-                move |this, _, cx| {
+                move |this, _, _cx| {
                     let project = self.project.clone();
-                    let content = content.clone();
-                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Muted))
+                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
                         .action("View Log", move |_, window, cx| {
                             let project = project.clone();
                             let content = content.clone();
@@ -2368,7 +2406,7 @@ impl GitPanel {
 
     fn open_output(
         project: Entity<Project>,
-        action_name: &'static str,
+        operation: &'static str,
         workspace: &mut Workspace,
         output: &str,
         window: &mut Window,
@@ -2378,7 +2416,7 @@ impl GitPanel {
         let editor = cx.new(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
             editor.buffer().update(cx, |buffer, cx| {
-                buffer.set_title(format!("Output from git {action_name}"), cx);
+                buffer.set_title(format!("Output from git {operation}"), cx);
             });
             editor.set_read_only(true);
             editor

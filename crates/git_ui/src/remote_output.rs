@@ -79,7 +79,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                 let files_changed = get_changes(&output).log_err();
                 let message = if let Some(files_changed) = files_changed {
                     format!(
-                        "Recieved {} file change{} from {}",
+                        "Received {} file change{} from {}",
                         files_changed,
                         if files_changed == 1 { "" } else { "s" },
                         remote_ref.name
