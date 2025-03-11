@@ -8,7 +8,7 @@ use dap_types::{
     requests::Request,
 };
 use futures::{channel::oneshot, select, FutureExt as _};
-use gpui::{App, AppContext, AsyncApp, BackgroundExecutor};
+use gpui::{AppContext, AsyncApp, BackgroundExecutor};
 use smol::channel::{Receiver, Sender};
 use std::{
     hash::Hash,

@@ -13,11 +13,11 @@ use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel};
 use menu::Confirm;
 use project::{
-    debugger::session::{CompletionsQuery, Session},
+    debugger::session::{CompletionsQuery, OutputToken, Session},
     Completion,
 };
 use settings::Settings;
-use std::{cell::RefCell, rc::Rc, sync::Arc, usize};
+use std::{cell::RefCell, rc::Rc, usize};
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex};
 
@@ -37,6 +37,8 @@ pub struct Console {
     _subscriptions: Vec<Subscription>,
     variable_list: Entity<VariableList>,
     stack_frame_list: Entity<StackFrameList>,
+    last_token: Option<OutputToken>,
+    update_output_task: Task<()>,
 }
 
 impl Console {
@@ -78,26 +80,8 @@ impl Console {
             editor
         });
 
-        let _subscriptions = vec![
-            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.observe_in(&session, window, |console, session, window, cx| {
-                let (mut output, last_processed_ix) = session.update(cx, |session, _| {
-                    (session.output(), session.last_processed_output())
-                });
-
-                if output.len() > last_processed_ix {
-                    dbg!(last_processed_ix, output.len());
-                    let last_processed = output.len();
-                    for event in output.drain(last_processed_ix..) {
-                        console.add_message(event.clone(), window, cx);
-                    }
-
-                    session.update(cx, |session, _| {
-                        session.set_last_processed_output(last_processed);
-                    });
-                }
-            }),
-        ];
+        let _subscriptions =
+            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
 
         Self {
             session,
@@ -106,6 +90,8 @@ impl Console {
             variable_list,
             _subscriptions,
             stack_frame_list,
+            update_output_task: Task::ready(()),
+            last_token: None,
             groups: Vec::default(),
         }
     }
@@ -135,107 +121,27 @@ impl Console {
         }
     }
 
-    pub fn add_message(&mut self, event: OutputEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn add_messages<'a>(
+        &mut self,
+        events: impl Iterator<Item = &'a OutputEvent>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.console.update(cx, |console, cx| {
-            let output = event.output.trim_end().to_string();
+            let mut to_insert = String::default();
+            for event in events {
+                use std::fmt::Write;
 
-            let snapshot = console.buffer().read(cx).snapshot(cx);
-
-            let start = snapshot.anchor_before(snapshot.max_point());
-
-            let mut indent_size = self
-                .groups
-                .iter()
-                .filter(|group| group.end.is_none())
-                .count();
-            if Some(OutputEventGroup::End) == event.group {
-                indent_size = indent_size.saturating_sub(1);
+                _ = write!(to_insert, "{}\n", event.output.trim_end());
             }
-
-            let indent = if indent_size > 0 {
-                "    ".repeat(indent_size)
-            } else {
-                "".to_string()
-            };
 
             console.set_read_only(false);
             console.move_to_end(&editor::actions::MoveToEnd, window, cx);
-            console.insert(format!("{}{}\n", indent, output).as_str(), window, cx);
+            console.insert(&to_insert, window, cx);
             console.set_read_only(true);
-
-            let end = snapshot.anchor_before(snapshot.max_point());
-
-            match event.group {
-                Some(OutputEventGroup::Start) => {
-                    self.groups.push(OutputGroup {
-                        start,
-                        end: None,
-                        collapsed: false,
-                        placeholder: output.clone().into(),
-                        crease_ids: console.insert_creases(
-                            vec![Self::create_crease(output.into(), start, end)],
-                            cx,
-                        ),
-                    });
-                }
-                Some(OutputEventGroup::StartCollapsed) => {
-                    self.groups.push(OutputGroup {
-                        start,
-                        end: None,
-                        collapsed: true,
-                        placeholder: output.clone().into(),
-                        crease_ids: console.insert_creases(
-                            vec![Self::create_crease(output.into(), start, end)],
-                            cx,
-                        ),
-                    });
-                }
-                Some(OutputEventGroup::End) => {
-                    if let Some(index) = self.groups.iter().rposition(|group| group.end.is_none()) {
-                        let group = self.groups.remove(index);
-
-                        console.remove_creases(group.crease_ids.clone(), cx);
-
-                        let creases =
-                            vec![Self::create_crease(group.placeholder, group.start, end)];
-                        console.insert_creases(creases.clone(), cx);
-
-                        if group.collapsed {
-                            console.fold_creases(creases, false, window, cx);
-                        }
-                    }
-                }
-                None => {}
-            }
 
             cx.notify();
         });
-    }
-
-    fn create_crease(placeholder: SharedString, start: Anchor, end: Anchor) -> Crease<Anchor> {
-        Crease::inline(
-            start..end,
-            FoldPlaceholder {
-                render: Arc::new({
-                    let placeholder = placeholder.clone();
-                    move |_id, _range, _cx| {
-                        ButtonLike::new("output-group-placeholder")
-                            .style(ButtonStyle::Transparent)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .child(Label::new(placeholder.clone()).single_line())
-                            .into_any_element()
-                    }
-                }),
-                ..Default::default()
-            },
-            move |row, is_folded, fold, _window, _cx| {
-                Disclosure::new(("output-group", row.0 as u64), !is_folded)
-                    .toggle_state(is_folded)
-                    .on_click(move |_event, window, cx| fold(!is_folded, window, cx))
-                    .into_any_element()
-            },
-            move |_id, _range, _window, _cx| gpui::Empty.into_any_element(),
-        )
     }
 
     pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -315,7 +221,24 @@ impl Console {
 }
 
 impl Render for Console {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let session = self.session.clone();
+        let token = self.last_token;
+        self.update_output_task = cx.spawn_in(window, move |this, mut cx| async move {
+            _ = session.update_in(&mut cx, move |session, window, cx| {
+                let (output, last_processed_token) = session.output(token);
+
+                _ = this.update(cx, |this, cx| {
+                    if last_processed_token == this.last_token {
+                        return;
+                    }
+                    this.add_messages(output, window, cx);
+
+                    this.last_token = last_processed_token;
+                });
+            });
+        });
+
         v_flex()
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))

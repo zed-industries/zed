@@ -31,7 +31,6 @@ use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::any::TypeId;
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::u64;
 use std::{
@@ -497,8 +496,8 @@ impl ThreadStates {
                 .any(|status| *status == ThreadStatus::Stopped)
     }
 }
-
-#[derive(Default, PartialEq, PartialOrd, Eq, Ord)]
+const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
+#[derive(Copy, Clone, Default, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub struct OutputToken(usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
@@ -509,9 +508,8 @@ pub struct Session {
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
-    last_processed_output: usize,
-    //output_token: OutputToken,
-    output: Vec<dap::OutputEvent>,
+    output_token: Option<OutputToken>,
+    output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
@@ -676,9 +674,9 @@ impl Session {
                     variables: Default::default(),
                     capabilities,
                     thread_states: ThreadStates::default(),
+                    output_token: None,
                     ignore_breakpoints: false,
-                    last_processed_output: 0,
-                    output: Vec::default(),
+                    output: Default::default(),
                     requests: HashMap::default(),
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
@@ -710,8 +708,9 @@ impl Session {
             variables: Default::default(),
             stack_frames: Default::default(),
             thread_states: ThreadStates::default(),
-            last_processed_output: 0,
-            output: Vec::default(),
+
+            output_token: None,
+            output: Default::default(),
             requests: HashMap::default(),
             modules: Vec::default(),
             loaded_sources: Vec::default(),
@@ -764,16 +763,25 @@ impl Session {
         }
     }
 
-    pub fn output(&self) -> Vec<dap::OutputEvent> {
-        self.output.iter().cloned().collect()
-    }
+    pub fn output(
+        &self,
+        since: Option<OutputToken>,
+    ) -> (impl Iterator<Item = &dap::OutputEvent>, Option<OutputToken>) {
+        let Some(output_token) = self.output_token else {
+            return (self.output.range(0..0), None);
+        };
 
-    pub fn last_processed_output(&self) -> usize {
-        self.last_processed_output
-    }
+        let events_since = output_token
+            .0
+            .checked_sub(since.map_or(0, |token| token.0))
+            .unwrap_or(0);
 
-    pub fn set_last_processed_output(&mut self, last_processed_output: usize) {
-        self.last_processed_output = last_processed_output;
+        let clamped_events_since = events_since.clamp(0, self.output.len());
+        (
+            self.output
+                .range(self.output.len() - clamped_events_since..),
+            self.output_token,
+        )
     }
 
     pub(crate) fn respond_to_client(
@@ -866,8 +874,12 @@ impl Session {
                 {
                     return;
                 }
-
-                self.output.push(event);
+                if let Some(index) = self.output_token.as_mut() {
+                    index.0 += 1;
+                } else {
+                    self.output_token = Some(OutputToken(0));
+                }
+                self.output.push_back(event);
                 cx.notify();
             }
             Events::Breakpoint(_) => {}
@@ -1508,7 +1520,7 @@ impl Session {
                 source,
             },
             |this, response, cx| {
-                this.output.push(dap::OutputEvent {
+                this.output.push_back(dap::OutputEvent {
                     category: None,
                     output: response.result.clone(),
                     group: None,
@@ -1520,7 +1532,6 @@ impl Session {
                     location_reference: None,
                 });
 
-                // TODO(debugger): only invalidate variables & scopes
                 this.invalidate_command_type::<ScopesCommand>();
                 cx.notify();
             },
