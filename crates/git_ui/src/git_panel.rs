@@ -3554,13 +3554,6 @@ impl PanelRepoFooter {
 
 impl RenderOnce for PanelRepoFooter {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let active_repo = self.active_repository.clone();
-        let repo_selector_trigger = Button::new("repo-selector", active_repo)
-            .style(ButtonStyle::Transparent)
-            .size(ButtonSize::None)
-            .label_size(LabelSize::Small)
-            .color(Color::Muted);
-
         let project = self
             .git_panel
             .as_ref()
@@ -3578,6 +3571,55 @@ impl RenderOnce for PanelRepoFooter {
             })
             .unwrap_or(true);
 
+        const MAX_BRANCH_LEN: usize = 16;
+        const MAX_REPO_LEN: usize = 16;
+        const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
+
+        let branch = self.branch.clone();
+        let branch_name = branch
+            .as_ref()
+            .map_or(" (no branch)".into(), |branch| branch.name.clone());
+        let active_repo_name = self.active_repository.clone();
+
+        let branch_actual_len = branch_name.len();
+        let repo_actual_len = active_repo_name.len();
+
+        // ideally, show the whole branch and repo names but
+        // when we can't, use a budget to allocate space between the two
+        let (repo_display_len, branch_display_len) = if branch_actual_len + repo_actual_len
+            <= LABEL_CHARACTER_BUDGET
+        {
+            (repo_actual_len, branch_actual_len)
+        } else {
+            if branch_actual_len <= MAX_BRANCH_LEN {
+                let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
+                (repo_space, branch_actual_len)
+            } else if repo_actual_len <= MAX_REPO_LEN {
+                let branch_space = (LABEL_CHARACTER_BUDGET - repo_actual_len).min(MAX_BRANCH_LEN);
+                (repo_actual_len, branch_space)
+            } else {
+                (MAX_REPO_LEN, MAX_BRANCH_LEN)
+            }
+        };
+
+        let truncated_repo_name = if repo_actual_len <= repo_display_len {
+            active_repo_name.to_string()
+        } else {
+            util::truncate_and_trailoff(active_repo_name.trim_ascii(), repo_display_len)
+        };
+
+        let truncated_branch_name = if branch_actual_len <= branch_display_len {
+            branch_name.to_string()
+        } else {
+            util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
+        };
+
+        let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
+            .style(ButtonStyle::Transparent)
+            .size(ButtonSize::None)
+            .label_size(LabelSize::Small)
+            .color(Color::Muted);
+
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project.clone();
@@ -3593,12 +3635,7 @@ impl RenderOnce for PanelRepoFooter {
             .attach(gpui::Corner::BottomLeft)
             .into_any_element();
 
-        let branch = self.branch.clone();
-        let branch_name = branch
-            .as_ref()
-            .map_or(" (no branch)".into(), |branch| branch.name.clone());
-
-        let branch_selector_button = Button::new("branch-selector", branch_name)
+        let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
             .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
