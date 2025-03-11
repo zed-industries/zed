@@ -1,13 +1,13 @@
 use ::settings::Settings;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
-    status::FileStatus,
+    status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
 use gpui::{App, Entity, FocusHandle};
 use project::Project;
 use project_diff::ProjectDiff;
-use ui::{ActiveTheme, Color, Icon, IconName, IntoElement, SharedString};
+use ui::prelude::*;
 use workspace::Workspace;
 
 mod askpass_modal;
@@ -86,30 +86,8 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-// TODO: Add updated status colors to theme
-pub fn git_status_icon(status: FileStatus, cx: &App) -> impl IntoElement {
-    let (icon_name, color) = if status.is_conflicted() {
-        (
-            IconName::Warning,
-            cx.theme().colors().version_control_conflict,
-        )
-    } else if status.is_deleted() {
-        (
-            IconName::SquareMinus,
-            cx.theme().colors().version_control_deleted,
-        )
-    } else if status.is_modified() {
-        (
-            IconName::SquareDot,
-            cx.theme().colors().version_control_modified,
-        )
-    } else {
-        (
-            IconName::SquarePlus,
-            cx.theme().colors().version_control_added,
-        )
-    };
-    Icon::new(icon_name).color(Color::Custom(color))
+pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
+    GitStatusIcon::new(status)
 }
 
 fn can_push_and_pull(project: &Entity<Project>, cx: &App) -> bool {
@@ -463,5 +441,81 @@ mod remote_button {
                     spread_radius: px(0.),
                 }])
         }
+    }
+}
+
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "Version Control")]
+pub struct GitStatusIcon {
+    status: FileStatus,
+}
+
+impl GitStatusIcon {
+    pub fn new(status: FileStatus) -> Self {
+        Self { status }
+    }
+}
+
+impl RenderOnce for GitStatusIcon {
+    fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
+        let status = self.status;
+
+        let (icon_name, color) = if status.is_conflicted() {
+            (
+                IconName::Warning,
+                cx.theme().colors().version_control_conflict,
+            )
+        } else if status.is_deleted() {
+            (
+                IconName::SquareMinus,
+                cx.theme().colors().version_control_deleted,
+            )
+        } else if status.is_modified() {
+            (
+                IconName::SquareDot,
+                cx.theme().colors().version_control_modified,
+            )
+        } else {
+            (
+                IconName::SquarePlus,
+                cx.theme().colors().version_control_added,
+            )
+        };
+
+        Icon::new(icon_name).color(Color::Custom(color))
+    }
+}
+
+// View this component preview using `workspace: open component-preview`
+impl ComponentPreview for GitStatusIcon {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        fn tracked_file_status(code: StatusCode) -> FileStatus {
+            FileStatus::Tracked(git::status::TrackedStatus {
+                index_status: code,
+                worktree_status: code,
+            })
+        }
+
+        let modified = tracked_file_status(StatusCode::Modified);
+        let added = tracked_file_status(StatusCode::Added);
+        let deleted = tracked_file_status(StatusCode::Deleted);
+        let conflict = UnmergedStatus {
+            first_head: UnmergedStatusCode::Updated,
+            second_head: UnmergedStatusCode::Updated,
+        }
+        .into();
+
+        v_flex()
+            .gap_6()
+            .children(vec![example_group(vec![
+                single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
+                single_example("Added", GitStatusIcon::new(added).into_any_element()),
+                single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
+                single_example(
+                    "Conflicted",
+                    GitStatusIcon::new(conflict).into_any_element(),
+                ),
+            ])])
+            .into_any_element()
     }
 }

@@ -11,7 +11,6 @@ use collections::HashMap;
 use git::status::StatusCode;
 #[cfg(any(test, feature = "test-support"))]
 use git::status::TrackedStatus;
-use git::GitHostingProviderRegistry;
 #[cfg(any(test, feature = "test-support"))]
 use git::{repository::RepoPath, status::FileStatus};
 
@@ -247,7 +246,6 @@ impl From<MTime> for proto::Timestamp {
 
 #[derive(Default)]
 pub struct RealFs {
-    git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
 }
 
@@ -300,14 +298,8 @@ impl FileHandle for std::fs::File {
 pub struct RealWatcher {}
 
 impl RealFs {
-    pub fn new(
-        git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
-        git_binary_path: Option<PathBuf>,
-    ) -> Self {
-        Self {
-            git_hosting_provider_registry,
-            git_binary_path,
-        }
+    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
+        Self { git_binary_path }
     }
 }
 
@@ -770,7 +762,6 @@ impl Fs for RealFs {
         Some(Arc::new(RealGitRepository::new(
             repo,
             self.git_binary_path.clone(),
-            self.git_hosting_provider_registry.clone(),
         )))
     }
 
