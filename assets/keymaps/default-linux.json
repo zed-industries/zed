@@ -787,6 +787,7 @@
       "escape": "git_panel::FocusChanges",
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
+      "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage"
