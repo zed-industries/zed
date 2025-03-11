@@ -11918,6 +11918,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "language",
  "log",
  "mlua",
  "parking_lot",

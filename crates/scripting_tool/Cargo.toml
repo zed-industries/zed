@@ -17,6 +17,7 @@ anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+language.workspace = true
 log.workspace = true
 mlua.workspace = true
 parking_lot.workspace = true
@@ -31,6 +32,7 @@ util.workspace = true
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
