@@ -1,27 +1,30 @@
-mod llm_request;
+mod headless_assistant;
 
-use client::{Client, UserStore};
-use gpui::{AppContext, Application, Entity};
-use language_model::{LanguageModelId, LanguageModelRegistry};
-use llm_request::Eval;
+use gpui::Application;
+use headless_assistant::Eval;
+use language_model::ANTHROPIC_PROVIDER_ID;
+use reqwest_client::ReqwestClient;
 use std::sync::Arc;
 
 fn main() {
-    let app = Application::headless();
+    let http_client = Arc::new(ReqwestClient::new());
+    let app = Application::headless().with_http_client(http_client.clone());
 
     app.run(|cx| {
-        let registry = LanguageModelRegistry::global(cx);
+        let app_state = headless_assistant::init(cx);
 
-        cx.spawn(|mut cx| async move {
-            let eval = Eval {
-                system_prompt: "You are a helpful assistant.".to_string(),
-                user_query: "write me a Limerick about code editors".to_string(),
-                model_name: "claude-3-7-sonnet-20240229".to_string(),
-            };
-            let result = llm_request::run_eval(registry, &eval, &mut cx).await;
+        let eval = Eval {
+            system_prompt: "You are a helpful assistant.".to_string(),
+            user_query: "write me a Limerick about code editors".to_string(),
+            provider_id: ANTHROPIC_PROVIDER_ID.to_string(),
+            model_name: "claude-3-sonnet-20240229".to_string(),
+        };
 
-            match result {
-                Ok(response) => println!("Response: {}", response),
+        let task = eval.run(app_state, cx);
+
+        cx.spawn(|_cx| async move {
+            match task.await {
+                Ok(response) => println!("Response: {:?}", response),
                 Err(err) => println!("Error: {}", err),
             }
         })
