@@ -820,6 +820,10 @@ impl ScriptingSession {
         // and then make that path relative to the root_dir if possible.
         if let Ok(absolute) = Path::new(&path_str).canonicalize() {
             if let Ok(relative) = absolute.strip_prefix(&root_dir) {
+                debug_assert!(
+                    relative.is_relative(),
+                    "{relative:?} should have been a relative path, but was absolute."
+                );
                 Ok(relative.to_path_buf())
             } else {
                 // todo-sandbox: In the future, sandbox this by prompting the user for

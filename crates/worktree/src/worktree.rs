@@ -3007,7 +3007,10 @@ impl Snapshot {
 
     pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let path = path.as_ref();
-        debug_assert!(path.is_relative());
+        debug_assert!(
+            path.is_relative(),
+            "{path:?} was not relative, but entry_for_path should only be given relative paths."
+        );
         self.traverse_from_path(true, true, true, path)
             .entry()
             .and_then(|entry| {
