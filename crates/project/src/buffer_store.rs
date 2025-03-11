@@ -15,7 +15,6 @@ use git::{blame::Blame, repository::RepoPath};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
-use http_client::Url;
 use language::{
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
@@ -34,7 +33,6 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
-    str::FromStr as _,
     sync::Arc,
     time::Instant,
 };
@@ -2776,20 +2774,10 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
         })
         .collect::<Vec<_>>();
 
-    let permalinks = blame
-        .permalinks
-        .into_iter()
-        .map(|(oid, url)| proto::CommitPermalink {
-            oid: oid.as_bytes().into(),
-            permalink: url.to_string(),
-        })
-        .collect::<Vec<_>>();
-
     proto::BlameBufferResponse {
         blame_response: Some(proto::blame_buffer_response::BlameResponse {
             entries,
             messages,
-            permalinks,
             remote_url: blame.remote_url,
         }),
     }
@@ -2828,20 +2816,8 @@ fn deserialize_blame_buffer_response(
         .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
         .collect::<HashMap<_, _>>();
 
-    let permalinks = response
-        .permalinks
-        .into_iter()
-        .filter_map(|permalink| {
-            Some((
-                git::Oid::from_bytes(&permalink.oid).ok()?,
-                Url::from_str(&permalink.permalink).ok()?,
-            ))
-        })
-        .collect::<HashMap<_, _>>();
-
     Some(Blame {
         entries,
-        permalinks,
         messages,
         remote_url: response.remote_url,
     })
