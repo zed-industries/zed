@@ -11,8 +11,6 @@
     (body
         (block
             (identifier) @context
-            (string_lit)? @name
-            (string_lit)? @name
         ) @item
     )
 )
