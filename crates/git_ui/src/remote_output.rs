@@ -148,7 +148,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                 }
             } else {
                 SuccessMessage {
-                    message: "Successfully pushed new branchc".to_owned(),
+                    message: "Successfully pushed new branch".to_owned(),
                     style: SuccessStyle::ToastWithLog { output },
                 }
             }

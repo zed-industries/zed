@@ -50,52 +50,40 @@ impl ToastLayer {
         }
     }
 
-    pub fn toggle_toast<V>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        new_toast: Entity<V>,
-    ) where
+    pub fn toggle_toast<V>(&mut self, cx: &mut Context<Self>, new_toast: Entity<V>)
+    where
         V: ToastView,
     {
         if let Some(active_toast) = &self.active_toast {
             let is_close = active_toast.toast.view().downcast::<V>().is_ok();
-            let did_close = self.hide_toast(window, cx);
+            let did_close = self.hide_toast(cx);
             if is_close || !did_close {
                 return;
             }
         }
-        self.show_toast(new_toast, window, cx);
+        self.show_toast(new_toast, cx);
     }
 
-    pub fn show_toast<V>(
-        &mut self,
-        new_toast: Entity<V>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) where
+    pub fn show_toast<V>(&mut self, new_toast: Entity<V>, cx: &mut Context<Self>)
+    where
         V: ToastView,
     {
         let focus_handle = cx.focus_handle();
 
         self.active_toast = Some(ActiveToast {
             toast: Box::new(new_toast.clone()),
-            _subscriptions: [cx.subscribe_in(
-                &new_toast,
-                window,
-                |this, _, _: &DismissEvent, window, cx| {
-                    this.hide_toast(window, cx);
-                },
-            )],
+            _subscriptions: [cx.subscribe(&new_toast, |this, _, _: &DismissEvent, cx| {
+                this.hide_toast(cx);
+            })],
             focus_handle,
         });
 
-        self.start_dismiss_timer(DEFAULT_TOAST_DURATION, window, cx);
+        self.start_dismiss_timer(DEFAULT_TOAST_DURATION, cx);
 
         cx.notify();
     }
 
-    pub fn hide_toast(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub fn hide_toast(&mut self, cx: &mut Context<Self>) -> bool {
         cx.notify();
 
         true
@@ -128,12 +116,7 @@ impl ToastLayer {
     }
 
     /// Starts a timer to automatically dismiss the toast after the specified duration
-    pub fn start_dismiss_timer(
-        &mut self,
-        duration: Duration,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn start_dismiss_timer(&mut self, duration: Duration, cx: &mut Context<Self>) {
         self.clear_dismiss_timer(cx);
 
         let instant_started = std::time::Instant::now();
@@ -158,11 +141,11 @@ impl ToastLayer {
     }
 
     /// Restarts the dismiss timer with a new duration
-    pub fn restart_dismiss_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn restart_dismiss_timer(&mut self, cx: &mut Context<Self>) {
         let Some(duration) = self.duration_remaining else {
             return;
         };
-        self.start_dismiss_timer(duration, window, cx);
+        self.start_dismiss_timer(duration, cx);
         cx.notify();
     }
 
@@ -194,14 +177,14 @@ impl Render for ToastLayer {
                     h_flex()
                         .id("active-toast-container")
                         .occlude()
-                        .on_hover(move |hover_start, window, cx| {
+                        .on_hover(move |hover_start, _window, cx| {
                             let Some(this) = handle.upgrade() else {
                                 return;
                             };
                             if *hover_start {
                                 this.update(cx, |this, _| this.pause_dismiss_timer());
                             } else {
-                                this.update(cx, |this, cx| this.restart_dismiss_timer(window, cx));
+                                this.update(cx, |this, cx| this.restart_dismiss_timer(cx));
                             }
                             cx.stop_propagation();
                         })

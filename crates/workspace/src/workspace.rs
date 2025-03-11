@@ -5018,12 +5018,11 @@ impl Workspace {
 
     pub fn toggle_status_toast<V: ToastView>(
         &mut self,
-        window: &mut Window,
-        cx: &mut App,
         entity: Entity<V>,
+        cx: &mut App,
     ) {
         self.toast_layer.update(cx, |toast_layer, cx| {
-            toast_layer.toggle_toast(window, cx, entity)
+            toast_layer.toggle_toast(cx, entity)
         })
     }
 

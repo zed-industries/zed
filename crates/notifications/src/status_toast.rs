@@ -67,14 +67,12 @@ pub struct StatusToast {
 impl StatusToast {
     pub fn new(
         text: impl Into<SharedString>,
-        window: &mut Window,
         cx: &mut App,
-        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
+        f: impl FnOnce(Self, &mut Context<Self>) -> Self,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
 
-            window.refresh();
             f(
                 Self {
                     text: text.into(),
@@ -82,7 +80,6 @@ impl StatusToast {
                     action: None,
                     focus_handle,
                 },
-                window,
                 cx,
             )
         })
@@ -144,49 +141,45 @@ impl Focusable for StatusToast {
 impl EventEmitter<DismissEvent> for StatusToast {}
 
 impl ComponentPreview for StatusToast {
-    fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
-        let text_example = StatusToast::new("Operation completed", window, cx, |this, _, _| this);
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        let text_example = StatusToast::new("Operation completed", cx, |this, _| this);
 
         let action_example =
-            StatusToast::new("Update ready to install", window, cx, |this, _, cx| {
+            StatusToast::new("Update ready to install", cx, |this,  cx| {
                 this.action("Restart", cx.listener(|_, _, _, _| {}))
             });
 
         let icon_example = StatusToast::new(
             "Nathan Sobo accepted your contact request",
-            window,
             cx,
-            |this, _, _| this.icon(ToastIcon::new(IconName::Check).color(Color::Muted)),
+            |this,  _| this.icon(ToastIcon::new(IconName::Check).color(Color::Muted)),
         );
 
         let success_example = StatusToast::new(
             "Pushed 4 changes to `zed/main`",
-            window,
             cx,
-            |this, _, _| this.icon(ToastIcon::new(IconName::Check).color(Color::Success)),
+            |this, _| this.icon(ToastIcon::new(IconName::Check).color(Color::Success)),
         );
 
         let error_example = StatusToast::new(
             "git push: Couldn't find remote origin `iamnbutler/zed`",
-            window,
             cx,
-            |this, _, cx| {
+            |this, cx| {
                 this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
                     .action("More Info", cx.listener(|_, _, _, _| {}))
             },
         );
 
         let warning_example =
-            StatusToast::new("You have outdated settings", window, cx, |this, _, cx| {
+            StatusToast::new("You have outdated settings",  cx, |this, cx| {
                 this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
                     .action("More Info", cx.listener(|_, _, _, _| {}))
             });
 
         let pr_example = StatusToast::new(
             "`zed/new-notification-system` created!",
-            window,
             cx,
-            |this, _, cx| {
+            |this, cx| {
                 this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
                     .action(
                         "Open Pull Request",
