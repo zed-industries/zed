@@ -25,10 +25,7 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::{
-        StartScreen::{JumpList, JumpListItem},
-        ViewManagement::UISettings,
-    },
+    UI::ViewManagement::UISettings,
 };
 
 use crate::{platform::blade::BladeContext, *};
@@ -52,7 +49,7 @@ pub(crate) struct WindowsPlatform {
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
-    dock_menu_actions: Vec<Box<dyn Action>>,
+    dock_menus: Vec<DockMenuItem>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
 }
@@ -75,7 +72,7 @@ impl WindowsPlatformState {
 
         Self {
             callbacks,
-            dock_menu_actions,
+            dock_menus: dock_menu_actions,
             current_cursor,
             menus: Vec::new(),
         }
@@ -189,9 +186,9 @@ impl WindowsPlatform {
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
-                .dock_menu_actions
+                .dock_menus
                 .get(action_idx)
-                .map(|action| action.boxed_clone())
+                .map(|dock_menu| dock_menu.action.boxed_clone())
             else {
                 lock.callbacks.app_menu_action = Some(callback);
                 log::error!("Dock menu for index {action_idx} not found");
@@ -254,34 +251,19 @@ impl WindowsPlatform {
         false
     }
 
-    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
-        // let jump_list = JumpList::LoadCurrentAsync()?.get()?;
-        // let items = jump_list.Items()?;
-        // items.Clear()?;
+    fn set_dock_menus(&self, menus: Vec<MenuItem>) {
         let mut actions = Vec::new();
-        for item in menus.into_iter() {
-            match item {
-                // MenuItem::Separator => JumpListItem::CreateSeparator()?,
-                // MenuItem::Submenu(_) => {
-                //     log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
-                //     continue;
-                // }
-                MenuItem::Action { name, action, .. } => {
-                    let idx = actions.len();
-                    actions.push(action.boxed_clone());
-                    // let item_args = format!("--dock-action {}", idx);
-                    // JumpListItem::CreateWithArguments(
-                    //     &HSTRING::from(item_args),
-                    //     &HSTRING::from(name.as_ref()),
-                    // )?
-                }
-                _ => {}
+        menus.into_iter().for_each(|menu| {
+            if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
+                actions.push(dock_menu);
             }
-            // items.Append(&item)?;
-        }
-        // jump_list.SaveAsync()?.get()?;
-        self.state.borrow_mut().dock_menu_actions = actions;
-        Ok(())
+        });
+        self.state.borrow_mut().dock_menus = actions;
+    }
+
+    fn update_destination_list(&self, entries: &[&str]) -> Option<Vec<String>> {
+        let dock_menus = &self.state.borrow().dock_menus;
+        update_jump_list(entries, dock_menus).log_err()
     }
 }
 
@@ -532,7 +514,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
-        self.configure_jump_list(menus).log_err();
+        self.set_dock_menus(menus);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
@@ -669,6 +651,10 @@ impl Platform for WindowsPlatform {
             )
             .log_err();
         }
+    }
+
+    fn update_jump_list(&self, entries: &[&str]) -> Option<Vec<String>> {
+        self.update_destination_list(entries)
     }
 }
 
