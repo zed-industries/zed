@@ -264,7 +264,7 @@ impl WindowsPlatform {
 
     fn update_jump_list(&self, entries: &[&Vec<String>]) -> Option<Vec<Vec<String>>> {
         let dock_menus = &self.state.borrow().dock_menus;
-        update_jump_list(entries, dock_menus)
+        update_jump_list(entries, dock_menus).log_err().flatten()
     }
 }
 
