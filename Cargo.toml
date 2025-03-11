@@ -619,12 +619,10 @@ features = [
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
-    "Foundation_Collections",
     "Foundation_Numerics",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
-    "UI_StartScreen",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
