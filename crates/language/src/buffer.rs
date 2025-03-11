@@ -4170,19 +4170,16 @@ impl BufferSnapshot {
                     if current_word_start_ix.is_none() {
                         current_word_start_ix = Some(ix);
                     }
-                    if query_ix == query_len {
-                        continue;
-                    } else {
-                        match &query {
-                            Some(query) =>  if c.eq_ignore_ascii_case(query.get(query_ix).expect(
-                                "query_ix is updated with query chars' length and should match the indices",
-                            )) {
-                                query_ix += 1;
-                                continue;
-                            },
-                            None => continue,
+                    if let Some(query) = &query {
+                        if query_ix < query_len
+                            && c.eq_ignore_ascii_case(query.get(query_ix).expect(
+                                "query_ix is a vec of chars, which we access only if before the end",
+                            ))
+                        {
+                            query_ix += 1;
                         }
                     }
+                    continue;
                 } else if let Some(word_start) = current_word_start_ix.take() {
                     if query_ix == query_len {
                         words.insert(self.text_for_range(word_start..ix).collect::<String>());

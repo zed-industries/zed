@@ -4391,7 +4391,6 @@ impl LspStore {
                                     } else {
                                         lsp_request.await
                                     }
-
                                 },
                             }
                         });

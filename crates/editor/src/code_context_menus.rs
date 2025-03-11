@@ -205,13 +205,13 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
-            completions: Rc::new(RefCell::new(completions)),
+            completions: RefCell::new(completions).into(),
             match_candidates,
-            entries: Rc::default(),
+            entries: RefCell::new(Vec::new()).into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
-            last_rendered_range: Rc::default(),
+            last_rendered_range: RefCell::new(None).into(),
             markdown_element: None,
         }
     }

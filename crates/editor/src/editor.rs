@@ -4061,11 +4061,16 @@ impl Editor {
         )
         .completions;
 
+        // The document can be large, so stay in reasonable bounds when searching for words,
+        // otherwise completion pop-up might be slow to appear.
+        const WORD_LOOKUP_ROWS: u32 = 5_000;
         let buffer_row = text::ToPoint::to_point(&buffer_position, &buffer_snapshot).row;
-        let min_word_search =
-            buffer_snapshot.clip_point(Point::new(buffer_row.saturating_sub(5_000), 0), Bias::Left);
+        let min_word_search = buffer_snapshot.clip_point(
+            Point::new(buffer_row.saturating_sub(WORD_LOOKUP_ROWS), 0),
+            Bias::Left,
+        );
         let max_word_search = buffer_snapshot.clip_point(
-            Point::new(buffer_row + 5_000, 0).min(buffer_snapshot.max_point()),
+            Point::new(buffer_row + WORD_LOOKUP_ROWS, 0).min(buffer_snapshot.max_point()),
             Bias::Right,
         );
         let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
