@@ -953,6 +953,32 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_multiple_writes(cx: &mut TestAppContext) {
+        let script = r#"
+                -- Test writing to a file multiple times
+                local file = io.open("multiwrite.txt", "w")
+                file:write("First line\n")
+                file:write("Second line\n")
+                file:write("Third line")
+                file:close()
+
+                -- Read back to verify
+                local read_file = io.open("multiwrite.txt", "r")
+                if read_file then
+                    local content = read_file:read("*a")
+                    print("Full content:", content)
+                    read_file:close()
+                end
+            "#;
+
+        let output = test_script(script, cx).await.unwrap();
+        assert_eq!(
+            output,
+            "Full content:\tFirst line\nSecond line\nThird line\n"
+        );
+    }
+
+    #[gpui::test]
     async fn test_read_formats(cx: &mut TestAppContext) {
         let script = r#"
             local file = io.open("multiline.txt", "w")
