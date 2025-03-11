@@ -1,6 +1,6 @@
-mod session;
+mod scripting_session;
 
-pub use session::*;
+pub use scripting_session::*;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
