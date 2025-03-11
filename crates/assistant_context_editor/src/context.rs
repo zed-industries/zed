@@ -1181,11 +1181,11 @@ impl AssistantContext {
             language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
-                
+
                 // Detect shell commands when buffer is edited
                 let buffer_snapshot = self.buffer.read(cx).text_snapshot();
                 detect_shell_commands(&buffer_snapshot, self);
-                
+
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -1406,21 +1406,21 @@ impl AssistantContext {
 
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).text_snapshot();
-        
+
         // Get the edits from the subscription
         let edits = self.edits_since_last_parse.consume();
-        
+
         // Process edits if there are any
         if !edits.is_empty() {
             let mut removed_parsed_slash_command_ranges = Vec::new();
             let mut updated_parsed_slash_commands = Vec::new();
             let mut removed_patches = Vec::new();
             let mut updated_patches = Vec::new();
-            
+
             // Process the entire buffer for simplicity
             let start = buffer.anchor_at(0, text::Bias::Left);
             let end = buffer.anchor_at(buffer.len(), text::Bias::Right);
-            
+
             self.reparse_slash_commands_in_range(
                 start..end,
                 &buffer,
@@ -1428,7 +1428,7 @@ impl AssistantContext {
                 &mut removed_parsed_slash_command_ranges,
                 cx,
             );
-            
+
             self.reparse_patches_in_range(
                 start..end,
                 &buffer,
@@ -1436,15 +1436,17 @@ impl AssistantContext {
                 &mut removed_patches,
                 cx,
             );
-            
+
             // Emit events if needed
-            if !updated_parsed_slash_commands.is_empty() || !removed_parsed_slash_command_ranges.is_empty() {
+            if !updated_parsed_slash_commands.is_empty()
+                || !removed_parsed_slash_command_ranges.is_empty()
+            {
                 cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
                     removed: removed_parsed_slash_command_ranges,
                     updated: updated_parsed_slash_commands,
                 });
             }
-            
+
             if !updated_patches.is_empty() || !removed_patches.is_empty() {
                 cx.emit(ContextEvent::PatchesUpdated {
                     removed: removed_patches,
@@ -1452,9 +1454,9 @@ impl AssistantContext {
                 });
             }
         }
-        
+
         self.invalidate_pending_slash_commands(&buffer, cx);
-        
+
         // Detect shell commands after other parsing
         let buffer_snapshot = self.buffer.read(cx).text_snapshot();
         detect_shell_commands(&buffer_snapshot, self);
@@ -2223,7 +2225,7 @@ impl AssistantContext {
                     let request_start = Instant::now();
                     let mut events = stream.await?;
                     let mut stop_reason = StopReason::EndTurn;
-                    
+
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
                             response_latency = Some(request_start.elapsed());
@@ -2251,12 +2253,15 @@ impl AssistantContext {
                                     LanguageModelCompletionEvent::Text(chunk) => {
                                         // First, apply the chunk as-is to maintain streaming experience
                                         buffer.edit(
-                                            [(message_old_end_offset..message_old_end_offset, chunk.clone())],
+                                            [(
+                                                message_old_end_offset..message_old_end_offset,
+                                                chunk.clone(),
+                                            )],
                                             None,
                                             cx,
                                         );
-                                        
-                                        // Then check if we've just completed a shell code block 
+
+                                        // Then check if we've just completed a shell code block
                                         // and format it if needed
                                         if chunk.contains("```sh") {
                                             format_shell_code_blocks(buffer, cx);
@@ -3387,20 +3392,22 @@ pub struct SavedContextMetadata {
 fn format_shell_code_blocks(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
     // Store the text once to avoid temporary value issues
     let text = buffer.text();
-    
+
     let mut blocks = Vec::new();
     let mut pos = 0;
-    
-    while let Some(start_idx) = find_next_pattern(&text[pos..], &["```sh", "```bash", "``` sh", "``` bash"]) {
+
+    while let Some(start_idx) =
+        find_next_pattern(&text[pos..], &["```sh", "```bash", "``` sh", "``` bash"])
+    {
         let block_start = pos + start_idx;
-        
+
         if let Some(line_end) = text[block_start..].find('\n') {
             let content_start = block_start + line_end + 1;
-            
+
             if let Some(end_marker) = text[content_start..].find("```") {
                 let content_end = content_start + end_marker;
                 let block_end = content_end + 3;
-                
+
                 let command = text[content_start..content_end].trim();
                 blocks.push((block_start, block_end, command.to_string()));
                 pos = block_end;
@@ -3411,7 +3418,7 @@ fn format_shell_code_blocks(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
             pos = block_start + 4;
         }
     }
-    
+
     // Remove text modification - we'll handle this visually with the button instead
     for (start, end, command) in blocks.iter().rev() {
         buffer.edit([(*start..*end, command.to_string())], None, cx);
@@ -3420,40 +3427,43 @@ fn format_shell_code_blocks(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
 
 // Helper to find the next occurrence of any pattern from a list
 fn find_next_pattern(text: &str, patterns: &[&str]) -> Option<usize> {
-    patterns.iter()
-        .filter_map(|pat| text.find(pat))
-        .min()
+    patterns.iter().filter_map(|pat| text.find(pat)).min()
 }
 
 // Detect shell commands in the buffer and store them in context
 fn detect_shell_commands(buffer_snapshot: &text::BufferSnapshot, context: &mut AssistantContext) {
     // Store the text once to avoid temporary value issues
     let text = buffer_snapshot.text();
-    
+
     let mut commands = Vec::new();
     let mut pos = 0;
-    
-    while let Some(start_idx) = find_next_pattern(&text[pos..], &["```sh", "```bash", "``` sh", "``` bash"]) {
+
+    while let Some(start_idx) =
+        find_next_pattern(&text[pos..], &["```sh", "```bash", "``` sh", "``` bash"])
+    {
         let block_start = pos + start_idx;
-        
+
         if let Some(line_end) = text[block_start..].find('\n') {
             let content_start = block_start + line_end + 1;
-            
+
             if let Some(end_marker) = text[content_start..].find("```") {
                 let content_end = content_start + end_marker;
                 let block_end = content_end + 3;
-                
+
                 let command = text[content_start..content_end].trim();
-                
+
                 // Create text anchors for the range
                 let start_anchor = buffer_snapshot.anchor_at(block_start, text::Bias::Left);
                 let end_anchor = buffer_snapshot.anchor_at(block_end, text::Bias::Right);
-                
+
                 commands.push(ShellCommand {
                     command: command.to_string(),
-                    range: Range { start: start_anchor, end: end_anchor },
+                    range: Range {
+                        start: start_anchor,
+                        end: end_anchor,
+                    },
                 });
-                
+
                 pos = block_end;
             } else {
                 pos = block_start + 4;
@@ -3462,6 +3472,6 @@ fn detect_shell_commands(buffer_snapshot: &text::BufferSnapshot, context: &mut A
             pos = block_start + 4;
         }
     }
-    
+
     context.shell_commands = commands;
 }

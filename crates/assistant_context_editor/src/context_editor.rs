@@ -6,8 +6,6 @@ use assistant_slash_commands::{
     FileSlashCommand,
 };
 use client::{proto, zed_urls};
-use text::Bias;
-use gpui::AppContext;
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
@@ -22,6 +20,7 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use futures::FutureExt;
+use gpui::AppContext;
 use gpui::{
     actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
     size, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
@@ -67,7 +66,10 @@ use crate::{
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
 };
-use terminal_view::terminal_panel::{TerminalPanel, ToggleFocus};
+use terminal_view::{terminal_panel::TerminalPanel, SendText};
+use terminal;
+use terminal_view::TerminalView;
+use workspace::Panel;
 
 actions!(
     assistant,
@@ -575,7 +577,7 @@ impl ContextEditor {
                 self.update_message_headers(cx);
                 self.update_image_blocks(cx);
                 self.update_shell_command_buttons(cx);
-                
+
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
@@ -2616,36 +2618,65 @@ impl ContextEditor {
 
     // Add this new function to impl ContextEditor
     fn update_shell_command_buttons(&mut self, cx: &mut Context<Self>) {
-        // Get the editor entity before updating
         let editor_entity = self.editor.clone();
-        
+
         self.editor.update(cx, |editor, cx| {
-            // Use a public getter method for shell_commands (you'll need to add this to AssistantContext)
             let commands = self.context.read(cx).get_shell_commands();
-            
-            let creases = commands.into_iter().map(|command| {
-                let buffer = editor.buffer().read(cx).snapshot(cx);
-                let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                
-                let start = buffer.anchor_in_excerpt(excerpt_id, command.range.start).unwrap();
-                let end = buffer.anchor_in_excerpt(excerpt_id, command.range.end).unwrap();
-                
-                Crease::inline(
-                    start..end,
-                    FoldPlaceholder {
-                        render: render_shell_command_run_button(
-                            editor_entity.downgrade(),
-                            self.workspace.clone(),
-                            IconName::Play,
-                            "Run".into(),
-                        ),
-                        merge_adjacent: false,
-                        ..Default::default()
-                    },
-                    render_slash_command_output_toggle,
-                    |_, _, _, _| Empty.into_any(),
-                )
-            }).collect::<Vec<_>>();
+
+            let creases = commands
+                .into_iter()
+                .map(|command| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
+
+                    let start = buffer
+                        .anchor_in_excerpt(excerpt_id, command.range.start)
+                        .unwrap();
+                    let end = buffer
+                        .anchor_in_excerpt(excerpt_id, command.range.end)
+                        .unwrap();
+
+                    // Find the position after ```sh
+                    let text = buffer
+                        .text_for_range(start.to_offset(&buffer)..end.to_offset(&buffer))
+                        .collect::<String>();
+                    let command_start = if let Some(pos) = text.find("```sh") {
+                        buffer.anchor_before(start.to_offset(&buffer) + pos + "```sh".len())
+                    } else {
+                        start
+                    };
+
+                    let run_button = render_shell_command_run_button(
+                        editor_entity.downgrade(),
+                        self.workspace.clone(),
+                        IconName::Play,
+                        "Run".into(),
+                    );
+
+                    let run_button_clone = run_button.clone();
+                    let range = command_start..end;
+
+                    Crease::inline(
+                        range.clone(),
+                        FoldPlaceholder {
+                            render: run_button,
+                            merge_adjacent: false,
+                            ..Default::default()
+                        },
+                        move |row, is_folded, fold, window, cx| {
+                            h_flex()
+                                .justify_between()
+                                .w_full()
+                                .child(render_slash_command_output_toggle(
+                                    row, is_folded, fold, window, cx,
+                                ))
+                                .child((run_button_clone)(FoldId::default(), range.clone(), cx))
+                                .into_any()
+                        },
+                        |_, _, _, _| Empty.into_any(),
+                    )
+                })
+                .collect::<Vec<_>>();
 
             editor.insert_creases(creases, cx);
         });
@@ -2724,7 +2755,30 @@ fn render_shell_command_run_button(
                 // Just open the terminal panel for now
                 if let Some(workspace) = workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
+                        // First focus the terminal panel
                         workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+                        
+                        // Get the terminal panel and send input directly
+                        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
+                            if let Ok(command_text) = command_text {
+                                let command_with_newline = format!("{}\n", command_text);
+                                terminal_panel.update(cx, |panel, cx| {
+                                    if let Some(pane) = panel.pane() {
+                                        if let Some(terminal_view) = pane.read(cx).active_item().and_then(|item| item.downcast::<TerminalView>()) {
+                                            // Get the terminal entity
+                                            let terminal = {
+                                                let view = terminal_view.read(cx);
+                                                view.terminal().clone()
+                                            };
+                                            // Now update it to send input
+                                            terminal.update(cx, |term, _| {
+                                                term.input(command_with_newline);
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        }
                     });
                 }
             })

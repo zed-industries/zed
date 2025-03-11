@@ -55,6 +55,7 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 terminal_view.workspace = true
+terminal.workspace=true
 
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }
