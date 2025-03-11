@@ -1,13 +1,13 @@
 use itertools::Itertools;
-use util::ResultExt;
 use windows::{
-    core::{Interface, GUID, HSTRING, PROPVARIANT},
+    core::{Interface, GUID, HSTRING},
     Win32::{
-        System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
+        Foundation::PROPERTYKEY,
+        System::Com::{CoCreateInstance, StructuredStorage::PROPVARIANT, CLSCTX_INPROC_SERVER},
         UI::Shell::{
             Common::{IObjectArray, IObjectCollection},
             DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW,
-            PropertiesSystem::{IPropertyStore, PROPERTYKEY},
+            PropertiesSystem::IPropertyStore,
             ShellLink,
         },
     },
