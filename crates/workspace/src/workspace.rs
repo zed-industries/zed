@@ -921,7 +921,7 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
+                    this.serialize_workspace(window, cx, true);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1226,7 +1226,6 @@ impl Workspace {
 
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
-            let is_new_workspace = serialized_workspace.is_none();
 
             let workspace_location = serialized_workspace
                 .as_ref()
@@ -1353,21 +1352,7 @@ impl Workspace {
             window
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
-                    if let Some(manager) = HistoryManager::global(cx) {
-                        let task = workspace.serialize_workspace_internal(window, cx);
-                        window
-                            .spawn(cx, |mut cx| async move {
-                                task.await;
-                                if is_new_workspace {
-                                    manager
-                                        .update(&mut cx, |_, cx| {
-                                            cx.emit(HistoryManagerEvent::Update)
-                                        })
-                                        .log_err();
-                                }
-                            })
-                            .detach();
-                    }
+                    workspace.update_changes(window, cx, true);
                 })
                 .log_err();
             Ok((window, opened_items))
@@ -2588,7 +2573,7 @@ impl Workspace {
         }
 
         cx.notify();
-        self.serialize_workspace(window, cx);
+        self.serialize_workspace(window, cx, false);
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2600,7 +2585,7 @@ impl Workspace {
 
         cx.focus_self(window);
         cx.notify();
-        self.serialize_workspace(window, cx);
+        self.serialize_workspace(window, cx, false);
     }
 
     /// Transfer focus to the panel of the given type.
@@ -2641,7 +2626,7 @@ impl Workspace {
 
         if panel.is_some() {
             cx.notify();
-            self.serialize_workspace(window, cx);
+            self.serialize_workspace(window, cx, false);
         }
 
         panel
@@ -2686,7 +2671,7 @@ impl Workspace {
         }
 
         if serialize {
-            self.serialize_workspace(window, cx);
+            self.serialize_workspace(window, cx, false);
         }
 
         cx.notify();
@@ -3530,7 +3515,7 @@ impl Workspace {
         }
 
         if serialize_workspace {
-            self.serialize_workspace(window, cx);
+            self.serialize_workspace(window, cx, false);
         }
     }
 
@@ -4588,18 +4573,41 @@ impl Workspace {
         cx.notify();
     }
 
-    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>, update: bool) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update_in(cx, |this, window, cx| {
-                    this.serialize_workspace_internal(window, cx).detach();
+                    this.update_changes(window, cx, update);
                     this._schedule_serialize.take();
                 })
                 .log_err();
             }));
+        }
+    }
+
+    pub fn update_changes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        update: bool,
+    ) {
+        let task = self.serialize_workspace_internal(window, cx);
+        if update {
+            cx.spawn(|this, mut cx| async move {
+                task.await;
+                this.update(&mut cx, |_, cx| {
+                    if let Some(manager) = HistoryManager::global(cx) {
+                        manager.update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update));
+                    }
+                })
+                .log_err();
+            })
+            .detach();
+        } else {
+            task.detach();
         }
     }
 
@@ -5562,7 +5570,7 @@ impl Render for Workspace {
                                                         );
                                                     }
                                                 };
-                                                workspace.serialize_workspace(window, cx);
+                                                workspace.serialize_workspace(window, cx, false);
                                             }
                                         },
                                     ))
