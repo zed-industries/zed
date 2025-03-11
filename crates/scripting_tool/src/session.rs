@@ -343,8 +343,10 @@ impl ScriptingSession {
             // When closing a writable file, record the content
             let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
             let content_ref = content.borrow::<FileContent>()?;
-            let content_vec = content_ref.0.lock();
-            let text = String::from_utf8(content_vec.to_vec()).into_lua_err()?;
+            let text = {
+                let content_vec = content_ref.0.lock().to_vec();
+                String::from_utf8(content_vec).into_lua_err()?
+            };
 
             Self::write_to_buffer(project_path, text, foreground_tx)
                 .await
