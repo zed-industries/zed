@@ -1,6 +1,7 @@
 use crate::headless_assistant::{
     authenticate_model_provider, find_model, HeadlessAppState, HeadlessAssistant,
 };
+use anyhow::anyhow;
 use assistant2::{Message, RequestKind};
 use gpui::{App, Task};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
@@ -124,10 +125,47 @@ impl EvalSetup {
                 .arg(&self.url)
                 .arg(repo_path)
                 .spawn()?;
-            let exit_status = child.wait().unwrap();
+            let exit_status = child.wait()?;
             if !exit_status.success() {
-                panic!("git clone exited with failure status {exit_status}");
+                return Err(anyhow!(
+                    "git clone exited with failure status {exit_status}"
+                ));
             }
+        }
+
+        let output = std::process::Command::new("git")
+            .arg("remote")
+            .arg("get-url")
+            .arg("origin")
+            .current_dir(repo_path)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "`git remote get-url origin` exited with failure status {}",
+                output.status
+            ));
+        }
+        let stdout = String::from_utf8(output.stdout)?;
+        let actual_origin = stdout.trim();
+        if actual_origin != self.url {
+            return Err(anyhow!(
+                "remote origin {} does not match expected origin {}",
+                actual_origin,
+                self.url
+            ));
+        }
+
+        let mut child = std::process::Command::new("git")
+            .arg("reset")
+            .arg("--hard")
+            .arg("HEAD")
+            .current_dir(repo_path)
+            .spawn()?;
+        let exit_status = child.wait()?;
+        if !exit_status.success() {
+            return Err(anyhow!(
+                "`git reset --hard` exited with failure status {exit_status}"
+            ));
         }
 
         let mut child = std::process::Command::new("git")
@@ -135,9 +173,11 @@ impl EvalSetup {
             .arg(&self.base_sha)
             .current_dir(repo_path)
             .spawn()?;
-        let exit_status = child.wait().unwrap();
+        let exit_status = child.wait()?;
         if !exit_status.success() {
-            panic!("git checkout exited with failure status {exit_status}");
+            return Err(anyhow!(
+                "`git checkout` exited with failure status {exit_status}"
+            ));
         }
 
         Ok(())
