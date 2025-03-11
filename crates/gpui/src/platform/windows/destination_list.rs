@@ -165,13 +165,11 @@ fn add_recent_folders(
 
 #[inline]
 fn is_item_in_array(item: &Vec<String>, removed: Option<&Vec<Vec<String>>>) -> bool {
-    let ret = if let Some(removed) = removed {
+    if let Some(removed) = removed {
         removed.iter().any(|removed_item| removed_item == item)
     } else {
         false
-    };
-    println!("is_item_in_array {}: {:?} {:?}", ret, item, removed);
-    ret
+    }
 }
 
 fn create_shell_link(
