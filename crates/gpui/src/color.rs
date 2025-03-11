@@ -1,5 +1,4 @@
 use anyhow::{bail, Context};
-use log::kv::ToValue;
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::{
     fmt::{self, Display, Formatter},
