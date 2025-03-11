@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [[bin]]
-name = "cli"
+name = "tool_evals"
 path = "src/main.rs"
 
 [dependencies]
