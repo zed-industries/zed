@@ -597,12 +597,12 @@ features = [
 ]
 
 [workspace.dependencies.windows]
-version = "0.58"
+version = "0.60"
 features = [
-    "implement",
     "Foundation_Collections",
     "Foundation_Numerics",
-    "Storage",
+    "Storage_Search",
+    "Storage_Streams",
     "System_Threading",
     "UI_StartScreen",
     "UI_ViewManagement",
@@ -623,9 +623,11 @@ features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
     "Win32_System_DataExchange",
+    "Win32_System_IO",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
