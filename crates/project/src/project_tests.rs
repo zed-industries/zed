@@ -6008,7 +6008,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 0..0,
                 "// the-deleted-contents\n",
                 "",
-                DiffHunkStatus::deleted(DiffHunkSecondaryStatus::None),
+                DiffHunkStatus::deleted(DiffHunkSecondaryStatus::NoSecondaryHunk),
             )],
         );
     });
@@ -6168,7 +6168,12 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
                     "",
                     DiffHunkStatus::deleted(HasSecondaryHunk),
                 ),
-                (1..2, "two\n", "TWO\n", DiffHunkStatus::modified(None)),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
                 (
                     3..4,
                     "four\n",
@@ -6217,7 +6222,12 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
                     "",
                     DiffHunkStatus::deleted(HasSecondaryHunk),
                 ),
-                (1..2, "two\n", "TWO\n", DiffHunkStatus::modified(None)),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
                 (
                     3..4,
                     "four\n",
@@ -6256,7 +6266,12 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
                     "",
                     DiffHunkStatus::deleted(HasSecondaryHunk),
                 ),
-                (1..2, "two\n", "TWO\n", DiffHunkStatus::modified(None)),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
                 (
                     3..4,
                     "four\n",
@@ -6277,6 +6292,70 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     } else {
         panic!("Unexpected event {event:?}");
     }
+
+    // Allow writing to the git index to succeed again.
+    fs.set_error_message_for_index_write("/dir/.git".as_ref(), None);
+
+    // Stage two hunks with separate operations.
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        diff.stage_or_unstage_hunks(true, &hunks[0..1], &snapshot, true, cx);
+        diff.stage_or_unstage_hunks(true, &hunks[2..3], &snapshot, true, cx);
+    });
+
+    // Both staged hunks appear as pending.
+    uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(SecondaryHunkRemovalPending),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+                ),
+            ],
+        );
+    });
+
+    // Both staging operations take effect.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+            ],
+        );
+    });
 }
 
 #[gpui::test]
