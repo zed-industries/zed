@@ -1447,6 +1447,12 @@ impl FakeFs {
         });
     }
 
+    pub fn delay_git_index_write(&self, dot_git: &Path) {
+        self.with_git_state(dot_git, true, |state| {
+            state.index_write_delayed = true;
+        });
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();

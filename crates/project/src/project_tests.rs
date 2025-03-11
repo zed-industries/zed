@@ -1,4 +1,4 @@
-use crate::{buffer_store::DiffBasesChange, task_inventory::TaskContexts, Event, *};
+use crate::{task_inventory::TaskContexts, Event, *};
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
@@ -6014,7 +6014,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 1)]
 async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
@@ -6075,7 +6075,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let invalidated_range: Rc<RefCell<Option<Range<Point>>>> = Rc::new(RefCell::new(None));
     buffer.update(cx, |_, cx| {
         let invalidated_range = invalidated_range.clone();
-        cx.subscribe(&uncommitted_diff, |buffer, _, event, cx| match event {
+        cx.subscribe(&uncommitted_diff, move |buffer, _, event, _| match event {
             BufferDiffEvent::DiffChanged { changed_range } => {
                 let Some(changed_range) = changed_range else {
                     return;
@@ -6085,7 +6085,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
                 let mut invalidated_range = invalidated_range.borrow_mut();
                 if let Some(range) = invalidated_range.take() {
                     invalidated_range.replace(
-                        range.start.min(changed_range.start)..range.end.min(changed_range.end),
+                        range.start.min(changed_range.start)..range.end.max(changed_range.end),
                     );
                 } else {
                     invalidated_range.replace(changed_range);
@@ -6164,7 +6164,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // The diff emits a change event for the range of the staged hunk.
     assert_eq!(
         invalidated_range.borrow_mut().take(),
-        Some(Point::new(1, 2)..Point::new(2, 0))
+        Some(Point::new(1, 0)..Point::new(2, 0))
     );
     cx.run_until_parked();
 
@@ -6242,23 +6242,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
             ],
         );
     });
-    dbg!();
-    assert!(matches!(
-        dbg!(diff_events.next().await.unwrap()),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
-    ));
-    dbg!();
-    let event = diff_events.next().await.unwrap();
-    dbg!();
-    if let BufferDiffEvent::DiffChanged {
-        changed_range: Some(changed_range),
-    } = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(3, 0)..Point::new(4, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
+
+    assert_eq!(
+        invalidated_range.borrow_mut().take(),
+        Some(Point::new(3, 0)..Point::new(4, 0))
+    );
 
     // When the write fails, the hunk returns to being unstaged.
     cx.run_until_parked();
@@ -6290,18 +6278,10 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    dbg!();
-    let event = diff_events.next().await.unwrap();
-    dbg!();
-    if let BufferDiffEvent::DiffChanged {
-        changed_range: Some(changed_range),
-    } = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
+    assert_eq!(
+        invalidated_range.borrow_mut().take(),
+        Some(Point::new(3, 0)..Point::new(4, 0))
+    );
 
     // Allow writing to the git index to succeed again.
     fs.set_error_message_for_index_write("/dir/.git".as_ref(), None);
@@ -6367,67 +6347,40 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    dbg!("--------------------------------------------");
+
+    // Set a delay for the next assertions
+    project.update(cx, |project, cx| {
+        project.git_store().update(cx, |git, cx| {
+            git.simulate_slow_index_write = true;
+        });
+    });
+
+    fs.delay_git_index_write("/dir/.git".as_ref());
+
     // Unstage two hunks, detect update from index, and then stage a third hunk.
-    let after_one = uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.update(cx, |diff, cx| {
         let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         let after_one = diff.stage_or_unstage_hunks(false, &hunks[0..=0], &snapshot, true, cx);
         diff.stage_or_unstage_hunks(false, &hunks[1..=1], &snapshot, true, cx);
         after_one.unwrap().to_string()
     });
 
-    let recv = project
-        .update(cx, |project, cx| {
-            project.buffer_store().update(cx, |buffer_store, cx| {
-                let diff_state = buffer_store
-                    .get_diff_state(snapshot.remote_id(), cx)
-                    .unwrap();
-                diff_state.update(cx, |diff_state, cx| {
-                    diff_state.diff_bases_changed(
-                        snapshot.text.clone(),
-                        DiffBasesChange::SetIndex(Some(after_one)),
-                        cx,
-                    )
-                })
-            })
-        })
-        .unwrap();
-    recv.await;
-
     uncommitted_diff.update(cx, |diff, cx| {
         let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(false, &hunks[2..=2], &snapshot, true, cx);
     });
 
-    // uncommitted_diff.update(cx, |diff, cx| {
-    //     assert_hunks(
-    //         diff.hunks(&snapshot, cx),
-    //         &snapshot,
-    //         &diff.base_text_string().unwrap(),
-    //         &[
-    //             (
-    //                 0..0,
-    //                 "zero\n",
-    //                 "",
-    //                 DiffHunkStatus::deleted(SecondaryHunkAdditionPending),
-    //             ),
-    //             (
-    //                 1..2,
-    //                 "two\n",
-    //                 "TWO\n",
-    //                 DiffHunkStatus::modified(SecondaryHunkAdditionPending),
-    //             ),
-    //             (
-    //                 3..4,
-    //                 "four\n",
-    //                 "FOUR\n",
-    //                 DiffHunkStatus::modified(SecondaryHunkAdditionPending),
-    //             ),
-    //         ],
-    //     );
-    // });
+    // bad sequence:
+    //   * unstage hunk
+    //   * start write to the index
+    //   * get fs event for git index
+    //   * finish write to the index
 
     // Wait till all unstaging operations take effect.
     cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(100));
+
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
             diff.hunks(&snapshot, cx),

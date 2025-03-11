@@ -37,6 +37,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt};
@@ -50,6 +51,8 @@ pub struct GitStore {
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<GitJob>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub simulate_slow_index_write: bool,
     _subscriptions: [Subscription; 2],
 }
 
@@ -124,6 +127,8 @@ impl GitStore {
             active_index: None,
             update_sender,
             _subscriptions,
+            #[cfg(any(test, feature = "test-support"))]
+            simulate_slow_index_write: false,
         }
     }
 
@@ -291,7 +296,7 @@ impl GitStore {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some((repo, path)) = this.repository_and_path_for_buffer_id(buffer_id, cx) {
-                diff.update(cx, |diff, cx| diff.start_pending_op(cx));
+                diff.update(cx, |diff, _| diff.start_pending_op());
                 let recv = repo.update(cx, |repo, cx| {
                     repo.set_index_text(
                         &path,
@@ -301,17 +306,28 @@ impl GitStore {
                 });
                 let diff = diff.downgrade();
                 cx.spawn(|this, mut cx| async move {
-                    if let Some(result) = cx.background_spawn(async move { recv.await.ok() }).await
+                    let result = cx.background_spawn(async move { recv.await.ok() }).await;
+
+                    #[cfg(any(test, feature = "test-support"))]
+                    if this
+                        .update(&mut cx, |this, _| this.simulate_slow_index_write)
+                        .unwrap_or_default()
                     {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(100))
+                            .await;
+                    }
+
+                    diff.update(&mut cx, |diff, cx| {
+                        diff.end_pending_op(&result, cx);
+                    })
+                    .ok();
+                    if let Some(result) = result {
                         if let Err(error) = result {
                             this.update(&mut cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
                                 .ok();
                         }
                     }
-                    diff.update(&mut cx, |diff, cx| {
-                        diff.end_pending_op(cx);
-                    })
-                    .ok();
                 })
                 .detach();
             }

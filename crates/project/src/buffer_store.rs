@@ -1852,7 +1852,7 @@ impl BufferStore {
         }
     }
 
-    pub fn get_diff_state(&self, buffer_id: BufferId, cx: &App) -> Option<Entity<BufferDiffState>> {
+    pub fn get_diff_state(&self, buffer_id: BufferId, _: &App) -> Option<Entity<BufferDiffState>> {
         if let OpenBuffer::Complete { diff_state, .. } = self.opened_buffers.get(&buffer_id)? {
             Some(diff_state.clone())
         } else {

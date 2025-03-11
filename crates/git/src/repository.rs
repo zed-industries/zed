@@ -942,6 +942,7 @@ pub struct FakeGitRepositoryState {
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
     pub simulated_index_write_error_message: Option<String>,
+    pub index_write_delayed: bool,
 }
 
 impl FakeGitRepository {
@@ -962,6 +963,7 @@ impl FakeGitRepositoryState {
             current_branch_name: Default::default(),
             branches: Default::default(),
             simulated_index_write_error_message: None,
+            index_write_delayed: false,
         }
     }
 }
@@ -999,6 +1001,7 @@ impl GitRepository for FakeGitRepository {
             .event_emitter
             .try_send(state.path.clone())
             .expect("Dropped repo change event");
+
         Ok(())
     }
 
