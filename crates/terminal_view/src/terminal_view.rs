@@ -114,7 +114,7 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     blinking_paused: bool,
     blink_epoch: usize,
-    can_navigate_to_selected_word: bool,
+    hover_target_tooltip: Option<String>,
     workspace_id: Option<WorkspaceId>,
     show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
@@ -196,7 +196,7 @@ impl TerminalView {
             blinking_terminal_enabled: false,
             blinking_paused: false,
             blink_epoch: 0,
-            can_navigate_to_selected_word: false,
+            hover_target_tooltip: None,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -869,19 +869,25 @@ fn subscribe_for_terminal_events(
             }
 
             Event::NewNavigationTarget(maybe_navigation_target) => {
-                this.can_navigate_to_selected_word = match maybe_navigation_target {
-                    Some(MaybeNavigationTarget::Url(_)) => true,
-                    Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
-                        let valid_files_to_open_task = possible_open_target(
-                            &workspace,
-                            &path_like_target.terminal_dir,
-                            &path_like_target.maybe_path,
-                            cx,
-                        );
-                        smol::block_on(valid_files_to_open_task).is_some()
-                    }
-                    None => false,
-                };
+                this.hover_target_tooltip =
+                    maybe_navigation_target
+                        .as_ref()
+                        .and_then(|navigation_target| match navigation_target {
+                            MaybeNavigationTarget::Url(url) => Some(url.clone()),
+                            MaybeNavigationTarget::PathLike(path_like_target) => {
+                                let valid_files_to_open_task = possible_open_target(
+                                    &workspace,
+                                    &path_like_target.terminal_dir,
+                                    &path_like_target.maybe_path,
+                                    cx,
+                                );
+                                Some(match smol::block_on(valid_files_to_open_task)? {
+                                    OpenTarget::File(path, _) | OpenTarget::Worktree(path, _) => {
+                                        path.to_string(|path| path.to_string_lossy().to_string())
+                                    }
+                                })
+                            }
+                        });
                 cx.notify()
             }
 
@@ -889,7 +895,7 @@ fn subscribe_for_terminal_events(
                 MaybeNavigationTarget::Url(url) => cx.open_url(url),
 
                 MaybeNavigationTarget::PathLike(path_like_target) => {
-                    if !this.can_navigate_to_selected_word {
+                    if this.hover_target_tooltip.is_none() {
                         return;
                     }
                     let task_workspace = workspace.clone();
@@ -905,7 +911,8 @@ fn subscribe_for_terminal_events(
                                 )
                             })?
                             .await;
-                        if let Some((path_to_open, open_target)) = open_target {
+                        if let Some(open_target) = open_target {
+                            let path_to_open = open_target.path();
                             let opened_items = task_workspace
                                 .update_in(&mut cx, |workspace, window, cx| {
                                     workspace.open_paths(
@@ -980,22 +987,29 @@ fn subscribe_for_terminal_events(
 
 #[derive(Debug, Clone)]
 enum OpenTarget {
-    Worktree(Entry),
-    File(Metadata),
+    Worktree(PathWithPosition, Entry),
+    File(PathWithPosition, Metadata),
 }
 
 impl OpenTarget {
     fn is_file(&self) -> bool {
         match self {
-            OpenTarget::Worktree(entry) => entry.is_file(),
-            OpenTarget::File(metadata) => !metadata.is_dir,
+            OpenTarget::Worktree(_, entry) => entry.is_file(),
+            OpenTarget::File(_, metadata) => !metadata.is_dir,
         }
     }
 
     fn is_dir(&self) -> bool {
         match self {
-            OpenTarget::Worktree(entry) => entry.is_dir(),
-            OpenTarget::File(metadata) => metadata.is_dir,
+            OpenTarget::Worktree(_, entry) => entry.is_dir(),
+            OpenTarget::File(_, metadata) => metadata.is_dir,
+        }
+    }
+
+    fn path(&self) -> &PathWithPosition {
+        match self {
+            OpenTarget::Worktree(path, _) => path,
+            OpenTarget::File(path, _) => path,
         }
     }
 }
@@ -1005,7 +1019,7 @@ fn possible_open_target(
     cwd: &Option<PathBuf>,
     maybe_path: &str,
     cx: &mut Context<TerminalView>,
-) -> Task<Option<(PathWithPosition, OpenTarget)>> {
+) -> Task<Option<OpenTarget>> {
     let Some(workspace) = workspace.upgrade() else {
         return Task::ready(None);
     };
@@ -1066,13 +1080,13 @@ fn possible_open_target(
                 .iter()
                 .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
             {
-                return Task::ready(Some((
+                return Task::ready(Some(OpenTarget::Worktree(
                     PathWithPosition {
                         path: worktree_root.join(&entry.path),
                         row: path_in_worktree.row,
                         column: path_in_worktree.column,
                     },
-                    OpenTarget::Worktree(entry.clone()),
+                    entry.clone(),
                 )));
             }
         }
@@ -1126,7 +1140,7 @@ fn possible_open_target(
     cx.background_spawn(async move {
         for path_to_check in paths_to_check {
             if let Some(metadata) = fs.metadata(&path_to_check.path).await.ok().flatten() {
-                return Some((path_to_check, OpenTarget::File(metadata)));
+                return Some(OpenTarget::File(path_to_check, metadata));
             }
         }
         None
@@ -1248,7 +1262,6 @@ impl Render for TerminalView {
                         self.focus_handle.clone(),
                         focused,
                         self.should_show_cursor(focused, cx),
-                        self.can_navigate_to_selected_word,
                         self.block_below_cursor.clone(),
                     ))
                     .when_some(self.render_scrollbar(cx), |div, scrollbar| {
