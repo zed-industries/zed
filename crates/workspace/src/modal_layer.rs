@@ -75,7 +75,6 @@ impl ModalLayer {
         if let Some(active_modal) = &self.active_modal {
             let is_close = active_modal.modal.view().downcast::<V>().is_ok();
             let did_close = self.hide_modal(window, cx);
-            dbg!(is_close, did_close);
             if is_close || !did_close {
                 return;
             }
