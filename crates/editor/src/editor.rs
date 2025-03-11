@@ -4105,7 +4105,10 @@ impl Editor {
                                     new_text: word.clone(),
                                     label: CodeLabel::plain(word, None),
                                     documentation: None,
-                                    source: CompletionSource::BufferWord(word_range),
+                                    source: CompletionSource::BufferWord {
+                                        word_range,
+                                        resolved: false,
+                                    },
                                     confirm: None,
                                 }),
                         );
@@ -4122,7 +4125,10 @@ impl Editor {
                                         new_text: word.clone(),
                                         label: CodeLabel::plain(word, None),
                                         documentation: None,
-                                        source: CompletionSource::BufferWord(word_range),
+                                        source: CompletionSource::BufferWord {
+                                            word_range,
+                                            resolved: false,
+                                        },
                                         confirm: None,
                                     }),
                             );

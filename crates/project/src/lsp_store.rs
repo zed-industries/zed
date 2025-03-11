@@ -4453,47 +4453,58 @@ impl LspStore {
                         {
                             did_resolve = true;
                         }
+                    } else {
+                        resolve_word_completion(
+                            &buffer_snapshot,
+                            &mut completions.borrow_mut()[completion_index],
+                        );
                     }
                 }
             } else {
                 for completion_index in completion_indices {
-                    let Some(server_id) = completions.borrow()[completion_index].source.server_id()
-                    else {
-                        continue;
+                    let server_id = {
+                        let completion = &completions.borrow()[completion_index];
+                        completion.source.server_id()
                     };
+                    if let Some(server_id) = server_id {
+                        let server_and_adapter = this
+                            .read_with(&cx, |lsp_store, _| {
+                                let server = lsp_store.language_server_for_id(server_id)?;
+                                let adapter =
+                                    lsp_store.language_server_adapter_for_id(server.server_id())?;
+                                Some((server, adapter))
+                            })
+                            .ok()
+                            .flatten();
+                        let Some((server, adapter)) = server_and_adapter else {
+                            continue;
+                        };
 
-                    let server_and_adapter = this
-                        .read_with(&cx, |lsp_store, _| {
-                            let server = lsp_store.language_server_for_id(server_id)?;
-                            let adapter =
-                                lsp_store.language_server_adapter_for_id(server.server_id())?;
-                            Some((server, adapter))
-                        })
-                        .ok()
-                        .flatten();
-                    let Some((server, adapter)) = server_and_adapter else {
-                        continue;
-                    };
-
-                    let resolved = Self::resolve_completion_local(
-                        server,
-                        &buffer_snapshot,
-                        completions.clone(),
-                        completion_index,
-                    )
-                    .await
-                    .log_err()
-                    .is_some();
-                    if resolved {
-                        Self::regenerate_completion_labels(
-                            adapter,
+                        let resolved = Self::resolve_completion_local(
+                            server,
                             &buffer_snapshot,
                             completions.clone(),
                             completion_index,
                         )
                         .await
-                        .log_err();
-                        did_resolve = true;
+                        .log_err()
+                        .is_some();
+                        if resolved {
+                            Self::regenerate_completion_labels(
+                                adapter,
+                                &buffer_snapshot,
+                                completions.clone(),
+                                completion_index,
+                            )
+                            .await
+                            .log_err();
+                            did_resolve = true;
+                        }
+                    } else {
+                        resolve_word_completion(
+                            &buffer_snapshot,
+                            &mut completions.borrow_mut()[completion_index],
+                        );
                     }
                 }
             }
@@ -4537,11 +4548,9 @@ impl LspStore {
                     );
                     server.request::<lsp::request::ResolveCompletionItem>(*lsp_completion.clone())
                 }
-                CompletionSource::BufferWord(a) => {
-                    //
-                    todo!("TODO kb")
+                CompletionSource::BufferWord { .. } | CompletionSource::Custom => {
+                    return Ok(());
                 }
-                CompletionSource::Custom => return Ok(()),
             }
         };
         let resolved_completion = request.await?;
@@ -4682,11 +4691,9 @@ impl LspStore {
                     }
                     serde_json::to_string(lsp_completion).unwrap().into_bytes()
                 }
-                CompletionSource::BufferWord(a) => {
-                    //
-                    todo!("TODO kb")
+                CompletionSource::Custom | CompletionSource::BufferWord { .. } => {
+                    return Ok(());
                 }
-                CompletionSource::Custom => return Ok(()),
             }
         };
         let request = proto::ResolveCompletionDocumentation {
@@ -8238,10 +8245,14 @@ impl LspStore {
                     .map(|lsp_defaults| serde_json::to_vec(lsp_defaults).unwrap());
                 serialized_completion.resolved = *resolved;
             }
-            CompletionSource::BufferWord(word_range) => {
+            CompletionSource::BufferWord {
+                word_range,
+                resolved,
+            } => {
                 serialized_completion.source = proto::completion::Source::BufferWord as i32;
                 serialized_completion.buffer_word_start = Some(serialize_anchor(&word_range.start));
                 serialized_completion.buffer_word_end = Some(serialize_anchor(&word_range.end));
+                serialized_completion.resolved = *resolved;
             }
             CompletionSource::Custom => {
                 serialized_completion.source = proto::completion::Source::Custom as i32;
@@ -8285,7 +8296,10 @@ impl LspStore {
                             .buffer_word_end
                             .and_then(deserialize_anchor)
                             .context("invalid buffer word end")?;
-                    CompletionSource::BufferWord(word_range)
+                    CompletionSource::BufferWord {
+                        word_range,
+                        resolved: completion.resolved,
+                    }
                 }
                 _ => anyhow::bail!("Unexpected completion source {}", completion.source),
             },
@@ -8349,6 +8363,40 @@ impl LspStore {
             }
         }
     }
+}
+
+fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completion) {
+    let CompletionSource::BufferWord {
+        word_range,
+        resolved,
+    } = &mut completion.source
+    else {
+        return;
+    };
+    if *resolved {
+        return;
+    }
+
+    if completion.new_text
+        != snapshot
+            .text_for_range(word_range.clone())
+            .collect::<String>()
+    {
+        return;
+    }
+
+    let mut offset = 0;
+    for chunk in snapshot.chunks(word_range.clone(), true) {
+        let end_offset = offset + chunk.text.len();
+        if let Some(highlight_id) = chunk.syntax_highlight_id {
+            completion
+                .label
+                .runs
+                .push((offset..end_offset, highlight_id));
+        }
+        offset = end_offset;
+    }
+    *resolved = true;
 }
 
 impl EventEmitter<LspStoreEvent> for LspStore {}
