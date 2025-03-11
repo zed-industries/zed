@@ -75,7 +75,11 @@ impl HeadlessAssistant {
                 .send_blocking(Err(anyhow!("{:?}", err)))
                 .unwrap(),
             ThreadEvent::DoneStreaming => {
-                if thread.read(cx).all_tools_finished() {
+                let thread = thread.read(cx);
+                if let Some(message) = thread.messages().last() {
+                    log::info!("Message: {}", message.text,);
+                }
+                if thread.all_tools_finished() {
                     self.done_tx.send_blocking(Ok(())).unwrap()
                 }
             }
