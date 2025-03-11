@@ -2874,6 +2874,7 @@ impl Editor {
         }
 
         let selections = self.selections.all_adjusted(cx);
+        let multi_section = selections.len() > 1;
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
@@ -2890,7 +2891,7 @@ impl Editor {
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
                 let mut is_bracket_pair_end = false;
-                if !text.is_empty() {
+                if !multi_section && !text.is_empty() {
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
