@@ -1186,6 +1186,7 @@ impl Workspace {
 
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
+            let is_new_workspace = serialized_workspace.is_none();
 
             let workspace_location = serialized_workspace
                 .as_ref()
@@ -1311,7 +1312,12 @@ impl Workspace {
             window
                 .update(&mut cx, |workspace, window, cx| {
                     window.activate_window();
-                    workspace.update_changes(window, cx, true);
+                    if is_new_workspace {
+                        // If opened a new workspace, the workspace will be serialized and notified here.
+                        // If opened an existing workspace, the workspace will be serialized and notified in the
+                        // above `open_items` call.
+                        workspace.serialize_workspace(window, cx, true);
+                    }
                 })
                 .log_err();
             Ok((window, opened_items))
@@ -4480,7 +4486,7 @@ impl Workspace {
 
     fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(window, cx)
+        self.serialize_workspace_internal(window, cx, false)
     }
 
     fn force_remove_pane(
@@ -4514,7 +4520,8 @@ impl Workspace {
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update_in(&mut cx, |this, window, cx| {
-                    this.update_changes(window, cx, update);
+                    this.serialize_workspace_internal(window, cx, update)
+                        .detach();
                     this._schedule_serialize.take();
                 })
                 .log_err();
@@ -4522,25 +4529,12 @@ impl Workspace {
         }
     }
 
-    fn update_changes(&self, window: &mut Window, cx: &mut Context<'_, Self>, update: bool) {
-        let task = self.serialize_workspace_internal(window, cx);
-        if update {
-            cx.spawn(|this, mut cx| async move {
-                task.await;
-                this.update(&mut cx, |_, cx| {
-                    if let Some(manager) = HistoryManager::global(cx) {
-                        manager.update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update));
-                    }
-                })
-                .log_err();
-            })
-            .detach();
-        } else {
-            task.detach();
-        }
-    }
-
-    fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
+    fn serialize_workspace_internal(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        update: bool,
+    ) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
@@ -4680,6 +4674,16 @@ impl Workspace {
                 session_id: self.session_id.clone(),
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
+            if update {
+                if let Some(manager) = HistoryManager::global(cx) {
+                    return window.spawn(cx, |mut cx| async move {
+                        persistence::DB.save_workspace(serialized_workspace).await;
+                        manager
+                            .update(&mut cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
+                            .log_err();
+                    });
+                }
+            }
             return window.spawn(cx, |_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
@@ -4844,7 +4848,9 @@ impl Workspace {
             workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                    workspace.serialize_workspace_internal(window, cx).detach();
+                    workspace
+                        .serialize_workspace_internal(window, cx, true)
+                        .detach();
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);
