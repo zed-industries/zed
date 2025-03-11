@@ -721,11 +721,13 @@ impl VariableList {
                                 } else {
                                     this.text_color(cx.theme().colors().text_muted)
                                         .when(
-                                            self.session
-                                                .read(cx)
-                                                .capabilities()
-                                                .supports_set_variable
-                                                .unwrap_or_default(),
+                                            !self.disabled
+                                                && self
+                                                    .session
+                                                    .read(cx)
+                                                    .capabilities()
+                                                    .supports_set_variable
+                                                    .unwrap_or_default(),
                                             |this| {
                                                 let path = variable.path.clone();
                                                 let variable_value = dap.value.clone();
