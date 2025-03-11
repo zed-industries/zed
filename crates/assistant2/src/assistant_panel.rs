@@ -166,22 +166,24 @@ impl AssistantPanel {
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
+        let thread = cx.new(|cx| {
+            ActiveThread::new(
+                thread.clone(),
+                thread_store.clone(),
+                language_registry.clone(),
+                window,
+                cx,
+            )
+        });
+
         Self {
             active_view: ActiveView::Thread,
             workspace,
             project: project.clone(),
             fs: fs.clone(),
-            language_registry: language_registry.clone(),
+            language_registry,
             thread_store: thread_store.clone(),
-            thread: cx.new(|cx| {
-                ActiveThread::new(
-                    thread.clone(),
-                    thread_store.clone(),
-                    language_registry,
-                    window,
-                    cx,
-                )
-            }),
+            thread,
             message_editor,
             context_store,
             context_editor: None,

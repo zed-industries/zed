@@ -347,12 +347,14 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone()) {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone())
+        {
             error
         } else {
             "No such file or directory".into()
-        }
+        };
+        Some(text)
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {

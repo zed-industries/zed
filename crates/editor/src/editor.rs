@@ -5931,7 +5931,6 @@ impl Editor {
     const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = Pixels(24.);
     const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = Pixels(2.);
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_popover(
         &mut self,
         text_bounds: &Bounds<Pixels>,
@@ -6043,7 +6042,6 @@ impl Editor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_modifier_jump_popover(
         &mut self,
         text_bounds: &Bounds<Pixels>,
@@ -6139,7 +6137,6 @@ impl Editor {
         Some((element, origin))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_scroll_popover(
         &mut self,
         to_y: impl Fn(Size<Pixels>) -> Pixels,
@@ -6170,7 +6167,6 @@ impl Editor {
         Some((element, origin))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_eager_jump_popover(
         &mut self,
         text_bounds: &Bounds<Pixels>,
@@ -6240,7 +6236,6 @@ impl Editor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_end_of_line_popover(
         self: &mut Editor,
         label: &'static str,
@@ -6299,7 +6294,6 @@ impl Editor {
         Some((element, origin))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_diff_popover(
         self: &Editor,
         text_bounds: &Bounds<Pixels>,
@@ -6607,7 +6601,6 @@ impl Editor {
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_cursor_popover(
         &self,
         min_width: Pixels,
@@ -11639,7 +11632,7 @@ impl Editor {
     fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_or_before_position(
+        self.go_to_hunk_before_or_after_position(
             &snapshot,
             selection.head(),
             Direction::Next,
@@ -11648,7 +11641,7 @@ impl Editor {
         );
     }
 
-    fn go_to_hunk_after_or_before_position(
+    fn go_to_hunk_before_or_after_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
@@ -11699,7 +11692,7 @@ impl Editor {
     ) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_or_before_position(
+        self.go_to_hunk_before_or_after_position(
             &snapshot,
             selection.head(),
             Direction::Prev,
@@ -13861,21 +13854,6 @@ impl Editor {
             return;
         }
 
-        let snapshot = self.snapshot(window, cx);
-        let newest_range = self.selections.newest::<Point>(cx).range();
-
-        let run_twice = snapshot
-            .hunks_for_ranges([newest_range])
-            .first()
-            .is_some_and(|hunk| {
-                let next_line = Point::new(hunk.row_range.end.0 + 1, 0);
-                self.hunk_after_position(&snapshot, next_line)
-                    .is_some_and(|other| other.row_range == hunk.row_range)
-            });
-
-        if run_twice {
-            self.go_to_next_hunk(&GoToHunk, window, cx);
-        }
         self.stage_or_unstage_diff_hunks(stage, ranges, cx);
         self.go_to_next_hunk(&GoToHunk, window, cx);
     }
@@ -14301,6 +14279,13 @@ impl Editor {
         let mut editor_settings = EditorSettings::get_global(cx).clone();
         editor_settings.gutter.line_numbers = !editor_settings.gutter.line_numbers;
         EditorSettings::override_global(editor_settings, cx);
+    }
+
+    pub fn line_numbers_enabled(&self, cx: &App) -> bool {
+        if let Some(show_line_numbers) = self.show_line_numbers {
+            return show_line_numbers;
+        }
+        EditorSettings::get_global(cx).gutter.line_numbers
     }
 
     pub fn should_use_relative_line_numbers(&self, cx: &mut App) -> bool {
@@ -16995,7 +16980,8 @@ fn snippet_completions(
                     new_text: snippet.body.clone(),
                     source: CompletionSource::Lsp {
                         server_id: LanguageServerId(usize::MAX),
-                        resolved: true,
+                        // Despite usize::MAX server_id above, snippets may need to be resolved
+                        resolved: false,
                         lsp_completion: Box::new(lsp::CompletionItem {
                             label: snippet.prefix.first().unwrap().clone(),
                             kind: Some(CompletionItemKind::SNIPPET),
@@ -17017,6 +17003,7 @@ fn snippet_completions(
                             sort_text: Some(char::MAX.to_string()),
                             ..lsp::CompletionItem::default()
                         }),
+                        lsp_defaults: None,
                     },
                     label: CodeLabel {
                         text: matching_prefix.clone(),

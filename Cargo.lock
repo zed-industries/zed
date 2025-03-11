@@ -84,7 +84,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1-dev"
-source = "git+https://github.com/zed-industries/alacritty.git?rev=03c2907b44b4189aac5fdeaea331f5aab5c7072e#03c2907b44b4189aac5fdeaea331f5aab5c7072e"
+source = "git+https://github.com/zed-industries/alacritty.git?branch=add-hush-login-flag#828457c9ff1f7ea0a0469337cc8a37ee3a1b0590"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.8.0",
@@ -490,6 +490,7 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "rope",
+ "scripting_tool",
  "serde",
  "serde_json",
  "settings",
@@ -5450,7 +5451,6 @@ dependencies = [
  "db",
  "editor",
  "env_logger 0.11.6",
- "feature_flags",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -11916,13 +11916,14 @@ name = "scripting_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_tool",
  "collections",
  "futures 0.3.31",
  "gpui",
+ "log",
  "mlua",
  "parking_lot",
  "project",
+ "rand 0.8.5",
  "regex",
  "schemars",
  "serde",
@@ -16985,7 +16986,6 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
- "scripting_tool",
  "search",
  "serde",
  "serde_json",
