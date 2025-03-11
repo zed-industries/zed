@@ -447,7 +447,7 @@ impl ActiveThread {
         };
 
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model, RequestKind::Chat, false, cx)
+            thread.send_to_model(model, RequestKind::Chat, cx)
         });
         cx.notify();
     }
