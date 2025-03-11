@@ -1,5 +1,5 @@
 use crate::status::FileStatus;
-use crate::GitHostingProviderRegistry;
+use crate::SHORT_SHA_LENGTH;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
 use askpass::{AskPassResult, AskPassSession};
@@ -55,6 +55,14 @@ impl Branch {
 pub struct Upstream {
     pub ref_name: SharedString,
     pub tracking: UpstreamTracking,
+}
+
+impl Upstream {
+    pub fn remote_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split("/").next())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -118,6 +126,12 @@ pub struct CommitDetails {
     pub commit_timestamp: i64,
     pub committer_email: SharedString,
     pub committer_name: SharedString,
+}
+
+impl CommitDetails {
+    pub fn short_sha(&self) -> SharedString {
+        self.sha[..SHORT_SHA_LENGTH].to_string().into()
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -263,19 +277,13 @@ impl std::fmt::Debug for dyn GitRepository {
 pub struct RealGitRepository {
     pub repository: Mutex<git2::Repository>,
     pub git_binary_path: PathBuf,
-    hosting_provider_registry: Arc<GitHostingProviderRegistry>,
 }
 
 impl RealGitRepository {
-    pub fn new(
-        repository: git2::Repository,
-        git_binary_path: Option<PathBuf>,
-        hosting_provider_registry: Arc<GitHostingProviderRegistry>,
-    ) -> Self {
+    pub fn new(repository: git2::Repository, git_binary_path: Option<PathBuf>) -> Self {
         Self {
             repository: Mutex::new(repository),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
-            hosting_provider_registry,
         }
     }
 
@@ -617,7 +625,6 @@ impl GitRepository for RealGitRepository {
             path,
             &content,
             remote_url,
-            self.hosting_provider_registry.clone(),
         )
     }
 

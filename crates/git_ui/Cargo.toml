@@ -50,6 +50,7 @@ strum.workspace = true
 telemetry.workspace = true
 theme.workspace = true
 time.workspace = true
+time_format.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
