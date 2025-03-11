@@ -319,6 +319,10 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
+
+const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
+
 impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
@@ -338,7 +342,9 @@ impl ContextProvider for PythonContextProvider {
             runner
         };
 
+        let module_target = self.build_module_target(variables);
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+
         cx.spawn(move |mut cx| async move {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
@@ -352,7 +358,11 @@ impl ContextProvider for PythonContextProvider {
                 String::from("python3")
             };
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            Ok(task::TaskVariables::from_iter([test_target?, toolchain]))
+            Ok(task::TaskVariables::from_iter([
+                test_target?,
+                module_target?,
+                toolchain,
+            ]))
         })
     }
 
@@ -379,6 +389,17 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                ..TaskTemplate::default()
+            },
+            // Execute a file as module
+            TaskTemplate {
+                label: format!("run as module '{}'", VariableName::File.template_value()),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                args: vec![
+                    "-m".to_owned(),
+                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
+                ],
+                tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
         ];
@@ -523,6 +544,19 @@ impl PythonContextProvider {
         let pytest_target = (PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str);
 
         Ok(pytest_target)
+    }
+
+    fn build_module_target(
+        &self,
+        variables: &task::TaskVariables,
+    ) -> Result<(VariableName, String)> {
+        let python_module_name = python_module_name_from_relative_path(
+            variables.get(&VariableName::RelativeFile).unwrap_or(""),
+        );
+
+        let module_target = (PYTHON_MODULE_NAME_TASK_VARIABLE.clone(), python_module_name);
+
+        Ok(module_target)
     }
 }
 
