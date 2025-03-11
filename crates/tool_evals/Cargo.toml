@@ -17,6 +17,7 @@ anyhow.workspace = true
 assistant2.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
+clap.workspace = true
 client.workspace = true
 collections.workspace = true
 context_server.workspace = true
@@ -34,6 +35,8 @@ prompt_store.workspace = true
 rand.workspace = true
 reqwest_client.workspace = true
 scripting_tool.workspace = true
+serde.workspace = true
+serde_json_lenient.workspace = true
 settings.workspace = true
 smol.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
