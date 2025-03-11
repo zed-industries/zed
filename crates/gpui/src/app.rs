@@ -1446,6 +1446,11 @@ impl App {
         self.platform.add_recent_document(path);
     }
 
+    /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
+    pub fn update_jump_list(&self, entries: &[&str]) -> Option<Vec<String>> {
+        self.platform.update_jump_list(entries)
+    }
+
     /// Dispatch an action to the currently active window or global action handler
     /// See [`crate::Action`] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {
