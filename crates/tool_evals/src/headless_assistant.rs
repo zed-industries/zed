@@ -24,7 +24,6 @@ pub struct HeadlessAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
-    pub workspace_store: Entity<WorkspaceStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub node_runtime: NodeRuntime,
 }
@@ -141,7 +140,6 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-    let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
     language::init(cx);
     language_model::init(client.clone(), cx);
@@ -157,7 +155,6 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
         languages,
         client,
         user_store,
-        workspace_store,
         fs,
         node_runtime: NodeRuntime::unavailable(),
     })
