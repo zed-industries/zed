@@ -1028,6 +1028,20 @@ fn possible_open_target(
     let mut potential_paths = Vec::new();
     let original_path = PathWithPosition::from_path(PathBuf::from(maybe_path));
     let path_with_position = PathWithPosition::parse_str(maybe_path);
+    let worktree_candidates = workspace
+        .read(cx)
+        .worktrees(cx)
+        .sorted_by_key(|worktree| {
+            let worktree_root = worktree.read(cx).abs_path();
+            match cwd
+                .as_ref()
+                .and_then(|cwd| worktree_root.strip_prefix(cwd).ok())
+            {
+                Some(cwd_child) => cwd_child.components().count(),
+                None => usize::MAX,
+            }
+        })
+        .collect::<Vec<_>>();
     // Since we do not check paths via FS and joining, we need to strip off potential `./`, `a/`, `b/` prefixes out of it.
     for prefix_str in GIT_DIFF_PATH_PREFIXES.iter().chain(std::iter::once(&".")) {
         if let Some(stripped) = original_path.path.strip_prefix(prefix_str).ok() {
@@ -1048,16 +1062,7 @@ fn possible_open_target(
     potential_paths.insert(0, original_path);
     potential_paths.insert(1, path_with_position);
 
-    for worktree in workspace.read(cx).worktrees(cx).sorted_by_key(|worktree| {
-        let worktree_root = worktree.read(cx).abs_path();
-        match cwd
-            .as_ref()
-            .and_then(|cwd| worktree_root.strip_prefix(cwd).ok())
-        {
-            Some(cwd_child) => cwd_child.components().count(),
-            None => usize::MAX,
-        }
-    }) {
+    for worktree in &worktree_candidates {
         let worktree_root = worktree.read(cx).abs_path();
         let paths_to_check = potential_paths
             .iter()
@@ -1127,6 +1132,13 @@ fn possible_open_target(
                     if let Some(cwd) = &cwd {
                         paths_to_check.push(PathWithPosition {
                             path: cwd.join(maybe_path),
+                            row: path_to_check.row,
+                            column: path_to_check.column,
+                        });
+                    }
+                    for worktree in &worktree_candidates {
+                        paths_to_check.push(PathWithPosition {
+                            path: worktree.read(cx).abs_path().join(maybe_path),
                             row: path_to_check.row,
                             column: path_to_check.column,
                         });

@@ -713,7 +713,7 @@ impl Element for TerminalElement {
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
-                        .tooltip(Tooltip::text(hover_target.to_string()))
+                        .tooltip(Tooltip::text(hover_target.clone()))
                         .into_any_element();
                     element.prepaint_as_root(offset, bounds.size.into(), window, cx);
                     element
