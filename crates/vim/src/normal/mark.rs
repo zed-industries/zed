@@ -100,7 +100,7 @@ impl Vim {
                 else {
                     return;
                 };
-                let mark = self.get_mark(&*text, &buffer, window, cx);
+                let mark = self.get_mark(&text, &buffer, window, cx);
                 match mark {
                     None => None,
                     Some(Mark::Local(anchors)) => Some(anchors),
@@ -122,7 +122,7 @@ impl Vim {
                                         cx,
                                         |s| {
                                             s.select_anchor_ranges(
-                                                anchors.into_iter().map(|a| a.clone()..a.clone()),
+                                                anchors.into_iter().map(|a| a..a),
                                             )
                                         },
                                     )
@@ -131,7 +131,7 @@ impl Vim {
                         });
                         return;
                     }
-                    Some(Mark::Buffer(buffer_id, anchors)) => {
+                    Some(Mark::Buffer(buffer_id, text_anchors)) => {
                         let Some(workspace) = self.workspace(window) else {
                             return;
                         };
@@ -140,7 +140,7 @@ impl Vim {
                             panes.insert(0, workspace.active_pane().clone());
                             for pane in panes {
                                 let mut found = false;
-                                let anchors = anchors.clone();
+                                let text_anchors = text_anchors.clone();
                                 pane.update(cx, |pane, cx| {
                                     let Some(item_handle) =
                                         pane.items().find(|&item_handle| -> bool {
@@ -170,17 +170,47 @@ impl Vim {
 
                                     cx.spawn_in(window, |_, mut cx| async move {
                                         editor.update_in(&mut cx, |editor, window, cx| {
+                                            let multi_buffer = editor.buffer().read(cx);
+                                            let excerpt_id =
+                                                *multi_buffer.excerpt_ids().first().unwrap();
+                                            let Some(buffer) =
+                                                editor.buffer().read(cx).as_singleton()
+                                            else {
+                                                return;
+                                            };
+                                            let buffer_id = buffer.read(cx).remote_id();
+                                            let anchors = text_anchors.into_iter().map(|a| {
+                                                Anchor::in_buffer(excerpt_id, buffer_id, a)
+                                            });
+                                            let map = editor.snapshot(window, cx);
+                                            let mut ranges: Vec<Range<Anchor>> = Vec::new();
+                                            for mut anchor in anchors {
+                                                if line {
+                                                    let mut point = anchor
+                                                        .to_display_point(&map.display_snapshot);
+                                                    point = motion::first_non_whitespace(
+                                                        &map.display_snapshot,
+                                                        false,
+                                                        point,
+                                                    );
+                                                    anchor = map
+                                                        .display_snapshot
+                                                        .buffer_snapshot
+                                                        .anchor_before(
+                                                            point.to_point(&map.display_snapshot),
+                                                        );
+                                                }
+
+                                                if ranges.last() != Some(&(anchor..anchor)) {
+                                                    ranges.push(anchor..anchor);
+                                                }
+                                            }
                                             editor.change_selections(
                                                 Some(Autoscroll::fit()),
                                                 window,
                                                 cx,
                                                 |s| {
-                                                    s.select_anchor_ranges(
-                                                        anchors
-                                                            .clone()
-                                                            .iter()
-                                                            .map(|&anchor| anchor..anchor),
-                                                    );
+                                                    s.select_anchor_ranges(ranges);
                                                 },
                                             )
                                         })?;
@@ -216,17 +246,29 @@ impl Vim {
                             this.update_in(&mut cx, |_, window, cx| {
                                 if let Some(editor) = editor.act_as::<Editor>(cx) {
                                     editor.update(cx, |editor, cx| {
+                                        let map = editor.snapshot(window, cx);
+                                        let points: Vec<_> = points
+                                            .into_iter()
+                                            .map(|p| {
+                                                if line {
+                                                    let point =
+                                                        p.to_display_point(&map.display_snapshot);
+                                                    motion::first_non_whitespace(
+                                                        &map.display_snapshot,
+                                                        false,
+                                                        point,
+                                                    )
+                                                    .to_point(&map.display_snapshot)
+                                                } else {
+                                                    p
+                                                }
+                                            })
+                                            .collect();
                                         editor.change_selections(
                                             Some(Autoscroll::fit()),
                                             window,
                                             cx,
-                                            |s| {
-                                                s.select_ranges(
-                                                    points
-                                                        .into_iter()
-                                                        .map(|p| p.clone()..p.clone()),
-                                                )
-                                            },
+                                            |s| s.select_ranges(points.into_iter().map(|p| p..p)),
                                         )
                                     })
                                 }
@@ -310,7 +352,6 @@ impl Vim {
                 return;
             };
             marks_state.update(cx, |ms, cx| {
-                dbg!("setting mark", name.clone());
                 ms.set_mark(name.clone(), buffer_entity, anchors, cx);
             });
         });

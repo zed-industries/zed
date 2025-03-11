@@ -9,7 +9,7 @@ use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::define_connection;
 use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
-use editor::{Anchor, ClipboardSelection, Editor, ExcerptId, MultiBuffer};
+use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, EntityId,
     Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
@@ -421,7 +421,7 @@ pub enum MarkLocation {
 pub enum Mark {
     Local(Vec<Anchor>),
     MultiBuffer(EntityId, Vec<Anchor>),
-    Buffer(BufferId, Vec<Anchor>), // for singleton buffers with no file
+    Buffer(BufferId, Vec<text::Anchor>), // for singleton buffers with no file
     Path(Arc<Path>, Vec<Point>),
 }
 
@@ -544,7 +544,6 @@ impl MarksState {
         let mut loaded_marks = HashMap::default();
         let buffer = buffer_handle.read(cx);
         for (name, points) in serialized_marks.iter() {
-            dbg!("loaded", &name, &points, &buffer.text());
             loaded_marks.insert(
                 name.clone(),
                 points
@@ -588,8 +587,6 @@ impl MarksState {
         if old_points == new_points {
             return;
         }
-        dbg!(std::backtrace::Backtrace::force_capture());
-        dbg!(&old_points, &new_points);
 
         for (key, _) in &new_points {
             if self.is_global_mark(key) {
@@ -683,7 +680,6 @@ impl MarksState {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
             BufferEvent::Edited => {
                 if let Some(path) = this.path_for_buffer(&buffer, cx) {
-                    dbg!(&buffer.read(cx).text());
                     this.serialize_buffer_marks(path, &buffer, cx);
                 }
             }
@@ -735,23 +731,13 @@ impl MarksState {
         };
 
         let buffer_id = buffer_handle.read(cx).remote_id();
-        dbg!(
-            "set_mark",
+        self.buffer_marks.entry(buffer_id).or_default().insert(
+            name.clone(),
             anchors
-                .iter()
+                .into_iter()
                 .map(|anchor| anchor.text_anchor)
-                .collect::<Vec<_>>()
+                .collect(),
         );
-        self.buffer_marks
-            .entry(buffer_id.clone())
-            .or_default()
-            .insert(
-                name.clone(),
-                anchors
-                    .into_iter()
-                    .map(|anchor| anchor.text_anchor)
-                    .collect(),
-            );
         self.global_marks.insert(
             // this will be overwritten by serialize if there is an associated file
             name.clone(),
@@ -781,13 +767,13 @@ impl MarksState {
             }
 
             let singleton = multi_buffer.read(cx).as_singleton()?;
-            let excerpt_id = multi_buffer.read(cx).excerpt_ids().first().unwrap().clone();
+            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first().unwrap();
             let buffer_id = singleton.read(cx).remote_id();
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .into_iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, anchor.clone()))
+                    .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -800,11 +786,7 @@ impl MarksState {
             }
             MarkLocation::Buffer(buffer_id) => {
                 let text_anchors = self.buffer_marks.get(&buffer_id)?.get(name)?;
-                let anchors: Vec<_> = text_anchors
-                    .into_iter()
-                    .map(|anchor| Anchor::in_buffer(ExcerptId::min(), *buffer_id, anchor.clone()))
-                    .collect();
-                return Some(Mark::Buffer(*buffer_id, anchors));
+                return Some(Mark::Buffer(*buffer_id, text_anchors.clone()));
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;
@@ -1465,7 +1447,6 @@ impl VimDb {
             .map(|point| (point.row, point.column))
             .collect();
         let serialized = serde_json::to_string(&pairs)?;
-        dbg!(&path, &mark_name, &serialized);
         self.write(move |conn| {
             conn.exec_bound(sql!(
                 INSERT OR REPLACE INTO vim_marks
@@ -1505,7 +1486,6 @@ impl VimDb {
         mark_name: String,
         path: Arc<Path>,
     ) -> Result<()> {
-        dbg!(&mark_name, &path);
         self.write(move |conn| {
             conn.exec_bound(sql!(
                 INSERT OR REPLACE INTO vim_global_marks_paths
