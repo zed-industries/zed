@@ -8,6 +8,11 @@ use language_model::{LanguageModelProviderId, ANTHROPIC_PROVIDER_ID};
 use reqwest_client::ReqwestClient;
 use std::{path::PathBuf, sync::Arc};
 
+// todo! no hardcoded system prompt
+const SYSTEM_PROMPT: &str = "You are an expert software engineering assistant in a code editor. \
+    Use the tools provided to respond to the user's query. \
+    If the user requests changes, these should be written to files using the lua interpreter.";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "tool_evals",
@@ -62,6 +67,7 @@ fn main() {
                 let eval = Eval::load(
                     &eval_path,
                     &repo_path,
+                    Some(SYSTEM_PROMPT.to_string()),
                     provider_id.clone(),
                     args.model_name.clone(),
                 )

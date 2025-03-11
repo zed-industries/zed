@@ -31,6 +31,7 @@ impl Eval {
     pub fn load(
         eval_path: &Path,
         repo_path: &Path,
+        system_prompt: Option<String>,
         provider_id: LanguageModelProviderId,
         model_name: String,
     ) -> anyhow::Result<Self> {
@@ -42,7 +43,7 @@ impl Eval {
 
         Ok(Eval {
             repo_path: repo_path.to_path_buf(),
-            system_prompt: None,
+            system_prompt,
             user_query,
             provider_id,
             model_name,
