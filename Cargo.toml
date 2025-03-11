@@ -178,7 +178,6 @@ members = [
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
-    "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
     "extensions/uiua",
