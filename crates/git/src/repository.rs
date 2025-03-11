@@ -1,6 +1,6 @@
 use crate::status::FileStatus;
+use crate::SHORT_SHA_LENGTH;
 use crate::{blame::Blame, status::GitStatus};
-use crate::{GitHostingProviderRegistry, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context, Result};
 use askpass::{AskPassResult, AskPassSession};
 use collections::{HashMap, HashSet};
