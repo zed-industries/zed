@@ -398,8 +398,8 @@ impl GitPanel {
             max_width_item_index: None,
             selected_entry: None,
             marked_entries: Vec::new(),
-            show_vertical_scrollbar: Self::should_show_vertical_scrollbar(cx),
-            show_horizontal_scrollbar: Self::should_show_horizontal_scrollbar(cx),
+            show_vertical_scrollbar: false,
+            show_horizontal_scrollbar: false,
             tracked_count: 0,
             tracked_staged_count: 0,
             update_visible_entries_task: Task::ready(()),
@@ -409,6 +409,8 @@ impl GitPanel {
             modal_open: false,
             entry_count: 0,
         };
+        git_panel.show_horizontal_scrollbar = git_panel.should_show_horizontal_scrollbar(cx);
+        git_panel.show_vertical_scrollbar = git_panel.should_show_vertical_scrollbar(cx);
         git_panel.schedule_update(false, window, cx);
         git_panel
     }
@@ -570,7 +572,7 @@ impl GitPanel {
     }
 
     /// Returns a `ShowScrollbar` for the vertical and horizontal scrollbar
-    fn show_scrollbar(cx: &mut Context<Self>) -> (ShowScrollbar, ShowScrollbar) {
+    fn show_scrollbar(&self, cx: &mut Context<Self>) -> (ShowScrollbar, ShowScrollbar) {
         let editor_scrollbar = EditorSettings::get_global(cx).scrollbar;
         let git_panel_scrollbar = GitPanelSettings::get_global(cx).scrollbar;
         let git_panel_show = git_panel_scrollbar.show;
@@ -594,33 +596,38 @@ impl GitPanel {
             show_vertical = ShowScrollbar::Never
         }
 
+        println!("show_vertical: {:?}", show_vertical);
+        println!("show_horizontal: {:?}", show_horizontal);
+
+        cx.notify();
+
         (show_vertical, show_horizontal)
     }
 
-    fn show_vertical_scrollbar(cx: &mut Context<Self>) -> ShowScrollbar {
-        Self::show_scrollbar(cx).0
+    fn show_vertical_scrollbar(&self, cx: &mut Context<Self>) -> ShowScrollbar {
+        self.show_scrollbar(cx).0
     }
 
-    fn show_horizontal_scrollbar(cx: &mut Context<Self>) -> ShowScrollbar {
-        Self::show_scrollbar(cx).1
+    fn show_horizontal_scrollbar(&self, cx: &mut Context<Self>) -> ShowScrollbar {
+        self.show_scrollbar(cx).1
     }
 
-    fn should_show_vertical_scrollbar(cx: &mut Context<Self>) -> bool {
-        match Self::show_vertical_scrollbar(cx) {
+    fn should_show_vertical_scrollbar(&self, cx: &mut Context<Self>) -> bool {
+        match self.show_vertical_scrollbar(cx) {
             ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
             ShowScrollbar::Never => false,
         }
     }
 
-    fn should_show_horizontal_scrollbar(cx: &mut Context<Self>) -> bool {
-        match Self::show_horizontal_scrollbar(cx) {
+    fn should_show_horizontal_scrollbar(&self, cx: &mut Context<Self>) -> bool {
+        match self.show_horizontal_scrollbar(cx) {
             ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
             ShowScrollbar::Never => false,
         }
     }
 
-    fn should_autohide_scrollbar(cx: &mut Context<Self>) -> (bool, bool) {
-        let (vertical_show, horizontal_show) = Self::show_scrollbar(cx);
+    fn should_autohide_scrollbar(&self, cx: &mut Context<Self>) -> (bool, bool) {
+        let (vertical_show, horizontal_show) = self.show_scrollbar(cx);
 
         let autohide = |show: ShowScrollbar, cx: &mut Context<Self>| match show {
             ShowScrollbar::Auto => true,
@@ -628,8 +635,10 @@ impl GitPanel {
                 .try_global::<ScrollbarAutoHide>()
                 .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
             ShowScrollbar::Always => false,
-            ShowScrollbar::Never => true,
+            ShowScrollbar::Never => false,
         };
+
+        cx.notify();
 
         (autohide(vertical_show, cx), autohide(horizontal_show, cx))
     }
@@ -637,7 +646,7 @@ impl GitPanel {
     fn hide_scrollbar(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
         let (should_autohide_vertical, should_autohide_horizontal) =
-            Self::should_autohide_scrollbar(cx);
+            self.should_autohide_scrollbar(cx);
 
         if (axis == Axis::Vertical && !should_autohide_vertical)
             || (axis == Axis::Horizontal && !should_autohide_horizontal)
@@ -2930,27 +2939,16 @@ impl GitPanel {
     ) -> impl IntoElement {
         let entry_count = self.entries.len();
         let show_vertical_scrollbar_container =
-            matches!(Self::show_vertical_scrollbar(cx), ShowScrollbar::Always);
+            matches!(self.show_vertical_scrollbar(cx), ShowScrollbar::Always);
 
         let show_horizontal_scrollbar_container =
-            matches!(Self::show_horizontal_scrollbar(cx), ShowScrollbar::Always);
+            matches!(self.show_horizontal_scrollbar(cx), ShowScrollbar::Always);
 
-        let show_vertical_scrollbar = if !Self::should_show_vertical_scrollbar(cx)
-            || !(self.show_vertical_scrollbar || self.vertical_scrollbar_state.is_dragging())
-        {
-            false
-        } else {
-            true
-        };
+        let show_vertical_scrollbar =
+            self.show_vertical_scrollbar || self.vertical_scrollbar_state.is_dragging();
 
-        let show_horizontal_scrollbar = if !Self::should_show_horizontal_scrollbar(cx)
-            || !(self.show_horizontal_scrollbar || self.horizontal_scrollbar_state.is_dragging())
-            || !self.horizontal_scroll_needed()
-        {
-            false
-        } else {
-            true
-        };
+        let show_horizontal_scrollbar =
+            self.show_horizontal_scrollbar || self.horizontal_scrollbar_state.is_dragging();
 
         let scroll_track_size = px(16.);
 
@@ -3439,6 +3437,9 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
 
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let should_autohide_scrollbar = self.should_autohide_scrollbar(cx);
+        let should_autohide_horizontal = should_autohide_scrollbar.0.clone();
+        let should_autohide_vertical = should_autohide_scrollbar.1.clone();
         let project = self.project.read(cx);
         let has_entries = self.entries.len() > 0;
         let room = self
@@ -3487,10 +3488,12 @@ impl Render for GitPanel {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
-            .on_hover(cx.listener(|this, hovered, window, cx| {
+            .on_hover(cx.listener(move |this, hovered, window, cx| {
                 if *hovered {
-                    this.show_vertical_scrollbar = true;
-                    if this.horizontal_scroll_needed() {
+                    if should_autohide_vertical {
+                        this.show_vertical_scrollbar = true;
+                    }
+                    if should_autohide_horizontal {
                         this.show_horizontal_scrollbar = true;
                     }
                     this.hide_scrollbar_task.take();
