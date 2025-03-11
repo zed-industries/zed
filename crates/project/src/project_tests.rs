@@ -941,7 +941,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     cx.executor().run_until_parked();
 
     // Start the language server by opening a buffer with a compatible file extension.
-    let _ = project
+    project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/the-root/src/a.rs"), cx)
         })
@@ -6358,6 +6358,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[allow(clippy::format_collect)]
 #[gpui::test]
 async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;

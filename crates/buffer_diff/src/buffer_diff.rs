@@ -255,7 +255,7 @@ impl BufferDiffInner {
 
             pending_hunks.append(preceding_pending_hunks, buffer);
 
-            // skip all overlaping old pending hunks
+            // skip all overlapping old pending hunks
             while old_pending_hunks
                 .item()
                 .is_some_and(|preceding_pending_hunk_item| {
