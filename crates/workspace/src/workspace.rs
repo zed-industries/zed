@@ -921,6 +921,8 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
+                    // Set `update` to `true` so that the history is updated.
+                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.serialize_workspace(window, cx, true);
                 }
 
@@ -4579,6 +4581,11 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Set the parameter `update` to `true` if the action changes the hisotry of the workspace.
+    /// Typically, there are three cases that change the history:
+    /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
+    /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
+    /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>, update: bool) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
@@ -4595,6 +4602,11 @@ impl Workspace {
         }
     }
 
+    /// Set the parameter `update` to `true` if the action changes the hisotry of the workspace.
+    /// Typically, there are three cases that change the history:
+    /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
+    /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
+    /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
     fn serialize_workspace_internal(
         &self,
         window: &mut Window,
@@ -4927,6 +4939,7 @@ impl Workspace {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+                    // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
                     workspace
                         .serialize_workspace_internal(window, cx, true)
                         .detach();
