@@ -344,7 +344,7 @@ impl DapStore {
         worktree: &Entity<Worktree>,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
+    ) -> (SessionId, Task<Result<Entity<Session>>>) {
         let Some(local_store) = self.as_local() else {
             unimplemented!("Starting session on remote side");
         };
@@ -373,7 +373,7 @@ impl DapStore {
             cx,
         );
 
-        cx.spawn(|this, mut cx| async move {
+        let task = cx.spawn(|this, mut cx| async move {
             let session = match start_client_task.await {
                 Ok(session) => session,
                 Err(error) => {
@@ -394,7 +394,8 @@ impl DapStore {
 
                 session
             })
-        })
+        });
+        (session_id, task)
     }
 
     fn handle_start_debugging_request(
@@ -425,7 +426,7 @@ impl DapStore {
             unreachable!("there must be a config for local sessions");
         };
 
-        let new_session_task = self.new_session(
+        let (_, new_session_task) = self.new_session(
             DebugAdapterConfig {
                 label: config.label,
                 kind: config.kind,

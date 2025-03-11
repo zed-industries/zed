@@ -15,7 +15,7 @@ use project::{
 };
 use rpc::proto::{self};
 use settings::Settings;
-use std::any::TypeId;
+use std::{any::TypeId, f32::consts::PI};
 use ui::prelude::*;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -248,6 +248,13 @@ impl DebugPanel {
                     return log::error!("Debug Panel out lived it's weak reference to Project");
                 };
 
+                if self.pane.read_with(cx, |pane, cx| {
+                    pane.items_of_type::<DebugSession>()
+                        .any(|item| item.read(cx).session_id(cx) == Some(*session_id))
+                }) {
+                    // We already have an item for this session.
+                    return;
+                }
                 let session_item =
                     DebugSession::running(project, self.workspace.clone(), session, window, cx);
 

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use dap::client::SessionId;
 use gpui::{
     percentage, Animation, AnimationExt, Entity, EventEmitter, FocusHandle, Focusable, Task,
     Transformation,
@@ -11,6 +12,7 @@ use ui::{v_flex, Color, Context, Icon, IconName, IntoElement, ParentElement, Ren
 
 pub(crate) struct StartingState {
     focus_handle: FocusHandle,
+    pub(super) session_id: SessionId,
     _notify_parent: Task<()>,
 }
 
@@ -22,7 +24,11 @@ pub(crate) enum StartingEvent {
 impl EventEmitter<StartingEvent> for StartingState {}
 
 impl StartingState {
-    pub(crate) fn new(task: Task<Result<Entity<Session>>>, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        session_id: SessionId,
+        task: Task<Result<Entity<Session>>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let _notify_parent = cx.spawn(move |this, mut cx| async move {
             let entity = task.await;
 
@@ -36,6 +42,7 @@ impl StartingState {
             .ok();
         });
         Self {
+            session_id,
             focus_handle: cx.focus_handle(),
             _notify_parent,
         }

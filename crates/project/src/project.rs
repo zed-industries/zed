@@ -1373,9 +1373,11 @@ impl Project {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
 
-        self.dap_store.update(cx, |dap_store, cx| {
-            dap_store.new_session(config, worktree, None, cx)
-        })
+        self.dap_store
+            .update(cx, |dap_store, cx| {
+                dap_store.new_session(config, worktree, None, cx)
+            })
+            .1
     }
 
     #[cfg(any(test, feature = "test-support"))]

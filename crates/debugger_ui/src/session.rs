@@ -120,7 +120,7 @@ impl DebugSession {
     pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
         match &self.mode {
             DebugSessionState::Inert(_) => None,
-            DebugSessionState::Starting(_) => None,
+            DebugSessionState::Starting(entity) => Some(entity.read(cx).session_id),
             DebugSessionState::Failed(_) => None,
             DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
         }
@@ -156,12 +156,12 @@ impl DebugSession {
             .ok()
             .flatten()
             .expect("worktree-less project");
-        let Ok(task) = dap_store.update(cx, |store, cx| {
+        let Ok((new_session_id, task)) = dap_store.update(cx, |store, cx| {
             store.new_session(config, &worktree, None, cx)
         }) else {
             return;
         };
-        let starting = cx.new(|cx| StartingState::new(task, cx));
+        let starting = cx.new(|cx| StartingState::new(new_session_id, task, cx));
 
         self._subscriptions = [cx.subscribe_in(&starting, window, Self::on_starting_event)];
         self.mode = DebugSessionState::Starting(starting);
