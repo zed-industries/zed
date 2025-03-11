@@ -837,8 +837,8 @@ impl BufferDiff {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut AsyncApp,
-    ) -> anyhow::Result<Option<Range<Anchor>>> {
-        let snapshot = if base_text_changed || language_changed {
+    ) -> anyhow::Result<BufferDiffSnapshot> {
+        let inner = if base_text_changed || language_changed {
             cx.update(|cx| {
                 Self::build(
                     buffer.clone(),
@@ -860,18 +860,45 @@ impl BufferDiff {
             })?
             .await
         };
-
-        this.update(cx, |this, _| this.set_state(snapshot, &buffer))
+        Ok(BufferDiffSnapshot {
+            inner,
+            secondary_diff: None,
+        })
     }
 
-    pub fn update_diff_from(
+    pub fn set_snapshot(
         &mut self,
         buffer: &text::BufferSnapshot,
-        other: &Entity<Self>,
+        new_snapshot: BufferDiffSnapshot,
+        language_changed: bool,
+        secondary_changed_range: Option<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
-        let other = other.read(cx).inner.clone();
-        self.set_state(other, buffer)
+        let changed_range = self.set_state(new_snapshot.inner, buffer);
+        if language_changed {
+            cx.emit(BufferDiffEvent::LanguageChanged);
+        }
+
+        let changed_range = match (secondary_changed_range, changed_range) {
+            (None, None) => None,
+            (Some(unstaged_range), None) => self.range_to_hunk_range(unstaged_range, &buffer, cx),
+            (None, Some(uncommitted_range)) => Some(uncommitted_range),
+            (Some(unstaged_range), Some(uncommitted_range)) => {
+                let mut start = uncommitted_range.start;
+                let mut end = uncommitted_range.end;
+                if let Some(unstaged_range) = self.range_to_hunk_range(unstaged_range, &buffer, cx)
+                {
+                    start = unstaged_range.start.min(&uncommitted_range.start, &buffer);
+                    end = unstaged_range.end.max(&uncommitted_range.end, &buffer);
+                }
+                Some(start..end)
+            }
+        };
+
+        cx.emit(BufferDiffEvent::DiffChanged {
+            changed_range: changed_range.clone(),
+        });
+        changed_range
     }
 
     fn set_state(
