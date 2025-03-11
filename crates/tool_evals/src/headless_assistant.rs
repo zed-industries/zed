@@ -12,7 +12,7 @@ use project::{Project, RealFs};
 use prompt_store::PromptBuilder;
 use settings::SettingsStore;
 use smol::channel;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use workspace::AppState;
 
 pub fn init(cx: &mut App) -> Arc<AppState> {
@@ -70,6 +70,36 @@ pub fn init(cx: &mut App) -> Arc<AppState> {
     app_state
 }
 
+pub fn find_model(model_name: &str, cx: &App) -> anyhow::Result<Arc<dyn LanguageModel>> {
+    let model_registry = LanguageModelRegistry::read_global(cx);
+    let model = model_registry
+        .available_models(cx)
+        .find(|model| model.id().0 == model_name);
+
+    let Some(model) = model else {
+        return Err(anyhow!(
+            "No language model named {} was available. Available models: {}",
+            model_name,
+            model_registry
+                .available_models(cx)
+                .map(|model| model.id().0.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    };
+
+    Ok(model)
+}
+
+pub fn authenticate_model_provider(
+    provider_id: LanguageModelProviderId,
+    cx: &mut App,
+) -> Task<std::result::Result<(), AuthenticateError>> {
+    let model_registry = LanguageModelRegistry::read_global(cx);
+    let model_provider = model_registry.provider(&provider_id).unwrap();
+    model_provider.authenticate(cx)
+}
+
 pub struct HeadlessThread {
     thread: Entity<Thread>,
     done_tx: channel::Sender<anyhow::Result<()>>,
@@ -77,7 +107,7 @@ pub struct HeadlessThread {
 }
 
 pub struct Eval {
-    pub system_prompt: String,
+    pub system_prompt: Option<String>,
     pub user_query: String,
     pub provider_id: String,
     pub model_name: String,
@@ -173,7 +203,7 @@ impl Eval {
         app_state: Arc<AppState>,
         cx: &mut App,
     ) -> Task<anyhow::Result<Vec<Message>>> {
-        let model = match self.model(cx) {
+        let model = match find_model(&self.model_name, cx) {
             Ok(model) => model,
             Err(err) => return Task::ready(Err(err)),
         };
@@ -182,7 +212,8 @@ impl Eval {
             registry.set_active_model(Some(model.clone()), cx);
         });
 
-        let authenticate_task = self.authenticate_model_provider(cx);
+        let provider_id = LanguageModelProviderId(self.provider_id.clone().into());
+        let authenticate_task = authenticate_model_provider(provider_id, cx);
 
         let system_prompt = self.system_prompt.clone();
         let user_query = self.user_query.clone();
@@ -196,8 +227,14 @@ impl Eval {
             headless_thread.update(&mut cx, |headless_thread, cx| {
                 headless_thread.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    thread.insert_message(language_model::Role::System, system_prompt, cx);
-                    thread.insert_user_message(user_query, context, cx);
+                    if let Some(system_prompt) = system_prompt {
+                        thread.insert_message(
+                            language_model::Role::System,
+                            system_prompt.clone(),
+                            cx,
+                        );
+                    }
+                    thread.insert_user_message(user_query.clone(), context, cx);
                     thread.send_to_model(model, RequestKind::Chat, true, cx);
                 });
             })?;
@@ -213,36 +250,5 @@ impl Eval {
                     .collect::<Vec<_>>()
             })
         })
-    }
-
-    fn model(&self, cx: &App) -> anyhow::Result<Arc<dyn LanguageModel>> {
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let model = model_registry
-            .available_models(cx)
-            .find(|model| model.id().0 == self.model_name);
-
-        let Some(model) = model else {
-            return Err(anyhow!(
-                "No language model named {} was available. Available models: {}",
-                self.model_name,
-                model_registry
-                    .available_models(cx)
-                    .map(|model| model.id().0.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        };
-
-        Ok(model)
-    }
-
-    fn authenticate_model_provider(
-        &self,
-        cx: &mut App,
-    ) -> Task<std::result::Result<(), AuthenticateError>> {
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let provider_id = LanguageModelProviderId(self.provider_id.clone().into());
-        let model_provider = model_registry.provider(&provider_id).unwrap();
-        model_provider.authenticate(cx)
     }
 }

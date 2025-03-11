@@ -14,7 +14,7 @@ fn main() {
         let app_state = headless_assistant::init(cx);
 
         let eval = Eval {
-            system_prompt: "You are a helpful assistant.".to_string(),
+            system_prompt: Some("You are a helpful assistant.".to_string()),
             user_query: "write me a Limerick about code editors".to_string(),
             provider_id: ANTHROPIC_PROVIDER_ID.to_string(),
             model_name: "claude-3-sonnet-20240229".to_string(),
