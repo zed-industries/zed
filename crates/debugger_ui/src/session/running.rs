@@ -392,16 +392,6 @@ impl RunningState {
                     StackFrameListEvent::SelectedStackFrameChanged(_) => this.clear_highlights(cx),
                 },
             ),
-            cx.subscribe(
-                &session,
-                move |this: &mut Self, _, event: &SessionEvent, cx| match event {
-                    SessionEvent::Stopped => {
-                        this.thread.take();
-                        cx.notify();
-                    }
-                    _ => {}
-                },
-            ),
             cx.observe(&module_list, |_, _, cx| cx.notify()),
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {
@@ -411,6 +401,7 @@ impl RunningState {
                                 workspace.open_panel::<crate::DebugPanel>(window, cx);
                             })
                             .log_err();
+                        this.thread.take();
                     }
                     _ => {}
                 }

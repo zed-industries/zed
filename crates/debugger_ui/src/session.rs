@@ -103,17 +103,17 @@ impl DebugSession {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let mode = DebugSessionState::Running(
-            cx.new(|cx| RunningState::new(session.clone(), workspace.clone(), window, cx)),
-        );
+        let mode = cx.new(|cx| RunningState::new(session.clone(), workspace.clone(), window, cx));
 
         cx.new(|cx| Self {
+            _subscriptions: [cx.subscribe(&mode, |_, _, _, cx| {
+                cx.notify();
+            })],
             remote_id: None,
-            mode,
+            mode: DebugSessionState::Running(mode),
             dap_store: project.read(cx).dap_store().downgrade(),
             worktree_store: project.read(cx).worktree_store().downgrade(),
             workspace,
-            _subscriptions: [cx.subscribe(&project, |_, _, _, _| {})], // todo(debugger) We don't need this subscription
         })
     }
 
