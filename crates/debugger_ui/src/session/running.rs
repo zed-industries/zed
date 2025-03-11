@@ -403,7 +403,19 @@ impl RunningState {
                 },
             ),
             cx.observe(&module_list, |_, _, cx| cx.notify()),
-            cx.observe(&session, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&session, window, |this, _, event, window, cx| {
+                match event {
+                    SessionEvent::Stopped => {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.open_panel::<crate::DebugPanel>(window, cx);
+                            })
+                            .log_err();
+                    }
+                    _ => {}
+                }
+                cx.notify()
+            }),
         ];
 
         Self {
@@ -423,40 +435,6 @@ impl RunningState {
             active_thread_item: ThreadItem::Variables,
         }
     }
-
-    // pub(crate) fn update_adapter(
-    //     &mut self,
-    //     update: &UpdateDebugAdapter,
-    //     window: &mut Window,
-    //     cx: &mut Context<Self>,
-    // ) {
-    //     if let Some(update_variant) = update.variant.as_ref() {
-    //         match update_variant {
-    //             proto::update_debug_adapter::Variant::StackFrameList(stack_frame_list) => {
-    //                 self.stack_frame_list.update(cx, |this, cx| {
-    //                     this.set_from_proto(stack_frame_list.clone(), cx);
-    //                 })
-    //             }
-    //             proto::update_debug_adapter::Variant::ThreadState(thread_state) => {
-    //                 self.thread_state.update(cx, |this, _| {
-    //                     *this = ThreadState::from_proto(thread_state.clone());
-    //                 })
-    //             }
-    //             proto::update_debug_adapter::Variant::VariableList(variable_list) => self
-    //                 .variable_list
-    //                 .update(cx, |this, cx| this.set_from_proto(variable_list, cx)),
-    //             proto::update_debug_adapter::Variant::AddToVariableList(variables_to_add) => self
-    //                 .variable_list
-    //                 .update(cx, |this, _| this.add_variables(variables_to_add.clone())),
-    //             proto::update_debug_adapter::Variant::Modules(_) => {}
-    //             proto::update_debug_adapter::Variant::OutputEvent(output_event) => {
-    //                 self.console.update(cx, |this, cx| {
-    //                     this.add_message(OutputEvent::from_proto(output_event.clone()), window, cx);
-    //                 })
-    //             }
-    //         }
-    //     }
-    // }
 
     pub fn session(&self) -> &Entity<Session> {
         &self.session

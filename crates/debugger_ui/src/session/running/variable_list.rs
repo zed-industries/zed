@@ -1,5 +1,5 @@
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
-use dap::{StackFrameId, VariableReference};
+use dap::{StackFrameId, VariablePresentationHintKind, VariableReference};
 use editor::Editor;
 use gpui::{
     actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
@@ -621,6 +621,22 @@ impl VariableList {
                 return div().into_any_element();
             }
         };
+
+        let variable_name_color = match &dap
+            .presentation_hint
+            .as_ref()
+            .and_then(|hint| hint.kind.as_ref())
+            .unwrap_or(&VariablePresentationHintKind::Unknown)
+        {
+            VariablePresentationHintKind::Class
+            | VariablePresentationHintKind::BaseClass
+            | VariablePresentationHintKind::InnerClass
+            | VariablePresentationHintKind::MostDerivedClass => cx.theme().syntax_color("type"),
+            VariablePresentationHintKind::Data => cx.theme().syntax_color("variable"),
+            VariablePresentationHintKind::Unknown | _ => cx.theme().syntax_color("variable"),
+        };
+        let variable_color = cx.theme().syntax_color("variable");
+
         let var_ref = dap.variables_reference;
         let colors = get_entry_color(cx);
         let is_selected = self
@@ -693,7 +709,7 @@ impl VariableList {
                         .gap_1()
                         .text_ui_sm(cx)
                         .w_full()
-                        .child(dap.name.clone())
+                        .child(Label::new(&dap.name).color(Color::from(variable_name_color)))
                         .when(!dap.value.is_empty(), |this| {
                             this.child(div().w_full().id(variable.item_value_id()).map(|this| {
                                 if let Some((_, editor)) = self
@@ -735,8 +751,8 @@ impl VariableList {
                                             Label::new(&dap.value)
                                                 .single_line()
                                                 .truncate()
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
+                                                .size(LabelSize::Small)
+                                                .color(Color::from(variable_color)),
                                         )
                                 }
                             }))
