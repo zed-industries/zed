@@ -15,19 +15,19 @@ use std::{
 };
 use util::{paths::PathMatcher, ResultExt};
 
-struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptSession>, AsyncApp) + Send>);
+struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptingSession>, AsyncApp) + Send>);
 
-pub struct ScriptSession {
+pub struct ScriptingSession {
     project: Entity<Project>,
     foreground_fns_tx: mpsc::Sender<ForegroundFn>,
     _invoke_foreground_fns: Task<()>,
     scripts: Vec<Script>,
 }
 
-impl ScriptSession {
+impl ScriptingSession {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let (foreground_fns_tx, mut foreground_fns_rx) = mpsc::channel(128);
-        ScriptSession {
+        ScriptingSession {
             project,
             foreground_fns_tx,
             _invoke_foreground_fns: cx.spawn(|this, cx| async move {
@@ -1041,7 +1041,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [Path::new("/")], cx).await;
-        let session = cx.new(|cx| ScriptSession::new(project, cx));
+        let session = cx.new(|cx| ScriptingSession::new(project, cx));
 
         let (script_id, task) =
             session.update(cx, |session, cx| session.run_script(source.to_string(), cx));
