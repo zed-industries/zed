@@ -5,6 +5,7 @@ use futures::{
     pin_mut, SinkExt, StreamExt,
 };
 use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
+use language::Buffer;
 use mlua::{ExternalResult, Lua, MultiValue, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project, ProjectPath, WorktreeId};
@@ -19,9 +20,10 @@ struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptingSession>, AsyncApp) + Sen
 
 pub struct ScriptingSession {
     project: Entity<Project>,
+    scripts: Vec<Script>,
+    changed_buffers: HashSet<Entity<Buffer>>,
     foreground_fns_tx: mpsc::Sender<ForegroundFn>,
     _invoke_foreground_fns: Task<()>,
-    scripts: Vec<Script>,
 }
 
 impl ScriptingSession {
@@ -29,14 +31,19 @@ impl ScriptingSession {
         let (foreground_fns_tx, mut foreground_fns_rx) = mpsc::channel(128);
         ScriptingSession {
             project,
+            scripts: Vec::new(),
+            changed_buffers: HashSet::default(),
             foreground_fns_tx,
             _invoke_foreground_fns: cx.spawn(|this, cx| async move {
                 while let Some(foreground_fn) = foreground_fns_rx.next().await {
                     foreground_fn.0(this.clone(), cx.clone());
                 }
             }),
-            scripts: Vec::new(),
         }
+    }
+
+    pub fn changed_buffers(&self) -> impl ExactSizeIterator<Item = &Entity<Buffer>> {
+        self.changed_buffers.iter()
     }
 
     pub fn run_script(
@@ -340,7 +347,6 @@ impl ScriptingSession {
         let write_perm = file_userdata.get::<bool>("__write_perm")?;
 
         if write_perm {
-            // When closing a writable file, record the content
             let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
             let content_ref = content.borrow::<FileContent>()?;
             let text = {
@@ -383,12 +389,21 @@ impl ScriptingSession {
                         })?;
 
                         session
-                            .update(&mut cx, |session, cx| {
-                                session
-                                    .project
-                                    .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                            .update(&mut cx, {
+                                let buffer = buffer.clone();
+
+                                |session, cx| {
+                                    session
+                                        .project
+                                        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                                }
                             })?
-                            .await
+                            .await?;
+
+                        // If we saved successfully, mark buffer as changed
+                        session.update(&mut cx, |session, _cx| {
+                            session.changed_buffers.insert(buffer);
+                        })
                     })
                 })
             }),
@@ -880,7 +895,6 @@ impl Script {
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
@@ -897,7 +911,8 @@ mod tests {
             print("Goodbye", "moon!")
         "#;
 
-        let output = test_script(script, cx).await.unwrap();
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Hello\tworld!\nGoodbye\tmoon!\n");
     }
 
@@ -916,7 +931,8 @@ mod tests {
             end
         "#;
 
-        let output = test_script(script, cx).await.unwrap();
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "File: /file1.txt\nMatches:\n  world\n");
     }
 
@@ -925,60 +941,129 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_read_file(cx: &mut TestAppContext) {
         let script = r#"
-                local file = io.open("file1.txt", "r")
-                local content = file:read()
-                print("Content:", content)
-                file:close()
-            "#;
+            local file = io.open("file1.txt", "r")
+            local content = file:read()
+            print("Content:", content)
+            file:close()
+        "#;
 
-        let output = test_script(script, cx).await.unwrap();
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Content:\tHello world!\n");
+
+        // Only read, should not be marked as changed
+        assert!(!test_session.was_marked_changed("file1.txt", cx));
     }
 
     #[gpui::test]
     async fn test_read_write_roundtrip(cx: &mut TestAppContext) {
         let script = r#"
-                local file = io.open("new_file.txt", "w")
-                file:write("This is new content")
-                file:close()
+            local file = io.open("file1.txt", "w")
+            file:write("This is new content")
+            file:close()
 
-                -- Read back to verify
-                local read_file = io.open("new_file.txt", "r")
-                if read_file then
-                    local content = read_file:read("*a")
-                    print("Written content:", content)
-                    read_file:close()
-                end
-            "#;
+            -- Read back to verify
+            local read_file = io.open("file1.txt", "r")
+            local content = read_file:read("*a")
+            print("Written content:", content)
+            read_file:close()
+        "#;
 
-        let output = test_script(script, cx).await.unwrap();
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Written content:\tThis is new content\n");
+        assert!(test_session.was_marked_changed("file1.txt", cx));
     }
 
     #[gpui::test]
     async fn test_multiple_writes(cx: &mut TestAppContext) {
         let script = r#"
-                -- Test writing to a file multiple times
-                local file = io.open("multiwrite.txt", "w")
-                file:write("First line\n")
-                file:write("Second line\n")
-                file:write("Third line")
-                file:close()
+            -- Test writing to a file multiple times
+            local file = io.open("multiwrite.txt", "w")
+            file:write("First line\n")
+            file:write("Second line\n")
+            file:write("Third line")
+            file:close()
 
-                -- Read back to verify
-                local read_file = io.open("multiwrite.txt", "r")
-                if read_file then
-                    local content = read_file:read("*a")
-                    print("Full content:", content)
-                    read_file:close()
-                end
-            "#;
+            -- Read back to verify
+            local read_file = io.open("multiwrite.txt", "r")
+            if read_file then
+                local content = read_file:read("*a")
+                print("Full content:", content)
+                read_file:close()
+            end
+        "#;
 
-        let output = test_script(script, cx).await.unwrap();
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
         assert_eq!(
             output,
             "Full content:\tFirst line\nSecond line\nThird line\n"
         );
+        assert!(test_session.was_marked_changed("multiwrite.txt", cx));
+    }
+
+    #[gpui::test]
+    async fn test_multiple_writes_diff_handles(cx: &mut TestAppContext) {
+        let script = r#"
+            -- Write to a file
+            local file1 = io.open("multi_open.txt", "w")
+            file1:write("Content written by first handle\n")
+            file1:close()
+
+            -- Open it again and add more content
+            local file2 = io.open("multi_open.txt", "w")
+            file2:write("Content written by second handle\n")
+            file2:close()
+
+            -- Open it a third time and read
+            local file3 = io.open("multi_open.txt", "r")
+            local content = file3:read("*a")
+            print("Final content:", content)
+            file3:close()
+        "#;
+
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
+        assert_eq!(
+            output,
+            "Final content:\tContent written by second handle\n\n"
+        );
+        assert!(test_session.was_marked_changed("multi_open.txt", cx));
+    }
+
+    #[gpui::test]
+    async fn test_append_mode(cx: &mut TestAppContext) {
+        let script = r#"
+            -- Test append mode
+            local file = io.open("append.txt", "w")
+            file:write("Initial content\n")
+            file:close()
+
+            -- Append more content
+            file = io.open("append.txt", "a")
+            file:write("Appended content\n")
+            file:close()
+
+            -- Add even more
+            file = io.open("append.txt", "a")
+            file:write("More appended content")
+            file:close()
+
+            -- Read back to verify
+            local read_file = io.open("append.txt", "r")
+            local content = read_file:read("*a")
+            print("Content after appends:", content)
+            read_file:close()
+        "#;
+
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
+        assert_eq!(
+            output,
+            "Content after appends:\tInitial content\nAppended content\nMore appended content\n"
+        );
+        assert!(test_session.was_marked_changed("append.txt", cx));
     }
 
     #[gpui::test]
@@ -1018,7 +1103,8 @@ mod tests {
             f:close()
         "#;
 
-        let output = test_script(script, cx).await.unwrap();
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
         println!("{}", &output);
         assert!(output.contains("All:\tLine 1\nLine 2\nLine 3"));
         assert!(output.contains("Line 1:\tLine 1"));
@@ -1027,46 +1113,75 @@ mod tests {
         assert!(output.contains("Line with newline length:\t7"));
         assert!(output.contains("Last char:\t10")); // LF
         assert!(output.contains("5 bytes:\tLine "));
+        assert!(test_session.was_marked_changed("multiline.txt", cx));
     }
 
     // helpers
 
-    async fn test_script(source: &str, cx: &mut TestAppContext) -> anyhow::Result<String> {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/",
-            json!({
-                "file1.txt": "Hello world!",
-                "file2.txt": "Goodbye moon!"
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs, [Path::new("/")], cx).await;
-        let session = cx.new(|cx| ScriptingSession::new(project, cx));
-
-        let (script_id, task) =
-            session.update(cx, |session, cx| session.run_script(source.to_string(), cx));
-
-        task.await;
-
-        Ok(session.read_with(cx, |session, _cx| {
-            let script = session.get(script_id);
-            let stdout = script.stdout_snapshot();
-
-            if let ScriptState::Failed { error, .. } = &script.state {
-                panic!("Script failed:\n{}\n\n{}", error, stdout);
-            }
-
-            stdout
-        }))
+    struct TestSession {
+        session: Entity<ScriptingSession>,
     }
 
-    fn init_test(cx: &mut TestAppContext) {
-        let settings_store = cx.update(SettingsStore::test);
-        cx.set_global(settings_store);
-        cx.update(Project::init_settings);
-        cx.update(language::init);
+    impl TestSession {
+        async fn init(cx: &mut TestAppContext) -> Self {
+            let settings_store = cx.update(SettingsStore::test);
+            cx.set_global(settings_store);
+            cx.update(Project::init_settings);
+            cx.update(language::init);
+
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/",
+                json!({
+                    "file1.txt": "Hello world!",
+                    "file2.txt": "Goodbye moon!"
+                }),
+            )
+            .await;
+
+            let project = Project::test(fs.clone(), [Path::new("/")], cx).await;
+            let session = cx.new(|cx| ScriptingSession::new(project, cx));
+
+            TestSession { session }
+        }
+
+        async fn test_success(&self, source: &str, cx: &mut TestAppContext) -> String {
+            let script_id = self.run_script(source, cx).await;
+
+            self.session.read_with(cx, |session, _cx| {
+                let script = session.get(script_id);
+                let stdout = script.stdout_snapshot();
+
+                if let ScriptState::Failed { error, .. } = &script.state {
+                    panic!("Script failed:\n{}\n\n{}", error, stdout);
+                }
+
+                stdout
+            })
+        }
+
+        fn was_marked_changed(&self, path_str: &str, cx: &mut TestAppContext) -> bool {
+            self.session.read_with(cx, |session, cx| {
+                let count_changed = session
+                    .changed_buffers
+                    .iter()
+                    .filter(|buffer| buffer.read(cx).file().unwrap().path().ends_with(path_str))
+                    .count();
+
+                assert!(count_changed < 2, "Multiple buffers matched for same path");
+
+                count_changed > 0
+            })
+        }
+
+        async fn run_script(&self, source: &str, cx: &mut TestAppContext) -> ScriptId {
+            let (script_id, task) = self
+                .session
+                .update(cx, |session, cx| session.run_script(source.to_string(), cx));
+
+            task.await;
+
+            script_id
+        }
     }
 }
