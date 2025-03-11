@@ -497,17 +497,9 @@ impl GitPanel {
         //
         // We should fix this. PR: https://github.com/zed-industries/zed/pull/19495
 
-        let horizontal_setting = if !editor_scrollbar_settings.axes.horizontal {
-            ShowScrollbar::Never
-        } else {
-            git_panel_show.unwrap_or(editor_scrollbar_settings.show)
-        };
+        let horizontal_setting = git_panel_show.unwrap_or(editor_scrollbar_settings.show);
 
-        let vertical_setting = if !editor_scrollbar_settings.axes.vertical {
-            ShowScrollbar::Never
-        } else {
-            git_panel_show.unwrap_or(editor_scrollbar_settings.show)
-        };
+        let vertical_setting = git_panel_show.unwrap_or(editor_scrollbar_settings.show);
 
         let autohide = |show: ShowScrollbar, cx: &mut Context<Self>| match show {
             ShowScrollbar::Auto => true,
