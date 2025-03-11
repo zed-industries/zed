@@ -117,7 +117,7 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
-    pub fn iter_from<'a, 'b>(&'a self, from: &'b K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
+    pub fn iter_from<'a>(&'a self, from: &K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let from_key = MapKeyRef(Some(from));
         cursor.seek(&from_key, Bias::Left, &());
@@ -333,7 +333,7 @@ where
         self.0.iter().map(|(k, _)| k)
     }
 
-    pub fn iter_from<'a, 'b>(&'a self, key: &'b K) -> impl Iterator<Item = &'a K> + 'a {
+    pub fn iter_from<'a>(&'a self, key: &K) -> impl Iterator<Item = &'a K> + 'a {
         self.0.iter_from(key).map(move |(k, _)| k)
     }
 }
