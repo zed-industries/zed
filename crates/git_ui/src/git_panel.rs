@@ -2767,57 +2767,49 @@ impl GitPanel {
             )
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let show_container = matches!(Self::show_vertical_scrollbar(cx), ShowScrollbar::Always);
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("git-panel-vertical-scroll")
+            .occlude()
+            .flex_none()
+            .h_full()
+            .cursor_default()
+            .absolute()
+            .right_0()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .pb_neg_2p5()
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.vertical_scrollbar_state.is_dragging()
+                        && !this.focus_handle.contains_focused(window, cx)
+                    {
+                        this.hide_vertical_scrollbar(window, cx);
+                        cx.notify();
+                    }
 
-        if !Self::should_show_vertical_scrollbar(cx)
-            || !(self.show_vertical_scrollbar || self.vertical_scrollbar_state.is_dragging())
-        {
-            return None;
-        }
-
-        Some(
-            div()
-                .id("git-panel-vertical-scroll")
-                .occlude()
-                .flex_none()
-                .h_full()
-                .cursor_default()
-                .when(show_container, |this| this.pl_1().px_1p5())
-                .when(!show_container, |this| {
-                    this.absolute().right_1().top_1().bottom_1().w(px(12.))
-                })
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        if !this.vertical_scrollbar_state.is_dragging()
-                            && !this.focus_handle.contains_focused(window, cx)
-                        {
-                            this.hide_vertical_scrollbar(window, cx);
-                            cx.notify();
-                        }
-
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .children(Scrollbar::vertical(
-                    // percentage as f32..end_offset as f32,
-                    self.vertical_scrollbar_state.clone(),
-                )),
-        )
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .children(Scrollbar::vertical(
+                // percentage as f32..end_offset as f32,
+                self.vertical_scrollbar_state.clone(),
+            ))
     }
 
     fn horizontal_scroll_needed(&self) -> bool {
@@ -2834,68 +2826,57 @@ impl GitPanel {
         longest_item_width < px(scroll_handle.base_handle.bounds().size.width.0)
     }
 
-    fn render_horizontal_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let show_container = matches!(Self::show_horizontal_scrollbar(cx), ShowScrollbar::Always);
+    /// Renders the horizontal scrollbar.
+    ///
+    /// The right offset is used to determine how far to the right the
+    /// scrollbar should extend to, useful for ensuring it doesn't collide
+    /// with the vertical scrollbar when visible.
+    fn render_horizontal_scrollbar(
+        &self,
+        right_offset: Pixels,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("git-panel-horizontal-scroll")
+            .occlude()
+            .flex_none()
+            .w_full()
+            .cursor_default()
+            .absolute()
+            .bottom_neg_px()
+            .left_0()
+            .right_0()
+            .pr(right_offset)
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.horizontal_scrollbar_state.is_dragging()
+                        && !this.focus_handle.contains_focused(window, cx)
+                    {
+                        this.hide_vertical_scrollbar(window, cx);
+                        cx.notify();
+                    }
 
-        if !Self::should_show_horizontal_scrollbar(cx)
-            || !(self.show_horizontal_scrollbar || self.horizontal_scrollbar_state.is_dragging())
-        {
-            return None;
-        }
-
-        if !self.horizontal_scroll_needed() {
-            return None;
-        }
-
-        Some(
-            div()
-                .id("git-panel-horizontal-scroll")
-                .occlude()
-                .flex_none()
-                .w_full()
-                .cursor_default()
-                .absolute()
-                .bottom_0()
-                .left_0()
-                .right_0()
-                .px_0p5()
-                .when(show_container, |this| {
-                    this.pt_1p5()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border)
-                })
-                .when(!show_container, |this| this)
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        if !this.horizontal_scrollbar_state.is_dragging()
-                            && !this.focus_handle.contains_focused(window, cx)
-                        {
-                            this.hide_vertical_scrollbar(window, cx);
-                            cx.notify();
-                        }
-
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .children(Scrollbar::horizontal(
-                    // percentage as f32..end_offset as f32,
-                    self.horizontal_scrollbar_state.clone(),
-                )),
-        )
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .children(Scrollbar::horizontal(
+                // percentage as f32..end_offset as f32,
+                self.horizontal_scrollbar_state.clone(),
+            ))
     }
 
     fn render_buffer_header_controls(
@@ -2948,60 +2929,170 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entry_count = self.entries.len();
+        // let show_vertical_scrollbar_container =
+        //     matches!(Self::show_vertical_scrollbar(cx), ShowScrollbar::Always);
 
-        h_flex()
-            // .debug_below()
+        // let show_horizontal_scrollbar_container =
+        //     matches!(Self::show_horizontal_scrollbar(cx), ShowScrollbar::Always);
+        let show_vertical_scrollbar_container = true;
+
+        let show_horizontal_scrollbar_container = true;
+
+        // let show_vertical_scrollbar = if !Self::should_show_vertical_scrollbar(cx)
+        //     || !(self.show_vertical_scrollbar || self.vertical_scrollbar_state.is_dragging())
+        // {
+        //     false
+        // } else {
+        //     true
+        // };
+
+        // let show_horizontal_scrollbar = if !Self::should_show_horizontal_scrollbar(cx)
+        //     || !(self.show_horizontal_scrollbar || self.horizontal_scrollbar_state.is_dragging())
+        //     || !self.horizontal_scroll_needed()
+        // {
+        //     false
+        // } else {
+        //     true
+        // };
+        let show_vertical_scrollbar = true;
+
+        let show_horizontal_scrollbar = true;
+
+        let scroll_track_size = px(16.);
+        let h_scroll_offset = if show_vertical_scrollbar {
+            // magic number
+            px(3.)
+        } else {
+            px(0.)
+        };
+
+        v_flex()
             .flex_1()
             .size_full()
-            .relative()
             .overflow_hidden()
+            .relative()
+            // Show a border on the top and bottom of the container when
+            // the vertical scrollbar container is visible so we don't have a
+            // floating left border in the panel.
+            .when(show_vertical_scrollbar_container, |this| {
+                this.border_t_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+            })
             .child(
-                uniform_list(cx.entity().clone(), "entries", entry_count, {
-                    move |this, range, window, cx| {
-                        let mut items = Vec::with_capacity(range.end - range.start);
+                h_flex()
+                    .flex_1()
+                    .size_full()
+                    .relative()
+                    .overflow_hidden()
+                    .child(
+                        uniform_list(cx.entity().clone(), "entries", entry_count, {
+                            move |this, range, window, cx| {
+                                let mut items = Vec::with_capacity(range.end - range.start);
 
-                        for ix in range {
-                            match &this.entries.get(ix) {
-                                Some(GitListEntry::GitStatusEntry(entry)) => {
-                                    items.push(this.render_entry(
-                                        ix,
-                                        entry,
-                                        has_write_access,
-                                        window,
-                                        cx,
-                                    ));
+                                for ix in range {
+                                    match &this.entries.get(ix) {
+                                        Some(GitListEntry::GitStatusEntry(entry)) => {
+                                            items.push(this.render_entry(
+                                                ix,
+                                                entry,
+                                                has_write_access,
+                                                window,
+                                                cx,
+                                            ));
+                                        }
+                                        Some(GitListEntry::Header(header)) => {
+                                            items.push(this.render_list_header(
+                                                ix,
+                                                header,
+                                                has_write_access,
+                                                window,
+                                                cx,
+                                            ));
+                                        }
+                                        None => {}
+                                    }
                                 }
-                                Some(GitListEntry::Header(header)) => {
-                                    items.push(this.render_list_header(
-                                        ix,
-                                        header,
-                                        has_write_access,
-                                        window,
-                                        cx,
-                                    ));
-                                }
-                                None => {}
+
+                                items
                             }
-                        }
-
-                        items
-                    }
-                })
-                .size_full()
-                .flex_grow()
-                .with_sizing_behavior(ListSizingBehavior::Auto)
-                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                .with_width_from_item(self.max_width_item_index)
-                .track_scroll(self.scroll_handle.clone()),
+                        })
+                        .size_full()
+                        .flex_grow()
+                        .with_sizing_behavior(ListSizingBehavior::Auto)
+                        .with_horizontal_sizing_behavior(
+                            ListHorizontalSizingBehavior::Unconstrained,
+                        )
+                        .with_width_from_item(self.max_width_item_index)
+                        .track_scroll(self.scroll_handle.clone()),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.deploy_panel_context_menu(event.position, window, cx)
+                        }),
+                    )
+                    .when(show_vertical_scrollbar_container, |this| {
+                        this.child(
+                            v_flex()
+                                .h_full()
+                                .flex_none()
+                                .w(scroll_track_size)
+                                .bg(cx.theme().colors().panel_background)
+                                .child(
+                                    div()
+                                        .size_full()
+                                        .flex_1()
+                                        .border_l_1()
+                                        .border_color(cx.theme().colors().border),
+                                ),
+                        )
+                    })
+                    .when(show_vertical_scrollbar, |this| {
+                        this.child(self.render_vertical_scrollbar(cx))
+                    }),
             )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_panel_context_menu(event.position, window, cx)
-                }),
-            )
-            .children(self.render_vertical_scrollbar(cx))
-            .children(self.render_horizontal_scrollbar(cx))
+            .when(show_horizontal_scrollbar_container, |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .h(scroll_track_size)
+                        .flex_none()
+                        .relative()
+                        .child(
+                            div()
+                                .w_full()
+                                .flex_1()
+                                // for some reason the horizontal scrollbar is 1px
+                                // taller than the vertical scrollbar??
+                                .h(scroll_track_size - px(1.))
+                                .bg(cx.theme().colors().panel_background)
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border),
+                        )
+                        .when(show_vertical_scrollbar_container, |this| {
+                            this.child(
+                                div()
+                                    .flex_none()
+                                    // -1px prevents a missing pixel between the two container borders
+                                    .w(scroll_track_size - px(1.))
+                                    .h_full(),
+                            )
+                            .child(
+                                // HACK: Fill the missing 1px 🥲
+                                div()
+                                    .absolute()
+                                    .right(scroll_track_size - px(1.))
+                                    .bottom(scroll_track_size - px(1.))
+                                    .size_px()
+                                    .bg(cx.theme().colors().border),
+                            )
+                        }),
+                )
+            })
+            .when(show_horizontal_scrollbar, |this| {
+                this.child(self.render_horizontal_scrollbar(h_scroll_offset, cx))
+            })
     }
 
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
