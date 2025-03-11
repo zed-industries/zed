@@ -253,81 +253,25 @@ impl ScriptSession {
             path: Path::new(&path_str).into(),
         };
 
-        // close method
-        let close_fn = {
+        // flush / close method
+        let flush_fn = {
             let project_path = project_path.clone();
             let foreground_tx = foreground_tx.clone();
             lua.create_async_function(move |_lua, file_userdata: mlua::Table| {
                 let project_path = project_path.clone();
                 let mut foreground_tx = foreground_tx.clone();
                 async move {
-                    let write_perm = file_userdata.get::<bool>("__write_perm")?;
-
-                    if write_perm {
-                        // When closing a writable file, record the content
-                        let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
-                        let content_ref = content.borrow::<FileContent>()?;
-                        let content_vec = content_ref.0.lock();
-                        let text = String::from_utf8(content_vec.to_vec()).into_lua_err()?;
-
-                        Self::write_to_buffer(project_path, text, &mut foreground_tx)
-                            .await
-                            .into_lua_err()?;
-                    }
-
-                    Ok(true)
+                    Self::io_file_flush(file_userdata, project_path, &mut foreground_tx).await
                 }
             })?
         };
-        file.set("close", close_fn)?;
+        file.set("flush", flush_fn.clone())?;
+        // We don't really hold files open, so we only need to flush on close
+        file.set("close", flush_fn)?;
 
         // If it's a directory, give it a custom read() and return early.
         if fs.is_dir(&path).await {
-            // TODO handle the case where we changed it in the in-memory fs
-
-            // Create a special directory handle
-            file.set("__is_directory", true)?;
-
-            // Store directory entries
-            let entries = match fs.read_dir(&path).await {
-                Ok(entries) => {
-                    let mut entry_names = Vec::new();
-
-                    // Process the stream of directory entries
-                    pin_mut!(entries);
-                    while let Some(Ok(entry_result)) = entries.next().await {
-                        if let Some(file_name) = entry_result.file_name() {
-                            entry_names.push(file_name.to_string_lossy().into_owned());
-                        }
-                    }
-
-                    entry_names
-                }
-                Err(e) => return Ok((None, format!("Error reading directory: {}", e))),
-            };
-
-            // Save the list of entries
-            file.set("__dir_entries", entries)?;
-            file.set("__dir_position", 0usize)?;
-
-            // Create a directory-specific read function
-            let read_fn = lua.create_function(|_lua, file_userdata: mlua::Table| {
-                let position = file_userdata.get::<usize>("__dir_position")?;
-                let entries = file_userdata.get::<Vec<String>>("__dir_entries")?;
-
-                if position >= entries.len() {
-                    return Ok(None); // No more entries
-                }
-
-                let entry = entries[position].clone();
-                file_userdata.set("__dir_position", position + 1)?;
-
-                Ok(Some(entry))
-            })?;
-            file.set("read", read_fn)?;
-
-            // If we got this far, the directory was opened successfully
-            return Ok((Some(file), String::new()));
+            return Self::io_file_dir(lua, fs, file, &path).await;
         }
 
         let mut file_content = Vec::new();
@@ -351,171 +295,11 @@ impl ScriptSession {
         // Create file methods
 
         // read method
-        let read_fn = {
-            lua.create_function(
-                |lua, (file_userdata, format): (mlua::Table, Option<mlua::Value>)| {
-                    let read_perm = file_userdata.get::<bool>("__read_perm")?;
-                    if !read_perm {
-                        return Err(mlua::Error::runtime("File not open for reading"));
-                    }
-
-                    let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
-                    let mut position = file_userdata.get::<usize>("__position")?;
-                    let content_ref = content.borrow::<FileContent>()?;
-                    let content = content_ref.0.lock();
-
-                    if position >= content.len() {
-                        return Ok(None); // EOF
-                    }
-
-                    let result = match format {
-                        Some(mlua::Value::String(s)) => {
-                            let lossy_string = s.to_string_lossy();
-                            let format_str: &str = lossy_string.as_ref();
-
-                            // Only consider the first 2 bytes, since it's common to pass e.g. "*all"  instead of "*a"
-                            match &format_str[0..2] {
-                                "*a" => {
-                                    // Read entire file from current position
-                                    let result = content[position..].to_vec();
-                                    position = content.len();
-                                    file_userdata.set("__position", position)?;
-                                    Ok(Some(result))
-                                }
-                                "*l" => {
-                                    if let Some(next_newline_ix) =
-                                        content[position..].iter().position(|c| *c == b'\n')
-                                    {
-                                        let mut line =
-                                            content[position..position + next_newline_ix].to_vec();
-                                        if line.ends_with(b"\r") {
-                                            line.pop();
-                                        }
-                                        position += next_newline_ix + 1;
-                                        file_userdata.set("__position", position)?;
-
-                                        Ok(Some(line))
-                                    } else if position < content.len() {
-                                        let line = content[position..].to_vec();
-                                        position = content.len();
-                                        file_userdata.set("__position", position)?;
-                                        Ok(Some(line))
-                                    } else {
-                                        Ok(None) // EOF
-                                    }
-                                }
-                                "*n" => {
-                                    // Try to parse as a number (number of bytes to read)
-                                    match format_str.parse::<usize>() {
-                                        Ok(n) => {
-                                            let end = std::cmp::min(position + n, content.len());
-                                            let result = content[position..end].to_vec();
-                                            position = end;
-                                            file_userdata.set("__position", position)?;
-                                            Ok(Some(result))
-                                        }
-                                        Err(_) => Err(mlua::Error::runtime(format!(
-                                            "Invalid format: {}",
-                                            format_str
-                                        ))),
-                                    }
-                                }
-                                "*L" => {
-                                    if position < content.len() {
-                                        let next_line_ix = content[position..]
-                                            .iter()
-                                            .position(|c| *c == b'\n')
-                                            .map_or(content.len(), |ix| position + ix + 1);
-                                        let line = content[position..next_line_ix].to_vec();
-                                        position = next_line_ix;
-                                        file_userdata.set("__position", position)?;
-                                        Ok(Some(line))
-                                    } else {
-                                        Ok(None) // EOF
-                                    }
-                                }
-                                _ => Err(mlua::Error::runtime(format!(
-                                    "Unsupported format: {}",
-                                    format_str
-                                ))),
-                            }
-                        }
-                        Some(mlua::Value::Number(n)) => {
-                            // Read n bytes
-                            let n = n as usize;
-                            let end = std::cmp::min(position + n, content.len());
-                            let result = content[position..end].to_vec();
-                            position = end;
-                            file_userdata.set("__position", position)?;
-                            Ok(Some(result))
-                        }
-                        Some(_) => Err(mlua::Error::runtime("Invalid format")),
-                        None => {
-                            if let Some(next_newline_ix) =
-                                content[position..].iter().position(|c| *c == b'\n')
-                            {
-                                let mut line =
-                                    content[position..position + next_newline_ix].to_vec();
-                                if line.ends_with(b"\r") {
-                                    line.pop();
-                                }
-                                position += next_newline_ix + 1;
-                                file_userdata.set("__position", position)?;
-
-                                Ok(Some(line))
-                            } else if position < content.len() {
-                                let line = content[position..].to_vec();
-                                position = content.len();
-                                file_userdata.set("__position", position)?;
-                                Ok(Some(line))
-                            } else {
-                                Ok(None) // EOF
-                            }
-                        }
-                    };
-
-                    match result {
-                        Ok(Some(content)) => Ok(Some(lua.create_string(content)?)),
-                        Ok(None) => Ok(None),
-                        Err(err) => Err(err),
-                    }
-                },
-            )?
-        };
+        let read_fn = lua.create_function(Self::io_file_read)?;
         file.set("read", read_fn)?;
 
         // write method
-        let write_fn =
-            lua.create_function(move |_lua, (file_userdata, text): (mlua::Table, String)| {
-                let write_perm = file_userdata.get::<bool>("__write_perm")?;
-                if !write_perm {
-                    return Err(mlua::Error::runtime("File not open for writing"));
-                }
-
-                let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
-                let position = file_userdata.get::<usize>("__position")?;
-                let content_ref = content.borrow::<FileContent>()?;
-                let mut content_vec = content_ref.0.lock();
-
-                let bytes = text.as_bytes();
-
-                // Ensure the vector has enough capacity
-                if position + bytes.len() > content_vec.len() {
-                    content_vec.resize(position + bytes.len(), 0);
-                }
-
-                // Write the bytes
-                for (i, &byte) in bytes.iter().enumerate() {
-                    content_vec[position + i] = byte;
-                }
-
-                // Update position
-                let new_position = position + bytes.len();
-                file_userdata.set("__position", new_position)?;
-
-                Ok(true)
-            })?;
-
+        let write_fn = lua.create_function(Self::io_file_write)?;
         file.set("write", write_fn)?;
 
         // If we got this far, the file was opened successfully
@@ -546,6 +330,28 @@ impl ScriptSession {
         )
         .await??
         .await
+    }
+
+    async fn io_file_flush(
+        file_userdata: mlua::Table,
+        project_path: ProjectPath,
+        foreground_tx: &mut mpsc::Sender<ForegroundFn>,
+    ) -> mlua::Result<bool> {
+        let write_perm = file_userdata.get::<bool>("__write_perm")?;
+
+        if write_perm {
+            // When closing a writable file, record the content
+            let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
+            let content_ref = content.borrow::<FileContent>()?;
+            let content_vec = content_ref.0.lock();
+            let text = String::from_utf8(content_vec.to_vec()).into_lua_err()?;
+
+            Self::write_to_buffer(project_path, text, foreground_tx)
+                .await
+                .into_lua_err()?;
+        }
+
+        Ok(true)
     }
 
     async fn write_to_buffer(
@@ -586,6 +392,218 @@ impl ScriptSession {
         )
         .await??
         .await
+    }
+
+    async fn io_file_dir(
+        lua: &Lua,
+        fs: Arc<dyn Fs>,
+        file: Table,
+        path: &Path,
+    ) -> mlua::Result<(Option<Table>, String)> {
+        // Create a special directory handle
+        file.set("__is_directory", true)?;
+
+        // Store directory entries
+        let entries = match fs.read_dir(&path).await {
+            Ok(entries) => {
+                let mut entry_names = Vec::new();
+
+                // Process the stream of directory entries
+                pin_mut!(entries);
+                while let Some(Ok(entry_result)) = entries.next().await {
+                    if let Some(file_name) = entry_result.file_name() {
+                        entry_names.push(file_name.to_string_lossy().into_owned());
+                    }
+                }
+
+                entry_names
+            }
+            Err(e) => return Ok((None, format!("Error reading directory: {}", e))),
+        };
+
+        // Save the list of entries
+        file.set("__dir_entries", entries)?;
+        file.set("__dir_position", 0usize)?;
+
+        // Create a directory-specific read function
+        let read_fn = lua.create_function(|_lua, file_userdata: mlua::Table| {
+            let position = file_userdata.get::<usize>("__dir_position")?;
+            let entries = file_userdata.get::<Vec<String>>("__dir_entries")?;
+
+            if position >= entries.len() {
+                return Ok(None); // No more entries
+            }
+
+            let entry = entries[position].clone();
+            file_userdata.set("__dir_position", position + 1)?;
+
+            Ok(Some(entry))
+        })?;
+        file.set("read", read_fn)?;
+
+        // If we got this far, the directory was opened successfully
+        return Ok((Some(file), String::new()));
+    }
+
+    fn io_file_read(
+        lua: &Lua,
+        (file_userdata, format): (Table, Option<mlua::Value>),
+    ) -> mlua::Result<Option<mlua::String>> {
+        let read_perm = file_userdata.get::<bool>("__read_perm")?;
+        if !read_perm {
+            return Err(mlua::Error::runtime("File not open for reading"));
+        }
+
+        let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
+        let mut position = file_userdata.get::<usize>("__position")?;
+        let content_ref = content.borrow::<FileContent>()?;
+        let content = content_ref.0.lock();
+
+        if position >= content.len() {
+            return Ok(None); // EOF
+        }
+
+        let result = match format {
+            Some(mlua::Value::String(s)) => {
+                let lossy_string = s.to_string_lossy();
+                let format_str: &str = lossy_string.as_ref();
+
+                // Only consider the first 2 bytes, since it's common to pass e.g. "*all"  instead of "*a"
+                match &format_str[0..2] {
+                    "*a" => {
+                        // Read entire file from current position
+                        let result = content[position..].to_vec();
+                        position = content.len();
+                        file_userdata.set("__position", position)?;
+                        Ok(Some(result))
+                    }
+                    "*l" => {
+                        if let Some(next_newline_ix) =
+                            content[position..].iter().position(|c| *c == b'\n')
+                        {
+                            let mut line = content[position..position + next_newline_ix].to_vec();
+                            if line.ends_with(b"\r") {
+                                line.pop();
+                            }
+                            position += next_newline_ix + 1;
+                            file_userdata.set("__position", position)?;
+
+                            Ok(Some(line))
+                        } else if position < content.len() {
+                            let line = content[position..].to_vec();
+                            position = content.len();
+                            file_userdata.set("__position", position)?;
+                            Ok(Some(line))
+                        } else {
+                            Ok(None) // EOF
+                        }
+                    }
+                    "*n" => {
+                        // Try to parse as a number (number of bytes to read)
+                        match format_str.parse::<usize>() {
+                            Ok(n) => {
+                                let end = std::cmp::min(position + n, content.len());
+                                let result = content[position..end].to_vec();
+                                position = end;
+                                file_userdata.set("__position", position)?;
+                                Ok(Some(result))
+                            }
+                            Err(_) => Err(mlua::Error::runtime(format!(
+                                "Invalid format: {}",
+                                format_str
+                            ))),
+                        }
+                    }
+                    "*L" => {
+                        if position < content.len() {
+                            let next_line_ix = content[position..]
+                                .iter()
+                                .position(|c| *c == b'\n')
+                                .map_or(content.len(), |ix| position + ix + 1);
+                            let line = content[position..next_line_ix].to_vec();
+                            position = next_line_ix;
+                            file_userdata.set("__position", position)?;
+                            Ok(Some(line))
+                        } else {
+                            Ok(None) // EOF
+                        }
+                    }
+                    _ => Err(mlua::Error::runtime(format!(
+                        "Unsupported format: {}",
+                        format_str
+                    ))),
+                }
+            }
+            Some(mlua::Value::Number(n)) => {
+                // Read n bytes
+                let n = n as usize;
+                let end = std::cmp::min(position + n, content.len());
+                let result = content[position..end].to_vec();
+                position = end;
+                file_userdata.set("__position", position)?;
+                Ok(Some(result))
+            }
+            Some(_) => Err(mlua::Error::runtime("Invalid format")),
+            None => {
+                if let Some(next_newline_ix) = content[position..].iter().position(|c| *c == b'\n')
+                {
+                    let mut line = content[position..position + next_newline_ix].to_vec();
+                    if line.ends_with(b"\r") {
+                        line.pop();
+                    }
+                    position += next_newline_ix + 1;
+                    file_userdata.set("__position", position)?;
+
+                    Ok(Some(line))
+                } else if position < content.len() {
+                    let line = content[position..].to_vec();
+                    position = content.len();
+                    file_userdata.set("__position", position)?;
+                    Ok(Some(line))
+                } else {
+                    Ok(None) // EOF
+                }
+            }
+        };
+
+        match result {
+            Ok(Some(content)) => Ok(Some(lua.create_string(content)?)),
+            Ok(None) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn io_file_write(
+        _lua: &Lua,
+        (file_userdata, text): (Table, mlua::String),
+    ) -> mlua::Result<bool> {
+        let write_perm = file_userdata.get::<bool>("__write_perm")?;
+        if !write_perm {
+            return Err(mlua::Error::runtime("File not open for writing"));
+        }
+
+        let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
+        let position = file_userdata.get::<usize>("__position")?;
+        let content_ref = content.borrow::<FileContent>()?;
+        let mut content_vec = content_ref.0.lock();
+
+        let bytes = text.as_bytes();
+
+        // Ensure the vector has enough capacity
+        if position + bytes.len() > content_vec.len() {
+            content_vec.resize(position + bytes.len(), 0);
+        }
+
+        // Write the bytes
+        for (i, &byte) in bytes.iter().enumerate() {
+            content_vec[position + i] = byte;
+        }
+
+        // Update position
+        let new_position = position + bytes.len();
+        file_userdata.set("__position", new_position)?;
+
+        Ok(true)
     }
 
     async fn search(
