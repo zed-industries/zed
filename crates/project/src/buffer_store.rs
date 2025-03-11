@@ -1692,11 +1692,17 @@ impl BufferStore {
                     Err(e) => return Task::ready(Err(e)),
                 };
 
+                let remote = repo_entry
+                    .branch()
+                    .and_then(|b| b.upstream.as_ref())
+                    .and_then(|b| b.remote_name())
+                    .unwrap_or("origin")
+                    .to_string();
+
                 cx.spawn(|cx| async move {
-                    const REMOTE_NAME: &str = "origin";
                     let origin_url = repo
-                        .remote_url(REMOTE_NAME)
-                        .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+                        .remote_url(&remote)
+                        .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
 
                     let sha = repo
                         .head_sha()
