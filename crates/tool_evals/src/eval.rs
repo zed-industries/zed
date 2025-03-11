@@ -96,7 +96,7 @@ impl Eval {
                         );
                     }
                     thread.insert_user_message(user_query.clone(), context, cx);
-                    thread.send_to_model(model, RequestKind::Chat, true, cx);
+                    thread.send_to_model(model, RequestKind::Chat, cx);
                 });
             })?;
 
