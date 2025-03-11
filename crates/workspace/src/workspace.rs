@@ -4588,12 +4588,7 @@ impl Workspace {
         }
     }
 
-    pub fn update_changes(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-        update: bool,
-    ) {
+    fn update_changes(&self, window: &mut Window, cx: &mut Context<'_, Self>, update: bool) {
         let task = self.serialize_workspace_internal(window, cx);
         if update {
             cx.spawn(|this, mut cx| async move {
