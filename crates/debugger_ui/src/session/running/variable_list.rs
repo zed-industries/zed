@@ -635,7 +635,7 @@ impl VariableList {
             VariablePresentationHintKind::Data => cx.theme().syntax_color("variable"),
             VariablePresentationHintKind::Unknown | _ => cx.theme().syntax_color("variable"),
         };
-        let variable_color = cx.theme().syntax_color("variable");
+        let variable_color = cx.theme().syntax_color("variable.special");
 
         let var_ref = dap.variables_reference;
         let colors = get_entry_color(cx);
