@@ -1036,7 +1036,9 @@ impl FakeFs {
             let this = this.clone();
             async move {
                 while let Ok(git_event) = rx.recv().await {
+                    dbg!("Recevied", &git_event);
                     if let Some(mut state) = this.state.try_lock() {
+                        dbg!("emitting");
                         state.emit_event([(git_event, None)]);
                     } else {
                         panic!("Failed to lock file system state, this execution would have caused a test hang");

@@ -1,4 +1,4 @@
-use crate::{task_inventory::TaskContexts, Event, *};
+use crate::{buffer_store::DiffBasesChange, task_inventory::TaskContexts, Event, *};
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
@@ -6238,7 +6238,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
     assert!(matches!(
-        diff_events.next().await.unwrap(),
+        dbg!(diff_events.next().await.unwrap()),
         BufferDiffEvent::HunksStagedOrUnstaged(_)
     ));
     let event = diff_events.next().await.unwrap();
@@ -6352,6 +6352,95 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
                     "four\n",
                     "FOUR\n",
                     DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // Unstage two hunks, detect update from index, and then stage a third hunk.
+    let after_one = uncommitted_diff.update(cx, |diff, cx| {
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let after_one = diff.stage_or_unstage_hunks(false, &hunks[0..=0], &snapshot, true, cx);
+        diff.stage_or_unstage_hunks(false, &hunks[1..=1], &snapshot, true, cx);
+        after_one.unwrap().to_string()
+    });
+
+    let recv = project
+        .update(cx, |project, cx| {
+            project.buffer_store().update(cx, |buffer_store, cx| {
+                let diff_state = buffer_store
+                    .get_diff_state(snapshot.remote_id(), cx)
+                    .unwrap();
+                diff_state.update(cx, |diff_state, cx| {
+                    diff_state.diff_bases_changed(
+                        snapshot.text.clone(),
+                        DiffBasesChange::SetIndex(Some(after_one)),
+                        cx,
+                    )
+                })
+            })
+        })
+        .unwrap();
+    recv.await;
+
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        diff.stage_or_unstage_hunks(false, &hunks[2..=2], &snapshot, true, cx);
+    });
+
+    // uncommitted_diff.update(cx, |diff, cx| {
+    //     assert_hunks(
+    //         diff.hunks(&snapshot, cx),
+    //         &snapshot,
+    //         &diff.base_text_string().unwrap(),
+    //         &[
+    //             (
+    //                 0..0,
+    //                 "zero\n",
+    //                 "",
+    //                 DiffHunkStatus::deleted(SecondaryHunkAdditionPending),
+    //             ),
+    //             (
+    //                 1..2,
+    //                 "two\n",
+    //                 "TWO\n",
+    //                 DiffHunkStatus::modified(SecondaryHunkAdditionPending),
+    //             ),
+    //             (
+    //                 3..4,
+    //                 "four\n",
+    //                 "FOUR\n",
+    //                 DiffHunkStatus::modified(SecondaryHunkAdditionPending),
+    //             ),
+    //         ],
+    //     );
+    // });
+
+    // Wait till all unstaging operations take effect.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk), // NoSecondaryHunk
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
                 ),
             ],
         );

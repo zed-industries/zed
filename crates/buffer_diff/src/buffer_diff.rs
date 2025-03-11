@@ -4,7 +4,6 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::cmp::Ordering;
-use std::mem;
 use std::{future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point};
@@ -15,6 +14,7 @@ pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner,
     secondary_diff: Option<Entity<BufferDiff>>,
+    pending_ops: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -197,6 +197,7 @@ impl BufferDiffInner {
         buffer: &text::BufferSnapshot,
         file_exists: bool,
     ) -> (Option<Rope>, SumTree<PendingHunk>) {
+        println!("------------------------------------------");
         let head_text = self
             .base_text_exists
             .then(|| self.base_text.as_rope().clone());
@@ -835,14 +836,21 @@ impl BufferDiff {
         self.secondary_diff.clone()
     }
 
-    pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
-        if let Some(secondary_diff) = &self.secondary_diff {
-            secondary_diff.update(cx, |diff, _| {
-                diff.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary::default());
-            });
-            cx.emit(BufferDiffEvent::DiffChanged {
-                changed_range: Some(Anchor::MIN..Anchor::MAX),
-            });
+    pub fn start_pending_op(&mut self, _cx: &mut Context<Self>) {
+        self.pending_ops += 1;
+    }
+
+    pub fn end_pending_op(&mut self, cx: &mut Context<Self>) {
+        self.pending_ops -= 1;
+        if self.pending_ops == 0 {
+            if let Some(secondary_diff) = &self.secondary_diff {
+                secondary_diff.update(cx, |diff, _| {
+                    diff.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary::default());
+                });
+                // cx.emit(BufferDiffEvent::DiffChanged {
+                //     changed_range: Some(Anchor::MIN..Anchor::MAX),
+                // });
+            }
         }
     }
 
@@ -854,7 +862,7 @@ impl BufferDiff {
         file_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<Rope> {
-        let (new_index_text, new_pending_hunks) = self.inner.stage_or_unstage_hunks(
+        let (new_index_text, merged_pending_hunks) = self.inner.stage_or_unstage_hunks(
             &self.secondary_diff.as_ref()?.read(cx).inner,
             stage,
             &hunks,
@@ -862,9 +870,20 @@ impl BufferDiff {
             file_exists,
         );
 
+        // println!(
+        //     "----\nnew_pending_hunks.len() = {}\n----",
+        //     new_pending_hunks.iter().count(),
+        // );
+        // println!(
+        //     "----\nnew_index_text = {}\n----",
+        //     new_index_text
+        //         .as_ref()
+        //         .map_or_else(String::new, Rope::to_string),
+        // );
+
         if let Some(unstaged_diff) = &self.secondary_diff {
             unstaged_diff.update(cx, |diff, _| {
-                diff.inner.pending_hunks = new_pending_hunks;
+                diff.inner.pending_hunks = merged_pending_hunks;
             });
         }
         cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
@@ -973,26 +992,27 @@ impl BufferDiff {
 
     fn set_state(
         &mut self,
-        new_state: BufferDiffInner,
+        mut new_state: BufferDiffInner,
         buffer: &text::BufferSnapshot,
     ) -> Option<Range<Anchor>> {
-        let (base_text_changed, changed_range) =
-            match (self.inner.base_text_exists, new_state.base_text_exists) {
-                (false, false) => (true, None),
-                (true, true)
-                    if self.inner.base_text.remote_id() == new_state.base_text.remote_id() =>
-                {
-                    (false, new_state.compare(&self.inner, buffer))
-                }
-                _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
-            };
+        let changed_range = match (self.inner.base_text_exists, new_state.base_text_exists) {
+            (false, false) => {
+                dbg!("1");
+                None
+            }
+            (true, true) if self.inner.base_text.remote_id() == new_state.base_text.remote_id() => {
+                dbg!("2");
+                new_state.compare(&self.inner, buffer)
+            }
+            _ => {
+                // it's always here...........
+                dbg!("3");
+                Some(text::Anchor::MIN..text::Anchor::MAX)
+            }
+        };
 
-        let pending_hunks = mem::replace(&mut self.inner.pending_hunks, SumTree::new(buffer));
-
+        new_state.pending_hunks = self.inner.pending_hunks.clone();
         self.inner = new_state;
-        if !base_text_changed {
-            self.inner.pending_hunks = pending_hunks;
-        }
         changed_range
     }
 
@@ -1106,6 +1126,7 @@ impl BufferDiff {
             buffer_id: buffer.remote_id(),
             inner: BufferDiff::build_empty(buffer, cx),
             secondary_diff: None,
+            pending_ops: 0,
         }
     }
 
@@ -1129,6 +1150,7 @@ impl BufferDiff {
             buffer_id: buffer.read(cx).remote_id(),
             inner: snapshot,
             secondary_diff: None,
+            pending_ops: 0,
         }
     }
 
@@ -1901,6 +1923,7 @@ mod tests {
         ) -> Entity<BufferDiff> {
             let inner = BufferDiff::build_sync(working_copy.text.clone(), head_text, cx);
             let secondary = BufferDiff {
+                pending_ops: 0,
                 buffer_id: working_copy.remote_id(),
                 inner: BufferDiff::build_sync(
                     working_copy.text.clone(),
@@ -1911,6 +1934,7 @@ mod tests {
             };
             let secondary = cx.new(|_| secondary);
             cx.new(|_| BufferDiff {
+                pending_ops: 0,
                 buffer_id: working_copy.remote_id(),
                 inner,
                 secondary_diff: Some(secondary),

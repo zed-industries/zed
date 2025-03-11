@@ -4442,6 +4442,7 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
+            dbg!(&paths);
             self.process_events(paths.into_iter().map(Into::into).collect())
                 .await;
         }

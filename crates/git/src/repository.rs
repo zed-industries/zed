@@ -994,6 +994,7 @@ impl GitRepository for FakeGitRepository {
         } else {
             state.index_contents.remove(path);
         }
+        dbg!("emitting event");
         state
             .event_emitter
             .try_send(state.path.clone())

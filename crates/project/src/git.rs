@@ -291,6 +291,7 @@ impl GitStore {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some((repo, path)) = this.repository_and_path_for_buffer_id(buffer_id, cx) {
+                diff.update(cx, |diff, cx| diff.start_pending_op(cx));
                 let recv = repo.update(cx, |repo, cx| {
                     repo.set_index_text(
                         &path,
@@ -303,14 +304,14 @@ impl GitStore {
                     if let Some(result) = cx.background_spawn(async move { recv.await.ok() }).await
                     {
                         if let Err(error) = result {
-                            diff.update(&mut cx, |diff, cx| {
-                                diff.clear_pending_hunks(cx);
-                            })
-                            .ok();
                             this.update(&mut cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
                                 .ok();
                         }
                     }
+                    diff.update(&mut cx, |diff, cx| {
+                        diff.end_pending_op(cx);
+                    })
+                    .ok();
                 })
                 .detach();
             }

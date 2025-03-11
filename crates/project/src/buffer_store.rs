@@ -68,7 +68,7 @@ struct SharedBuffer {
 }
 
 #[derive(Default)]
-struct BufferDiffState {
+pub struct BufferDiffState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
@@ -84,7 +84,7 @@ struct BufferDiffState {
 }
 
 #[derive(Clone, Debug)]
-enum DiffBasesChange {
+pub enum DiffBasesChange {
     SetIndex(Option<String>),
     SetHead(Option<String>),
     SetEach {
@@ -143,7 +143,7 @@ impl BufferDiffState {
         Some(rx)
     }
 
-    fn diff_bases_changed(
+    pub fn diff_bases_changed(
         &mut self,
         buffer: text::BufferSnapshot,
         diff_bases_change: DiffBasesChange,
@@ -1847,6 +1847,14 @@ impl BufferStore {
     pub fn get_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Option<Entity<BufferDiff>> {
         if let OpenBuffer::Complete { diff_state, .. } = self.opened_buffers.get(&buffer_id)? {
             diff_state.read(cx).unstaged_diff.as_ref()?.upgrade()
+        } else {
+            None
+        }
+    }
+
+    pub fn get_diff_state(&self, buffer_id: BufferId, cx: &App) -> Option<Entity<BufferDiffState>> {
+        if let OpenBuffer::Complete { diff_state, .. } = self.opened_buffers.get(&buffer_id)? {
+            Some(diff_state.clone())
         } else {
             None
         }
