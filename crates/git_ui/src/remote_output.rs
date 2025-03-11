@@ -27,10 +27,6 @@ pub enum SuccessStyle {
     PushPrLink { link: String },
 }
 
-// git:: Open Git Log
-// workspace:: ClickStatusNotification
-//shift-cmd-enter (or some nonsense) that clicks the button in the status toast.
-
 pub struct SuccessMessage {
     pub message: String,
     pub style: SuccessStyle,
@@ -45,7 +41,6 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     style: SuccessStyle::Toast,
                 }
             } else {
-                // TODO count output.stderr.contains("* [new branch]") for "N new branches"
                 SuccessMessage {
                     message: "Synchronized with remotes".into(),
                     style: SuccessStyle::ToastWithLog { output },

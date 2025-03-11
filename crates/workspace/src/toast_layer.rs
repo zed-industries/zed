@@ -1,12 +1,70 @@
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
+use gpui::{actions, AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::{animation::DefaultAnimations, prelude::*};
+
+use crate::Workspace;
 
 const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(2400);
 const MINIMUM_RESUME_DURATION: Duration = Duration::from_millis(800);
 
-pub trait ToastView: ManagedView {}
+actions!(toast, [RunAction]);
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|_workspace, _: &RunAction, window, cx| {
+            let workspace = cx.entity();
+            let window = window.window_handle();
+            cx.defer(move |cx| {
+                let action = workspace
+                    .read(cx)
+                    .toast_layer
+                    .read(cx)
+                    .active_toast
+                    .as_ref()
+                    .and_then(|active_toast| active_toast.action.clone());
+
+                if let Some(on_click) = action.and_then(|action| action.on_click) {
+                    window
+                        .update(cx, |_, window, cx| {
+                            on_click(window, cx);
+                        })
+                        .ok();
+                }
+            });
+        });
+    })
+    .detach();
+}
+
+pub trait ToastView: ManagedView {
+    fn action(&self) -> Option<ToastAction>;
+}
+
+#[derive(Clone)]
+pub struct ToastAction {
+    pub id: ElementId,
+    pub label: SharedString,
+    pub on_click: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
+}
+
+impl ToastAction {
+    pub fn new(
+        label: SharedString,
+        on_click: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
+    ) -> Self {
+        let id = ElementId::Name(label.clone());
+
+        Self {
+            id,
+            label,
+            on_click,
+        }
+    }
+}
 
 trait ToastViewHandle {
     fn view(&self) -> AnyView;
@@ -20,6 +78,7 @@ impl<V: ToastView> ToastViewHandle for Entity<V> {
 
 pub struct ActiveToast {
     toast: Box<dyn ToastViewHandle>,
+    action: Option<ToastAction>,
     _subscriptions: [Subscription; 1],
     focus_handle: FocusHandle,
 }
@@ -68,10 +127,12 @@ impl ToastLayer {
     where
         V: ToastView,
     {
+        let action = new_toast.read(cx).action();
         let focus_handle = cx.focus_handle();
 
         self.active_toast = Some(ActiveToast {
             toast: Box::new(new_toast.clone()),
+            action,
             _subscriptions: [cx.subscribe(&new_toast, |this, _, _: &DismissEvent, cx| {
                 this.hide_toast(cx);
             })],
@@ -84,6 +145,7 @@ impl ToastLayer {
     }
 
     pub fn hide_toast(&mut self, cx: &mut Context<Self>) -> bool {
+        self.active_toast.take();
         cx.notify();
 
         true
@@ -124,11 +186,7 @@ impl ToastLayer {
             cx.background_executor().timer(duration).await;
 
             if let Some(this) = this.upgrade() {
-                this.update(&mut cx, |this, cx| {
-                    this.active_toast.take();
-                    cx.notify();
-                })
-                .ok();
+                this.update(&mut cx, |this, cx| this.hide_toast(cx)).ok();
             }
         });
 

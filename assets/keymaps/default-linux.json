@@ -393,6 +393,7 @@
       "alt-shift-open": "projects::OpenRemote",
       "alt-ctrl-shift-o": "projects::OpenRemote",
       "alt-ctrl-shift-b": "branches::OpenRecent",
+      "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
       "save": "workspace::Save",
       "ctrl-s": "workspace::Save",

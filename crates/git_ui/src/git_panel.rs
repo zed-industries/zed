@@ -2261,7 +2261,7 @@ impl GitPanel {
                 let toast =
                     StatusToast::new(format!("git {} failed", action.clone()), cx, |this, _cx| {
                         this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                            .action("Open Log", move |_, window, cx| {
+                            .action("View Log", move |window, cx| {
                                 let message = message.clone();
                                 let project = project.clone();
                                 let action = action.clone();
@@ -2289,14 +2289,14 @@ impl GitPanel {
             let workspace_weak = cx.weak_entity();
             let operation = action.name();
 
-            let status_toast = StatusToast::new(message, cx, move |this, cx| {
+            let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 let project = self.project.clone();
                 match style {
                     Toast { .. } => this,
                     ToastWithLog { output } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                        .action("View Log", move |_, window, cx| {
+                        .action("View Log", move |window, cx| {
                             let output = output.clone();
                             let project = project.clone();
                             let output =
@@ -2311,10 +2311,7 @@ impl GitPanel {
                         }),
                     PushPrLink { link } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                        .action(
-                            "Open Pull Request",
-                            cx.listener(move |_, _, _, cx| cx.open_url(&link)),
-                        ),
+                        .action("Open Pull Request", move |_, cx| cx.open_url(&link)),
                 }
             });
             workspace.toggle_status_toast(status_toast, cx)
