@@ -42,6 +42,10 @@ impl ScriptingSession {
         }
     }
 
+    pub fn changed_buffers(&self) -> impl ExactSizeIterator<Item = &Entity<Buffer>> {
+        self.changed_buffers.iter()
+    }
+
     pub fn run_script(
         &mut self,
         script_src: String,

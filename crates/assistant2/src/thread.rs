@@ -5,7 +5,7 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
-use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -13,7 +13,7 @@ use language_model::{
     Role, StopReason,
 };
 use project::Project;
-use scripting_tool::ScriptingTool;
+use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
@@ -76,6 +76,7 @@ pub struct Thread {
     project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
+    scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
 }
 
@@ -83,8 +84,10 @@ impl Thread {
     pub fn new(
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
+
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -99,6 +102,7 @@ impl Thread {
             project,
             tools,
             tool_use: ToolUseState::new(),
+            scripting_session,
             scripting_tool_use: ToolUseState::new(),
         }
     }
@@ -108,7 +112,7 @@ impl Thread {
         saved: SavedThread,
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
             saved
@@ -121,6 +125,7 @@ impl Thread {
             ToolUseState::from_saved_messages(&saved.messages, |name| name != ScriptingTool::NAME);
         let scripting_tool_use =
             ToolUseState::from_saved_messages(&saved.messages, |name| name == ScriptingTool::NAME);
+        let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
 
         Self {
             id,
@@ -144,6 +149,7 @@ impl Thread {
             project,
             tools,
             tool_use,
+            scripting_session,
             scripting_tool_use,
         }
     }
@@ -235,6 +241,13 @@ impl Thread {
         id: MessageId,
     ) -> Vec<&LanguageModelToolResult> {
         self.scripting_tool_use.tool_results_for_message(id)
+    }
+
+    pub fn scripting_changed_buffers<'a>(
+        &self,
+        cx: &'a App,
+    ) -> impl ExactSizeIterator<Item = &'a Entity<language::Buffer>> {
+        self.scripting_session.read(cx).changed_buffers()
     }
 
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
@@ -637,7 +650,32 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for scripting_tool_use in pending_scripting_tool_uses {
-            let task = ScriptingTool.run(scripting_tool_use.input, self.project.clone(), cx);
+            let task = match ScriptingTool::deserialize_input(scripting_tool_use.input) {
+                Err(err) => Task::ready(Err(err.into())),
+                Ok(input) => {
+                    let (script_id, script_task) =
+                        self.scripting_session.update(cx, move |session, cx| {
+                            session.run_script(input.lua_script, cx)
+                        });
+
+                    let session = self.scripting_session.clone();
+                    cx.spawn(|_, cx| async move {
+                        script_task.await;
+
+                        let message = session.read_with(&cx, |session, _cx| {
+                            // Using a id to get the script output seems impractical.
+                            // Why not just include it in the Task result?
+                            // This is because we'll later report the script state as it runs,
+                            session
+                                .get(script_id)
+                                .output_message_for_llm()
+                                .expect("Script shouldn't still be running")
+                        })?;
+
+                        Ok(message)
+                    })
+                }
+            };
 
             self.insert_scripting_tool_output(scripting_tool_use.id.clone(), task, cx);
         }
