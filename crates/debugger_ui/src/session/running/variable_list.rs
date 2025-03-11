@@ -230,6 +230,14 @@ impl VariableList {
                 is_expanded: dap_kind.as_variable().is_none(),
             });
 
+            if matches!(dap_kind, EntryKind::Scope(_))
+                && entries
+                    .last()
+                    .is_some_and(|last: &ListEntry| matches!(last.dap_kind, EntryKind::Scope(_)))
+            {
+                entries.pop();
+            }
+
             entries.push(ListEntry {
                 dap_kind,
                 path: path.clone(),
@@ -247,6 +255,13 @@ impl VariableList {
                     )
                 }));
             }
+        }
+
+        if entries
+            .last()
+            .is_some_and(|last| matches!(last.dap_kind, EntryKind::Scope(_)))
+        {
+            entries.pop();
         }
 
         self.entries = entries;
@@ -509,7 +524,7 @@ impl VariableList {
                 "{}{} {}",
                 INDENT.repeat(state.depth),
                 if state.is_expanded { "v" } else { ">" },
-                entry.dap_kind.name,
+                entry.dap_kind.name(),
             ));
         }
 

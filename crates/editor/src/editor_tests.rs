@@ -16848,8 +16848,7 @@ fn add_log_breakpoint_at_cursor(
                 .snapshot(window, cx)
                 .display_snapshot
                 .buffer_snapshot
-                .anchor_before(Point::new(cursor_position.row, 0))
-                .text_anchor;
+                .anchor_before(Point::new(cursor_position.row, 0));
 
             let kind = BreakpointKind::Log(Arc::from(log_message));
 
