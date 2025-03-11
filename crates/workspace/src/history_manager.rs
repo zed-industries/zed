@@ -2,7 +2,7 @@ use gpui::{AppContext, Entity, EventEmitter, Global};
 use ui::{App, Context};
 use util::{paths::PathExt, ResultExt};
 
-use crate::{WorkspaceId, WORKSPACE_DB};
+use crate::WORKSPACE_DB;
 
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
@@ -31,24 +31,20 @@ fn perform_update(cx: &mut App, manager: Entity<HistoryManager>) {
                         .sorted_paths()
                         .iter()
                         .map(|path| path.compact().to_string_lossy().into_owned())
-                        .collect::<Vec<_>>()
-                        .join(""),
+                        .collect::<Vec<_>>(),
                     id,
                 )
             })
             .collect::<Vec<_>>();
         let entries = recent_folders
             .iter()
-            .map(|(query, _)| query.as_str())
+            .map(|(query, _)| query)
             .collect::<Vec<_>>();
         if let Some(user_removed) = cx
-            .update(|cx| cx.update_jump_list(&entries))
+            .update(|cx| cx.update_jump_list(entries.as_slice()))
             .log_err()
             .flatten()
         {
-            // let user_removed = update_jump_list(&recent_folders)
-            //     .log_err()
-            //     .unwrap_or_default();
             let deleted_ids = recent_folders
                 .into_iter()
                 .filter_map(|(query, id)| {
