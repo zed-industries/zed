@@ -163,7 +163,8 @@ mod destination_list {
             let tasks: IObjectCollection =
                 CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
-            let exe = HSTRING::from(std::env::current_exe()?.to_string_lossy().to_string());
+            let exe_path = std::env::current_exe()?;
+            let exe = HSTRING::from(exe_path.as_os_str());
             link.SetPath(&exe)?;
             link.SetArguments(&HSTRING::from("--dock-action 0"))?;
             link.SetDescription(&HSTRING::from("Opens a new window."))?;
@@ -206,8 +207,9 @@ mod destination_list {
     fn create_shell_link(folder_path: &str) -> anyhow::Result<IShellLinkW> {
         unsafe {
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
-            let exe = std::env::current_exe()?.to_string_lossy().to_string();
-            link.SetPath(&HSTRING::from(exe))?;
+            let exe_path = std::env::current_exe()?;
+            let exe = HSTRING::from(exe_path.as_os_str());
+            link.SetPath(&exe)?;
             link.SetArguments(&HSTRING::from(folder_path))?;
             link.SetDescription(&HSTRING::from(folder_path))?;
             link.SetIconLocation(&HSTRING::from("explorer.exe"), 0)?;
