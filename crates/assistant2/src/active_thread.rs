@@ -1,4 +1,3 @@
-use std::path::{self, Path, PathBuf};
 use std::sync::Arc;
 
 use collections::HashMap;
@@ -11,14 +10,12 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
-use project::ProjectPath;
 use scripting_tool::{ScriptingTool, ScriptingToolInput};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
 
-use crate::edit_action::EditAction;
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
@@ -657,25 +654,6 @@ impl ActiveThread {
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .child(Button::new("apply-changes", "Apply changes").on_click({
-                    let thread = self.thread.clone();
-
-                    move |_, _window, cx| {
-                        thread.update(cx, |thread, cx| {
-                            let model_registry = LanguageModelRegistry::read_global(cx);
-                            let Some(model) = model_registry.editor_model() else {
-                                return;
-                            };
-
-                            thread.send_to_model(
-                                model,
-                                RequestKind::Edits { message_index: ix },
-                                false,
-                                cx,
-                            );
-                        });
-                    }
-                }))
                 .child(message_content)
                 .map(|parent| {
                     if tool_uses.is_empty() && scripting_tool_uses.is_empty() {

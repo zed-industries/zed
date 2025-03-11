@@ -671,11 +671,15 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
+ "futures 0.3.31",
  "gpui",
+ "language_model",
  "project",
+ "rand 0.8.5",
  "schemars",
  "serde",
  "serde_json",
+ "util",
 ]
 
 [[package]]
