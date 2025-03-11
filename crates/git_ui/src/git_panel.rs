@@ -270,6 +270,8 @@ impl Drop for RemoteOperationGuard {
     }
 }
 
+const MAX_PANEL_EDITOR_LINES: usize = 6;
+
 pub(crate) fn commit_message_editor(
     commit_message_buffer: Entity<Buffer>,
     placeholder: Option<&str>,
@@ -279,7 +281,7 @@ pub(crate) fn commit_message_editor(
     cx: &mut Context<'_, Editor>,
 ) -> Editor {
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
-    let max_lines = if in_panel { 6 } else { 18 };
+    let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
         EditorMode::AutoHeight { max_lines },
         buffer,
@@ -2590,8 +2592,12 @@ impl GitPanel {
         let branch = active_repository.read(cx).current_branch().cloned();
 
         let footer_size = px(32.);
-        let gap = px(8.0);
-        let max_height = window.line_height() * 5. + gap + footer_size;
+        let gap = px(9.0);
+        let max_height = panel_editor_style
+            .text
+            .line_height_in_pixels(window.rem_size())
+            * MAX_PANEL_EDITOR_LINES
+            + gap;
 
         let git_panel = cx.entity().clone();
         let display_name = SharedString::from(Arc::from(
@@ -2600,6 +2606,9 @@ impl GitPanel {
                 .display_name(project, cx)
                 .trim_end_matches("/"),
         ));
+        let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
+            editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
+        });
 
         let footer = v_flex()
             .child(PanelRepoFooter::new(
@@ -2612,11 +2621,10 @@ impl GitPanel {
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
                     .relative()
-                    .h(max_height)
                     .w_full()
+                    .h(max_height + footer_size)
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().editor_background)
                     .cursor_text()
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.commit_editor.focus_handle(cx));
@@ -2624,6 +2632,10 @@ impl GitPanel {
                     .child(
                         h_flex()
                             .id("commit-footer")
+                            .border_t_1()
+                            .when(editor_is_long, |el| {
+                                el.border_color(cx.theme().colors().border_variant)
+                            })
                             .absolute()
                             .bottom_0()
                             .left_0()
