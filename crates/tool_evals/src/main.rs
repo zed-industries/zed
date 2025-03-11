@@ -58,7 +58,7 @@ fn main() {
         cx.spawn(move |cx| async move {
             for eval_name in evals_to_run {
                 let eval_path = evaluation_data_dir.join(&eval_name).canonicalize().unwrap();
-                let repo_path = repos_dir.join(&eval_name).canonicalize().unwrap();
+                let repo_path = repos_dir.canonicalize().unwrap().join(&eval_name);
                 let eval = Eval::load(
                     &eval_path,
                     &repo_path,
