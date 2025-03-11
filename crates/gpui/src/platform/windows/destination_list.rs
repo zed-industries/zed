@@ -40,6 +40,7 @@ impl DockMenuItem {
     }
 }
 
+// https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/winui/shell/appshellintegration/RecipePropertyHandler/RecipePropertyHandler.cpp
 pub(crate) fn update_jump_list(
     entries: &[&Vec<String>],
     dock_menus: &[DockMenuItem],
