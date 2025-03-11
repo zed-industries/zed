@@ -2457,7 +2457,7 @@ impl GitPanel {
         let text;
         let action;
         let tooltip;
-        if self.total_staged_count() == self.entry_count {
+        if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
             text = "Unstage All";
             action = git::UnstageAll.boxed_clone();
             tooltip = "git reset";
@@ -2498,6 +2498,7 @@ impl GitPanel {
                         action.as_ref(),
                         &self.focus_handle,
                     ))
+                    .disabled(self.entry_count == 0)
                     .on_click(move |_, _, cx| {
                         let action = action.boxed_clone();
                         cx.defer(move |cx| {
