@@ -82,3 +82,19 @@
         )
     )
 )
+
+; module main method
+(
+    (module
+        (if_statement
+            condition: (comparison_operator
+                (identifier) @run @_lhs
+                operators: "=="
+                (string) @_rhs
+            )
+            (#eq? @_lhs "__name__")
+            (#eq? @_rhs "\"__main__\"")
+            (#set! tag python-module-main-method)
+        )
+    )
+)
