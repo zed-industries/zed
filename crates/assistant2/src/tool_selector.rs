@@ -18,7 +18,7 @@ impl ToolSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |mut menu, window, cx| {
+        ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let tools_by_source = self.tools.tools_by_source(cx);
 
             for (source, tools) in tools_by_source {
@@ -28,13 +28,21 @@ impl ToolSelector {
                 };
 
                 for tool in tools {
-                    menu = menu.toggleable_entry(
-                        tool.name(),
-                        false,
-                        IconPosition::End,
-                        None,
-                        |_window, _cx| {},
-                    );
+                    let source = tool.source();
+                    let name = tool.name().into();
+                    let is_enabled = self.tools.is_enabled(&source, &name);
+
+                    menu =
+                        menu.toggleable_entry(tool.name(), is_enabled, IconPosition::End, None, {
+                            let tools = self.tools.clone();
+                            move |_window, _cx| {
+                                if is_enabled {
+                                    tools.disable(source.clone(), &[name.clone()]);
+                                } else {
+                                    tools.enable(source.clone(), &[name.clone()]);
+                                }
+                            }
+                        });
                 }
             }
 
@@ -57,6 +65,6 @@ impl Render for ToolSelector {
                     .icon_color(Color::Muted),
                 Tooltip::text("Customize Tools"),
             )
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::Corner::BottomLeft)
     }
 }

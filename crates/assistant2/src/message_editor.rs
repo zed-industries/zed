@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use assistant_tool::ToolWorkingSet;
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use file_icons::FileIcons;
@@ -543,25 +542,26 @@ impl Render for MessageEditor {
                                 h_flex()
                                     .justify_between()
                                     .child(
-                                        Switch::new("use-tools", self.use_tools.into())
-                                            .label("Tools")
-                                            .on_click(cx.listener(
-                                                |this, selection, _window, _cx| {
-                                                    this.use_tools = match selection {
-                                                        ToggleState::Selected => true,
-                                                        ToggleState::Unselected
-                                                        | ToggleState::Indeterminate => false,
-                                                    };
-                                                },
-                                            ))
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &ChatMode,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )),
+                                        h_flex().gap_2().child(self.tool_selector.clone()).child(
+                                            Switch::new("use-tools", self.use_tools.into())
+                                                .label("Tools")
+                                                .on_click(cx.listener(
+                                                    |this, selection, _window, _cx| {
+                                                        this.use_tools = match selection {
+                                                            ToggleState::Selected => true,
+                                                            ToggleState::Unselected
+                                                            | ToggleState::Indeterminate => false,
+                                                        };
+                                                    },
+                                                ))
+                                                .key_binding(KeyBinding::for_action_in(
+                                                    &ChatMode,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )),
+                                        ),
                                     )
-                                    .child(self.tool_selector.clone())
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
                                             ButtonLike::new("submit-message")
