@@ -834,6 +834,7 @@ impl LocalBufferStore {
         }
 
         cx.spawn(move |this, mut cx| async move {
+            git_store.wait_for_pending_index_writes().await;
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_changes_by_buffer = cx

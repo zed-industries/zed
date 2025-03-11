@@ -367,6 +367,8 @@ impl BufferDiffInner {
         new_index_text.append(index_cursor.suffix());
         drop(old_pending_hunks);
         self.pending_hunks = pending_hunks;
+        println!("pending_hunks: {}", self.pending_hunks.iter().count());
+        println!("new_index_text: {}", new_index_text.to_string());
         Some(new_index_text)
     }
 
@@ -832,8 +834,8 @@ impl BufferDiff {
     }
 
     pub fn start_pending_op(&mut self) {
-        dbg!("start");
         self.pending_ops += 1;
+        dbg!(("start", self.pending_ops));
     }
 
     pub fn end_pending_op(&mut self, result: &Option<anyhow::Result<()>>, cx: &mut Context<Self>) {
@@ -979,7 +981,7 @@ impl BufferDiff {
 
     fn set_state(
         &mut self,
-        new_state: BufferDiffInner,
+        mut new_state: BufferDiffInner,
         buffer: &text::BufferSnapshot,
     ) -> Option<Range<Anchor>> {
         let mut changed_range = match (self.inner.base_text_exists, new_state.base_text_exists) {
@@ -991,18 +993,18 @@ impl BufferDiff {
         };
 
         dbg!("set state", self.pending_ops);
-        // if self.pending_ops == 0 {
-        if let Some(cleared_range) = self.clear_pending_hunks() {
-            if let Some(changed_range) = changed_range.as_mut() {
-                changed_range.start = changed_range.start.min(&cleared_range.start, &buffer);
-                changed_range.end = changed_range.end.max(&cleared_range.end, &buffer);
-            } else {
-                changed_range = Some(cleared_range);
+        if self.pending_ops == 0 {
+            if let Some(cleared_range) = self.clear_pending_hunks() {
+                if let Some(changed_range) = changed_range.as_mut() {
+                    changed_range.start = changed_range.start.min(&cleared_range.start, &buffer);
+                    changed_range.end = changed_range.end.max(&cleared_range.end, &buffer);
+                } else {
+                    changed_range = Some(cleared_range);
+                }
             }
+        } else {
+            new_state.pending_hunks = self.inner.pending_hunks.clone();
         }
-        // } else {
-        //     new_state.pending_hunks = self.inner.pending_hunks.clone();
-        // }
 
         self.inner = new_state;
         changed_range
