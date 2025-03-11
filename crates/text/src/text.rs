@@ -110,6 +110,8 @@ pub struct BufferSnapshot {
     undo_map: UndoMap,
     fragments: SumTree<Fragment>,
     insertions: SumTree<InsertionFragment>,
+    // todo!("turn this into a treemap / sum tree")
+    insertion_slices: HashMap<clock::Lamport, Vec<InsertionSlice>>,
     pub version: clock::Global,
 }
 
@@ -137,7 +139,6 @@ impl HistoryEntry {
 struct History {
     base_text: Rope,
     operations: TreeMap<clock::Lamport, Operation>,
-    insertion_slices: HashMap<clock::Lamport, Vec<InsertionSlice>>,
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
     transaction_depth: usize,
@@ -155,7 +156,6 @@ impl History {
         Self {
             base_text,
             operations: Default::default(),
-            insertion_slices: Default::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             transaction_depth: 0,
@@ -696,6 +696,7 @@ impl Buffer {
                 insertions,
                 version,
                 undo_map: Default::default(),
+                insertion_slices: Default::default(),
             },
             history,
             deferred_ops: OperationQueue::new(),
@@ -929,7 +930,7 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.subscriptions.publish_mut(&edits_patch);
-        self.history
+        self.snapshot
             .insertion_slices
             .insert(timestamp, insertion_slices);
         edit_op
@@ -1177,7 +1178,7 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, &());
-        self.history
+        self.snapshot
             .insertion_slices
             .insert(timestamp, insertion_slices);
         self.subscriptions.publish_mut(&edits_patch)
@@ -1190,7 +1191,7 @@ impl Buffer {
         // Get all of the insertion slices changed by the given edits.
         let mut insertion_slices = Vec::new();
         for edit_id in edit_ids {
-            if let Some(slices) = self.history.insertion_slices.get(edit_id) {
+            if let Some(slices) = self.snapshot.insertion_slices.get(edit_id) {
                 insertion_slices.extend_from_slice(slices)
             }
         }
