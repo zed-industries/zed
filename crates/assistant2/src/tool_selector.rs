@@ -1,0 +1,41 @@
+use gpui::Entity;
+use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
+
+pub struct ToolSelector {}
+
+impl ToolSelector {
+    pub fn new(_cx: &mut Context<Self>) -> Self {
+        Self {}
+    }
+
+    fn build_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            menu.header("Agent Mode")
+                .header("MCP 1")
+                .header("MCP 2")
+                .header("MCP 3")
+        })
+    }
+}
+
+impl Render for ToolSelector {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let this = cx.entity().clone();
+        PopoverMenu::new("tool-selector")
+            .menu(move |window, cx| {
+                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+            })
+            .trigger_with_tooltip(
+                IconButton::new("tool-selector-button", IconName::SettingsAlt)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+                Tooltip::text("Customize Tools"),
+            )
+            .anchor(gpui::Corner::BottomRight)
+    }
+}

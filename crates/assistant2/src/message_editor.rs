@@ -28,6 +28,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
+use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 
 pub struct MessageEditor {
@@ -39,6 +40,7 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
+    tool_selector: Entity<ToolSelector>,
     use_tools: bool,
     edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
@@ -118,6 +120,7 @@ impl MessageEditor {
                     cx,
                 )
             }),
+            tool_selector: cx.new(|cx| ToolSelector::new(cx)),
             use_tools: false,
             edits_expanded: false,
             _subscriptions: subscriptions,
@@ -556,6 +559,7 @@ impl Render for MessageEditor {
                                                 cx,
                                             )),
                                     )
+                                    .child(self.tool_selector.clone())
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
                                             ButtonLike::new("submit-message")
