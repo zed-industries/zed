@@ -20,6 +20,7 @@ struct WorkingSetState {
     context_server_tools_by_id: HashMap<ToolId, Arc<dyn Tool>>,
     context_server_tools_by_name: HashMap<String, Arc<dyn Tool>>,
     disabled_tools_by_source: HashMap<ToolSource, HashSet<Arc<str>>>,
+    is_scripting_tool_disabled: bool,
     next_tool_id: ToolId,
 }
 
@@ -121,6 +122,21 @@ impl ToolWorkingSet {
             .context_server_tools_by_id
             .retain(|id, _| !tool_ids_to_remove.contains(id));
         state.tools_changed();
+    }
+
+    pub fn is_scripting_tool_enabled(&self) -> bool {
+        let state = self.state.lock();
+        !state.is_scripting_tool_disabled
+    }
+
+    pub fn enable_scripting_tool(&self) {
+        let mut state = self.state.lock();
+        state.is_scripting_tool_disabled = false;
+    }
+
+    pub fn disable_scripting_tool(&self) {
+        let mut state = self.state.lock();
+        state.is_scripting_tool_disabled = true;
     }
 }
 

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use gpui::Entity;
+use scripting_tool::ScriptingTool;
 use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
@@ -22,24 +23,48 @@ impl ToolSelector {
             let tools_by_source = self.tools.tools_by_source(cx);
 
             for (source, tools) in tools_by_source {
+                let mut tools = tools
+                    .into_iter()
+                    .map(|tool| {
+                        let source = tool.source();
+                        let name = tool.name().into();
+                        let is_enabled = self.tools.is_enabled(&source, &name);
+
+                        (source, name, is_enabled)
+                    })
+                    .collect::<Vec<_>>();
+
+                if ToolSource::Native == source {
+                    tools.push((
+                        ToolSource::Native,
+                        ScriptingTool::NAME.into(),
+                        self.tools.is_scripting_tool_enabled(),
+                    ));
+                    tools.sort_by(|(_, name_a, _), (_, name_b, _)| name_a.cmp(name_b));
+                }
+
                 menu = match source {
                     ToolSource::Native => menu.header("Zed"),
                     ToolSource::ContextServer { id } => menu.separator().header(id),
                 };
 
-                for tool in tools {
-                    let source = tool.source();
-                    let name = tool.name().into();
-                    let is_enabled = self.tools.is_enabled(&source, &name);
-
+                for (source, name, is_enabled) in tools {
                     menu =
-                        menu.toggleable_entry(tool.name(), is_enabled, IconPosition::End, None, {
+                        menu.toggleable_entry(name.clone(), is_enabled, IconPosition::End, None, {
                             let tools = self.tools.clone();
                             move |_window, _cx| {
-                                if is_enabled {
-                                    tools.disable(source.clone(), &[name.clone()]);
+                                if name.as_ref() == ScriptingTool::NAME {
+                                    if is_enabled {
+                                        tools.disable_scripting_tool();
+                                    } else {
+                                        tools.enable_scripting_tool();
+                                    }
                                 } else {
-                                    tools.enable(source.clone(), &[name.clone()]);
+                                    if is_enabled {
+                                        tools.disable(source.clone(), &[name.clone()]);
+                                    } else {
+                                        tools.enable(source.clone(), &[name.clone()]);
+                                    }
                                 }
                             }
                         });
