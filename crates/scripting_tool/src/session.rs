@@ -344,7 +344,8 @@ impl ScriptingSession {
             let content = file_userdata.get::<mlua::AnyUserData>("__content")?;
             let content_ref = content.borrow::<FileContent>()?;
             let text = {
-                let content_vec = content_ref.0.lock().to_vec();
+                let mut content_vec = content_ref.0.lock();
+                let content_vec = std::mem::take(&mut *content_vec);
                 String::from_utf8(content_vec).into_lua_err()?
             };
 
