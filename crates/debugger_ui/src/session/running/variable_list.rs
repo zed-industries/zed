@@ -209,9 +209,15 @@ impl VariableList {
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
             session.scopes(stack_frame_id, cx).iter().cloned().collect()
         });
+        let scopes_count = scopes.len();
         let mut stack = scopes
             .into_iter()
             .rev()
+            .filter(|scope| {
+                self.session.update(cx, |session, cx| {
+                    session.variables(scope.variables_reference, cx).len() > 0
+                })
+            })
             .map(|scope| {
                 (
                     scope.variables_reference,
@@ -225,18 +231,13 @@ impl VariableList {
             if let Some(dap) = &dap_kind.as_variable() {
                 path = path.with_name(dap.name.clone().into());
             }
+
             let var_state = self.entry_states.entry(path.clone()).or_insert(EntryState {
                 depth: path.indices.len() + path.leaf_name.is_some() as usize,
-                is_expanded: dap_kind.as_variable().is_none(),
+                is_expanded: dap_kind.as_scope().is_some_and(|scope| {
+                    scopes_count == 1 || &scope.name.to_lowercase() == "locals"
+                }),
             });
-
-            if matches!(dap_kind, EntryKind::Scope(_))
-                && entries
-                    .last()
-                    .is_some_and(|last: &ListEntry| matches!(last.dap_kind, EntryKind::Scope(_)))
-            {
-                entries.pop();
-            }
 
             entries.push(ListEntry {
                 dap_kind,
@@ -255,13 +256,6 @@ impl VariableList {
                     )
                 }));
             }
-        }
-
-        if entries
-            .last()
-            .is_some_and(|last| matches!(last.dap_kind, EntryKind::Scope(_)))
-        {
-            entries.pop();
         }
 
         self.entries = entries;
