@@ -1,11 +1,16 @@
+use std::sync::Arc;
+
+use assistant_tool::ToolWorkingSet;
 use gpui::Entity;
 use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 
-pub struct ToolSelector {}
+pub struct ToolSelector {
+    tools: Arc<ToolWorkingSet>,
+}
 
 impl ToolSelector {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
-        Self {}
+    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut Context<Self>) -> Self {
+        Self { tools }
     }
 
     fn build_context_menu(
@@ -14,10 +19,25 @@ impl ToolSelector {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |menu, window, cx| {
-            menu.header("Agent Mode")
+            let tools = self.tools.tools(cx);
+
+            let mut menu = menu
+                .header("Agent Mode")
                 .header("MCP 1")
                 .header("MCP 2")
-                .header("MCP 3")
+                .header("MCP 3");
+
+            for tool in tools {
+                menu = menu.toggleable_entry(
+                    tool.name(),
+                    false,
+                    IconPosition::End,
+                    None,
+                    |_window, _cx| {},
+                );
+            }
+
+            menu
         })
     }
 }

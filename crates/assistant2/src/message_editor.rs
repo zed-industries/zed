@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use assistant_tool::ToolWorkingSet;
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use file_icons::FileIcons;
@@ -55,6 +56,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let tools = thread.read(cx).tools().clone();
         let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
@@ -120,7 +122,7 @@ impl MessageEditor {
                     cx,
                 )
             }),
-            tool_selector: cx.new(|cx| ToolSelector::new(cx)),
+            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
             use_tools: false,
             edits_expanded: false,
             _subscriptions: subscriptions,
