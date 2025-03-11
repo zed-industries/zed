@@ -901,6 +901,7 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
 
     use super::*;
 
@@ -1131,7 +1132,7 @@ mod tests {
 
             let fs = FakeFs::new(cx.executor());
             fs.insert_tree(
-                "/",
+                path!("/"),
                 json!({
                     "file1.txt": "Hello world!",
                     "file2.txt": "Goodbye moon!"
@@ -1139,7 +1140,7 @@ mod tests {
             )
             .await;
 
-            let project = Project::test(fs.clone(), [Path::new("/")], cx).await;
+            let project = Project::test(fs.clone(), [Path::new(path!("/"))], cx).await;
             let session = cx.new(|cx| ScriptingSession::new(project, cx));
 
             TestSession { session }
