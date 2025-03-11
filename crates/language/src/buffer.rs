@@ -20,7 +20,7 @@ use anyhow::{anyhow, Context as _, Result};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
@@ -4146,9 +4146,13 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn words_in_range(&self, query: Option<&str>, range: Range<usize>) -> HashSet<String> {
+    pub fn words_in_range(
+        &self,
+        query: Option<&str>,
+        range: Range<usize>,
+    ) -> HashMap<String, Range<Anchor>> {
         if query.map_or(false, |query| query.is_empty()) {
-            return HashSet::default();
+            return HashMap::default();
         }
 
         let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
@@ -4160,7 +4164,7 @@ impl BufferSnapshot {
         let query = query.map(|query| query.chars().collect::<Vec<_>>());
         let query_len = query.as_ref().map_or(0, |query| query.len());
 
-        let mut words = HashSet::default();
+        let mut words = HashMap::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = range.start;
         for chunk in self.chunks(range, false) {
@@ -4184,7 +4188,11 @@ impl BufferSnapshot {
                     continue;
                 } else if let Some(word_start) = current_word_start_ix.take() {
                     if query_ix == query_len {
-                        words.insert(self.text_for_range(word_start..ix).collect::<String>());
+                        let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
+                        words.insert(
+                            self.text_for_range(word_start..ix).collect::<String>(),
+                            word_range,
+                        );
                     }
                 }
                 query_ix = 0;

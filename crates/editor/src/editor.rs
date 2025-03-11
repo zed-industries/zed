@@ -4076,7 +4076,7 @@ impl Editor {
         let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
             ..buffer_snapshot.point_to_offset(max_word_search);
         let words = match completion_settings.words {
-            WordsCompletionMode::Disabled => Task::ready(HashSet::default()),
+            WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
             WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => {
                 cx.background_spawn(async move {
                     buffer_snapshot.words_in_range(None, word_search_range)
@@ -4099,13 +4099,13 @@ impl Editor {
                             words
                                 .await
                                 .into_iter()
-                                .filter(|word| word_to_exclude.as_ref() != Some(word))
-                                .map(|word| Completion {
+                                .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
+                                .map(|(word, word_range)| Completion {
                                     old_range: old_range.clone(),
                                     new_text: word.clone(),
                                     label: CodeLabel::plain(word, None),
                                     documentation: None,
-                                    source: CompletionSource::Custom,
+                                    source: CompletionSource::BufferWord(word_range),
                                     confirm: None,
                                 }),
                         );
@@ -4116,13 +4116,13 @@ impl Editor {
                                 words
                                     .await
                                     .into_iter()
-                                    .filter(|word| word_to_exclude.as_ref() != Some(word))
-                                    .map(|word| Completion {
+                                    .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
+                                    .map(|(word, word_range)| Completion {
                                         old_range: old_range.clone(),
                                         new_text: word.clone(),
                                         label: CodeLabel::plain(word, None),
                                         documentation: None,
-                                        source: CompletionSource::Custom,
+                                        source: CompletionSource::BufferWord(word_range),
                                         confirm: None,
                                     }),
                             );

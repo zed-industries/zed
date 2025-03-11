@@ -3160,7 +3160,7 @@ fn test_words_in_range(cx: &mut gpui::App) {
             BTreeSet::from_iter(["Pizza".to_string()]),
             snapshot
                 .words_in_range(Some("piz"), 0..snapshot.len())
-                .into_iter()
+                .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
@@ -3172,7 +3172,7 @@ fn test_words_in_range(cx: &mut gpui::App) {
             ]),
             snapshot
                 .words_in_range(Some("öp"), 0..snapshot.len())
-                .into_iter()
+                .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
@@ -3184,28 +3184,28 @@ fn test_words_in_range(cx: &mut gpui::App) {
             ]),
             snapshot
                 .words_in_range(Some("öÄ"), 0..snapshot.len())
-                .into_iter()
+                .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
             BTreeSet::default(),
             snapshot
                 .words_in_range(Some("öÄ好"), 0..snapshot.len())
-                .into_iter()
+                .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
             BTreeSet::from_iter(["bar你".to_string(),]),
             snapshot
                 .words_in_range(Some("你"), 0..snapshot.len())
-                .into_iter()
+                .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
             BTreeSet::default(),
             snapshot
                 .words_in_range(Some(""), 0..snapshot.len())
-                .into_iter()
+                .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
@@ -3222,7 +3222,7 @@ fn test_words_in_range(cx: &mut gpui::App) {
             ]),
             snapshot
                 .words_in_range(None, 0..snapshot.len())
-                .into_iter()
+                .into_keys()
                 .collect::<BTreeSet<_>>()
         );
     });

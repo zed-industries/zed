@@ -4537,6 +4537,10 @@ impl LspStore {
                     );
                     server.request::<lsp::request::ResolveCompletionItem>(*lsp_completion.clone())
                 }
+                CompletionSource::BufferWord(a) => {
+                    //
+                    todo!("TODO kb")
+                }
                 CompletionSource::Custom => return Ok(()),
             }
         };
@@ -4677,6 +4681,10 @@ impl LspStore {
                         return Ok(());
                     }
                     serde_json::to_string(lsp_completion).unwrap().into_bytes()
+                }
+                CompletionSource::BufferWord(a) => {
+                    //
+                    todo!("TODO kb")
                 }
                 CompletionSource::Custom => return Ok(()),
             }
@@ -8209,51 +8217,50 @@ impl LspStore {
     }
 
     pub(crate) fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
-        let (source, server_id, lsp_completion, lsp_defaults, resolved) = match &completion.source {
+        let mut serialized_completion = proto::Completion {
+            old_start: Some(serialize_anchor(&completion.old_range.start)),
+            old_end: Some(serialize_anchor(&completion.old_range.end)),
+            new_text: completion.new_text.clone(),
+            ..proto::Completion::default()
+        };
+        match &completion.source {
             CompletionSource::Lsp {
                 server_id,
                 lsp_completion,
                 lsp_defaults,
                 resolved,
-            } => (
-                proto::completion::Source::Lsp as i32,
-                server_id.0 as u64,
-                serde_json::to_vec(lsp_completion).unwrap(),
-                lsp_defaults
+            } => {
+                serialized_completion.source = proto::completion::Source::Lsp as i32;
+                serialized_completion.server_id = server_id.0 as u64;
+                serialized_completion.lsp_completion = serde_json::to_vec(lsp_completion).unwrap();
+                serialized_completion.lsp_defaults = lsp_defaults
                     .as_deref()
-                    .map(|lsp_defaults| serde_json::to_vec(lsp_defaults).unwrap()),
-                *resolved,
-            ),
-            CompletionSource::Custom => (
-                proto::completion::Source::Custom as i32,
-                0,
-                Vec::new(),
-                None,
-                true,
-            ),
-        };
-
-        proto::Completion {
-            old_start: Some(serialize_anchor(&completion.old_range.start)),
-            old_end: Some(serialize_anchor(&completion.old_range.end)),
-            new_text: completion.new_text.clone(),
-            server_id,
-            lsp_completion,
-            lsp_defaults,
-            resolved,
-            source,
+                    .map(|lsp_defaults| serde_json::to_vec(lsp_defaults).unwrap());
+                serialized_completion.resolved = *resolved;
+            }
+            CompletionSource::BufferWord(word_range) => {
+                serialized_completion.source = proto::completion::Source::BufferWord as i32;
+                serialized_completion.buffer_word_start = Some(serialize_anchor(&word_range.start));
+                serialized_completion.buffer_word_end = Some(serialize_anchor(&word_range.end));
+            }
+            CompletionSource::Custom => {
+                serialized_completion.source = proto::completion::Source::Custom as i32;
+                serialized_completion.resolved = true;
+            }
         }
+
+        serialized_completion
     }
 
     pub(crate) fn deserialize_completion(completion: proto::Completion) -> Result<CoreCompletion> {
         let old_start = completion
             .old_start
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid old start"))?;
+            .context("invalid old start")?;
         let old_end = completion
             .old_end
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid old end"))?;
+            .context("invalid old end")?;
         Ok(CoreCompletion {
             old_range: old_start..old_end,
             new_text: completion.new_text,
@@ -8269,6 +8276,17 @@ impl LspStore {
                         .transpose()?,
                     resolved: completion.resolved,
                 },
+                Some(proto::completion::Source::BufferWord) => {
+                    let word_range = completion
+                        .buffer_word_start
+                        .and_then(deserialize_anchor)
+                        .context("invalid buffer word start")?
+                        ..completion
+                            .buffer_word_end
+                            .and_then(deserialize_anchor)
+                            .context("invalid buffer word end")?;
+                    CompletionSource::BufferWord(word_range)
+                }
                 _ => anyhow::bail!("Unexpected completion source {}", completion.source),
             },
         })

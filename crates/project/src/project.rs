@@ -388,6 +388,7 @@ pub enum CompletionSource {
         resolved: bool,
     },
     Custom,
+    BufferWord(Range<Anchor>),
 }
 
 impl CompletionSource {
