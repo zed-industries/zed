@@ -4170,13 +4170,15 @@ impl BufferSnapshot {
                     if current_word_start_ix.is_none() {
                         current_word_start_ix = Some(ix);
                     }
+
                     if let Some(query) = &query {
-                        if query_ix < query_len
-                            && c.eq_ignore_ascii_case(query.get(query_ix).expect(
+                        if query_ix < query_len {
+                            let query_c = query.get(query_ix).expect(
                                 "query_ix is a vec of chars, which we access only if before the end",
-                            ))
-                        {
-                            query_ix += 1;
+                            );
+                            if c.to_lowercase().eq(query_c.to_lowercase()) {
+                                query_ix += 1;
+                            }
                         }
                     }
                     continue;

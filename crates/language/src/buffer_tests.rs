@@ -3145,7 +3145,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
 fn test_words_in_range(cx: &mut gpui::App) {
     init_settings(cx, |_| {});
 
-    let contents = r#"let word=foo.bar Foo word2-FoO-Pizza-word FOO word"#;
+    let contents = r#"let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word"#;
 
     let buffer = cx.new(|cx| {
         let buffer = Buffer::local(contents, cx).with_language(Arc::new(rust_lang()), cx);
@@ -3165,27 +3165,39 @@ fn test_words_in_range(cx: &mut gpui::App) {
         );
         assert_eq!(
             BTreeSet::from_iter([
-                "foo".to_string(),
-                "Foo".to_string(),
-                "FoO".to_string(),
-                "FOO".to_string(),
+                "öäpple".to_string(),
+                "Öäpple".to_string(),
+                "öÄpPlE".to_string(),
+                "ÖÄPPLE".to_string(),
             ]),
             snapshot
-                .words_in_range(Some("fo"), 0..snapshot.len())
+                .words_in_range(Some("öp"), 0..snapshot.len())
                 .into_iter()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
             BTreeSet::from_iter([
-                "foo".to_string(),
-                "Foo".to_string(),
-                "FoO".to_string(),
-                "FOO".to_string(),
-                "word".to_string(),
-                "word2".to_string(),
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
             ]),
             snapshot
-                .words_in_range(Some("o"), 0..snapshot.len())
+                .words_in_range(Some("öÄ"), 0..snapshot.len())
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(Some("öÄ好"), 0..snapshot.len())
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter(["bar你".to_string(),]),
+            snapshot
+                .words_in_range(Some("你"), 0..snapshot.len())
                 .into_iter()
                 .collect::<BTreeSet<_>>()
         );
@@ -3198,11 +3210,11 @@ fn test_words_in_range(cx: &mut gpui::App) {
         );
         assert_eq!(
             BTreeSet::from_iter([
-                "bar".to_string(),
-                "foo".to_string(),
-                "Foo".to_string(),
-                "FoO".to_string(),
-                "FOO".to_string(),
+                "bar你".to_string(),
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
                 "let".to_string(),
                 "Pizza".to_string(),
                 "word".to_string(),
