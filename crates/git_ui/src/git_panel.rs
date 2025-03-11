@@ -1706,10 +1706,18 @@ impl GitPanel {
         };
         telemetry::event!("Git Pushed");
         let branch = branch.clone();
+
         let options = if force_push {
-            PushOptions::Force
+            Some(PushOptions::Force)
         } else {
-            PushOptions::SetUpstream
+            match branch.upstream {
+                Some(Upstream {
+                    tracking: UpstreamTracking::Gone,
+                    ..
+                })
+                | None => Some(PushOptions::SetUpstream),
+                _ => None,
+            }
         };
         let remote = self.get_current_remote(window, cx);
 
@@ -1739,7 +1747,7 @@ impl GitPanel {
                 repo.push(
                     branch.name.clone(),
                     remote.name.clone(),
-                    Some(options),
+                    options,
                     askpass_delegate,
                     cx,
                 )
