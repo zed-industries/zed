@@ -7,7 +7,11 @@
       sha256 = lock.nodes.rust-overlay.locked.narHash;
     }
   ),
-  pkgs ? import <nixpkgs> {
+  nixpkgs ? builtins.fetchTarball {
+    url = "github:NixOS/nixpkgs/${lock.nodes.nixpkgs.locked.rev}";
+    sha256 = lock.nodes.nixpkgs.locked.narHash;
+  },
+  pkgs ? import nixpkgs {
     inherit system;
     overlays = [ rust-overlay ];
   },
