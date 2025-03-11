@@ -45,15 +45,15 @@ impl ToolWorkingSet {
         tools
     }
 
-    pub fn insert(&self, command: Arc<dyn Tool>) -> ToolId {
+    pub fn insert(&self, tool: Arc<dyn Tool>) -> ToolId {
         let mut state = self.state.lock();
-        let command_id = state.next_tool_id;
+        let tool_id = state.next_tool_id;
         state.next_tool_id.0 += 1;
         state
             .context_server_tools_by_id
-            .insert(command_id, command.clone());
+            .insert(tool_id, tool.clone());
         state.tools_changed();
-        command_id
+        tool_id
     }
 
     pub fn remove(&self, command_ids_to_remove: &[ToolId]) {
