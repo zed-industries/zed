@@ -74,35 +74,30 @@ const PKEY_LINK_ARGS: PROPERTYKEY = PROPERTYKEY {
 fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<Vec<Vec<String>>>)> {
     let list: ICustomDestinationList =
         unsafe { CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER) }?;
-    let mut pcminslots = 0;
-    let user_removed: IObjectArray = unsafe { list.BeginList(&mut pcminslots) }?;
-    let removed = {
-        let count = unsafe { user_removed.GetCount() }?;
-        if count == 0 {
-            None
-        } else {
-            let mut removed = Vec::with_capacity(count as usize);
-            for i in 0..count {
-                let shell_link: IShellLinkW = unsafe { user_removed.GetAt(i)? };
-                let store: IPropertyStore = shell_link.cast()?;
-                let argument = unsafe { store.GetValue(&PKEY_LINK_ARGS)? };
-                let args = {
-                    let args = argument.to_string();
-                    args.split_whitespace()
-                        .map(|s| {
-                            s.trim_start_matches("\"")
-                                .trim_end_matches("\"")
-                                .to_string()
-                        })
-                        .collect_vec()
-                };
-                println!("User removed args: {:?}", args);
-                removed.push(args);
-            }
-            Some(removed)
-        }
-    };
-    Ok((list, removed))
+
+    let mut slots = 0;
+    let user_removed: IObjectArray = unsafe { list.BeginList(&mut slots) }?;
+
+    let count = unsafe { user_removed.GetCount() }?;
+    if count == 0 {
+        return Ok((list, None));
+    }
+
+    let mut removed = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let shell_link: IShellLinkW = unsafe { user_removed.GetAt(i)? };
+        let store: IPropertyStore = shell_link.cast()?;
+        let argument = unsafe { store.GetValue(&PKEY_LINK_ARGS)? };
+        let args = argument
+            .to_string()
+            .split_whitespace()
+            .map(|s| s.trim_matches('"').to_string())
+            .collect_vec();
+
+        removed.push(args);
+    }
+
+    Ok((list, Some(removed)))
 }
 
 fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> anyhow::Result<()> {
@@ -129,31 +124,39 @@ fn add_recent_folders(
     unsafe {
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
-        for folder_path in entries.iter() {
-            if !is_item_in_array(folder_path, removed) {
-                let argument = {
-                    let mut argument = "".to_string();
-                    for path in folder_path.iter() {
-                        let path_string = format!("\"{}\" ", path);
-                        argument.push_str(&path_string);
-                    }
-                    HSTRING::from(argument.trim())
-                };
-                let description = HSTRING::from(folder_path.join("\n"));
-                let icon = HSTRING::from("explorer.exe");
-                let display = folder_path
+
+        for folder_path in entries
+            .iter()
+            .filter(|path| !is_item_in_array(path, removed))
+        {
+            let argument = HSTRING::from(
+                folder_path
                     .iter()
-                    .map(|p| {
-                        std::path::Path::new(p)
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or(p.to_string())
-                    })
-                    .join(", ");
-                let link = create_shell_link(argument, description, Some(icon), &display)?;
-                tasks.AddObject(&link)?;
-            }
+                    .map(|path| format!("\"{}\"", path))
+                    .join(" "),
+            );
+
+            let description = HSTRING::from(folder_path.join("\n"));
+            let icon = HSTRING::from("explorer.exe");
+
+            let display = folder_path
+                .iter()
+                .map(|p| {
+                    std::path::Path::new(p)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| p.clone())
+                })
+                .join(", ");
+
+            tasks.AddObject(&create_shell_link(
+                argument,
+                description,
+                Some(icon),
+                &display,
+            )?)?;
         }
+
         list.AppendCategory(&HSTRING::from("Recent Folders"), &tasks)?;
         Ok(())
     }
