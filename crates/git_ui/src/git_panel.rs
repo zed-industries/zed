@@ -260,8 +260,10 @@ impl ScrollbarProperties {
 
     fn hide(&mut self, window: &mut Window, cx: &mut Context<GitPanel>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        
-        if !s
+
+        if !self.auto_hide {
+            return;
+        }
 
         let axis = self.axis;
         self.hide_task = Some(cx.spawn_in(window, |panel, mut cx| async move {
