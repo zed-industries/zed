@@ -875,14 +875,16 @@ float4 fill_color(Background background,
       break;
     }
     case 2: {
-        float pattern_height = background.gradient_angle_or_pattern_height;
+        uint gradient_angle_or_pattern_height = as_type<uint>(background.gradient_angle_or_pattern_height);
+        float pattern_height = ((gradient_angle_or_pattern_height >> 16) & 0xFFFF) / 255.0f;
+        float pattern_interval = ((gradient_angle_or_pattern_height >> 0) & 0xFFFF) / 255.0f;
         float stripe_angle = M_PI_F / 4.0;
-        float pattern_period = pattern_height * sin(stripe_angle);
+        float pattern_period = (pattern_height + pattern_interval) * sin(stripe_angle) / 2.0f;
         float2x2 rotation = rotate2d(stripe_angle);
         float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
         float2 rotated_point = rotation * relative_position;
         float pattern = fmod(rotated_point.x, pattern_period);
-        float distance = min(pattern, pattern_period - pattern) - pattern_period / 4.0;
+        float distance = min(pattern, pattern_period - pattern) - pattern_period * pattern_height / (pattern_height + pattern_interval) / 2.0f;
         color = solid_color;
         color.a *= saturate(0.5 - distance);
         break;

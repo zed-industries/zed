@@ -6779,7 +6779,8 @@ impl Element for EditorElement {
 
                         let unstaged = diff_status.has_secondary_hunk();
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
-                        let slash_width = line_height.0 / 1.5; // ~16 by default
+                        let slash_width = font_size.0 / 1.5; // 10 by default
+                        let slash_interval = line_height.0 / 1.5; // ~16 by default
 
                         let staged_highlight: LineHighlight = match hunk_style {
                             GitHunkStyleSetting::Transparent
@@ -6787,10 +6788,12 @@ impl Element for EditorElement {
                             | GitHunkStyleSetting::Border => {
                                 solid_background(background_color.opacity(hunk_opacity)).into()
                             }
-                            GitHunkStyleSetting::StagedPattern => {
-                                pattern_slash(background_color.opacity(hunk_opacity), slash_width)
-                                    .into()
-                            }
+                            GitHunkStyleSetting::StagedPattern => pattern_slash(
+                                background_color.opacity(hunk_opacity),
+                                slash_width,
+                                slash_interval,
+                            )
+                            .into(),
                             GitHunkStyleSetting::StagedTransparent => {
                                 solid_background(background_color.opacity(if is_light {
                                     0.08
@@ -6823,10 +6826,12 @@ impl Element for EditorElement {
                                 }))
                                 .into()
                             }
-                            GitHunkStyleSetting::Pattern => {
-                                pattern_slash(background_color.opacity(hunk_opacity), slash_width)
-                                    .into()
-                            }
+                            GitHunkStyleSetting::Pattern => pattern_slash(
+                                background_color.opacity(hunk_opacity),
+                                slash_width,
+                                slash_interval,
+                            )
+                            .into(),
                             GitHunkStyleSetting::Border => LineHighlight {
                                 background: (background_color.opacity(if is_light {
                                     0.08
