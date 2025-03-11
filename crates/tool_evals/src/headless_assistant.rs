@@ -1,8 +1,7 @@
 use anyhow::anyhow;
-use assistant2::{Message, RequestKind, Thread, ThreadEvent, ThreadStore};
+use assistant2::{Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
-use git::GitHostingProviderRegistry;
 use gpui::{prelude::*, App, Entity, Subscription, Task};
 use language::LanguageRegistry;
 use language_model::{
@@ -13,11 +12,7 @@ use project::{Project, RealFs};
 use prompt_store::PromptBuilder;
 use settings::SettingsStore;
 use smol::channel;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use workspace::WorkspaceStore;
+use std::sync::Arc;
 
 /// Subset of `workspace::AppState` needed by `HeadlessAssistant`.
 pub struct HeadlessAppState {
@@ -99,16 +94,6 @@ impl HeadlessAssistant {
                     }
                 }
             }
-            ThreadEvent::ScriptFinished { .. } => {
-                let model_registry = LanguageModelRegistry::read_global(cx);
-                if let Some(model) = model_registry.active_model() {
-                    thread.update(cx, |thread, cx| {
-                        // TODO: this was copied from active_thread.rs - why is use_tools false?
-                        let use_tools = false;
-                        thread.send_to_model(model, RequestKind::Chat, use_tools, cx);
-                    });
-                }
-            }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryChanged
             | ThreadEvent::StreamedAssistantText(_, _)
@@ -133,9 +118,8 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     let client = Client::production(cx);
     cx.set_http_client(client.http_client().clone());
 
-    let git_hosting_provider_registry = GitHostingProviderRegistry::default_global(cx);
     let git_binary_path = None;
-    let fs = Arc::new(RealFs::new(git_hosting_provider_registry, git_binary_path));
+    let fs = Arc::new(RealFs::new(git_binary_path));
 
     let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
@@ -145,7 +129,6 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     assistant_tools::init(cx);
-    scripting_tool::init(cx);
     context_server::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);

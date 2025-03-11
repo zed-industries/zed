@@ -1,7 +1,6 @@
 use crate::headless_assistant::{
     authenticate_model_provider, find_model, HeadlessAppState, HeadlessAssistant,
 };
-use anyhow::anyhow;
 use assistant2::{Message, RequestKind};
 use gpui::{App, Task};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
@@ -10,7 +9,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::AppState;
 
 pub struct Eval {
     pub repo_path: PathBuf,

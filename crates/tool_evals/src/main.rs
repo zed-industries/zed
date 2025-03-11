@@ -1,7 +1,7 @@
 mod eval;
 mod headless_assistant;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use eval::Eval;
 use gpui::Application;
 use language_model::{LanguageModelProviderId, ANTHROPIC_PROVIDER_ID};
