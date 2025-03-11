@@ -1,5 +1,5 @@
 use gpui::{AppContext, Entity, EventEmitter, Global};
-use ui::{App, Context};
+use ui::App;
 use util::{paths::PathExt, ResultExt};
 
 use crate::WORKSPACE_DB;
@@ -93,7 +93,7 @@ impl HistoryManager {
         Self {}
     }
 
-    pub fn global<T>(cx: &Context<'_, T>) -> Option<Entity<Self>> {
+    pub fn global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalHistoryManager>()
             .map(|model| model.0.clone())
     }
