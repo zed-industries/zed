@@ -54,7 +54,7 @@ mod windows_impl {
         let hwnd = create_dialog_window(rx)?.0 as isize;
         std::thread::spawn(move || {
             tx.send(perform_update(app_dir.as_path(), hwnd)).ok();
-            unsafe { PostMessageW(HWND(hwnd as _), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
+            unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
         });
         unsafe {
             let mut message = MSG::default();
