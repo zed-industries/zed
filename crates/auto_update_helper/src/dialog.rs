@@ -7,7 +7,8 @@ use windows::{
         Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
             BeginPaint, CreateFontW, DeleteObject, EndPaint, ReleaseDC, SelectObject, TextOutW,
-            FW_NORMAL, LOGFONTW, PAINTSTRUCT,
+            CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, FW_NORMAL, LOGFONTW,
+            OUT_TT_ONLY_PRECIS, PAINTSTRUCT,
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::{
@@ -39,7 +40,7 @@ pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWN
         let class_name = windows::core::w!("Zed-Auto-Updater-Dialog-Class");
         let module = GetModuleHandleW(None).context("unable to get module handle")?;
         let handle = LoadImageW(
-            module,
+            Some(module.into()),
             windows::core::PCWSTR(1 as _),
             IMAGE_ICON,
             0,
@@ -109,7 +110,6 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_NCCREATE => {
-            log::info!("WM_NCCREATE");
             let create_struct = lparam.0 as *const CREATESTRUCTW;
             let info = (*create_struct).lpCreateParams as *mut RefCell<DialogInfo>;
             let info = Box::from_raw(info);
@@ -117,7 +117,6 @@ unsafe extern "system" fn wnd_proc(
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_CREATE => {
-            log::info!("WM_CREATE");
             // Create progress bar
             let mut rect = RECT::default();
             return_if_failed!(GetWindowRect(hwnd, &mut rect));
@@ -130,7 +129,7 @@ unsafe extern "system" fn wnd_proc(
                 50,
                 340,
                 35,
-                hwnd,
+                Some(hwnd),
                 None,
                 None,
                 None,
@@ -138,10 +137,10 @@ unsafe extern "system" fn wnd_proc(
             SendMessageW(
                 progress_bar,
                 PBM_SETRANGE,
-                WPARAM(0),
-                make_lparam!(0, TOTAL_JOBS * 10),
+                None,
+                Some(make_lparam!(0, TOTAL_JOBS * 10)),
             );
-            SendMessageW(progress_bar, PBM_SETSTEP, WPARAM(10), LPARAM(0));
+            SendMessageW(progress_bar, PBM_SETSTEP, Some(WPARAM(10)), None);
             with_dialog_data(hwnd, |data| {
                 data.borrow_mut().progress_bar = progress_bar.0 as isize
             });
@@ -161,32 +160,28 @@ unsafe extern "system" fn wnd_proc(
                 0,
                 0,
                 0,
-                0,
-                0,
-                0,
-                2,
+                DEFAULT_CHARSET,
+                OUT_TT_ONLY_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY,
                 0,
                 &HSTRING::from(font_name),
             );
-            let temp = SelectObject(hdc, font);
+            let temp = SelectObject(hdc, font.into());
             let string = HSTRING::from("Zed Editor is updating...");
-            return_if_failed!(TextOutW(hdc, 20, 15, string.as_wide()).ok());
+            return_if_failed!(TextOutW(hdc, 20, 15, &string).ok());
             return_if_failed!(DeleteObject(temp).ok());
 
             return_if_failed!(EndPaint(hwnd, &ps).ok());
-            ReleaseDC(hwnd, hdc);
+            ReleaseDC(Some(hwnd), hdc);
 
             LRESULT(0)
         }
-        WM_JOB_UPDATED => {
-            log::info!("WM_JOB_UPDATED");
-            with_dialog_data(hwnd, |data| {
-                let progress_bar = data.borrow().progress_bar;
-                SendMessageW(HWND(progress_bar as _), PBM_STEPIT, WPARAM(0), LPARAM(0))
-            })
-        }
+        WM_JOB_UPDATED => with_dialog_data(hwnd, |data| {
+            let progress_bar = data.borrow().progress_bar;
+            SendMessageW(HWND(progress_bar as _), PBM_STEPIT, None, None)
+        }),
         WM_TERMINATE => {
-            log::info!("WM_TERMINATE");
             with_dialog_data(hwnd, |data| {
                 if let Ok(result) = data.borrow_mut().rx.recv() {
                     if let Err(e) = result {
