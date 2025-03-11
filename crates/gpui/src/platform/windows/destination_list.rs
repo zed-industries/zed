@@ -1,3 +1,4 @@
+use util::ResultExt;
 use windows::{
     core::{Interface, GUID, HSTRING, PROPVARIANT},
     Win32::{
@@ -41,9 +42,19 @@ impl DockMenuItem {
 pub(crate) fn update_jump_list(
     entries: &[&str],
     dock_menus: &[DockMenuItem],
-) -> anyhow::Result<Vec<String>> {
+) -> Option<Vec<String>> {
+    update_jump_list_inner(entries, dock_menus)
+        .log_err()
+        .flatten()
+}
+
+#[inline]
+fn update_jump_list_inner(
+    entries: &[&str],
+    dock_menus: &[DockMenuItem],
+) -> anyhow::Result<Option<Vec<String>>> {
     let (list, removed) = create_destination_list()?;
-    add_recent_folders(&list, entries, &removed)?;
+    add_recent_folders(&list, entries, removed.as_ref())?;
     add_dock_menu(&list, dock_menus)?;
     unsafe { list.CommitList() }?;
     Ok(removed)
@@ -59,20 +70,27 @@ const PKEY_LINK_ARGS: PROPERTYKEY = PROPERTYKEY {
     pid: 100,
 };
 
-fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<String>)> {
+fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<Vec<String>>)> {
     let list: ICustomDestinationList =
         unsafe { CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER) }?;
     let mut pcminslots = 0;
     let user_removed: IObjectArray = unsafe { list.BeginList(&mut pcminslots) }?;
-    let count = unsafe { user_removed.GetCount() }?;
-    let mut removed = Vec::with_capacity(count as usize);
-    for i in 0..count {
-        let shell_link: IShellLinkW = unsafe { user_removed.GetAt(i)? };
-        let store: IPropertyStore = shell_link.cast()?;
-        let argument = unsafe { store.GetValue(&PKEY_LINK_ARGS)? };
-        let args = argument.to_string();
-        removed.push(args);
-    }
+    let removed = {
+        let count = unsafe { user_removed.GetCount() }?;
+        if count == 0 {
+            None
+        } else {
+            let mut removed = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                let shell_link: IShellLinkW = unsafe { user_removed.GetAt(i)? };
+                let store: IPropertyStore = shell_link.cast()?;
+                let argument = unsafe { store.GetValue(&PKEY_LINK_ARGS)? };
+                let args = argument.to_string();
+                removed.push(args);
+            }
+            Some(removed)
+        }
+    };
     Ok((list, removed))
 }
 
@@ -80,18 +98,13 @@ fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> 
     unsafe {
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
-        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
-        let exe_path = std::env::current_exe()?;
-        let exe = HSTRING::from(exe_path.as_os_str());
-        link.SetPath(&exe)?;
-        link.SetArguments(&HSTRING::from("--dock-action 0"))?;
-        link.SetDescription(&HSTRING::from("Opens a new window."))?;
-        link.SetIconLocation(&exe, 0)?;
-        let store: IPropertyStore = link.cast()?;
-        let title = PROPVARIANT::from("New Window");
-        store.SetValue(&PKEY_TITLE, &title)?;
-        store.Commit()?;
-        tasks.AddObject(&link)?;
+        for (idx, dock_menu) in dock_menus.iter().enumerate() {
+            let argument = HSTRING::from(format!("--dock-action {}", idx));
+            let description = HSTRING::from(dock_menu.description.as_str());
+            let display = dock_menu.name.as_str();
+            let task = create_shell_link(argument, description, None, display)?;
+            tasks.AddObject(&task)?;
+        }
         list.AddUserTasks(&tasks)?;
         Ok(())
     }
@@ -100,14 +113,21 @@ fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> 
 fn add_recent_folders(
     list: &ICustomDestinationList,
     entries: &[&str],
-    removed: &[String],
+    removed: Option<&Vec<String>>,
 ) -> anyhow::Result<()> {
     unsafe {
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
         for folder_path in entries.iter() {
             if !is_item_in_array(folder_path, removed) {
-                let link = create_shell_link(folder_path)?;
+                let argument = HSTRING::from(*folder_path);
+                let description = HSTRING::from(*folder_path);
+                let icon = HSTRING::from("explorer.exe");
+                let display = std::path::Path::new(folder_path)
+                    .file_name()
+                    .map(|os_str| os_str.to_string_lossy().to_string())
+                    .unwrap_or(folder_path.to_string());
+                let link = create_shell_link(argument, description, Some(icon), &display)?;
                 tasks.AddObject(&link)?;
             }
         }
@@ -117,27 +137,33 @@ fn add_recent_folders(
 }
 
 #[inline]
-fn is_item_in_array(item: &str, removed: &[String]) -> bool {
-    removed
-        .iter()
-        .any(|removed_item| removed_item.to_lowercase() == item.to_lowercase())
+fn is_item_in_array(item: &str, removed: Option<&Vec<String>>) -> bool {
+    if let Some(removed) = removed {
+        removed
+            .iter()
+            .any(|removed_item| removed_item.to_lowercase() == item.to_lowercase())
+    } else {
+        false
+    }
 }
 
-fn create_shell_link(folder_path: &str) -> anyhow::Result<IShellLinkW> {
+fn create_shell_link(
+    argument: HSTRING,
+    description: HSTRING,
+    icon: Option<HSTRING>,
+    display: &str,
+) -> anyhow::Result<IShellLinkW> {
     unsafe {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
-        let exe_path = std::env::current_exe()?;
-        let exe = HSTRING::from(exe_path.as_os_str());
-        link.SetPath(&exe)?;
-        link.SetArguments(&HSTRING::from(folder_path))?;
-        link.SetDescription(&HSTRING::from(folder_path))?;
-        link.SetIconLocation(&HSTRING::from("explorer.exe"), 0)?;
+        let exe_path = HSTRING::from(std::env::current_exe()?.as_os_str());
+        link.SetPath(&exe_path)?;
+        link.SetArguments(&argument)?;
+        link.SetDescription(&description)?;
+        if let Some(icon) = icon {
+            link.SetIconLocation(&icon, 0)?;
+        }
         let store: IPropertyStore = link.cast()?;
-        let title_string = std::path::Path::new(folder_path)
-            .file_name()
-            .map(|os_str| os_str.to_string_lossy().to_string())
-            .unwrap_or(folder_path.to_string());
-        let title = PROPVARIANT::from(title_string.as_str());
+        let title = PROPVARIANT::from(display);
         store.SetValue(&PKEY_TITLE, &title)?;
         store.Commit()?;
 
