@@ -36,7 +36,7 @@ impl ScriptingTool {
         };
 
         // TODO: Store a session per thread
-        let session = cx.new(|cx| ScriptSession::new(project, cx));
+        let session = cx.new(|cx| ScriptingSession::new(project, cx));
         let lua_script = input.lua_script;
 
         let (script_id, script_task) =
