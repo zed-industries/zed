@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::App;
 use parking_lot::Mutex;
 
-use crate::{Tool, ToolRegistry};
+use crate::{Tool, ToolRegistry, ToolSource};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ToolId(usize);
@@ -43,6 +43,19 @@ impl ToolWorkingSet {
         );
 
         tools
+    }
+
+    pub fn tools_by_source(&self, cx: &App) -> HashMap<ToolSource, Vec<Arc<dyn Tool>>> {
+        let mut tools_by_source = HashMap::default();
+
+        for tool in self.tools(cx) {
+            tools_by_source
+                .entry(tool.source())
+                .or_insert_with(Vec::new)
+                .push(tool);
+        }
+
+        tools_by_source
     }
 
     pub fn insert(&self, tool: Arc<dyn Tool>) -> ToolId {

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use assistant_tool::ToolWorkingSet;
+use assistant_tool::{ToolSource, ToolWorkingSet};
 use gpui::Entity;
 use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 
@@ -18,23 +18,24 @@ impl ToolSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            let tools = self.tools.tools(cx);
+        ContextMenu::build(window, cx, |mut menu, window, cx| {
+            let tools_by_source = self.tools.tools_by_source(cx);
 
-            let mut menu = menu
-                .header("Agent Mode")
-                .header("MCP 1")
-                .header("MCP 2")
-                .header("MCP 3");
+            for (source, tools) in tools_by_source {
+                menu = match source {
+                    ToolSource::Native => menu.header("Zed"),
+                    ToolSource::ContextServer { id } => menu.separator().header(id),
+                };
 
-            for tool in tools {
-                menu = menu.toggleable_entry(
-                    tool.name(),
-                    false,
-                    IconPosition::End,
-                    None,
-                    |_window, _cx| {},
-                );
+                for tool in tools {
+                    menu = menu.toggleable_entry(
+                        tool.name(),
+                        false,
+                        IconPosition::End,
+                        None,
+                        |_window, _cx| {},
+                    );
+                }
             }
 
             menu
