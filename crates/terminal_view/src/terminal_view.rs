@@ -1014,7 +1014,8 @@ fn possible_open_target(
     let mut potential_paths = Vec::new();
     let original_path = PathWithPosition::from_path(PathBuf::from(maybe_path));
     let path_with_position = PathWithPosition::parse_str(maybe_path);
-    for prefix_str in GIT_DIFF_PATH_PREFIXES {
+    // Since we do not check paths via FS and joining, we need to strip off potential `./`, `a/`, `b/` prefixes out of it.
+    for prefix_str in GIT_DIFF_PATH_PREFIXES.iter().chain(std::iter::once(&".")) {
         if let Some(stripped) = original_path.path.strip_prefix(prefix_str).ok() {
             potential_paths.push(PathWithPosition {
                 path: stripped.to_owned(),
