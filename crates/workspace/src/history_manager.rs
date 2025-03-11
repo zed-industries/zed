@@ -87,7 +87,7 @@ impl HistoryManager {
         Self {}
     }
 
-    pub fn global<'a, T>(cx: &Context<'a, T>) -> Option<Entity<Self>> {
+    pub fn global<T>(cx: &Context<'_, T>) -> Option<Entity<Self>> {
         cx.try_global::<GlobalHistoryManager>()
             .map(|model| model.0.clone())
     }
