@@ -2776,10 +2776,10 @@ impl GitPanel {
             .cursor_default()
             .absolute()
             .right_0()
-            .top_1()
+            .top_0()
             .bottom_0()
             .w(px(12.))
-            .pb_neg_2p5()
+            .pb_neg_3p5()
             .on_mouse_move(cx.listener(|_, _, _, cx| {
                 cx.notify();
                 cx.stop_propagation()
