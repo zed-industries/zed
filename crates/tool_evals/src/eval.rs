@@ -1,4 +1,6 @@
-use crate::headless_assistant::{authenticate_model_provider, find_model, HeadlessAssistant};
+use crate::headless_assistant::{
+    authenticate_model_provider, find_model, HeadlessAppState, HeadlessAssistant,
+};
 use anyhow::anyhow;
 use assistant2::{Message, RequestKind};
 use gpui::{App, Task};
@@ -52,7 +54,7 @@ impl Eval {
     /// LanguageModelRegistry.active_model is global state.
     pub fn run(
         &self,
-        app_state: Arc<AppState>,
+        app_state: Arc<HeadlessAppState>,
         cx: &mut App,
     ) -> Task<anyhow::Result<Vec<Message>>> {
         let model = match find_model(&self.model_name, cx) {

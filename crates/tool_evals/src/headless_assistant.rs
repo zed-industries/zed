@@ -1,13 +1,14 @@
 use anyhow::anyhow;
 use assistant2::{Message, RequestKind, Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
-use client::Client;
+use client::{Client, UserStore};
 use git::GitHostingProviderRegistry;
 use gpui::{prelude::*, App, Entity, Subscription, Task};
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
 };
+use node_runtime::NodeRuntime;
 use project::{Project, RealFs};
 use prompt_store::PromptBuilder;
 use settings::SettingsStore;
@@ -16,7 +17,17 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::AppState;
+use workspace::WorkspaceStore;
+
+/// Subset of `workspace::AppState` needed by `HeadlessAssistant`.
+pub struct HeadlessAppState {
+    pub languages: Arc<LanguageRegistry>,
+    pub client: Arc<Client>,
+    pub user_store: Entity<UserStore>,
+    pub workspace_store: Entity<WorkspaceStore>,
+    pub fs: Arc<dyn fs::Fs>,
+    pub node_runtime: NodeRuntime,
+}
 
 pub struct HeadlessAssistant {
     pub project: Entity<Project>,
@@ -27,7 +38,7 @@ pub struct HeadlessAssistant {
 
 impl HeadlessAssistant {
     pub fn new(
-        app_state: Arc<AppState>,
+        app_state: Arc<HeadlessAppState>,
         cx: &mut App,
     ) -> anyhow::Result<(Entity<Self>, channel::Receiver<anyhow::Result<()>>)> {
         let env = None;
@@ -109,7 +120,7 @@ impl HeadlessAssistant {
     }
 }
 
-pub fn init(cx: &mut App) -> Arc<AppState> {
+pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     gpui_tokio::init(cx);
 
     let mut settings_store = SettingsStore::new(cx);
@@ -129,39 +140,26 @@ pub fn init(cx: &mut App) -> Arc<AppState> {
 
     let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
-    let test_app_state = AppState::test(cx);
-    let app_state = Arc::new(AppState {
-        client,
-        fs: fs.clone(),
-        languages,
-        // Clone fields from test_app_state
-        user_store: test_app_state.user_store.clone(),
-        workspace_store: test_app_state.workspace_store.clone(),
-        build_window_options: test_app_state.build_window_options,
-        node_runtime: test_app_state.node_runtime.clone(),
-        session: test_app_state.session.clone(),
-    });
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+    let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
-    language_model::init(app_state.client.clone(), cx);
-    language_models::init(
-        app_state.user_store.clone(),
-        app_state.client.clone(),
-        app_state.fs.clone(),
-        cx,
-    );
+    language_model::init(client.clone(), cx);
+    language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     assistant_tools::init(cx);
     scripting_tool::init(cx);
     context_server::init(cx);
     let stdout_is_a_pty = false;
-    let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty, cx);
-    assistant2::init(
-        app_state.fs.clone(),
-        app_state.client.clone(),
-        prompt_builder.clone(),
-        cx,
-    );
+    let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
+    assistant2::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
-    app_state
+    Arc::new(HeadlessAppState {
+        languages,
+        client,
+        user_store,
+        workspace_store,
+        fs,
+        node_runtime: NodeRuntime::unavailable(),
+    })
 }
 
 pub fn find_model(model_name: &str, cx: &App) -> anyhow::Result<Arc<dyn LanguageModel>> {

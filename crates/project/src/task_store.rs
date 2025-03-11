@@ -281,13 +281,6 @@ impl TaskStore {
         fs: Arc<dyn Fs>,
         cx: &mut Context<'_, Self>,
     ) -> Task<()> {
-        // todo! sort out why this fails in headless_assistant with:
-        //
-        // > internal error: entered unreachable code
-        //
-        // Due to the use of `block`. Should this even block?
-        //
-        /*
         let mut user_tasks_file_rx =
             watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
@@ -317,8 +310,6 @@ impl TaskStore {
                 };
             }
         })
-        */
-        Task::ready(())
     }
 }
 
