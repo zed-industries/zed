@@ -8,6 +8,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScriptingToolInput {
     pub lua_script: String,
+    pub summary: Option<String>,
 }
 
 pub struct ScriptingTool;

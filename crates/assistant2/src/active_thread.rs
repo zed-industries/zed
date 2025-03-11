@@ -29,7 +29,8 @@ pub struct ActiveThread {
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, Entity<Markdown>>,
-    rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
+    rendered_scripting_tool_uses:
+        HashMap<LanguageModelToolUseId, (Entity<Markdown>, Option<String>)>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     last_error: Option<ThreadError>,
@@ -267,15 +268,19 @@ impl ActiveThread {
             return;
         }
 
-        let lua_script = serde_json::from_value::<ScriptingToolInput>(tool_input)
-            .map(|input| input.lua_script)
-            .unwrap_or_default();
+        let tool_input_result = serde_json::from_value::<ScriptingToolInput>(tool_input);
+
+        let (lua_script, summary) = if let Ok(input) = tool_input_result {
+            (input.lua_script, input.summary)
+        } else {
+            (String::new(), None)
+        };
 
         let lua_script =
             self.render_markdown(format!("```lua\n{lua_script}\n```").into(), window, cx);
 
         self.rendered_scripting_tool_uses
-            .insert(tool_use_id, lua_script);
+            .insert(tool_use_id, (lua_script, summary));
     }
 
     fn handle_thread_event(
@@ -852,8 +857,13 @@ impl ActiveThread {
                         return parent;
                     }
 
-                    let lua_script_markdown =
+                    let scripting_tool_result =
                         self.rendered_scripting_tool_uses.get(&tool_use.id).cloned();
+
+                    let (lua_script_markdown, summary) = match scripting_tool_result {
+                        Some((markdown, summary)) => (Some(markdown), summary),
+                        None => (None, None),
+                    };
 
                     parent.child(
                         v_flex()
@@ -864,7 +874,22 @@ impl ActiveThread {
                                     .px_2p5()
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
-                                    .child(Label::new("Input:"))
+                                    .child(v_flex().when_some(
+                                        summary.clone(),
+                                        |parent, summary| {
+                                            parent.child(
+                                                v_flex()
+                                                    .gap_0p5()
+                                                    .child(
+                                                        Label::new("Summary:")
+                                                            .font_weight(FontWeight::SEMI_BOLD),
+                                                    )
+                                                    .child(Label::new(summary))
+                                                    .pb_1(),
+                                            )
+                                        },
+                                    ))
+                                    .child(Label::new("Input:").font_weight(FontWeight::SEMI_BOLD))
                                     .map(|parent| {
                                         if let Some(markdown) = lua_script_markdown {
                                             parent.child(markdown)
