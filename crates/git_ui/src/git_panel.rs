@@ -103,9 +103,14 @@ enum TrashCancel {
     Cancel,
 }
 
-fn git_panel_context_menu(window: &mut Window, cx: &mut App) -> Entity<ContextMenu> {
+fn git_panel_context_menu(
+    focus_handle: FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ContextMenu> {
     ContextMenu::build(window, cx, |context_menu, _, _| {
         context_menu
+            .context(focus_handle)
             .action("Stage All", StageAll.boxed_clone())
             .action("Unstage All", UnstageAll.boxed_clone())
             .separator()
@@ -806,10 +811,6 @@ impl GitPanel {
         }
     }
 
-    pub(crate) fn editor_focus_handle(&self, cx: &mut Context<Self>) -> FocusHandle {
-        self.commit_editor.focus_handle(cx).clone()
-    }
-
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx));
@@ -862,6 +863,7 @@ impl GitPanel {
                             .as_ref()
                     {
                         project_diff.focus_handle(cx).focus(window);
+                        project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
                         return None;
                     }
                 }
@@ -1019,13 +1021,14 @@ impl GitPanel {
             let buffers = futures::future::join_all(tasks).await;
 
             active_repository
-                .update(&mut cx, |repo, _| {
+                .update(&mut cx, |repo, cx| {
                     repo.checkout_files(
                         "HEAD",
                         entries
                             .iter()
                             .map(|entries| entries.repo_path.clone())
                             .collect(),
+                        cx,
                     )
                 })?
                 .await??;
@@ -1349,6 +1352,35 @@ impl GitPanel {
         }
     }
 
+    fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selected_entry) = self.get_selected_entry() else {
+            return;
+        };
+        let Some(status_entry) = selected_entry.status_entry() else {
+            return;
+        };
+        if status_entry.staging != StageStatus::Staged {
+            self.change_file_stage(true, vec![status_entry.clone()], cx);
+        }
+    }
+
+    fn unstage_selected(
+        &mut self,
+        _: &git::UnstageFile,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_entry) = self.get_selected_entry() else {
+            return;
+        };
+        let Some(status_entry) = selected_entry.status_entry() else {
+            return;
+        };
+        if status_entry.staging != StageStatus::Unstaged {
+            self.change_file_stage(false, vec![status_entry.clone()], cx);
+        }
+    }
+
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .commit_editor
@@ -1407,7 +1439,8 @@ impl GitPanel {
 
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
-            let commit_task = active_repository.read(cx).commit(message.into(), None);
+            let commit_task =
+                active_repository.update(cx, |repo, cx| repo.commit(message.into(), None, cx));
             cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
@@ -1428,7 +1461,7 @@ impl GitPanel {
             cx.spawn(|_, mut cx| async move {
                 stage_task.await?;
                 let commit_task = active_repository
-                    .update(&mut cx, |repo, _| repo.commit(message.into(), None))?;
+                    .update(&mut cx, |repo, cx| repo.commit(message.into(), None, cx))?;
                 commit_task.await?
             })
         };
@@ -1464,7 +1497,7 @@ impl GitPanel {
                 if let Ok(true) = confirmation.await {
                     let prior_head = prior_head.await?;
 
-                    repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
+                    repo.update(&mut cx, |repo, cx| repo.reset("HEAD^", ResetMode::Soft, cx))?
                         .await??;
 
                     Ok(Some(prior_head))
@@ -2422,6 +2455,18 @@ impl GitPanel {
         path + file_name
     }
 
+    fn render_overflow_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
+        PopoverMenu::new(id.into())
+            .trigger(
+                IconButton::new("overflow-menu-trigger", IconName::EllipsisVertical)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+            )
+            .menu(move |window, cx| Some(git_panel_context_menu(focus_handle.clone(), window, cx)))
+            .anchor(Corner::TopRight)
+    }
+
     pub(crate) fn render_generate_commit_message_button(
         &self,
         cx: &Context<Self>,
@@ -2465,10 +2510,7 @@ impl GitPanel {
                             cx,
                         )
                     } else {
-                        Tooltip::simple(
-                            "You must have either staged changes or tracked files to generate a commit message",
-                            cx,
-                        )
+                        Tooltip::simple("No changes to commit", cx)
                     }
                 })
                 .disabled(!can_commit)
@@ -2518,10 +2560,7 @@ impl GitPanel {
         if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
         } else if !self.has_staged_changes() && !self.has_tracked_changes() {
-            (
-                false,
-                "You must have either staged changes or tracked files to commit",
-            )
+            (false, "No changes to commit")
         } else if self.pending_commit.is_some() {
             (false, "Commit in progress")
         } else if self.custom_or_suggested_commit_message(cx).is_none() {
@@ -2561,7 +2600,7 @@ impl GitPanel {
         let text;
         let action;
         let tooltip;
-        if self.total_staged_count() == self.entry_count {
+        if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
             text = "Unstage All";
             action = git::UnstageAll.boxed_clone();
             tooltip = "git reset";
@@ -2571,12 +2610,22 @@ impl GitPanel {
             tooltip = "git add --all ."
         }
 
+        let change_string = match self.entry_count {
+            0 => "No Changes".to_string(),
+            1 => "1 Change".to_string(),
+            _ => format!("{} Changes", self.entry_count),
+        };
+
         self.panel_header_container(window, cx)
             .px_2()
             .child(
-                panel_button("Open Diff")
+                panel_button(change_string)
                     .color(Color::Muted)
-                    .tooltip(Tooltip::for_action_title("Open diff", &Diff))
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Open diff",
+                        &Diff,
+                        &self.focus_handle,
+                    ))
                     .on_click(|_, _, cx| {
                         cx.defer(|cx| {
                             cx.dispatch_action(&Diff);
@@ -2584,9 +2633,15 @@ impl GitPanel {
                     }),
             )
             .child(div().flex_grow()) // spacer
+            .child(self.render_overflow_menu("overflow_menu"))
             .child(
                 panel_filled_button(text)
-                    .tooltip(Tooltip::for_action_title(tooltip, action.as_ref()))
+                    .tooltip(Tooltip::for_action_title_in(
+                        tooltip,
+                        action.as_ref(),
+                        &self.focus_handle,
+                    ))
+                    .disabled(self.entry_count == 0)
                     .on_click(move |_, _, cx| {
                         let action = action.boxed_clone();
                         cx.defer(move |cx| {
@@ -3178,6 +3233,7 @@ impl GitPanel {
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
+                .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile.boxed_clone())
                 .separator()
@@ -3194,7 +3250,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = git_panel_context_menu(window, cx);
+        let context_menu = git_panel_context_menu(self.focus_handle.clone(), window, cx);
         self.set_context_menu(context_menu, position, window, cx);
     }
 
@@ -3322,7 +3378,8 @@ impl GitPanel {
                 el.border_color(cx.theme().colors().border_focused)
             })
             .px(rems(0.75)) // ~12px
-            // .flex_none()
+            .overflow_hidden()
+            .flex_none()
             .gap_1p5()
             .bg(base_bg)
             .hover(|this| this.bg(hover_bg))
@@ -3477,10 +3534,16 @@ impl Render for GitPanel {
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(has_write_access && !project.is_read_only(cx), |this| {
-                this.on_action(cx.listener(|this, &ToggleStaged, window, cx| {
-                    this.toggle_staged_for_selected(&ToggleStaged, window, cx)
-                }))
-                .on_action(cx.listener(GitPanel::commit))
+                this.on_action(cx.listener(Self::toggle_staged_for_selected))
+                    .on_action(cx.listener(GitPanel::commit))
+                    .on_action(cx.listener(Self::stage_all))
+                    .on_action(cx.listener(Self::unstage_all))
+                    .on_action(cx.listener(Self::stage_selected))
+                    .on_action(cx.listener(Self::unstage_selected))
+                    .on_action(cx.listener(Self::restore_tracked_files))
+                    .on_action(cx.listener(Self::revert_selected))
+                    .on_action(cx.listener(Self::clean_all))
+                    .on_action(cx.listener(Self::generate_commit_message_action))
             })
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_next))
@@ -3489,16 +3552,9 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_file))
-            .on_action(cx.listener(Self::revert_selected))
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
-            .on_action(cx.listener(Self::toggle_staged_for_selected))
-            .on_action(cx.listener(Self::stage_all))
-            .on_action(cx.listener(Self::unstage_all))
-            .on_action(cx.listener(Self::restore_tracked_files))
-            .on_action(cx.listener(Self::clean_all))
             .on_action(cx.listener(Self::expand_commit_editor))
-            .on_action(cx.listener(Self::generate_commit_message_action))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
@@ -3720,23 +3776,11 @@ impl PanelRepoFooter {
             git_panel: None,
         }
     }
-
-    fn render_overflow_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
-        PopoverMenu::new(id.into())
-            .trigger(
-                IconButton::new("overflow-menu-trigger", IconName::EllipsisVertical)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted),
-            )
-            .menu(move |window, cx| Some(git_panel_context_menu(window, cx)))
-            .anchor(Corner::TopRight)
-    }
 }
 
 impl RenderOnce for PanelRepoFooter {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_repo = self.active_repository.clone();
-        let overflow_menu_id: SharedString = format!("overflow-menu-{}", active_repo).into();
         let repo_selector_trigger = Button::new("repo-selector", active_repo)
             .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
@@ -3816,6 +3860,7 @@ impl RenderOnce for PanelRepoFooter {
             .h(px(36.))
             .items_center()
             .justify_between()
+            .gap_1()
             .child(
                 h_flex()
                     .flex_1()
@@ -3848,7 +3893,6 @@ impl RenderOnce for PanelRepoFooter {
                     .gap_1()
                     .flex_shrink_0()
                     .children(spinner)
-                    .child(self.render_overflow_menu(overflow_menu_id))
                     .when_some(branch, |this, branch| {
                         let mut focus_handle = None;
                         if let Some(git_panel) = self.git_panel.as_ref() {

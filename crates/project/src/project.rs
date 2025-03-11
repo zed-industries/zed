@@ -844,6 +844,7 @@ impl Project {
                 GitStore::new(
                     &worktree_store,
                     buffer_store.clone(),
+                    Some(environment.clone()),
                     client.clone().into(),
                     None,
                     cx,
@@ -972,6 +973,7 @@ impl Project {
                 GitStore::new(
                     &worktree_store,
                     buffer_store.clone(),
+                    Some(environment.clone()),
                     ssh_proto.clone(),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
@@ -1116,7 +1118,6 @@ impl Project {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
         subscriptions: [EntitySubscription; 5],
@@ -1179,6 +1180,7 @@ impl Project {
             GitStore::new(
                 &worktree_store,
                 buffer_store.clone(),
+                None,
                 client.clone().into(),
                 Some(ProjectId(remote_id)),
                 cx,

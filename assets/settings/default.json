@@ -1300,8 +1300,7 @@
   },
   // Settings for auto-closing of JSX tags.
   "jsx_tag_auto_close": {
-    // // Whether to auto-close JSX tags.
-    // "enabled": true
+    "enabled": true
   },
   // LSP Specific settings.
   "lsp": {

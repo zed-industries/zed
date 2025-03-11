@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use assistant_tool::Tool;
+use assistant_tool::{Tool, ToolSource};
 use gpui::{App, Entity, Task};
 use project::Project;
 
@@ -35,6 +35,12 @@ impl Tool for ContextServerTool {
 
     fn description(&self) -> String {
         self.tool.description.clone().unwrap_or_default()
+    }
+
+    fn source(&self) -> ToolSource {
+        ToolSource::ContextServer {
+            id: self.server_id.clone().into(),
+        }
     }
 
     fn input_schema(&self) -> serde_json::Value {

@@ -29,7 +29,7 @@ use super::button_icon::ButtonIcon;
 /// use ui::prelude::*;
 ///
 /// Button::new("button_id", "Click me!")
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
@@ -44,7 +44,7 @@ use super::button_icon::ButtonIcon;
 /// Button::new("button_id", "Click me!")
 ///     .icon(IconName::Check)
 ///     .selected(true)
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
@@ -58,7 +58,7 @@ use super::button_icon::ButtonIcon;
 /// Button::new("button_id", "Click me!")
 ///     .selected(true)
 ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
@@ -72,7 +72,7 @@ use super::button_icon::ButtonIcon;
 ///
 /// let button = Button::new("button_id", "Click me!")
 ///     .full_width()
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
@@ -230,7 +230,7 @@ impl Toggleable for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .selected(true)
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -254,7 +254,7 @@ impl SelectableButton for Button {
     /// Button::new("button_id", "Click me!")
     ///     .selected(true)
     ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -278,7 +278,7 @@ impl Disableable for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .disabled(true)
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -319,7 +319,7 @@ impl FixedWidth for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .width(px(100.).into())
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -339,7 +339,7 @@ impl FixedWidth for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .full_width()
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -383,7 +383,7 @@ impl ButtonCommon for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .tooltip(Tooltip::text_f("This is a tooltip", cx))
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
