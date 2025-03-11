@@ -934,7 +934,10 @@ mod tests {
 
         let test_session = TestSession::init(cx).await;
         let output = test_session.test_success(script, cx).await;
-        assert_eq!(output, "File: /file1.txt\nMatches:\n  world\n");
+        assert_eq!(
+            output,
+            concat!("File: ", path!("/file1.txt"), "\nMatches:\n  world\n")
+        );
     }
 
     // io.open
