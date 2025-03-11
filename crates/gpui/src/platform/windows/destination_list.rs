@@ -44,16 +44,6 @@ impl DockMenuItem {
 pub(crate) fn update_jump_list(
     entries: &[&Vec<String>],
     dock_menus: &[DockMenuItem],
-) -> Option<Vec<Vec<String>>> {
-    update_jump_list_inner(entries, dock_menus)
-        .log_err()
-        .flatten()
-}
-
-#[inline]
-fn update_jump_list_inner(
-    entries: &[&Vec<String>],
-    dock_menus: &[DockMenuItem],
 ) -> anyhow::Result<Option<Vec<Vec<String>>>> {
     let (list, removed) = create_destination_list()?;
     add_recent_folders(&list, entries, removed.as_ref())?;
@@ -138,6 +128,8 @@ fn add_recent_folders(
             );
 
             let description = HSTRING::from(folder_path.join("\n"));
+            // simulate folder icon
+            // https://github.com/microsoft/vscode/blob/7a5dc239516a8953105da34f84bae152421a8886/src/vs/platform/workspaces/electron-main/workspacesHistoryMainService.ts#L380
             let icon = HSTRING::from("explorer.exe");
 
             let display = folder_path
