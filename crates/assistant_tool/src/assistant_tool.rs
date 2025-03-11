@@ -14,7 +14,7 @@ pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub enum ToolSource {
     /// A native tool built-in to Zed.
     Native,

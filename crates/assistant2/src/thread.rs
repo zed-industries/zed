@@ -355,16 +355,13 @@ impl Thread {
                 input_schema: ScriptingTool::input_schema(),
             });
 
-            tools.extend(
-                self.tools()
-                    .tools(cx)
-                    .into_iter()
-                    .map(|tool| LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(),
-                    }),
-            );
+            tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
+                LanguageModelRequestTool {
+                    name: tool.name(),
+                    description: tool.description(),
+                    input_schema: tool.input_schema(),
+                }
+            }));
 
             request.tools = tools;
         }

@@ -28,6 +28,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
+use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 
 pub struct MessageEditor {
@@ -39,6 +40,7 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
+    tool_selector: Entity<ToolSelector>,
     use_tools: bool,
     edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
@@ -53,6 +55,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let tools = thread.read(cx).tools().clone();
         let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
@@ -118,6 +121,7 @@ impl MessageEditor {
                     cx,
                 )
             }),
+            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
             use_tools: false,
             edits_expanded: false,
             _subscriptions: subscriptions,
@@ -538,23 +542,25 @@ impl Render for MessageEditor {
                                 h_flex()
                                     .justify_between()
                                     .child(
-                                        Switch::new("use-tools", self.use_tools.into())
-                                            .label("Tools")
-                                            .on_click(cx.listener(
-                                                |this, selection, _window, _cx| {
-                                                    this.use_tools = match selection {
-                                                        ToggleState::Selected => true,
-                                                        ToggleState::Unselected
-                                                        | ToggleState::Indeterminate => false,
-                                                    };
-                                                },
-                                            ))
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &ChatMode,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )),
+                                        h_flex().gap_2().child(self.tool_selector.clone()).child(
+                                            Switch::new("use-tools", self.use_tools.into())
+                                                .label("Tools")
+                                                .on_click(cx.listener(
+                                                    |this, selection, _window, _cx| {
+                                                        this.use_tools = match selection {
+                                                            ToggleState::Selected => true,
+                                                            ToggleState::Unselected
+                                                            | ToggleState::Indeterminate => false,
+                                                        };
+                                                    },
+                                                ))
+                                                .key_binding(KeyBinding::for_action_in(
+                                                    &ChatMode,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )),
+                                        ),
                                     )
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
