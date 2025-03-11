@@ -229,7 +229,7 @@ impl MarkdownPreviewView {
                                                 s.bg(cx.theme().colors().border_variant)
                                             }
                                         })
-                                        .rounded_sm();
+                                        .rounded_xs();
 
                                     container.child(
                                         div()

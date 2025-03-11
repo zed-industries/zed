@@ -2360,7 +2360,6 @@ impl OutlinePanel {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_search_match(
         &mut self,
         multi_buffer_snapshot: Option<&MultiBufferSnapshot>,
@@ -2452,7 +2451,6 @@ impl OutlinePanel {
         ))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
         rendered_entry: PanelEntry,
@@ -3836,7 +3834,6 @@ impl OutlinePanel {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_entry(
         &self,
         state: &mut GenerationState,
@@ -4054,7 +4051,6 @@ impl OutlinePanel {
         update_cached_entries
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
         state: &mut GenerationState,
@@ -4113,7 +4109,6 @@ impl OutlinePanel {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
@@ -5169,7 +5164,7 @@ mod tests {
     use search::project_search::{self, perform_project_search};
     use serde_json::json;
     use util::path;
-    use workspace::OpenVisible;
+    use workspace::{OpenOptions, OpenVisible};
 
     use super::*;
 
@@ -5780,7 +5775,10 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![PathBuf::from("/root/two")],
-                    OpenVisible::OnlyDirectories,
+                    OpenOptions {
+                        visible: Some(OpenVisible::OnlyDirectories),
+                        ..Default::default()
+                    },
                     None,
                     window,
                     cx,
@@ -5971,7 +5969,15 @@ struct OutlineEntryExcerpt {
 
         let _editor = workspace
             .update(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/root/src/lib.rs")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/root/src/lib.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .unwrap()
             .await

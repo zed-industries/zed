@@ -1,17 +1,15 @@
 use crate::commit::get_messages;
-use crate::{parse_git_remote_url, BuildCommitPermalinkParams, GitHostingProviderRegistry, Oid};
+use crate::Oid;
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::{ops::Range, path::Path};
 use text::Rope;
 use time::macros::format_description;
 use time::OffsetDateTime;
 use time::UtcOffset;
-use url::Url;
 
 pub use git2 as libgit;
 
@@ -19,7 +17,6 @@ pub use git2 as libgit;
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
-    pub permalinks: HashMap<Oid, Url>,
     pub remote_url: Option<String>,
 }
 
@@ -30,32 +27,15 @@ impl Blame {
         path: &Path,
         content: &Rope,
         remote_url: Option<String>,
-        provider_registry: Arc<GitHostingProviderRegistry>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, content)?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
-        let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
-        let parsed_remote_url = remote_url
-            .as_deref()
-            .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
-            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
-            // now do the parsing.
-            if let Some((provider, remote)) = parsed_remote_url.as_ref() {
-                permalinks.entry(entry.sha).or_insert_with(|| {
-                    provider.build_commit_permalink(
-                        remote,
-                        BuildCommitPermalinkParams {
-                            sha: entry.sha.to_string().as_str(),
-                        },
-                    )
-                });
-            }
         }
 
         let shas = unique_shas.into_iter().collect::<Vec<_>>();
@@ -64,7 +44,6 @@ impl Blame {
 
         Ok(Self {
             entries,
-            permalinks,
             messages,
             remote_url,
         })

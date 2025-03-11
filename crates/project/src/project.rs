@@ -5,7 +5,6 @@ pub mod debounced_delay;
 pub mod git;
 pub mod image_store;
 pub mod lsp_command;
-pub mod lsp_ext_command;
 pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
@@ -23,7 +22,7 @@ mod project_tests;
 mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
-pub use environment::EnvironmentErrorMessage;
+pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::Repository;
 pub mod search_history;
 mod yarn;
@@ -46,11 +45,7 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use ::git::{
-    blame::Blame,
-    repository::{Branch, GitRepository, RepoPath},
-    status::FileStatus,
-};
+use ::git::{blame::Blame, repository::GitRepository, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter,
     Hsla, SharedString, Task, WeakEntity, Window,
@@ -369,19 +364,115 @@ pub struct Completion {
     pub new_text: String,
     /// A label for this completion that is shown in the menu.
     pub label: CodeLabel,
-    /// The id of the language server that produced this completion.
-    pub server_id: LanguageServerId,
     /// The documentation for this completion.
     pub documentation: Option<CompletionDocumentation>,
-    /// The raw completion provided by the language server.
-    pub lsp_completion: lsp::CompletionItem,
-    /// Whether this completion has been resolved, to ensure it happens once per completion.
-    pub resolved: bool,
+    /// Completion data source which it was constructed from.
+    pub source: CompletionSource,
     /// An optional callback to invoke when this completion is confirmed.
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CompletionSource {
+    Lsp {
+        /// The id of the language server that produced this completion.
+        server_id: LanguageServerId,
+        /// The raw completion provided by the language server.
+        lsp_completion: Box<lsp::CompletionItem>,
+        /// A set of defaults for this completion item.
+        lsp_defaults: Option<Arc<lsp::CompletionListItemDefaults>>,
+        /// Whether this completion has been resolved, to ensure it happens once per completion.
+        resolved: bool,
+    },
+    Custom,
+}
+
+impl CompletionSource {
+    pub fn server_id(&self) -> Option<LanguageServerId> {
+        if let CompletionSource::Lsp { server_id, .. } = self {
+            Some(*server_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn lsp_completion(&self, apply_defaults: bool) -> Option<Cow<lsp::CompletionItem>> {
+        if let Self::Lsp {
+            lsp_completion,
+            lsp_defaults,
+            ..
+        } = self
+        {
+            if apply_defaults {
+                if let Some(lsp_defaults) = lsp_defaults {
+                    let mut completion_with_defaults = *lsp_completion.clone();
+                    let default_commit_characters = lsp_defaults.commit_characters.as_ref();
+                    let default_edit_range = lsp_defaults.edit_range.as_ref();
+                    let default_insert_text_format = lsp_defaults.insert_text_format.as_ref();
+                    let default_insert_text_mode = lsp_defaults.insert_text_mode.as_ref();
+
+                    if default_commit_characters.is_some()
+                        || default_edit_range.is_some()
+                        || default_insert_text_format.is_some()
+                        || default_insert_text_mode.is_some()
+                    {
+                        if completion_with_defaults.commit_characters.is_none()
+                            && default_commit_characters.is_some()
+                        {
+                            completion_with_defaults.commit_characters =
+                                default_commit_characters.cloned()
+                        }
+                        if completion_with_defaults.text_edit.is_none() {
+                            match default_edit_range {
+                                Some(lsp::CompletionListItemDefaultsEditRange::Range(range)) => {
+                                    completion_with_defaults.text_edit =
+                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                            range: *range,
+                                            new_text: completion_with_defaults.label.clone(),
+                                        }))
+                                }
+                                Some(
+                                    lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                        insert,
+                                        replace,
+                                    },
+                                ) => {
+                                    completion_with_defaults.text_edit =
+                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                            lsp::InsertReplaceEdit {
+                                                new_text: completion_with_defaults.label.clone(),
+                                                insert: *insert,
+                                                replace: *replace,
+                                            },
+                                        ))
+                                }
+                                None => {}
+                            }
+                        }
+                        if completion_with_defaults.insert_text_format.is_none()
+                            && default_insert_text_format.is_some()
+                        {
+                            completion_with_defaults.insert_text_format =
+                                default_insert_text_format.cloned()
+                        }
+                        if completion_with_defaults.insert_text_mode.is_none()
+                            && default_insert_text_mode.is_some()
+                        {
+                            completion_with_defaults.insert_text_mode =
+                                default_insert_text_mode.cloned()
+                        }
+                    }
+                    return Some(Cow::Owned(completion_with_defaults));
+                }
+            }
+            Some(Cow::Borrowed(lsp_completion))
+        } else {
+            None
+        }
+    }
 }
 
 impl std::fmt::Debug for Completion {
@@ -390,9 +481,8 @@ impl std::fmt::Debug for Completion {
             .field("old_range", &self.old_range)
             .field("new_text", &self.new_text)
             .field("label", &self.label)
-            .field("server_id", &self.server_id)
             .field("documentation", &self.documentation)
-            .field("lsp_completion", &self.lsp_completion)
+            .field("source", &self.source)
             .finish()
     }
 }
@@ -402,9 +492,7 @@ impl std::fmt::Debug for Completion {
 pub(crate) struct CoreCompletion {
     old_range: Range<Anchor>,
     new_text: String,
-    server_id: LanguageServerId,
-    lsp_completion: lsp::CompletionItem,
-    resolved: bool,
+    source: CompletionSource,
 }
 
 /// A code action provided by a language server.
@@ -415,7 +503,48 @@ pub struct CodeAction {
     /// The range of the buffer where this code action is applicable.
     pub range: Range<Anchor>,
     /// The raw code action provided by the language server.
-    pub lsp_action: lsp::CodeAction,
+    /// Can be either an action or a command.
+    pub lsp_action: LspAction,
+}
+
+/// An action sent back by a language server.
+#[derive(Clone, Debug)]
+pub enum LspAction {
+    /// An action with the full data, may have a command or may not.
+    /// May require resolving.
+    Action(Box<lsp::CodeAction>),
+    /// A command data to run as an action.
+    Command(lsp::Command),
+}
+
+impl LspAction {
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Action(action) => &action.title,
+            Self::Command(command) => &command.title,
+        }
+    }
+
+    fn action_kind(&self) -> Option<lsp::CodeActionKind> {
+        match self {
+            Self::Action(action) => action.kind.clone(),
+            Self::Command(_) => Some(lsp::CodeActionKind::new("command")),
+        }
+    }
+
+    fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
+        match self {
+            Self::Action(action) => action.edit.as_ref(),
+            Self::Command(_) => None,
+        }
+    }
+
+    fn command(&self) -> Option<&lsp::Command> {
+        match self {
+            Self::Action(action) => action.command.as_ref(),
+            Self::Command(command) => Some(command),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -711,8 +840,16 @@ impl Project {
                 )
             });
 
-            let git_store =
-                cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
+            let git_store = cx.new(|cx| {
+                GitStore::new(
+                    &worktree_store,
+                    buffer_store.clone(),
+                    Some(environment.clone()),
+                    client.clone().into(),
+                    None,
+                    cx,
+                )
+            });
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -836,14 +973,14 @@ impl Project {
                 GitStore::new(
                     &worktree_store,
                     buffer_store.clone(),
-                    Some(ssh_proto.clone()),
+                    Some(environment.clone()),
+                    ssh_proto.clone(),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
                 )
             });
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
-            cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
 
             let this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -981,7 +1118,6 @@ impl Project {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
         subscriptions: [EntitySubscription; 5],
@@ -1044,7 +1180,8 @@ impl Project {
             GitStore::new(
                 &worktree_store,
                 buffer_store.clone(),
-                Some(client.clone().into()),
+                None,
+                client.clone().into(),
                 Some(ProjectId(remote_id)),
                 cx,
             )
@@ -1328,9 +1465,9 @@ impl Project {
         self.environment.read(cx).environment_errors()
     }
 
-    pub fn remove_environment_error(&mut self, cx: &mut Context<Self>, worktree_id: WorktreeId) {
-        self.environment.update(cx, |environment, _| {
-            environment.remove_environment_error(worktree_id);
+    pub fn remove_environment_error(&mut self, worktree_id: WorktreeId, cx: &mut Context<Self>) {
+        self.environment.update(cx, |environment, cx| {
+            environment.remove_environment_error(worktree_id, cx);
         });
     }
 
@@ -1721,7 +1858,6 @@ impl Project {
         };
 
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
-        cx.notify();
         Ok(())
     }
 
@@ -1737,7 +1873,6 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.send_project_updates(cx);
         });
-        cx.notify();
         cx.emit(Event::Reshared);
         Ok(())
     }
@@ -1767,13 +1902,12 @@ impl Project {
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
         cx.emit(Event::Rejoined);
-        cx.notify();
         Ok(())
     }
 
     pub fn unshare(&mut self, cx: &mut Context<Self>) -> Result<()> {
         self.unshare_internal(cx)?;
-        cx.notify();
+        cx.emit(Event::RemoteIdChanged(None));
         Ok(())
     }
 
@@ -1817,7 +1951,6 @@ impl Project {
         }
         self.disconnected_from_host_internal(cx);
         cx.emit(Event::DisconnectedFromHost);
-        cx.notify();
     }
 
     pub fn set_role(&mut self, role: proto::ChannelRole, cx: &mut Context<Self>) {
@@ -2276,7 +2409,6 @@ impl Project {
             BufferStoreEvent::BufferAdded(buffer) => {
                 self.register_buffer(buffer, cx).log_err();
             }
-            BufferStoreEvent::BufferChangedFilePath { .. } => {}
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 if let Some(ref ssh_client) = self.ssh_client {
                     ssh_client
@@ -2289,6 +2421,7 @@ impl Project {
                         .log_err();
                 }
             }
+            _ => {}
         }
     }
 
@@ -2466,15 +2599,11 @@ impl Project {
         }
     }
 
-    fn on_worktree_added(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
-        {
-            let mut remotely_created_models = self.remotely_created_models.lock();
-            if remotely_created_models.retain_count > 0 {
-                remotely_created_models.worktrees.push(worktree.clone())
-            }
+    fn on_worktree_added(&mut self, worktree: &Entity<Worktree>, _: &mut Context<Self>) {
+        let mut remotely_created_models = self.remotely_created_models.lock();
+        if remotely_created_models.retain_count > 0 {
+            remotely_created_models.worktrees.push(worktree.clone())
         }
-        cx.observe(worktree, |_, _, cx| cx.notify()).detach();
-        cx.notify();
     }
 
     fn on_worktree_released(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
@@ -2486,8 +2615,6 @@ impl Project {
                 })
                 .log_err();
         }
-
-        cx.notify();
     }
 
     fn on_buffer_event(
@@ -3705,21 +3832,6 @@ impl Project {
         worktree.get_local_repo(&root_entry)?.repo().clone().into()
     }
 
-    pub fn branches(&self, project_path: ProjectPath, cx: &App) -> Task<Result<Vec<Branch>>> {
-        self.worktree_store().read(cx).branches(project_path, cx)
-    }
-
-    pub fn update_or_create_branch(
-        &self,
-        repository: ProjectPath,
-        new_branch: String,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        self.worktree_store()
-            .read(cx)
-            .update_or_create_branch(repository, new_branch, cx)
-    }
-
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,
@@ -3776,7 +3888,6 @@ impl Project {
             cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
-            cx.notify();
         })?;
 
         Ok(())
@@ -3820,7 +3931,6 @@ impl Project {
                 old_peer_id,
                 new_peer_id,
             });
-            cx.notify();
             Ok(())
         })?
     }
@@ -3848,7 +3958,6 @@ impl Project {
             });
 
             cx.emit(Event::CollaboratorLeft(peer_id));
-            cx.notify();
             Ok(())
         })?
     }
@@ -4264,7 +4373,6 @@ impl Project {
         worktrees: Vec<proto::WorktreeMetadata>,
         cx: &mut Context<Project>,
     ) -> Result<()> {
-        cx.notify();
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
         })
@@ -4351,35 +4459,8 @@ impl Project {
         self.git_store.read(cx).all_repositories()
     }
 
-    pub fn repository_and_path_for_buffer_id(
-        &self,
-        buffer_id: BufferId,
-        cx: &App,
-    ) -> Option<(Entity<Repository>, RepoPath)> {
-        let path = self
-            .buffer_for_id(buffer_id, cx)?
-            .read(cx)
-            .project_path(cx)?;
-
-        let mut found: Option<(Entity<Repository>, RepoPath)> = None;
-        for repo_handle in self.git_store.read(cx).all_repositories() {
-            let repo = repo_handle.read(cx);
-            if repo.worktree_id != path.worktree_id {
-                continue;
-            }
-            let Ok(relative_path) = repo.repository_entry.relativize(&path.path) else {
-                continue;
-            };
-            if found
-                .as_ref()
-                .is_some_and(|(found, _)| repo.contains_sub_repo(found, cx))
-            {
-                continue;
-            }
-            found = Some((repo_handle.clone(), relative_path))
-        }
-
-        found
+    pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        self.git_store.read(cx).status_for_buffer_id(buffer_id, cx)
     }
 }
 
@@ -4619,27 +4700,41 @@ impl Completion {
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
-        let kind_key = match self.lsp_completion.kind {
-            Some(lsp::CompletionItemKind::KEYWORD) => 0,
-            Some(lsp::CompletionItemKind::VARIABLE) => 1,
-            _ => 2,
-        };
+        const DEFAULT_KIND_KEY: usize = 2;
+        let kind_key = self
+            .source
+            // `lsp::CompletionListItemDefaults` has no `kind` field
+            .lsp_completion(false)
+            .and_then(|lsp_completion| lsp_completion.kind)
+            .and_then(|lsp_completion_kind| match lsp_completion_kind {
+                lsp::CompletionItemKind::KEYWORD => Some(0),
+                lsp::CompletionItemKind::VARIABLE => Some(1),
+                _ => None,
+            })
+            .unwrap_or(DEFAULT_KIND_KEY);
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }
 
     /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
-        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+        self.source
+            // `lsp::CompletionListItemDefaults` has `insert_text_format` field
+            .lsp_completion(true)
+            .map_or(false, |lsp_completion| {
+                lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+            })
     }
 
     /// Returns the corresponding color for this completion.
     ///
     /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
     pub fn color(&self) -> Option<Hsla> {
-        match self.lsp_completion.kind {
-            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
-            _ => None,
+        // `lsp::CompletionListItemDefaults` has no `kind` field
+        let lsp_completion = self.source.lsp_completion(false)?;
+        if lsp_completion.kind? == CompletionItemKind::COLOR {
+            return color_extractor::extract_color(&lsp_completion);
         }
+        None
     }
 }
 

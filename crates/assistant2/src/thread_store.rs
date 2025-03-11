@@ -26,7 +26,6 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct ThreadStore {
-    #[allow(unused)]
     project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
     context_server_manager: Entity<ContextServerManager>,
@@ -78,7 +77,7 @@ impl ThreadStore {
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
-        cx.new(|cx| Thread::new(self.tools.clone(), cx))
+        cx.new(|cx| Thread::new(self.project.clone(), self.tools.clone(), cx))
     }
 
     pub fn open_thread(
@@ -96,7 +95,15 @@ impl ThreadStore {
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
             this.update(&mut cx, |this, cx| {
-                cx.new(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
+                cx.new(|cx| {
+                    Thread::from_saved(
+                        id.clone(),
+                        thread,
+                        this.project.clone(),
+                        this.tools.clone(),
+                        cx,
+                    )
+                })
             })
         })
     }
@@ -109,28 +116,35 @@ impl ThreadStore {
                 updated_at: thread.updated_at(),
                 messages: thread
                     .messages()
-                    .map(|message| SavedMessage {
-                        id: message.id,
-                        role: message.role,
-                        text: message.text.clone(),
-                        tool_uses: thread
+                    .map(|message| {
+                        let all_tool_uses = thread
                             .tool_uses_for_message(message.id)
                             .into_iter()
+                            .chain(thread.scripting_tool_uses_for_message(message.id))
                             .map(|tool_use| SavedToolUse {
                                 id: tool_use.id,
                                 name: tool_use.name,
                                 input: tool_use.input,
                             })
-                            .collect(),
-                        tool_results: thread
+                            .collect();
+                        let all_tool_results = thread
                             .tool_results_for_message(message.id)
                             .into_iter()
+                            .chain(thread.scripting_tool_results_for_message(message.id))
                             .map(|tool_result| SavedToolResult {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
                                 content: tool_result.content.clone(),
                             })
-                            .collect(),
+                            .collect();
+
+                        SavedMessage {
+                            id: message.id,
+                            role: message.role,
+                            text: message.text.clone(),
+                            tool_uses: all_tool_uses,
+                            tool_results: all_tool_results,
+                        }
                     })
                     .collect(),
             };

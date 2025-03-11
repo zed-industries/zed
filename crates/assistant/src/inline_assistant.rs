@@ -35,10 +35,10 @@ use language_model::{
     report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
-use language_model_selector::inline_language_model_selector;
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::{CodeAction, ProjectTransaction};
+use project::{CodeAction, LspAction, ProjectTransaction};
 use prompt_store::PromptBuilder;
 use rope::Rope;
 use settings::{update_settings_file, Settings, SettingsStore};
@@ -386,7 +386,6 @@ impl InlineAssistant {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1425,6 +1424,7 @@ enum PromptEditorEvent {
 struct PromptEditor {
     id: InlineAssistId,
     editor: Entity<Editor>,
+    language_model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
@@ -1438,7 +1438,6 @@ struct PromptEditor {
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakEntity<Workspace>>,
     show_rate_limit_notice: bool,
-    fs: Arc<dyn Fs>,
 }
 
 #[derive(Copy, Clone)]
@@ -1567,7 +1566,6 @@ impl Render for PromptEditor {
                 ]
             }
         });
-        let fs_clone = self.fs.clone();
 
         h_flex()
             .key_context("PromptEditor")
@@ -1590,13 +1588,29 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(inline_language_model_selector(move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs_clone.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    }))
+                    .child(LanguageModelSelectorPopoverMenu::new(
+                        self.language_model_selector.clone(),
+                        IconButton::new("context", IconName::SettingsAlt)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted),
+                        move |window, cx| {
+                            Tooltip::with_meta(
+                                format!(
+                                    "Using {}",
+                                    LanguageModelRegistry::read_global(cx)
+                                        .active_model()
+                                        .map(|model| model.name().0)
+                                        .unwrap_or_else(|| "No model selected".into()),
+                                ),
+                                None,
+                                "Change Model",
+                                window,
+                                cx,
+                            )
+                        },
+                        gpui::Corner::TopRight,
+                    ))
                     .map(|el| {
                         let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
                             return el;
@@ -1659,7 +1673,6 @@ impl Focusable for PromptEditor {
 impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
-    #[allow(clippy::too_many_arguments)]
     fn new(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -1709,8 +1722,21 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
-            fs,
             editor: prompt_editor,
+            language_model_selector: cx.new(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }),
             edited_since_done: false,
             gutter_dimensions,
             prompt_history,
@@ -2305,7 +2331,6 @@ struct InlineAssist {
 }
 
 impl InlineAssist {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
@@ -3541,10 +3566,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             Task::ready(Ok(vec![CodeAction {
                 server_id: language::LanguageServerId(0),
                 range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
-                lsp_action: lsp::CodeAction {
+                lsp_action: LspAction::Action(Box::new(lsp::CodeAction {
                     title: "Fix with Assistant".into(),
                     ..Default::default()
-                },
+                })),
             }]))
         } else {
             Task::ready(Ok(Vec::new()))

@@ -663,11 +663,13 @@ impl std::fmt::Debug for BufferDiff {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum BufferDiffEvent {
     DiffChanged {
         changed_range: Option<Range<text::Anchor>>,
     },
     LanguageChanged,
+    HunksStagedOrUnstaged(Option<Rope>),
 }
 
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
@@ -762,6 +764,17 @@ impl BufferDiff {
         self.secondary_diff.clone()
     }
 
+    pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
+        if let Some(secondary_diff) = &self.secondary_diff {
+            secondary_diff.update(cx, |diff, _| {
+                diff.inner.pending_hunks.clear();
+            });
+            cx.emit(BufferDiffEvent::DiffChanged {
+                changed_range: Some(Anchor::MIN..Anchor::MAX),
+            });
+        }
+    }
+
     pub fn stage_or_unstage_hunks(
         &mut self,
         stage: bool,
@@ -784,6 +797,9 @@ impl BufferDiff {
                 }
             });
         }
+        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
+            new_index_text.clone(),
+        ));
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
             let changed_range = first.buffer_range.start..last.buffer_range.end;
             cx.emit(BufferDiffEvent::DiffChanged {
@@ -812,7 +828,6 @@ impl BufferDiff {
         Some(start..end)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn update_diff(
         this: Entity<BufferDiff>,
         buffer: text::BufferSnapshot,
@@ -822,8 +837,8 @@ impl BufferDiff {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut AsyncApp,
-    ) -> anyhow::Result<Option<Range<Anchor>>> {
-        let snapshot = if base_text_changed || language_changed {
+    ) -> anyhow::Result<BufferDiffSnapshot> {
+        let inner = if base_text_changed || language_changed {
             cx.update(|cx| {
                 Self::build(
                     buffer.clone(),
@@ -845,18 +860,45 @@ impl BufferDiff {
             })?
             .await
         };
-
-        this.update(cx, |this, _| this.set_state(snapshot, &buffer))
+        Ok(BufferDiffSnapshot {
+            inner,
+            secondary_diff: None,
+        })
     }
 
-    pub fn update_diff_from(
+    pub fn set_snapshot(
         &mut self,
         buffer: &text::BufferSnapshot,
-        other: &Entity<Self>,
+        new_snapshot: BufferDiffSnapshot,
+        language_changed: bool,
+        secondary_changed_range: Option<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
-        let other = other.read(cx).inner.clone();
-        self.set_state(other, buffer)
+        let changed_range = self.set_state(new_snapshot.inner, buffer);
+        if language_changed {
+            cx.emit(BufferDiffEvent::LanguageChanged);
+        }
+
+        let changed_range = match (secondary_changed_range, changed_range) {
+            (None, None) => None,
+            (Some(unstaged_range), None) => self.range_to_hunk_range(unstaged_range, &buffer, cx),
+            (None, Some(uncommitted_range)) => Some(uncommitted_range),
+            (Some(unstaged_range), Some(uncommitted_range)) => {
+                let mut start = uncommitted_range.start;
+                let mut end = uncommitted_range.end;
+                if let Some(unstaged_range) = self.range_to_hunk_range(unstaged_range, &buffer, cx)
+                {
+                    start = unstaged_range.start.min(&uncommitted_range.start, &buffer);
+                    end = unstaged_range.end.max(&uncommitted_range.end, &buffer);
+                }
+                Some(start..end)
+            }
+        };
+
+        cx.emit(BufferDiffEvent::DiffChanged {
+            changed_range: changed_range.clone(),
+        });
+        changed_range
     }
 
     fn set_state(
@@ -898,6 +940,14 @@ impl BufferDiff {
                 .as_ref()
                 .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
         }
+    }
+
+    pub fn hunks<'a>(
+        &'a self,
+        buffer_snapshot: &'a text::BufferSnapshot,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        self.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer_snapshot, cx)
     }
 
     pub fn hunks_intersecting_range<'a>(

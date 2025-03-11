@@ -816,7 +816,6 @@ impl InlineAssistId {
 }
 
 impl PromptEditor<BufferCodegen> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new_buffer(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -857,6 +856,7 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let context_strip = cx.new(|cx| {
             ContextStrip::new(
@@ -880,7 +880,13 @@ impl PromptEditor<BufferCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(fs, prompt_editor.focus_handle(cx), window, cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle,
+                    prompt_editor.focus_handle(cx),
+                    window,
+                    cx,
+                )
             }),
             edited_since_done: false,
             prompt_history,
@@ -969,7 +975,6 @@ impl TerminalInlineAssistId {
 }
 
 impl PromptEditor<TerminalCodegen> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
@@ -1005,6 +1010,7 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let context_strip = cx.new(|cx| {
             ContextStrip::new(
@@ -1028,7 +1034,13 @@ impl PromptEditor<TerminalCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(fs, prompt_editor.focus_handle(cx), window, cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle.clone(),
+                    prompt_editor.focus_handle(cx),
+                    window,
+                    cx,
+                )
             }),
             edited_since_done: false,
             prompt_history,

@@ -38,7 +38,7 @@ use language_model::{
     Role,
 };
 use language_model_selector::{
-    assistant_language_model_selector, LanguageModelSelector, ToggleModelSelector,
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
@@ -197,7 +197,8 @@ pub struct ContextEditor {
     // the file is opened. In order to keep the worktree alive for the duration of the
     // context editor, we keep a reference here.
     dragged_file_worktrees: Vec<Entity<Worktree>>,
-    language_model_selector: PopoverMenuHandle<LanguageModelSelector>,
+    language_model_selector: Entity<LanguageModelSelector>,
+    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 pub const DEFAULT_TAB_TITLE: &str = "New Chat";
@@ -263,7 +264,7 @@ impl ContextEditor {
             image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
-            fs,
+            fs: fs.clone(),
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
@@ -275,7 +276,20 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
-            language_model_selector: PopoverMenuHandle::default(),
+            language_model_selector: cx.new(|cx| {
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }),
+            language_model_selector_menu_handle: PopoverMenuHandle::default(),
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -521,7 +535,6 @@ impl ContextEditor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn run_command(
         &mut self,
         command_range: Range<language::Anchor>,
@@ -1227,7 +1240,7 @@ impl ContextEditor {
             .child("Press")
             .child(
                 h_flex()
-                    .rounded_md()
+                    .rounded_sm()
                     .px_1()
                     .mr_0p5()
                     .border_1()
@@ -2043,7 +2056,6 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
@@ -2078,7 +2090,7 @@ impl ContextEditor {
                 .ml(gutter_width)
                 .pb_1()
                 .w(max_width - gutter_width)
-                .rounded_md()
+                .rounded_sm()
                 .border_1()
                 .border_color(theme.colors().border_variant)
                 .overflow_hidden()
@@ -2373,6 +2385,46 @@ impl ContextEditor {
                 )
             },
         )
+    }
+
+    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.editor().focus_handle(cx).clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            None => SharedString::from("No model selected"),
+        };
+
+        LanguageModelSelectorPopoverMenu::new(
+            self.language_model_selector.clone(),
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+            gpui::Corner::BottomLeft,
+        )
+        .with_handle(self.language_model_selector_menu_handle.clone())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2818,9 +2870,8 @@ impl Render for ContextEditor {
         } else {
             None
         };
-        let fs_clone = self.fs.clone();
 
-        let language_model_selector = self.language_model_selector.clone();
+        let language_model_selector = self.language_model_selector_menu_handle.clone();
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2873,18 +2924,11 @@ impl Render for ContextEditor {
                                 .gap_1()
                                 .child(self.render_inject_context_menu(cx))
                                 .child(ui::Divider::vertical())
-                                .child(div().pl_0p5().child(assistant_language_model_selector(
-                                    self.editor().focus_handle(cx),
-                                    Some(self.language_model_selector.clone()),
-                                    cx,
-                                    move |model, cx| {
-                                        update_settings_file::<AssistantSettings>(
-                                            fs_clone.clone(),
-                                            cx,
-                                            move |settings, _| settings.set_model(model.clone()),
-                                        );
-                                    },
-                                ))),
+                                .child(
+                                    div()
+                                        .pl_0p5()
+                                        .child(self.render_language_model_selector(cx)),
+                                ),
                         )
                         .child(
                             h_flex()
@@ -3376,7 +3420,7 @@ fn invoked_slash_command_fold_placeholder(
                 .ml_6()
                 .gap_2()
                 .bg(cx.theme().colors().surface_background)
-                .rounded_md()
+                .rounded_sm()
                 .child(Label::new(format!("/{}", command.name.clone())))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {

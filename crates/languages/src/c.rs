@@ -278,6 +278,9 @@ impl super::LspAdapter for CLspAdapter {
             "textDocument": {
                 "completion" : {
                     "editsNearCursor": true
+                },
+                "inactiveRegionsCapabilities": {
+                    "inactiveRegions": true,
                 }
             }
         });

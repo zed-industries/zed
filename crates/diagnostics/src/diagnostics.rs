@@ -311,7 +311,10 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Workspace>,
     ) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
-            workspace.activate_item(&existing, true, true, window, cx);
+            let is_active = workspace
+                .active_item(cx)
+                .is_some_and(|item| item.item_id() == existing.item_id());
+            workspace.activate_item(&existing, true, !is_active, window, cx);
         } else {
             let workspace_handle = cx.entity().downgrade();
 
@@ -973,7 +976,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 h_flex()
                     .gap_2()
                     .px_1()
-                    .rounded_md()
+                    .rounded_sm()
                     .bg(color.surface_background.opacity(0.5))
                     .map(|stack| {
                         stack.child(

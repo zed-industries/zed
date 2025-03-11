@@ -429,12 +429,14 @@ impl EditorTestContext {
                 if expected_selections.len() > 0 {
                     assert!(
                         is_selected,
-                        "excerpt {} should be selected. Got {:?}",
-                        ix,
-                        self.editor_state()
+                        "excerpt {ix} should be selected. got {:?}",
+                        self.editor_state(),
                     );
                 } else {
-                    assert!(!is_selected, "excerpt {} should not be selected", ix);
+                    assert!(
+                        !is_selected,
+                        "excerpt {ix} should not be selected, got: {selections:?}",
+                    );
                 }
                 continue;
             }

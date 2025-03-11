@@ -31,7 +31,7 @@ use smol::future::yield_now;
 use std::{
     any::type_name,
     borrow::Cow,
-    cell::{Ref, RefCell},
+    cell::{Cell, Ref, RefCell},
     cmp, fmt,
     future::Future,
     io,
@@ -39,6 +39,7 @@ use std::{
     mem,
     ops::{Range, RangeBounds, Sub},
     path::Path,
+    rc::Rc,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -76,6 +77,7 @@ pub struct MultiBuffer {
     history: History,
     title: Option<String>,
     capability: Capability,
+    buffer_changed_since_sync: Rc<Cell<bool>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,6 +123,7 @@ pub enum Event {
     Discarded,
     DirtyChanged,
     DiagnosticsUpdated,
+    BufferDiffChanged,
 }
 
 /// A diff hunk, representing a range of consequent lines in a multibuffer.
@@ -153,6 +156,11 @@ impl MultiBufferDiffHunk {
             kind,
             secondary: self.secondary_status,
         }
+    }
+
+    pub fn is_created_file(&self) -> bool {
+        self.diff_base_byte_range == (0..0)
+            && self.buffer_range == (text::Anchor::MIN..text::Anchor::MAX)
     }
 }
 
@@ -248,8 +256,10 @@ impl DiffState {
                     if let Some(changed_range) = changed_range.clone() {
                         this.buffer_diff_changed(diff, changed_range, cx)
                     }
+                    cx.emit(Event::BufferDiffChanged);
                 }
                 BufferDiffEvent::LanguageChanged => this.buffer_diff_language_changed(diff, cx),
+                _ => {}
             }),
             diff,
         }
@@ -494,7 +504,7 @@ struct BufferEdit {
     range: Range<usize>,
     new_text: Arc<str>,
     is_insertion: bool,
-    original_start_column: u32,
+    original_indent_column: Option<u32>,
     excerpt_id: ExcerptId,
 }
 
@@ -560,6 +570,7 @@ impl MultiBuffer {
             capability,
             title: None,
             buffers_by_path: Default::default(),
+            buffer_changed_since_sync: Default::default(),
             history: History {
                 next_transaction_id: clock::Lamport::default(),
                 undo_stack: Vec::new(),
@@ -579,6 +590,7 @@ impl MultiBuffer {
             subscriptions: Default::default(),
             singleton: false,
             capability,
+            buffer_changed_since_sync: Default::default(),
             history: History {
                 next_transaction_id: Default::default(),
                 undo_stack: Default::default(),
@@ -592,7 +604,11 @@ impl MultiBuffer {
 
     pub fn clone(&self, new_cx: &mut Context<Self>) -> Self {
         let mut buffers = HashMap::default();
+        let buffer_changed_since_sync = Rc::new(Cell::new(false));
         for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
+            buffer_state.buffer.update(new_cx, |buffer, _| {
+                buffer.record_changes(Rc::downgrade(&buffer_changed_since_sync));
+            });
             buffers.insert(
                 *buffer_id,
                 BufferState {
@@ -621,6 +637,7 @@ impl MultiBuffer {
             capability: self.capability,
             history: self.history.clone(),
             title: self.title.clone(),
+            buffer_changed_since_sync,
         }
     }
 
@@ -750,15 +767,15 @@ impl MultiBuffer {
                 return;
             }
 
-            let original_start_columns = match &mut autoindent_mode {
+            let original_indent_columns = match &mut autoindent_mode {
                 Some(AutoindentMode::Block {
-                    original_start_columns,
-                }) => mem::take(original_start_columns),
+                    original_indent_columns,
+                }) => mem::take(original_indent_columns),
                 _ => Default::default(),
             };
 
             let (buffer_edits, edited_excerpt_ids) =
-                this.convert_edits_to_buffer_edits(edits, &snapshot, &original_start_columns);
+                this.convert_edits_to_buffer_edits(edits, &snapshot, &original_indent_columns);
             drop(snapshot);
 
             let mut buffer_ids = Vec::new();
@@ -777,7 +794,7 @@ impl MultiBuffer {
                             mut range,
                             mut new_text,
                             mut is_insertion,
-                            original_start_column: original_indent_column,
+                            original_indent_column,
                             excerpt_id,
                         }) = edits.next()
                         {
@@ -820,7 +837,7 @@ impl MultiBuffer {
                         let deletion_autoindent_mode =
                             if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
                                 Some(AutoindentMode::Block {
-                                    original_start_columns: Default::default(),
+                                    original_indent_columns: Default::default(),
                                 })
                             } else {
                                 autoindent_mode.clone()
@@ -828,7 +845,7 @@ impl MultiBuffer {
                         let insertion_autoindent_mode =
                             if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
                                 Some(AutoindentMode::Block {
-                                    original_start_columns: original_indent_columns,
+                                    original_indent_columns,
                                 })
                             } else {
                                 autoindent_mode.clone()
@@ -850,13 +867,13 @@ impl MultiBuffer {
         &self,
         edits: Vec<(Range<usize>, Arc<str>)>,
         snapshot: &MultiBufferSnapshot,
-        original_start_columns: &[u32],
+        original_indent_columns: &[Option<u32>],
     ) -> (HashMap<BufferId, Vec<BufferEdit>>, Vec<ExcerptId>) {
         let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
         let mut edited_excerpt_ids = Vec::new();
         let mut cursor = snapshot.cursor::<usize>();
         for (ix, (range, new_text)) in edits.into_iter().enumerate() {
-            let original_start_column = original_start_columns.get(ix).copied().unwrap_or(0);
+            let original_indent_column = original_indent_columns.get(ix).copied().flatten();
 
             cursor.seek(&range.start);
             let mut start_region = cursor.region().expect("start offset out of bounds");
@@ -907,7 +924,7 @@ impl MultiBuffer {
                             range: buffer_start..buffer_end,
                             new_text,
                             is_insertion: true,
-                            original_start_column,
+                            original_indent_column,
                             excerpt_id: start_region.excerpt.id,
                         });
                 }
@@ -923,7 +940,7 @@ impl MultiBuffer {
                             range: start_excerpt_range,
                             new_text: new_text.clone(),
                             is_insertion: true,
-                            original_start_column,
+                            original_indent_column,
                             excerpt_id: start_region.excerpt.id,
                         });
                 }
@@ -936,7 +953,7 @@ impl MultiBuffer {
                             range: end_excerpt_range,
                             new_text: new_text.clone(),
                             is_insertion: false,
-                            original_start_column,
+                            original_indent_column,
                             excerpt_id: end_region.excerpt.id,
                         });
                 }
@@ -956,7 +973,7 @@ impl MultiBuffer {
                                 range: region.buffer_range,
                                 new_text: new_text.clone(),
                                 is_insertion: false,
-                                original_start_column,
+                                original_indent_column,
                                 excerpt_id: region.excerpt.id,
                             });
                     }
@@ -1068,6 +1085,11 @@ impl MultiBuffer {
             buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
         }
         self.history.start_transaction(now)
+    }
+
+    pub fn last_transaction_id(&self) -> Option<TransactionId> {
+        let last_transaction = self.history.undo_stack.last()?;
+        return Some(last_transaction.id);
     }
 
     pub fn end_transaction(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
@@ -1715,19 +1737,25 @@ impl MultiBuffer {
 
         self.sync(cx);
 
-        let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer_snapshot.remote_id();
 
         let mut buffers = self.buffers.borrow_mut();
-        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
-            last_version: buffer_snapshot.version().clone(),
-            last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
-            excerpts: Default::default(),
-            _subscriptions: [
-                cx.observe(&buffer, |_, _, cx| cx.notify()),
-                cx.subscribe(&buffer, Self::on_buffer_event),
-            ],
-            buffer: buffer.clone(),
+        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| {
+            self.buffer_changed_since_sync.replace(true);
+            buffer.update(cx, |buffer, _| {
+                buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
+            });
+            BufferState {
+                last_version: buffer_snapshot.version().clone(),
+                last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
+                excerpts: Default::default(),
+                _subscriptions: [
+                    cx.observe(&buffer, |_, _, cx| cx.notify()),
+                    cx.subscribe(&buffer, Self::on_buffer_event),
+                ],
+                buffer: buffer.clone(),
+            }
         });
 
         let mut snapshot = self.snapshot.borrow_mut();
@@ -2045,6 +2073,7 @@ impl MultiBuffer {
             .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
         let mut edits = Vec::new();
         let mut excerpt_ids = ids.iter().copied().peekable();
+        let mut removed_buffer_ids = Vec::new();
 
         while let Some(excerpt_id) = excerpt_ids.next() {
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
@@ -2067,7 +2096,7 @@ impl MultiBuffer {
                                 excerpt.buffer_id
                             );
                             buffers.remove(&excerpt.buffer_id);
-                            self.diffs.remove(&excerpt.buffer_id);
+                            removed_buffer_ids.push(excerpt.buffer_id);
                         }
                     }
                     cursor.next(&());
@@ -2108,6 +2137,10 @@ impl MultiBuffer {
         new_excerpts.append(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
+        for buffer_id in removed_buffer_ids {
+            self.diffs.remove(&buffer_id);
+            snapshot.diffs.remove(&buffer_id);
+        }
 
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
@@ -2218,6 +2251,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         self.sync(cx);
+        self.buffer_changed_since_sync.replace(true);
 
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
@@ -2696,6 +2730,11 @@ impl MultiBuffer {
     }
 
     fn sync(&self, cx: &App) {
+        let changed = self.buffer_changed_since_sync.replace(false);
+        if !changed {
+            return;
+        }
+
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
         let mut non_text_state_updated = false;
@@ -2741,9 +2780,10 @@ impl MultiBuffer {
         snapshot.has_deleted_file = has_deleted_file;
         snapshot.has_conflict = has_conflict;
 
-        snapshot.diffs.retain(|_, _| false);
         for (id, diff) in self.diffs.iter() {
-            snapshot.diffs.insert(*id, diff.diff.read(cx).snapshot(cx));
+            if snapshot.diffs.get(&id).is_none() {
+                snapshot.diffs.insert(*id, diff.diff.read(cx).snapshot(cx));
+            }
         }
 
         excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
@@ -2942,7 +2982,6 @@ impl MultiBuffer {
         snapshot.check_invariants();
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn recompute_diff_transforms_for_edit(
         &self,
         edit: &Edit<TypedOffset<Excerpt>>,
@@ -3506,10 +3545,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
-            let Some(diff) = self.diffs.get(&buffer.remote_id()) else {
-                log::debug!("no diff found for {:?}", buffer.remote_id());
-                return None;
-            };
+            let diff = self.diffs.get(&buffer.remote_id())?;
             let buffer_start = buffer.anchor_before(buffer_range.start);
             let buffer_end = buffer.anchor_after(buffer_range.end);
             Some(
@@ -3813,6 +3849,11 @@ impl MultiBufferSnapshot {
             // When there are no more metadata items for this excerpt, move to the next excerpt.
             else {
                 current_excerpt_metadata.take();
+                if let Some((end_excerpt_id, _)) = range_end {
+                    if excerpt.id == end_excerpt_id {
+                        return None;
+                    }
+                }
                 cursor.next_excerpt();
             }
         })
@@ -4134,6 +4175,9 @@ impl MultiBufferSnapshot {
         let region = cursor.region()?;
         let overshoot = offset - region.range.start;
         let buffer_offset = region.buffer_range.start + overshoot;
+        if buffer_offset > region.buffer.len() {
+            return None;
+        }
         Some((region.buffer, buffer_offset))
     }
 
@@ -4142,8 +4186,11 @@ impl MultiBufferSnapshot {
         cursor.seek(&point);
         let region = cursor.region()?;
         let overshoot = point - region.range.start;
-        let buffer_offset = region.buffer_range.start + overshoot;
-        Some((region.buffer, buffer_offset, region.is_main_buffer))
+        let buffer_point = region.buffer_range.start + overshoot;
+        if buffer_point > region.buffer.max_point() {
+            return None;
+        }
+        Some((region.buffer, buffer_point, region.is_main_buffer))
     }
 
     pub fn suggested_indents(

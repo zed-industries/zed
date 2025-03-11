@@ -1,0 +1,22 @@
+You can write a Lua script and I'll run it on my codebase and tell you what its
+output was, including both stdout as well as the git diff of changes it made to
+the filesystem. That way, you can get more information about the code base, or
+make changes to the code base directly.
+
+The Lua script will have access to `io` and it will run with the current working
+directory being in the root of the code base, so you can use it to explore,
+search, make changes, etc. You can also have the script print things, and I'll
+tell you what the output was. Note that `io` only has `open`, and then the file
+it returns only has the methods read, write, and close - it doesn't have popen
+or anything else.
+
+Also, I'm going to be putting this Lua script into JSON, so please don't use
+Lua's double quote syntax for string literals - use one of Lua's other syntaxes
+for string literals, so I don't have to escape the double quotes.
+
+There will be a global called `search` which accepts a regex (it's implemented
+using Rust's regex crate, so use that regex syntax) and runs that regex on the
+contents of every file in the code base (aside from gitignored files), then
+returns an array of tables with two fields: "path" (the path to the file that
+had the matches) and "matches" (an array of strings, with each string being a
+match that was found within the file).
