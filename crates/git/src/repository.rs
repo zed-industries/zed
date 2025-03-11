@@ -56,6 +56,14 @@ pub struct Upstream {
     pub tracking: UpstreamTracking,
 }
 
+impl Upstream {
+    pub fn remote_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split("/").next())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum UpstreamTracking {
     /// Remote ref not present in local repository.
