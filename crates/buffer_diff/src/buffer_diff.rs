@@ -1204,7 +1204,7 @@ pub fn assert_hunks<Iter>(
         })
         .collect();
 
-    assert_eq!(actual_hunks, expected_hunks);
+    pretty_assertions::assert_eq!(actual_hunks, expected_hunks);
 }
 
 #[cfg(test)]
