@@ -3429,7 +3429,6 @@ impl GitPanel {
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
-                    .ml_neg_0p5()
                     .child(
                         Checkbox::new(checkbox_id, is_staged)
                             .disabled(!has_write_access)
