@@ -4,8 +4,8 @@ use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, UnderlineStyle,
+    Entity, Focusable, FontWeight, Length, ListAlignment, ListOffset, ListState, StyleRefinement,
+    Subscription, Task, TextStyleRefinement, UnderlineStyle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -882,14 +882,14 @@ impl ActiveThread {
                                                     .gap_0p5()
                                                     .child(
                                                         Label::new("Summary:")
-                                                            .font_weight(FontWeight::SEMI_BOLD),
+                                                            .weight(FontWeight::SEMIBOLD),
                                                     )
                                                     .child(Label::new(summary))
                                                     .pb_1(),
                                             )
                                         },
                                     ))
-                                    .child(Label::new("Input:").font_weight(FontWeight::SEMI_BOLD))
+                                    .child(Label::new("Input:").weight(FontWeight::SEMIBOLD))
                                     .map(|parent| {
                                         if let Some(markdown) = lua_script_markdown {
                                             parent.child(markdown)
