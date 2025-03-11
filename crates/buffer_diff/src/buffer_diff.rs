@@ -4,6 +4,7 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::cmp::Ordering;
+use std::mem;
 use std::{future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point};
@@ -844,12 +845,18 @@ impl BufferDiff {
         self.pending_ops -= 1;
         if self.pending_ops == 0 {
             if let Some(secondary_diff) = &self.secondary_diff {
-                secondary_diff.update(cx, |diff, _| {
-                    diff.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary::default());
+                let hunks = secondary_diff.update(cx, |diff, _| {
+                    mem::replace(
+                        &mut diff.inner.pending_hunks,
+                        SumTree::from_summary(DiffHunkSummary::default()),
+                    )
                 });
-                // cx.emit(BufferDiffEvent::DiffChanged {
-                //     changed_range: Some(Anchor::MIN..Anchor::MAX),
-                // });
+                if let Some((first, last)) = hunks.first().zip(hunks.last()) {
+                    let changed_range = first.buffer_range.start..last.buffer_range.end;
+                    cx.emit(BufferDiffEvent::DiffChanged {
+                        changed_range: Some(changed_range),
+                    });
+                }
             }
         }
     }

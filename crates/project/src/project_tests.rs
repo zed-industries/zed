@@ -21,7 +21,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{str::FromStr, sync::OnceLock};
+use std::{cell::RefCell, rc::Rc, str::FromStr, sync::OnceLock};
 
 use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
@@ -6071,7 +6071,30 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let mut diff_events = cx.events(&uncommitted_diff);
+
+    let invalidated_range: Rc<RefCell<Option<Range<Point>>>> = Rc::new(RefCell::new(None));
+    buffer.update(cx, |_, cx| {
+        let invalidated_range = invalidated_range.clone();
+        cx.subscribe(&uncommitted_diff, |buffer, _, event, cx| match event {
+            BufferDiffEvent::DiffChanged { changed_range } => {
+                let Some(changed_range) = changed_range else {
+                    return;
+                };
+                let snapshot = buffer.snapshot();
+                let changed_range = changed_range.to_point(&snapshot);
+                let mut invalidated_range = invalidated_range.borrow_mut();
+                if let Some(range) = invalidated_range.take() {
+                    invalidated_range.replace(
+                        range.start.min(changed_range.start)..range.end.min(changed_range.end),
+                    );
+                } else {
+                    invalidated_range.replace(changed_range);
+                }
+            }
+            _ => {}
+        })
+        .detach();
+    });
 
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
@@ -6139,23 +6162,12 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 
     // The diff emits a change event for the range of the staged hunk.
-    assert!(matches!(
-        diff_events.next().await.unwrap(),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
-    ));
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged {
-        changed_range: Some(changed_range),
-    } = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
-
-    // When the write to the index completes, it appears as staged.
+    assert_eq!(
+        invalidated_range.borrow_mut().take(),
+        Some(Point::new(1, 2)..Point::new(2, 0))
+    );
     cx.run_until_parked();
+
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
             diff.hunks(&snapshot, cx),
@@ -6184,17 +6196,10 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    // The diff emits a change event for the changed index text.
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged {
-        changed_range: Some(changed_range),
-    } = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
+    assert_eq!(
+        invalidated_range.borrow_mut().take(),
+        Some(Point::new(0, 0)..Point::new(5, 0))
+    );
 
     // Simulate a problem writing to the git index.
     fs.set_error_message_for_index_write(
@@ -6237,11 +6242,14 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
             ],
         );
     });
+    dbg!();
     assert!(matches!(
         dbg!(diff_events.next().await.unwrap()),
         BufferDiffEvent::HunksStagedOrUnstaged(_)
     ));
+    dbg!();
     let event = diff_events.next().await.unwrap();
+    dbg!();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
     } = event
@@ -6282,7 +6290,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    dbg!();
     let event = diff_events.next().await.unwrap();
+    dbg!();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
     } = event
