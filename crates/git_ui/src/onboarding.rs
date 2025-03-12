@@ -90,21 +90,14 @@ impl Render for GitOnboardingModal {
                 this.focus_handle.focus(window);
             }))
             .child(
-                div()
-                    .p_1p5()
-                    .absolute()
-                    .top_1()
-                    .left_1()
-                    .right_0()
-                    .h(px(200.))
-                    .child(
-                        svg()
-                            .path("icons/zed_predict_bg.svg")
-                            .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(530.))
-                            .h(px(128.))
-                            .overflow_hidden(),
-                    ),
+                div().p_1p5().absolute().inset_0().h(px(160.)).child(
+                    svg()
+                        .path("icons/git_onboarding_bg.svg")
+                        .text_color(cx.theme().colors().icon_disabled)
+                        .w(px(420.))
+                        .h(px(128.))
+                        .overflow_hidden(),
+                ),
             )
             .child(
                 v_flex()
