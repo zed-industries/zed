@@ -1235,23 +1235,6 @@ mod preview {
                 }
             }
 
-            fn custom(branch_name: &str, upstream: Option<UpstreamTracking>) -> Branch {
-                Branch {
-                    is_head: true,
-                    name: branch_name.to_string().into(),
-                    upstream: upstream.map(|tracking| Upstream {
-                        ref_name: format!("zed/{}", branch_name).into(),
-                        tracking,
-                    }),
-                    most_recent_commit: Some(CommitSummary {
-                        sha: "abc123".into(),
-                        subject: "Modify stuff".into(),
-                        commit_timestamp: 1710932954,
-                        has_parent: true,
-                    }),
-                }
-            }
-
             let no_repo_state = ProjectDiffEmptyState {
                 no_repo: true,
                 can_push_and_pull: false,
