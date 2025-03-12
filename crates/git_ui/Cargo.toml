@@ -19,6 +19,7 @@ test-support = ["multi_buffer/test-support"]
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
+assistant_settings.workspace = true
 buffer_diff.workspace = true
 collections.workspace = true
 component.workspace = true
@@ -36,6 +37,7 @@ linkme.workspace = true
 log.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
+notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 postage.workspace = true

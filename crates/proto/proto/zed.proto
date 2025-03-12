@@ -344,7 +344,9 @@ message Envelope {
         AskPassResponse ask_pass_response = 318;
 
         GitDiff git_diff = 319;
-        GitDiffResponse git_diff_response = 320; // current max
+        GitDiffResponse git_diff_response = 320;
+
+        GitInit git_init = 321; // current max
     }
 
     reserved 87 to 88;
@@ -2936,4 +2938,10 @@ message GitDiff {
 
 message GitDiffResponse {
     string diff = 1;
+}
+
+message GitInit {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string fallback_branch_name = 3;
 }
