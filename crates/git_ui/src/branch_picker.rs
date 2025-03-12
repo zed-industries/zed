@@ -434,6 +434,7 @@ impl PickerDelegate for BranchListDelegate {
                                             "Create branch \"{}\"…",
                                             entry.branch.name
                                         ))
+                                        .single_line()
                                         .into_any_element()
                                     } else {
                                         HighlightedLabel::new(
