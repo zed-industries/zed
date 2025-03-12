@@ -3634,7 +3634,11 @@ impl GitPanel {
                         Checkbox::new(checkbox_id, is_staged)
                             .disabled(!has_write_access)
                             .fill()
-                            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
+                            .placeholder(
+                                !self.has_staged_changes()
+                                    && !self.has_conflicts()
+                                    && !entry.status.is_created(),
+                            )
                             .elevation(ElevationIndex::Surface)
                             .on_click({
                                 let entry = entry.clone();
