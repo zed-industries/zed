@@ -673,16 +673,20 @@ dependencies = [
  "assistant_tool",
  "chrono",
  "collections",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "language",
  "language_model",
  "project",
  "rand 0.8.5",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
+ "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]

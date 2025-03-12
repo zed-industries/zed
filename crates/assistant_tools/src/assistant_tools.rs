@@ -5,7 +5,9 @@ mod read_file_tool;
 mod regex_search;
 
 use assistant_tool::ToolRegistry;
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::App;
+use release_channel::ReleaseChannel;
 
 use crate::edit_files_tool::EditFilesTool;
 use crate::list_directory_tool::ListDirectoryTool;
@@ -22,4 +24,6 @@ pub fn init(cx: &mut App) {
     registry.register_tool(ListDirectoryTool);
     registry.register_tool(EditFilesTool);
     registry.register_tool(RegexSearchTool);
+
+    crate::edit_files_tool::log::init(cx);
 }
