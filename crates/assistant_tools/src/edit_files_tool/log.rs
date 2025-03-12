@@ -1,7 +1,7 @@
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
-    actions, prelude::*, App, Entity, EventEmitter, FocusHandle, Focusable, Global, SharedString,
-    Subscription, Window,
+    actions, list, prelude::*, App, Entity, EventEmitter, FocusHandle, Focusable, Global,
+    ListAlignment, ListState, ScrollHandle, SharedString, Subscription, Window,
 };
 use release_channel::ReleaseChannel;
 use ui::prelude::*;
@@ -64,7 +64,7 @@ impl EditToolLog {
             response: None,
             error: None,
         });
-        cx.emit(());
+        cx.emit(EditToolLogEvent::Inserted);
         id
     }
 
@@ -83,7 +83,7 @@ impl EditToolLog {
                     response.push_str(chunk);
                 }
             }
-            cx.emit(());
+            cx.emit(EditToolLogEvent::Updated);
         }
     }
 
@@ -95,12 +95,17 @@ impl EditToolLog {
     ) {
         if let Some(request) = self.requests.get_mut(id.0 as usize) {
             request.error = Some(error);
-            cx.emit(());
+            cx.emit(EditToolLogEvent::Updated);
         }
     }
 }
 
-impl EventEmitter<()> for EditToolLog {}
+enum EditToolLogEvent {
+    Inserted,
+    Updated,
+}
+
+impl EventEmitter<EditToolLogEvent> for EditToolLog {}
 
 pub struct EditToolRequest {
     instructions: String,
@@ -112,21 +117,95 @@ pub struct EditToolRequest {
 pub struct EditToolLogViewer {
     focus_handle: FocusHandle,
     log: Entity<EditToolLog>,
+    list_state: ListState,
     _subscription: Subscription,
 }
 
 impl EditToolLogViewer {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let log = EditToolLog::global(cx);
-        let subscription = cx.subscribe(&log, |_, _, _, cx| {
-            cx.notify();
-        });
+
+        let subscription = cx.subscribe(&log, Self::handle_log_event);
 
         Self {
             focus_handle: cx.focus_handle(),
-            log,
+            log: log.clone(),
+            list_state: ListState::new(
+                log.read(cx).requests.len(),
+                ListAlignment::Bottom,
+                px(1024.),
+                {
+                    let this = cx.entity().downgrade();
+                    move |ix, window: &mut Window, cx: &mut App| {
+                        this.update(cx, |this, cx| this.render_request(ix, window, cx))
+                            .unwrap()
+                    }
+                },
+            ),
             _subscription: subscription,
         }
+    }
+
+    fn handle_log_event(
+        &mut self,
+        _: Entity<EditToolLog>,
+        event: &EditToolLogEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            EditToolLogEvent::Inserted => {
+                let count = self.list_state.item_count();
+                self.list_state.splice(count..count, 1);
+            }
+            EditToolLogEvent::Updated => {}
+        }
+
+        cx.notify();
+    }
+
+    fn render_request(
+        &self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let request = &self.log.read(cx).requests[index];
+
+        v_flex()
+            .gap_3()
+            .child(
+                Label::new("Instructions")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(request.instructions.clone())
+            .map(|parent| match &request.response {
+                None => {
+                    if request.error.is_none() {
+                        parent.child("...")
+                    } else {
+                        parent
+                    }
+                }
+                Some(response) => parent
+                    .child(
+                        Label::new("Response")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(response.clone()),
+            })
+            .when_some(request.error.as_ref(), |parent, error| {
+                parent
+                    .child(
+                        Label::new("Error")
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    )
+                    .child(Label::new(error.clone()).color(Color::Error))
+            })
+            .child(ui::Divider::horizontal())
+            .into_any()
     }
 }
 
@@ -166,48 +245,26 @@ impl Item for EditToolLogViewer {
 
 impl Render for EditToolLogViewer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.list_state.item_count() == 0 {
+            return v_flex()
+                .justify_center()
+                .size_full()
+                .gap_1()
+                .bg(cx.theme().colors().editor_background)
+                .text_center()
+                .text_lg()
+                .child("No requests yet")
+                .child(
+                    div()
+                        .text_ui(cx)
+                        .child("Go ask the assistant to perform some edits"),
+                );
+        }
+
         v_flex()
-            .id("edit-tool-log")
+            .p_4()
             .bg(cx.theme().colors().editor_background)
-            .h_full()
-            .p_2()
-            .gap_3()
-            .overflow_y_scroll()
-            .children(self.log.read(cx).requests.iter().map(|request| {
-                v_flex()
-                    .gap_3()
-                    .child(
-                        Label::new("Instructions")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(request.instructions.clone())
-                    .map(|parent| match &request.response {
-                        None => {
-                            if request.error.is_none() {
-                                parent.child("...")
-                            } else {
-                                parent
-                            }
-                        }
-                        Some(response) => parent
-                            .child(
-                                Label::new("Response")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(response.clone()),
-                    })
-                    .when_some(request.error.as_ref(), |parent, error| {
-                        parent
-                            .child(
-                                Label::new("Error")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .child(Label::new(error.clone()).color(Color::Error))
-                    })
-                    .child(ui::Divider::horizontal())
-            }))
+            .size_full()
+            .child(list(self.list_state.clone()).flex_grow())
     }
 }

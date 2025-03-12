@@ -77,7 +77,8 @@ impl Tool for EditFilesTool {
                     if let Err(err) = &result {
                         log.update(&mut cx, |log, cx| {
                             log.set_request_error(req_id, err.to_string(), cx)
-                        });
+                        })
+                        .log_err();
                     }
 
                     result
