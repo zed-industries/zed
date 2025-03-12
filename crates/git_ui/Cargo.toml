@@ -36,6 +36,7 @@ linkme.workspace = true
 log.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
+notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 postage.workspace = true

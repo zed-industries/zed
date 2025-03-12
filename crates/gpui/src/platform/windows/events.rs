@@ -177,7 +177,12 @@ fn handle_size_msg(
 
 fn handle_size_move_loop(handle: HWND) -> Option<isize> {
     unsafe {
-        let ret = SetTimer(handle, SIZE_MOVE_LOOP_TIMER_ID, USER_TIMER_MINIMUM, None);
+        let ret = SetTimer(
+            Some(handle),
+            SIZE_MOVE_LOOP_TIMER_ID,
+            USER_TIMER_MINIMUM,
+            None,
+        );
         if ret == 0 {
             log::error!(
                 "unable to create timer: {}",
@@ -190,7 +195,7 @@ fn handle_size_move_loop(handle: HWND) -> Option<isize> {
 
 fn handle_size_move_loop_exit(handle: HWND) -> Option<isize> {
     unsafe {
-        KillTimer(handle, SIZE_MOVE_LOOP_TIMER_ID).log_err();
+        KillTimer(Some(handle), SIZE_MOVE_LOOP_TIMER_ID).log_err();
     }
     None
 }
@@ -217,7 +222,7 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
         request_frame(Default::default());
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
-    unsafe { ValidateRect(handle, None).ok().log_err() };
+    unsafe { ValidateRect(Some(handle), None).ok().log_err() };
     Some(0)
 }
 
@@ -776,7 +781,7 @@ fn handle_activate_msg(
     if state_ptr.hide_title_bar {
         if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
             unsafe {
-                InvalidateRect(handle, Some(&titlebar_rect), FALSE)
+                InvalidateRect(Some(handle), Some(&titlebar_rect), false)
                     .ok()
                     .log_err()
             };
@@ -1105,7 +1110,7 @@ fn handle_nc_mouse_up_msg(
             HTCLOSE => {
                 if last_button == HTCLOSE {
                     unsafe {
-                        PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default())
+                        PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
                             .log_err()
                     };
                     handled = true;
@@ -1133,7 +1138,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     ) {
         return None;
     }
-    unsafe { SetCursor(state_ptr.state.borrow().current_cursor) };
+    unsafe { SetCursor(Some(state_ptr.state.borrow().current_cursor)) };
     Some(1)
 }
 

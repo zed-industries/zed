@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
+use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
@@ -15,7 +16,7 @@ use std::time::Duration;
 use text::Bias;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Switch,
+    prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
     Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
@@ -27,6 +28,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
+use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 
 pub struct MessageEditor {
@@ -38,7 +40,8 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    use_tools: bool,
+    tool_selector: Entity<ToolSelector>,
+    edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -51,6 +54,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let tools = thread.read(cx).tools().clone();
         let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
@@ -116,13 +120,13 @@ impl MessageEditor {
                     cx,
                 )
             }),
-            use_tools: false,
+            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
+            edits_expanded: false,
             _subscriptions: subscriptions,
         }
     }
 
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
-        self.use_tools = !self.use_tools;
         cx.notify();
     }
 
@@ -189,14 +193,13 @@ impl MessageEditor {
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
-        let use_tools = self.use_tools;
         cx.spawn(move |_, mut cx| async move {
             refresh_task.await;
             thread
                 .update(&mut cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
                     thread.insert_user_message(user_message, context, cx);
-                    thread.send_to_model(model, request_kind, use_tools, cx);
+                    thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();
         })
@@ -303,6 +306,9 @@ impl Render for MessageEditor {
             px(64.)
         };
 
+        let changed_buffers = self.thread.read(cx).scripting_changed_buffers(cx);
+        let changed_buffers_count = changed_buffers.len();
+
         v_flex()
             .size_full()
             .when(is_streaming_completion, |parent| {
@@ -361,6 +367,109 @@ impl Render for MessageEditor {
                                     }),
                             ),
                     ),
+                )
+            })
+            .when(changed_buffers_count > 0, |parent| {
+                parent.child(
+                    v_flex()
+                        .mx_2()
+                        .bg(cx.theme().colors().element_background)
+                        .border_1()
+                        .border_b_0()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_t_md()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .p_2()
+                                .child(
+                                    Disclosure::new("edits-disclosure", self.edits_expanded)
+                                        .on_click(cx.listener(|this, _ev, _window, cx| {
+                                            this.edits_expanded = !this.edits_expanded;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    Label::new("Edits")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(
+                                        "{} {}",
+                                        changed_buffers_count,
+                                        if changed_buffers_count == 1 {
+                                            "file"
+                                        } else {
+                                            "files"
+                                        }
+                                    ))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                                ),
+                        )
+                        .when(self.edits_expanded, |parent| {
+                            parent.child(
+                                v_flex().bg(cx.theme().colors().editor_background).children(
+                                    changed_buffers.enumerate().flat_map(|(index, buffer)| {
+                                        let file = buffer.read(cx).file()?;
+                                        let path = file.path();
+
+                                        let parent_label = path.parent().and_then(|parent| {
+                                            let parent_str = parent.to_string_lossy();
+
+                                            if parent_str.is_empty() {
+                                                None
+                                            } else {
+                                                Some(
+                                                    Label::new(format!(
+                                                        "{}{}",
+                                                        parent_str,
+                                                        std::path::MAIN_SEPARATOR_STR
+                                                    ))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                                )
+                                            }
+                                        });
+
+                                        let name_label = path.file_name().map(|name| {
+                                            Label::new(name.to_string_lossy().to_string())
+                                                .size(LabelSize::Small)
+                                        });
+
+                                        let file_icon = FileIcons::get_icon(&path, cx)
+                                            .map(Icon::from_path)
+                                            .unwrap_or_else(|| Icon::new(IconName::File));
+
+                                        let element = div()
+                                            .p_2()
+                                            .when(index + 1 < changed_buffers_count, |parent| {
+                                                parent
+                                                    .border_color(cx.theme().colors().border)
+                                                    .border_b_1()
+                                            })
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(file_icon)
+                                                    .child(
+                                                        // TODO: handle overflow
+                                                        h_flex()
+                                                            .children(parent_label)
+                                                            .children(name_label),
+                                                    )
+                                                    // TODO: show lines changed
+                                                    .child(Label::new("+").color(Color::Created))
+                                                    .child(Label::new("-").color(Color::Deleted)),
+                                            );
+
+                                        Some(element)
+                                    }),
+                                ),
+                            )
+                        }),
                 )
             })
             .child(
@@ -428,25 +537,7 @@ impl Render for MessageEditor {
                             .child(
                                 h_flex()
                                     .justify_between()
-                                    .child(
-                                        Switch::new("use-tools", self.use_tools.into())
-                                            .label("Tools")
-                                            .on_click(cx.listener(
-                                                |this, selection, _window, _cx| {
-                                                    this.use_tools = match selection {
-                                                        ToggleState::Selected => true,
-                                                        ToggleState::Unselected
-                                                        | ToggleState::Indeterminate => false,
-                                                    };
-                                                },
-                                            ))
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &ChatMode,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )),
-                                    )
+                                    .child(h_flex().gap_2().child(self.tool_selector.clone()))
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
                                             ButtonLike::new("submit-message")

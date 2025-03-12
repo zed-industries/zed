@@ -4653,6 +4653,7 @@ impl EditorElement {
                 };
                 window.set_cursor_style(cursor_style, &layout.position_map.text_hitbox);
 
+                self.paint_lines_background(layout, window, cx);
                 let invisible_display_ranges = self.paint_highlights(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
@@ -4740,6 +4741,18 @@ impl EditorElement {
 
         for line_element in &mut layout.line_elements {
             line_element.paint(window, cx);
+        }
+    }
+
+    fn paint_lines_background(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
+            let row = DisplayRow(layout.visible_display_row_range.start.0 + ix as u32);
+            line_with_invisibles.draw_background(layout, row, layout.content_origin, window, cx);
         }
     }
 
@@ -6235,6 +6248,35 @@ impl LineWithInvisibles {
             window,
             cx,
         );
+    }
+
+    fn draw_background(
+        &self,
+        layout: &EditorLayout,
+        row: DisplayRow,
+        content_origin: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let line_height = layout.position_map.line_height;
+        let line_y = line_height
+            * (row.as_f32() - layout.position_map.scroll_pixel_position.y / line_height);
+
+        let mut fragment_origin =
+            content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y);
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(line) => {
+                    line.paint_background(fragment_origin, line_height, window, cx)
+                        .log_err();
+                    fragment_origin.x += line.width;
+                }
+                LineFragment::Element { size, .. } => {
+                    fragment_origin.x += size.width;
+                }
+            }
+        }
     }
 
     fn draw_invisibles(

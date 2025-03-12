@@ -16,6 +16,7 @@ mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod tool_selector;
 mod tool_use;
 mod ui;
 

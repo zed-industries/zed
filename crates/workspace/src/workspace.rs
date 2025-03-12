@@ -14,7 +14,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use toast_layer::{ToastLayer, ToastView};
+pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
 
 use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
@@ -384,6 +384,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
     theme_preview::init(cx);
+    toast_layer::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -5016,15 +5017,9 @@ impl Workspace {
         })
     }
 
-    pub fn toggle_status_toast<V: ToastView>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-        entity: Entity<V>,
-    ) {
-        self.toast_layer.update(cx, |toast_layer, cx| {
-            toast_layer.toggle_toast(window, cx, entity)
-        })
+    pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
+        self.toast_layer
+            .update(cx, |toast_layer, cx| toast_layer.toggle_toast(cx, entity))
     }
 
     pub fn toggle_centered_layout(
