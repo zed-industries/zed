@@ -555,6 +555,12 @@
     //
     // Default: icon
     "status_style": "icon",
+    // What branch name to use if init.defaultBranch
+    // is not set
+    //
+    // Default: main
+    "fallback_branch_name": "main",
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -590,6 +596,13 @@
     "default_height": 320,
     // The default model to use when creating new chats.
     "default_model": {
+      // The provider to use.
+      "provider": "zed.dev",
+      // The model to use.
+      "model": "claude-3-5-sonnet-latest"
+    },
+    // The model to use when applying edits from the assistant.
+    "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
@@ -837,15 +850,7 @@
       //
       // The minimum column number to show the inline blame information at
       // "min_column": 0
-    },
-    // How git hunks are displayed visually in the editor.
-    // This setting can take two values:
-    //
-    // 1. Show unstaged hunks with a transparent background (default):
-    //    "hunk_style": "transparent"
-    // 2. Show unstaged hunks with a pattern background:
-    //    "hunk_style": "pattern"
-    "hunk_style": "staged_border"
+    }
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.

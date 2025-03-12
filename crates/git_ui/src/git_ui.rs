@@ -89,23 +89,27 @@ pub fn init(cx: &mut App) {
                 panel.unstage_all(action, window, cx);
             });
         });
-
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&[
                 zed_actions::OpenGitIntegrationOnboarding.type_id(),
                 // ResetOnboarding.type_id(),
             ]);
         });
-
         workspace.register_action(
             move |workspace, _: &zed_actions::OpenGitIntegrationOnboarding, window, cx| {
                 GitOnboardingModal::toggle(workspace, window, cx)
             },
         );
-
         workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
             clear_dismissed(cx);
             window.refresh();
+        workspace.register_action(|workspace, _action: &git::Init, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.git_init(window, cx);
+            });
         });
     })
     .detach();

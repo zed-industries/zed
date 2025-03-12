@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use assistant_tool::{Tool, ToolSource};
 use gpui::{App, Entity, Task};
+use language_model::LanguageModelRequestMessage;
 use project::Project;
 
 use crate::manager::ContextServerManager;
@@ -58,6 +59,7 @@ impl Tool for ContextServerTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
+        _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {

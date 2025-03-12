@@ -22,6 +22,24 @@ impl ToolSelector {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let tools_by_source = self.tools.tools_by_source(cx);
 
+            let all_tools_enabled = self.tools.are_all_tools_enabled();
+            menu = menu.header("Tools").toggleable_entry(
+                "All Tools",
+                all_tools_enabled,
+                IconPosition::End,
+                None,
+                {
+                    let tools = self.tools.clone();
+                    move |_window, cx| {
+                        if all_tools_enabled {
+                            tools.disable_all_tools(cx);
+                        } else {
+                            tools.enable_all_tools();
+                        }
+                    }
+                },
+            );
+
             for (source, tools) in tools_by_source {
                 let mut tools = tools
                     .into_iter()
