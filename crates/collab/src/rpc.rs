@@ -308,7 +308,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
-            .add_request_handler(forward_mutating_project_request::<proto::ResolveCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)

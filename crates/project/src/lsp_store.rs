@@ -2973,8 +2973,8 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
         client.add_entity_request_handler(Self::handle_code_lens);
-        client.add_entity_request_handler(Self::handle_resolve_code_lens);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
+        client.add_entity_request_handler(Self::handle_resolve_code_action);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
@@ -7260,14 +7260,6 @@ impl LspStore {
         _: TypedEnvelope<proto::GetCodeLens>,
         mut cx: AsyncApp,
     ) -> Result<proto::GetCodeLensResponse> {
-        todo!("TODO kb")
-    }
-
-    async fn handle_resolve_code_lens(
-        this: Entity<Self>,
-        _: TypedEnvelope<proto::ResolveCodeLens>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::ResolveCodeLensResponse> {
         todo!("TODO kb")
     }
 

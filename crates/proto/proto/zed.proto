@@ -351,9 +351,7 @@ message Envelope {
         CodeLens code_lens = 322;
         GetCodeLens get_code_lens = 323;
         GetCodeLensResponse get_code_lens_response = 324;
-        ResolveCodeLens resolve_code_lens = 325;
-        ResolveCodeLensResponse resolve_code_lens_response = 326;
-        RefreshCodeLens refresh_code_lens = 327; // current max
+        RefreshCodeLens refresh_code_lens = 325;  // current max
     }
 
     reserved 87 to 88;
@@ -1283,16 +1281,6 @@ message GetCodeLens {
 message GetCodeLensResponse {
     repeated CodeLens lens = 1;
     repeated VectorClockEntry version = 2;
-}
-
-message ResolveCodeLens {
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    CodeLens lens = 3;
-}
-
-message ResolveCodeLensResponse {
-    CodeLens lens = 1;
 }
 
 message RefreshCodeLens {
