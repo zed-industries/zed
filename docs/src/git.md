@@ -54,7 +54,7 @@ Entries can be staged using each individual entry's checkbox. All changes can be
 
 <!-- Add media and keybinding -->
 
-## Commiting
+## Committing
 
 TODO: Composing a commit
 
