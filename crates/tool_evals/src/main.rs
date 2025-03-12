@@ -30,6 +30,12 @@ struct Args {
     /// Name of the model (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model_name: String,
+    /// Name of the model provider (default: value of `--provider_id`).
+    #[arg(long)]
+    editor_model_provider_id: Option<String>,
+    /// Name of the editor model (default: value of `--model_name`).
+    #[arg(long)]
+    editor_model_name: Option<String>,
 }
 
 fn main() {
@@ -56,6 +62,17 @@ fn main() {
     }
 
     let provider_id = LanguageModelProviderId(args.provider_id.into());
+    let editor_model_provider_id = if let Some(provider_id) = args.editor_model_provider_id {
+        LanguageModelProviderId(provider_id.into())
+    } else {
+        provider_id.clone()
+    };
+
+    let editor_model_name = if let Some(model_name) = args.editor_model_name {
+        model_name
+    } else {
+        args.model_name.clone()
+    };
 
     app.run(move |cx| {
         let app_state = headless_assistant::init(cx);
@@ -70,6 +87,8 @@ fn main() {
                     Some(SYSTEM_PROMPT.to_string()),
                     provider_id.clone(),
                     args.model_name.clone(),
+                    editor_model_provider_id.clone(),
+                    editor_model_name.clone(),
                 )
                 .unwrap();
 

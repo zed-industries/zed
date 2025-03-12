@@ -17,6 +17,8 @@ pub struct Eval {
     pub user_query: String,
     pub provider_id: LanguageModelProviderId,
     pub model_name: String,
+    pub editor_model_provider_id: LanguageModelProviderId,
+    pub editor_model_name: String,
     pub original_diff: Option<String>,
     pub original_message: Option<String>,
 }
@@ -36,6 +38,8 @@ impl Eval {
         system_prompt: Option<String>,
         provider_id: LanguageModelProviderId,
         model_name: String,
+        editor_model_provider_id: LanguageModelProviderId,
+        editor_model_name: String,
     ) -> anyhow::Result<Self> {
         let user_query = std::fs::read_to_string(eval_path.join("prompt.txt"))?;
         let setup_contents = std::fs::read_to_string(eval_path.join("setup.json"))?;
@@ -64,6 +68,8 @@ impl Eval {
             user_query,
             provider_id,
             model_name,
+            editor_model_provider_id,
+            editor_model_name,
             original_diff,
             original_message,
         })
@@ -81,18 +87,28 @@ impl Eval {
             Err(err) => return Task::ready(Err(err)),
         };
 
+        let editor_model = match find_model(&self.editor_model_name, cx) {
+            Ok(editor_model) => editor_model,
+            Err(err) => return Task::ready(Err(err)),
+        };
+
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             registry.set_active_model(Some(model.clone()), cx);
+            registry.set_editor_model(Some(editor_model.clone()), cx);
         });
 
-        let authenticate_task = authenticate_model_provider(self.provider_id.clone(), cx);
-
+        let provider_id = self.provider_id.clone();
+        let editor_model_provider_id = self.editor_model_provider_id.clone();
         let repo_path = self.repo_path.clone();
         let system_prompt = self.system_prompt.clone();
         let user_query = self.user_query.clone();
 
         cx.spawn(move |mut cx| async move {
-            authenticate_task.await?;
+            cx.update(|cx| authenticate_model_provider(provider_id.clone(), cx))?
+                .await?;
+
+            cx.update(|cx| authenticate_model_provider(editor_model_provider_id.clone(), cx))?
+                .await?;
 
             let (assistant, done_rx) =
                 cx.update(|cx| HeadlessAssistant::new(app_state.clone(), cx))??;
