@@ -1,3 +1,4 @@
+mod bash_tool;
 mod delete_path_tool;
 mod edit_files_tool;
 mod list_directory_tool;
@@ -8,6 +9,7 @@ mod regex_search;
 use assistant_tool::ToolRegistry;
 use gpui::App;
 
+use crate::bash_tool::BashTool;
 use crate::delete_path_tool::DeletePathTool;
 use crate::edit_files_tool::EditFilesTool;
 use crate::list_directory_tool::ListDirectoryTool;
@@ -25,4 +27,5 @@ pub fn init(cx: &mut App) {
     registry.register_tool(EditFilesTool);
     registry.register_tool(RegexSearchTool);
     registry.register_tool(DeletePathTool);
+    registry.register_tool(BashTool);
 }
