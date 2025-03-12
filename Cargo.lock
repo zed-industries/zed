@@ -675,6 +675,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "language",
  "language_model",
  "project",
  "rand 0.8.5",
@@ -4638,6 +4639,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "extension",
  "extension_host",
  "feature_flags",
  "fs",
@@ -5450,7 +5452,9 @@ dependencies = [
  "askpass",
  "assistant_settings",
  "buffer_diff",
+ "chrono",
  "collections",
+ "command_palette_hooks",
  "component",
  "ctor",
  "db",
@@ -13984,6 +13988,7 @@ dependencies = [
  "client",
  "collections",
  "feature_flags",
+ "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -17004,7 +17009,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.178.0"
+version = "0.179.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

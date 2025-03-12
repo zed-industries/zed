@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -13,9 +13,10 @@ use language_model::{
     Role, StopReason,
 };
 use project::Project;
+use prompt_store::PromptBuilder;
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
-use util::{post_inc, TryFutureExt as _};
+use util::{post_inc, ResultExt, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
@@ -74,6 +75,7 @@ pub struct Thread {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
+    prompt_builder: Arc<PromptBuilder>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
     scripting_session: Entity<ScriptingSession>,
@@ -84,6 +86,7 @@ impl Thread {
     pub fn new(
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
@@ -100,6 +103,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             project,
+            prompt_builder,
             tools,
             tool_use: ToolUseState::new(),
             scripting_session,
@@ -112,6 +116,7 @@ impl Thread {
         saved: SavedThread,
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
@@ -147,6 +152,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             project,
+            prompt_builder,
             tools,
             tool_use,
             scripting_session,
@@ -373,14 +379,25 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
-        _cx: &App,
+        cx: &App,
     ) -> LanguageModelRequest {
+        let worktree_root_names = self
+            .project
+            .read(cx)
+            .worktree_root_names(cx)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let system_prompt = self
+            .prompt_builder
+            .generate_assistant_system_prompt(worktree_root_names)
+            .context("failed to generate assistant system prompt")
+            .log_err()
+            .unwrap_or_default();
+
         let mut request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
                 role: Role::System,
-                content: vec![MessageContent::Text(
-                    include_str!("./system_prompt.md").to_string(),
-                )],
+                content: vec![MessageContent::Text(system_prompt)],
                 cache: true,
             }],
             tools: Vec::new(),
