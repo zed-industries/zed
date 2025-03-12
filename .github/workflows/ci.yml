@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 350
-      # 350 is arbitrary. Full fetch is ~18secs; 350 is
+      # 350 is arbitrary. Full fetch is ~18secs; 350 is ~5s
       # This will fail if your branch is >350 commits behind main
       - name: Fetch main branch
         run: git fetch origin main --depth=350
