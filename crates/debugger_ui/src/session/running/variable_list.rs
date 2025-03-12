@@ -1,5 +1,5 @@
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
-use dap::{StackFrameId, VariablePresentationHintKind, VariableReference};
+use dap::{ScopePresentationHint, StackFrameId, VariablePresentationHintKind, VariableReference};
 use editor::Editor;
 use gpui::{
     actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
@@ -235,7 +235,12 @@ impl VariableList {
             let var_state = self.entry_states.entry(path.clone()).or_insert(EntryState {
                 depth: path.indices.len(),
                 is_expanded: dap_kind.as_scope().is_some_and(|scope| {
-                    scopes_count == 1 || &scope.name.to_lowercase() == "locals"
+                    scopes_count == 1
+                        || scope
+                            .presentation_hint
+                            .as_ref()
+                            .map(|hint| *hint == ScopePresentationHint::Locals)
+                            .unwrap_or(scope.name.to_lowercase() == "locals")
                 }),
             });
 
