@@ -1,6 +1,3 @@
-use std::process::Command;
-use std::sync::Arc;
-
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use gpui::{App, Entity, Task};
@@ -8,6 +5,7 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
