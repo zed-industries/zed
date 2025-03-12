@@ -92,6 +92,8 @@ extern "C" {
 
 #[ctor]
 unsafe fn build_classes() {
+    let _: () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+
     WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
     PANEL_CLASS = build_window_class("GPUIPanel", class!(NSPanel));
     VIEW_CLASS = {
