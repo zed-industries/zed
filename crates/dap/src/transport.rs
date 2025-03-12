@@ -349,7 +349,7 @@ impl TransportDelegate {
                 Ok(Message::Response(res)) => {
                     if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
                         if let Err(e) = tx.send(Self::process_response(res)) {
-                            break Err(anyhow!("Failed to send response: {:?}", e));
+                            log::trace!("Did not send response `{:?}` for a cancelled", e);
                         }
                     } else {
                         client_tx.send(Message::Response(res)).await?;
