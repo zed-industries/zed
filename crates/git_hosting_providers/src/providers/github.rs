@@ -60,6 +60,9 @@ impl Github {
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
         let host = get_host_from_git_remote_url(remote_url)?;
+        if host == "github.com" {
+            bail!("the GitHub instance is not self-hosted");
+        }
 
         // TODO: detecting self hosted instances by checking whether "github" is in the url or not
         // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
@@ -235,6 +238,13 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn test_invalid_self_hosted_remote_url() {
+        let remote_url = "git@github.com:zed-industries/zed.git";
+        let github = Github::from_remote_url(remote_url);
+        assert!(github.is_err());
+    }
 
     #[test]
     fn test_from_remote_url_ssh() {
