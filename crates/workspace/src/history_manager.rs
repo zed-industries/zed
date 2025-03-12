@@ -9,9 +9,10 @@ pub fn init(cx: &mut App) {
     HistoryManager::set_global(manager.clone(), cx);
     cx.subscribe(&manager, |manager, event, cx| match event {
         HistoryManagerEvent::Update => perform_update(cx, manager),
-        HistoryManagerEvent::Delete(DeleteSource::User) => {
-            manager.update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update));
-        }
+        HistoryManagerEvent::Delete(source) => match source {
+            DeleteSource::System => {}
+            DeleteSource::User => perform_update(cx, manager),
+        },
         _ => {}
     })
     .detach();
