@@ -14,8 +14,8 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction, ProjectItem as _,
-    ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
+    ProjectItem as _, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -1651,8 +1651,6 @@ impl LocalLspStore {
             LspAction::Action(lsp_action) => {
                 if !action.resolved
                     && GetCodeActions::can_resolve_actions(&lang_server.capabilities())
-                    && lsp_action.data.is_some()
-                    && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
                     *lsp_action = Box::new(
                         lang_server
@@ -1662,12 +1660,7 @@ impl LocalLspStore {
                 }
             }
             LspAction::CodeLens(lens) => {
-                if !action.resolved
-                    // TODO kb
-                    // && CodeLens::can_resolve_actions(&lang_server.capabilities())
-                    && lens.data.is_some()
-                    && lens.command.is_none()
-                {
+                if !action.resolved && GetCodeLens::can_resolve_lens(&lang_server.capabilities()) {
                     *lens = lang_server
                         .request::<lsp::request::CodeLensResolve>(lens.clone())
                         .await?;

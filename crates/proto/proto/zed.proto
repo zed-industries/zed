@@ -1271,9 +1271,7 @@ message RefreshInlayHints {
 }
 
 message CodeLens {
-    Range range = 1;
-    optional string command = 2;
-    optional string data = 3;
+    bytes lsp_lens = 1;
 }
 
 message GetCodeLens {
@@ -1283,7 +1281,8 @@ message GetCodeLens {
 }
 
 message GetCodeLensResponse {
-    repeated CodeLens lenses = 1;
+    repeated CodeLens lens = 1;
+    repeated VectorClockEntry version = 2;
 }
 
 message ResolveCodeLens {

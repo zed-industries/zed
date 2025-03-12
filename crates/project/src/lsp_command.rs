@@ -2,10 +2,10 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
-    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, LspAction, MarkupContent, PrepareRenameResponse, ProjectTransaction,
-    ResolveState,
+    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
+    InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
+    ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -236,6 +236,16 @@ pub(crate) struct InlayHints {
 
 #[derive(Debug)]
 pub(crate) struct GetCodeLens;
+
+impl GetCodeLens {
+    pub(crate) fn can_resolve_lens(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_lens_provider
+            .as_ref()
+            .and_then(|code_lens_options| code_lens_options.resolve_provider)
+            .unwrap_or(false)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
@@ -3064,7 +3074,7 @@ impl LspCommand for GetCodeLens {
     fn to_lsp(
         &self,
         path: &Path,
-        buffer: &Buffer,
+        _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::CodeLensParams> {
@@ -3080,12 +3090,16 @@ impl LspCommand for GetCodeLens {
     async fn response_from_lsp(
         self,
         message: Option<Vec<lsp::CodeLens>>,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        server_id: LanguageServerId,
-        mut cx: AsyncApp,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
     ) -> anyhow::Result<Vec<LspAction>> {
-        todo!("TODO kb")
+        Ok(message
+            .unwrap_or_default()
+            .into_iter()
+            .map(LspAction::CodeLens)
+            .collect())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCodeLens {
@@ -3107,7 +3121,6 @@ impl LspCommand for GetCodeLens {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
-
         Ok(Self)
     }
 
@@ -3118,23 +3131,21 @@ impl LspCommand for GetCodeLens {
         buffer_version: &clock::Global,
         _: &mut App,
     ) -> proto::GetCodeLensResponse {
-        // proto::GetCodeLensResponse {
-        //     lenses: response
-        //         .into_iter()
-        //         .filter_map(|lsp_action| {
-        //             if let LspAction::CodeLens(lens) = lsp_action {
-        //                 Some(proto::CodeLens {
-        //                     range: lens.range.into(),
-        //                     command: lens.command.map(|command| command.into()),
-        //                     data: lens.data.map(|data| data.to_string()),
-        //                 })
-        //             } else {
-        //                 None
-        //             }
-        //         })
-        //         .collect(),
-        // }
-        todo!("TODO kb")
+        proto::GetCodeLensResponse {
+            lens: response
+                .into_iter()
+                .filter_map(|lsp_action| {
+                    if let LspAction::CodeLens(lens) = lsp_action {
+                        Some(proto::CodeLens {
+                            lsp_lens: serde_json::to_vec(&lens).unwrap(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
     }
 
     async fn response_from_proto(
@@ -3144,19 +3155,21 @@ impl LspCommand for GetCodeLens {
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> anyhow::Result<Vec<LspAction>> {
-        // buffer
-        //     .update(&mut cx, |buffer, _| {
-        //         buffer.wait_for_version(deserialize_version(&message.version))
-        //     })?
-        //     .await?;
-
-        // let mut hints = Vec::new();
-        // for message_hint in message.hints {
-        //     hints.push(InlayHints::proto_to_project_hint(message_hint)?);
-        // }
-
-        // Ok(hints)
-        todo!("TODO kb")
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        message
+            .lens
+            .into_iter()
+            .map(|code_lens| {
+                anyhow::Ok(LspAction::CodeLens(serde_json::from_slice(
+                    &code_lens.lsp_lens,
+                )?))
+            })
+            .collect::<Result<Vec<_>>>()
+            .context("deserializing proto code lens response")
     }
 
     fn buffer_id_from_proto(message: &proto::GetCodeLens) -> Result<BufferId> {
