@@ -18,6 +18,7 @@ test-support = []
 anyhow.workspace = true
 clock.workspace = true
 futures.workspace = true
+git.workspace = true
 git2.workspace = true
 gpui.workspace = true
 language.workspace = true

@@ -12,13 +12,15 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::io::Write as _;
 use std::process::Stdio;
-use std::sync::LazyLock;
 use std::{
-    cmp::Ordering,
     path::{Component, Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        Arc, LazyLock,
+    },
 };
 use sum_tree::MapSeekTarget;
 use util::command::{new_smol_command, new_std_command};
@@ -150,15 +152,43 @@ pub enum ResetMode {
     Mixed,
 }
 
+/// Track whether we did override the index text after reading it.
+///
+/// After this is created, you can call `is_outdated` to see if we wrote
+///
+/// Note: this doesn't account for external processis writing to the `index`, but it's still useful
+/// if the invariant we want to hold is only dependent on our writes (currently, it is).
+#[derive(Debug, Clone)]
+pub struct IndexTextVersion {
+    version_reference: Arc<AtomicUsize>,
+    read_value: usize,
+}
+
+impl IndexTextVersion {
+    fn new(version_reference: Arc<AtomicUsize>) -> Self {
+        IndexTextVersion {
+            read_value: version_reference.load(AtomicOrdering::Relaxed),
+            version_reference,
+        }
+    }
+
+    /// Returns `true` if the index was overriden by ourselves.
+    pub fn is_outdated(&self) -> bool {
+        self.read_value != self.version_reference.load(AtomicOrdering::Relaxed)
+    }
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
-    /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
+    /// Returns the contents of an entry in the repository's index, or None if there is no entry
+    /// for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_index_text(&self, path: &RepoPath) -> Option<String>;
+    fn load_index_text(&self, path: &RepoPath) -> Option<(String, IndexTextVersion)>;
 
-    /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
+    /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist
+    /// or has no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
@@ -277,6 +307,8 @@ impl std::fmt::Debug for dyn GitRepository {
 pub struct RealGitRepository {
     pub repository: Mutex<git2::Repository>,
     pub git_binary_path: PathBuf,
+    /// Incremented when we write to the index.
+    pub index_version: Arc<AtomicUsize>,
 }
 
 impl RealGitRepository {
@@ -284,6 +316,7 @@ impl RealGitRepository {
         Self {
             repository: Mutex::new(repository),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
+            index_version: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -294,6 +327,63 @@ impl RealGitRepository {
             .context("failed to read git work directory")
             .map(Path::to_path_buf)
     }
+
+    fn set_index_text_impl(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+        env: &HashMap<String, String>,
+        repo: &git2::Repository,
+    ) -> anyhow::Result<()> {
+        let working_directory = repo
+            .workdir()
+            .context("failed to read git work directory")
+            .map(Path::to_path_buf)?;
+        if let Some(content) = content {
+            let mut child = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .envs(env)
+                .args(["hash-object", "-w", "--stdin"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()?;
+            child.stdin.take().unwrap().write_all(content.as_bytes())?;
+            let output = child.wait_with_output()?.stdout;
+            let sha = String::from_utf8(output)?;
+
+            log::debug!("indexing SHA: {sha}, path {path:?}");
+
+            let output = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .envs(env)
+                .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
+                .arg(path.as_ref())
+                .output()?;
+
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to stage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        } else {
+            let output = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .envs(env)
+                .args(["update-index", "--force-remove"])
+                .arg(path.as_ref())
+                .output()?;
+
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to unstage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
@@ -302,7 +392,7 @@ const GIT_MODE_SYMLINK: u32 = 0o120000;
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {
-            _ = index.read(false);
+            index.read(false).log_err();
         }
     }
 
@@ -385,13 +475,15 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<(String, IndexTextVersion)> {
         fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
-            let index = repo.index()?;
+            let mut index = repo.index()?;
 
             // This check is required because index.get_path() unwraps internally :(
             check_path_to_repo_path_errors(path)?;
+
+            index.read(false)?;
 
             let oid = match index.get_path(path, STAGE_NORMAL) {
                 Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
@@ -402,11 +494,16 @@ impl GitRepository for RealGitRepository {
             Ok(Some(String::from_utf8(content)?))
         }
 
-        match logic(&self.repository.lock(), path) {
-            Ok(value) => return value,
-            Err(err) => log::error!("Error loading index text: {:?}", err),
+        let repo = self.repository.lock();
+        let version = IndexTextVersion::new(self.index_version.clone());
+
+        match logic(&repo, path) {
+            Ok(value) => value.map(|string| (string, version)),
+            Err(err) => {
+                log::error!("Error loading index text: {:?}", err);
+                None
+            }
         }
-        None
     }
 
     fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
@@ -417,8 +514,7 @@ impl GitRepository for RealGitRepository {
             return None;
         }
         let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
-        let content = String::from_utf8(content).log_err()?;
-        Some(content)
+        String::from_utf8(content).log_err()
     }
 
     fn set_index_text(
@@ -428,54 +524,9 @@ impl GitRepository for RealGitRepository {
         env: &HashMap<String, String>,
     ) -> anyhow::Result<()> {
         let repo = self.repository.lock();
-        let working_directory = repo
-            .workdir()
-            .context("failed to read git work directory")
-            .map(Path::to_path_buf)?;
-        if let Some(content) = content {
-            let mut child = new_std_command(&self.git_binary_path)
-                .current_dir(&working_directory)
-                .envs(env)
-                .args(["hash-object", "-w", "--stdin"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()?;
-            child.stdin.take().unwrap().write_all(content.as_bytes())?;
-            let output = child.wait_with_output()?.stdout;
-            let sha = String::from_utf8(output)?;
-
-            log::debug!("indexing SHA: {sha}, path {path:?}");
-
-            let output = new_std_command(&self.git_binary_path)
-                .current_dir(&working_directory)
-                .envs(env)
-                .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
-                .arg(path.as_ref())
-                .output()?;
-
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Failed to stage:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-        } else {
-            let output = new_std_command(&self.git_binary_path)
-                .current_dir(&working_directory)
-                .envs(env)
-                .args(["update-index", "--force-remove"])
-                .arg(path.as_ref())
-                .output()?;
-
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Failed to unstage:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-        }
-
-        Ok(())
+        let result = self.set_index_text_impl(path, content, env, &repo);
+        self.index_version.fetch_add(1, AtomicOrdering::Relaxed);
+        result
     }
 
     fn remote_url(&self, name: &str) -> Option<String> {
@@ -945,6 +996,7 @@ pub struct FakeGitRepositoryState {
     pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    pub index_version: Arc<AtomicUsize>,
     pub simulated_index_write_error_message: Option<String>,
     pub index_write_delayed: bool,
 }
@@ -966,6 +1018,7 @@ impl FakeGitRepositoryState {
             statuses: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
+            index_version: Arc::new(AtomicUsize::new(0)),
             simulated_index_write_error_message: None,
             index_write_delayed: false,
         }
@@ -975,9 +1028,11 @@ impl FakeGitRepositoryState {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<(String, IndexTextVersion)> {
         let state = self.state.lock();
-        state.index_contents.get(path.as_ref()).cloned()
+        let version = IndexTextVersion::new(state.index_version.clone());
+        let string = state.index_contents.get(path.as_ref()).cloned();
+        string.map(|content| (content, version))
     }
 
     fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
@@ -1000,7 +1055,8 @@ impl GitRepository for FakeGitRepository {
         } else {
             state.index_contents.remove(path);
         }
-        dbg!("emitting event");
+        state.index_version.fetch_add(1, AtomicOrdering::Relaxed);
+
         state
             .event_emitter
             .try_send(state.path.clone())

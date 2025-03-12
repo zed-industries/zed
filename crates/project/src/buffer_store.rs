@@ -11,7 +11,10 @@ use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
-use git::{blame::Blame, repository::RepoPath};
+use git::{
+    blame::Blame,
+    repository::{IndexTextVersion, RepoPath},
+};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -98,7 +101,7 @@ impl BufferDiffState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
-        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
+        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), None, cx);
     }
 
     fn unstaged_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -131,7 +134,7 @@ impl BufferDiffState {
             },
         };
 
-        let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
+        let _ = self.diff_bases_changed(buffer, diff_bases_change, None, cx);
     }
 
     pub fn wait_for_recalculation(&mut self) -> Option<oneshot::Receiver<()>> {
@@ -147,6 +150,8 @@ impl BufferDiffState {
         &mut self,
         buffer: text::BufferSnapshot,
         diff_bases_change: DiffBasesChange,
+        // Provided when this function is called from event updates and we read the index.
+        read_index_version: Option<IndexTextVersion>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         match diff_bases_change {
@@ -188,12 +193,13 @@ impl BufferDiffState {
             }
         }
 
-        self.recalculate_diffs(buffer, cx)
+        self.recalculate_diffs(buffer, read_index_version, cx)
     }
 
     fn recalculate_diffs(
         &mut self,
         buffer: text::BufferSnapshot,
+        read_index_version: Option<IndexTextVersion>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         log::debug!("recalculate diffs");
@@ -209,10 +215,6 @@ impl BufferDiffState {
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
-        let unstaged_diff_version = unstaged_diff.as_ref().map(|diff| diff.read(cx).version());
-        let uncommitted_diff_version = uncommitted_diff
-            .as_ref()
-            .map(|diff| diff.read(cx).version());
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
@@ -257,32 +259,25 @@ impl BufferDiffState {
                 }
             }
 
-            let unstaged_changed_range =
-                if let Some(((unstaged_diff, new_unstaged_diff), unstaged_diff_version)) =
-                    unstaged_diff
-                        .as_ref()
-                        .zip(new_unstaged_diff.clone())
-                        .zip(unstaged_diff_version)
-                {
-                    unstaged_diff.update(&mut cx, |diff, cx| {
-                        diff.set_snapshot(
-                            &buffer,
-                            new_unstaged_diff,
-                            language_changed,
-                            None,
-                            unstaged_diff_version,
-                            cx,
-                        )
-                    })?
-                } else {
-                    None
-                };
+            let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
+                unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
+            {
+                unstaged_diff.update(&mut cx, |diff, cx| {
+                    diff.set_snapshot(
+                        &buffer,
+                        new_unstaged_diff,
+                        language_changed,
+                        None,
+                        read_index_version,
+                        cx,
+                    )
+                })?
+            } else {
+                None
+            };
 
-            if let Some(((uncommitted_diff, new_uncommitted_diff), uncommitted_diff_version)) =
-                uncommitted_diff
-                    .as_ref()
-                    .zip(new_uncommitted_diff.clone())
-                    .zip(uncommitted_diff_version)
+            if let Some((uncommitted_diff, new_uncommitted_diff)) =
+                uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
                 uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
                     uncommitted_diff.set_snapshot(
@@ -290,7 +285,7 @@ impl BufferDiffState {
                         new_uncommitted_diff,
                         language_changed,
                         unstaged_changed_range,
-                        uncommitted_diff_version,
+                        None,
                         cx,
                     );
                 })?;
@@ -855,20 +850,24 @@ impl LocalBufferStore {
         cx.spawn(move |this, mut cx| async move {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
-            let diff_bases_changes_by_buffer = cx
+            let diff_bases_changes_by_buffer: Vec<(
+                Entity<Buffer>,
+                Option<DiffBasesChange>,
+                Option<IndexTextVersion>,
+            )> = cx
                 .background_spawn(async move {
                     diff_state_updates
                         .into_iter()
                         .filter_map(|(buffer, path, current_index_text, current_head_text)| {
                             let local_repo = snapshot.local_repo_for_path(&path)?;
                             let relative_path = local_repo.relativize(&path).ok()?;
-                            dbg!("start loading index text {:?}", &relative_path);
-                            let index_text = if current_index_text.is_some() {
-                                local_repo.repo().load_index_text(&relative_path)
+
+                            let (index_text, index_version) = if current_index_text.is_some() {
+                                let repo = local_repo.repo();
+                                repo.load_index_text(&relative_path).unzip()
                             } else {
-                                None
+                                (None, None)
                             };
-                            dbg!("start loading head text {:?}", &relative_path);
                             let head_text = if current_head_text.is_some() {
                                 local_repo.repo().load_committed_text(&relative_path)
                             } else {
@@ -901,14 +900,14 @@ impl LocalBufferStore {
                                     (false, false) => None,
                                 };
 
-                            Some((buffer, diff_bases_change))
+                            Some((buffer, diff_bases_change, index_version))
                         })
-                        .collect::<Vec<_>>()
+                        .collect()
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
+                for (buffer, diff_bases_change, index_version) in diff_bases_changes_by_buffer {
                     let Some(OpenBuffer::Complete { diff_state, .. }) =
                         this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
                     else {
@@ -950,6 +949,7 @@ impl LocalBufferStore {
                         let _ = diff_state.diff_bases_changed(
                             buffer.text_snapshot(),
                             diff_bases_change,
+                            index_version,
                             cx,
                         );
                     });
@@ -1554,7 +1554,8 @@ impl BufferStore {
                         }
                     };
 
-                    let rx = diff_state.diff_bases_changed(text_snapshot, diff_bases_change, cx);
+                    let rx =
+                        diff_state.diff_bases_changed(text_snapshot, diff_bases_change, None, cx);
 
                     Ok(async move {
                         rx.await.ok();
@@ -2012,7 +2013,7 @@ impl BufferStore {
             {
                 let buffer = buffer.read(cx).text_snapshot();
                 futures.push(diff_state.update(cx, |diff_state, cx| {
-                    diff_state.recalculate_diffs(buffer, cx)
+                    diff_state.recalculate_diffs(buffer, None, cx)
                 }));
             }
         }

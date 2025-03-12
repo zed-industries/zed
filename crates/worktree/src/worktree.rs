@@ -1057,12 +1057,16 @@ impl Worktree {
                 let snapshot = this.snapshot();
                 cx.background_spawn(async move {
                     if let Some(repo) = snapshot.repository_for_path(&path) {
-                        if let Some(repo_path) = repo.relativize(&path).log_err() {
-                            if let Some(git_repo) =
-                                snapshot.git_repositories.get(&repo.work_directory_id)
-                            {
-                                return Ok(git_repo.repo_ptr.load_index_text(&repo_path));
-                            }
+                        if let Some((repo_path, git_repo)) = repo
+                            .relativize(&path)
+                            .log_err()
+                            .zip(snapshot.git_repositories.get(&repo.work_directory_id))
+                        {
+                            let string = git_repo
+                                .repo_ptr
+                                .load_index_text(&repo_path)
+                                .map(|(string, _)| string);
+                            return Ok(string);
                         }
                     }
                     Err(anyhow!("No repository found for {path:?}"))
@@ -1081,12 +1085,12 @@ impl Worktree {
                 let snapshot = this.snapshot();
                 cx.background_spawn(async move {
                     if let Some(repo) = snapshot.repository_for_path(&path) {
-                        if let Some(repo_path) = repo.relativize(&path).log_err() {
-                            if let Some(git_repo) =
-                                snapshot.git_repositories.get(&repo.work_directory_id)
-                            {
-                                return Ok(git_repo.repo_ptr.load_committed_text(&repo_path));
-                            }
+                        if let Some((repo_path, git_repo)) = repo
+                            .relativize(&path)
+                            .log_err()
+                            .zip(snapshot.git_repositories.get(&repo.work_directory_id))
+                        {
+                            return Ok(git_repo.repo_ptr.load_committed_text(&repo_path));
                         }
                     }
                     Err(anyhow!("No repository found for {path:?}"))
@@ -4442,7 +4446,6 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            dbg!(&paths);
             self.process_events(paths.into_iter().map(Into::into).collect())
                 .await;
         }
