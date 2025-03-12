@@ -417,22 +417,17 @@ impl ComponentPreview {
         }
     }
 
-    fn test_status_toast(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn test_status_toast(&self, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                let status_toast = StatusToast::new(
-                    "`zed/new-notification-system` created!",
-                    window,
-                    cx,
-                    |this, _, cx| {
+                let status_toast =
+                    StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
                         this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                            .action(
-                                "Open Pull Request",
-                                cx.listener(|_, _, _, cx| cx.open_url("https://github.com/")),
-                            )
-                    },
-                );
-                workspace.toggle_status_toast(window, cx, status_toast)
+                            .action("Open Pull Request", |_, cx| {
+                                cx.open_url("https://github.com/")
+                            })
+                    });
+                workspace.toggle_status_toast(status_toast, cx)
             });
         }
     }
@@ -478,8 +473,8 @@ impl Render for ComponentPreview {
                         div().w_full().pb_4().child(
                             Button::new("toast-test", "Launch Toast")
                                 .on_click(cx.listener({
-                                    move |this, _, window, cx| {
-                                        this.test_status_toast(window, cx);
+                                    move |this, _, _window, cx| {
+                                        this.test_status_toast(cx);
                                         cx.notify();
                                     }
                                 }))

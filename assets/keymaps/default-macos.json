@@ -514,6 +514,7 @@
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
+      "alt-shift-enter": "toast::RunAction",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",

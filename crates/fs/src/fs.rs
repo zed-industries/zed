@@ -16,12 +16,14 @@ use git::{repository::RepoPath, status::FileStatus};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use std::borrow::Cow;
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::fd::AsFd;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+use util::command::new_std_command;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -136,6 +138,7 @@ pub trait Fs: Send + Sync {
 
     fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
+    fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
 
@@ -763,6 +766,29 @@ impl Fs for RealFs {
             repo,
             self.git_binary_path.clone(),
         )))
+    }
+
+    fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
+        let config = new_std_command("git")
+            .current_dir(abs_work_directory_path)
+            .args(&["config", "--global", "--get", "init.defaultBranch"])
+            .output()?;
+
+        let branch_name;
+
+        if config.status.success() && !config.stdout.is_empty() {
+            branch_name = String::from_utf8_lossy(&config.stdout);
+        } else {
+            branch_name = Cow::Borrowed(fallback_branch_name.as_str());
+        }
+
+        new_std_command("git")
+            .current_dir(abs_work_directory_path)
+            .args(&["init", "-b"])
+            .arg(branch_name.trim())
+            .output()?;
+
+        Ok(())
     }
 
     fn is_fake(&self) -> bool {
@@ -2073,6 +2099,14 @@ impl Fs for FakeFs {
         } else {
             None
         }
+    }
+
+    fn git_init(
+        &self,
+        abs_work_directory_path: &Path,
+        _fallback_branch_name: String,
+    ) -> Result<()> {
+        smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
     }
 
     fn is_fake(&self) -> bool {

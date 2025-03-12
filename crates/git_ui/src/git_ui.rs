@@ -17,7 +17,7 @@ pub mod git_panel;
 mod git_panel_settings;
 pub mod picker_prompt;
 pub mod project_diff;
-mod remote_output_toast;
+pub(crate) mod remote_output;
 pub mod repository_selector;
 
 pub fn init(cx: &mut App) {
@@ -80,6 +80,14 @@ pub fn init(cx: &mut App) {
             };
             panel.update(cx, |panel, cx| {
                 panel.unstage_all(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, _action: &git::Init, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.git_init(window, cx);
             });
         });
     })

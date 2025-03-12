@@ -17,7 +17,7 @@ use text::Bias;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
-    Switch, Tooltip,
+    Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
@@ -28,6 +28,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
+use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 
 pub struct MessageEditor {
@@ -39,7 +40,7 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    use_tools: bool,
+    tool_selector: Entity<ToolSelector>,
     edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -53,6 +54,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let tools = thread.read(cx).tools().clone();
         let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
@@ -118,14 +120,13 @@ impl MessageEditor {
                     cx,
                 )
             }),
-            use_tools: false,
+            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
             edits_expanded: false,
             _subscriptions: subscriptions,
         }
     }
 
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
-        self.use_tools = !self.use_tools;
         cx.notify();
     }
 
@@ -192,14 +193,13 @@ impl MessageEditor {
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
-        let use_tools = self.use_tools;
         cx.spawn(move |_, mut cx| async move {
             refresh_task.await;
             thread
                 .update(&mut cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
                     thread.insert_user_message(user_message, context, cx);
-                    thread.send_to_model(model, request_kind, use_tools, cx);
+                    thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();
         })
@@ -537,25 +537,7 @@ impl Render for MessageEditor {
                             .child(
                                 h_flex()
                                     .justify_between()
-                                    .child(
-                                        Switch::new("use-tools", self.use_tools.into())
-                                            .label("Tools")
-                                            .on_click(cx.listener(
-                                                |this, selection, _window, _cx| {
-                                                    this.use_tools = match selection {
-                                                        ToggleState::Selected => true,
-                                                        ToggleState::Unselected
-                                                        | ToggleState::Indeterminate => false,
-                                                    };
-                                                },
-                                            ))
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &ChatMode,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )),
-                                    )
+                                    .child(h_flex().gap_2().child(self.tool_selector.clone()))
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
                                             ButtonLike::new("submit-message")
