@@ -525,6 +525,32 @@ impl VariableList {
         pretty_assertions::assert_eq!(expected, visual_entries);
     }
 
+    #[track_caller]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn scopes(&self) -> Vec<dap::Scope> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.dap_kind {
+                EntryKind::Scope(scope) => Some(scope),
+                _ => None,
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[track_caller]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn variables(&self) -> Vec<dap::Variable> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.dap_kind {
+                EntryKind::Variable(variable) => Some(variable),
+                _ => None,
+            })
+            .cloned()
+            .collect()
+    }
+
     fn create_variable_editor(default: &str, window: &mut Window, cx: &mut App) -> Entity<Editor> {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);

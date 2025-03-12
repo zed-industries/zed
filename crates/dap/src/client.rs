@@ -315,7 +315,7 @@ mod tests {
                 connection: None,
                 cwd: None,
             },
-            Box::new(|_, _| panic!("Did not expect to hit this code path")),
+            Box::new(|_| panic!("Did not expect to hit this code path")),
             cx.to_async(),
         )
         .await
@@ -386,7 +386,7 @@ mod tests {
             },
             Box::new({
                 let called_event_handler = called_event_handler.clone();
-                move |event, _| {
+                move |event| {
                     called_event_handler.store(true, Ordering::SeqCst);
 
                     assert_eq!(
@@ -435,7 +435,7 @@ mod tests {
             },
             Box::new({
                 let called_event_handler = called_event_handler.clone();
-                move |event, _| {
+                move |event| {
                     called_event_handler.store(true, Ordering::SeqCst);
 
                     assert_eq!(

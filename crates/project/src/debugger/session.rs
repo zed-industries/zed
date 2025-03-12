@@ -504,6 +504,7 @@ impl ThreadStates {
     }
 }
 const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
+
 #[derive(Copy, Clone, Default, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub struct OutputToken(usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
@@ -674,6 +675,11 @@ impl Session {
                 })
                 .detach();
 
+                let output = circular_buffer::CircularBuffer::<
+                    MAX_TRACKED_OUTPUT_EVENTS,
+                    dap::OutputEvent,
+                >::boxed();
+
                 Self {
                     mode: Mode::Local(mode),
                     id: session_id,
@@ -683,7 +689,7 @@ impl Session {
                     thread_states: ThreadStates::default(),
                     output_token: None,
                     ignore_breakpoints: false,
-                    output: Default::default(),
+                    output,
                     requests: HashMap::default(),
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
@@ -1456,7 +1462,6 @@ impl Session {
             .unwrap_or_default()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn variables(
         &mut self,
         variables_reference: VariableReference,

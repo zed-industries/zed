@@ -119,7 +119,7 @@ impl StackFrameList {
             .unwrap_or(0)
     }
 
-    pub fn current_stack_frame_id(&self) -> Option<u64> {
+    pub fn current_stack_frame_id(&self) -> Option<StackFrameId> {
         self.current_stack_frame_id
     }
 
