@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::Tool;
 use gpui::{App, Entity, Task};
+use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ impl Tool for ListWorktreesTool {
     fn run(
         self: Arc<Self>,
         _input: serde_json::Value,
+        _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {

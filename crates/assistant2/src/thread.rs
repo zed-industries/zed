@@ -376,7 +376,13 @@ impl Thread {
         _cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
-            messages: vec![],
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![MessageContent::Text(
+                    include_str!("./system_prompt.md").to_string(),
+                )],
+                cache: true,
+            }],
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,
@@ -623,6 +629,7 @@ impl Thread {
     }
 
     pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) {
+        let request = self.to_completion_request(RequestKind::Chat, cx);
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()
@@ -633,7 +640,7 @@ impl Thread {
 
         for tool_use in pending_tool_uses {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let task = tool.run(tool_use.input, self.project.clone(), cx);
+                let task = tool.run(tool_use.input, &request.messages, self.project.clone(), cx);
 
                 self.insert_tool_output(tool_use.id.clone(), task, cx);
             }

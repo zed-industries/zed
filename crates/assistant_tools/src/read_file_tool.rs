@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use gpui::{App, Entity, Task};
+use language_model::LanguageModelRequestMessage;
 use project::{Project, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,7 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
+        _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
@@ -56,7 +58,16 @@ impl Tool for ReadFileTool {
                 })?
                 .await?;
 
-            cx.update(|cx| buffer.read(cx).text())
+            buffer.read_with(&cx, |buffer, _cx| {
+                if buffer
+                    .file()
+                    .map_or(false, |file| file.disk_state().exists())
+                {
+                    Ok(buffer.text())
+                } else {
+                    Err(anyhow!("File does not exist"))
+                }
+            })?
         })
     }
 }

@@ -600,6 +600,13 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
+    },
+    // The model to use when applying edits from the assistant.
+    "editor_model": {
+      // The provider to use.
+      "provider": "zed.dev",
+      // The model to use.
+      "model": "claude-3-5-sonnet-latest"
     }
   },
   // The settings for slash commands.
