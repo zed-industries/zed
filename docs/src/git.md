@@ -46,11 +46,11 @@ Zed has two primary staging workflows: Staging using the Project Diff, and using
 
 ### Using the Git Panel
 
-From the panel you can simply type a commit message and hit the commit button, or {#action git::Commit}. This will automatically all tracked files (indicated by a `[·]` in the entry's checkbox) and commit them.
+From the panel you can simply type a commit message and hit the commit button, or {#action git::Commit}. This will automatically stage all tracked files (indicated by a `[·]` in the entry's checkbox) and commit them.
 
 <!-- Show a set of changes with default staged -->
 
-Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}
+Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
 
 <!-- Add media and keybinding -->
 
@@ -64,7 +64,8 @@ TODO: Undoing a commit
 
 ## AI Support in Git
 
-Zed currently supports LLM-powered commit message generation. This can be done when focused on the commit message editor in the Git Panel.
+Zed currently supports LLM-powered commit message generation. 
+You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage} keybinding.
 
 > Note that you need to have an LLM provider configured.
 
