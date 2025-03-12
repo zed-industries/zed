@@ -675,11 +675,6 @@ impl Session {
                 })
                 .detach();
 
-                let output = circular_buffer::CircularBuffer::<
-                    MAX_TRACKED_OUTPUT_EVENTS,
-                    dap::OutputEvent,
-                >::boxed();
-
                 Self {
                     mode: Mode::Local(mode),
                     id: session_id,
@@ -689,7 +684,7 @@ impl Session {
                     thread_states: ThreadStates::default(),
                     output_token: None,
                     ignore_breakpoints: false,
-                    output,
+                    output: circular_buffer::CircularBuffer::boxed(),
                     requests: HashMap::default(),
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
