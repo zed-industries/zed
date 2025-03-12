@@ -58,6 +58,11 @@ impl ToolWorkingSet {
         state.disabled_tools_by_source.is_empty() && !state.is_scripting_tool_disabled
     }
 
+    pub fn are_all_tools_from_source_enabled(&self, source: &ToolSource) -> bool {
+        let state = self.state.lock();
+        !state.disabled_tools_by_source.contains_key(source)
+    }
+
     pub fn enabled_tools(&self, cx: &App) -> Vec<Arc<dyn Tool>> {
         self.state.lock().enabled_tools(cx)
     }
@@ -71,6 +76,16 @@ impl ToolWorkingSet {
     pub fn disable_all_tools(&self, cx: &App) {
         let mut state = self.state.lock();
         state.disable_all_tools(cx);
+    }
+
+    pub fn enable_source(&self, source: &ToolSource) {
+        let mut state = self.state.lock();
+        state.enable_source(source);
+    }
+
+    pub fn disable_source(&self, source: ToolSource, cx: &App) {
+        let mut state = self.state.lock();
+        state.disable_source(source, cx);
     }
 
     pub fn insert(&self, tool: Arc<dyn Tool>) -> ToolId {
@@ -193,6 +208,25 @@ impl WorkingSetState {
             .entry(source)
             .or_default()
             .extend(tools_to_disable.into_iter().cloned());
+    }
+
+    fn enable_source(&mut self, source: &ToolSource) {
+        self.disabled_tools_by_source.remove(source);
+    }
+
+    fn disable_source(&mut self, source: ToolSource, cx: &App) {
+        let tools_by_source = self.tools_by_source(cx);
+        let Some(tools) = tools_by_source.get(&source) else {
+            return;
+        };
+
+        self.disabled_tools_by_source.insert(
+            source,
+            tools
+                .into_iter()
+                .map(|tool| tool.name().into())
+                .collect::<HashSet<_>>(),
+        );
     }
 
     fn disable_all_tools(&mut self, cx: &App) {
