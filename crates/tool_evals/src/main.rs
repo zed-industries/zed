@@ -6,6 +6,7 @@ use clap::Parser;
 use eval::Eval;
 use gpui::Application;
 use judge::Judge;
+use regex::Regex;
 use reqwest_client::ReqwestClient;
 use std::{path::PathBuf, sync::Arc};
 
@@ -19,8 +20,9 @@ const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
     before_help = "Tool eval runner"
 )]
 struct Args {
-    evals_to_run: Vec<String>,
-    /// Runs all evals in `evaluation_data`.
+    /// Regexes to match the names of evals to run.
+    eval_name_regexes: Vec<String>,
+    /// Runs all evals in `evaluation_data`, causes the regex to be ignored.
     #[arg(long)]
     all: bool,
     /// Name of the model (default: "claude-3-7-sonnet-latest")
@@ -44,18 +46,32 @@ fn main() {
     let evaluation_data_dir = crate_dir.join("evaluation_data");
     let repos_dir = crate_dir.join("repos");
 
+    let all_evals = std::fs::read_dir(&evaluation_data_dir)
+        .unwrap()
+        .map(|path| path.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+
     let evals_to_run = if args.all {
-        std::fs::read_dir(&evaluation_data_dir)
-            .unwrap()
-            .map(|path| path.unwrap().file_name().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
+        all_evals
     } else {
-        args.evals_to_run
+        args.eval_name_regexes
+            .into_iter()
+            .map(|regex_string| Regex::new(&regex_string).unwrap())
+            .flat_map(|regex| {
+                all_evals
+                    .iter()
+                    .filter(|eval_name| regex.is_match(eval_name))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
     };
 
     if evals_to_run.is_empty() {
         panic!("Names of evals to run must be provided or `--all` specified");
     }
+
+    println!("Will run the following evals: {evals_to_run:?}");
 
     let editor_model_name = if let Some(model_name) = args.editor_model_name {
         model_name
