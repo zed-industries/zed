@@ -1,4 +1,7 @@
-use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
+use crate::{
+    git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
+    GitStatusIcon,
+};
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
@@ -9,8 +12,9 @@ use editor::{
 };
 use futures::StreamExt;
 use git::{
-    repository::Branch, status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged,
-    UnstageAll, UnstageAndNext,
+    repository::Branch,
+    status::{FileStatus, StatusCode},
+    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
 };
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
@@ -1019,6 +1023,191 @@ impl Render for ProjectDiffToolbar {
                             })),
                     ),
             )
+    }
+}
+
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "Version Control")]
+pub struct ProjectDiffEmptyState {
+    pub can_push_and_pull: bool,
+    pub focus_handle: Option<FocusHandle>,
+    pub current_branch: Option<Branch>,
+    // has_pending_commits: bool,
+    // ahead_of_remote: bool,
+    // no_git_repository: bool,
+}
+
+impl RenderOnce for ProjectDiffEmptyState {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex().size_full().items_center().justify_center().child(
+            v_flex()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .justify_around()
+                        .child(Label::new("No uncommitted changes")),
+                )
+                .when(self.can_push_and_pull, |this_div| {
+                    this_div.when_some(self.current_branch.as_ref(), |this_div, branch| {
+                        let remote_button = crate::render_remote_button(
+                            "project-diff-remote-button",
+                            branch,
+                            self.focus_handle.clone(),
+                            false,
+                        );
+
+                        match remote_button {
+                            Some(button) => this_div.child(h_flex().justify_around().child(button)),
+                            None => this_div.child(
+                                h_flex()
+                                    .justify_around()
+                                    .child(Label::new("Remote up to date")),
+                            ),
+                        }
+                    })
+                })
+                .map(|this| {
+                    this.child(h_flex().justify_around().mt_1().child(
+                        Button::new("project-diff-close-button", "Close").when_some(
+                            self.focus_handle.clone(),
+                            |this, focus_handle| {
+                                this.key_binding(KeyBinding::for_action_in(
+                                    &CloseActiveItem::default(),
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    window.focus(&focus_handle);
+                                    window
+                                        .dispatch_action(Box::new(CloseActiveItem::default()), cx);
+                                })
+                            },
+                        ),
+                    ))
+                }),
+        )
+    }
+}
+
+mod preview {
+
+    use git::status::{StatusCode, UnmergedStatus, UnmergedStatusCode};
+    use ui::prelude::*;
+
+    use git::repository::{
+        Branch, CommitSummary, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    };
+    use git::status::FileStatus;
+
+    use crate::GitStatusIcon;
+
+    use super::ProjectDiffEmptyState;
+
+    // View this component preview using `workspace: open component-preview`
+    impl ComponentPreview for ProjectDiffEmptyState {
+        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+            let unknown_upstream: Option<UpstreamTracking> = None;
+            let no_remote_upstream: Option<UpstreamTracking> = Some(UpstreamTracking::Gone);
+            let ahead_of_upstream: Option<UpstreamTracking> = Some(
+                UpstreamTrackingStatus {
+                    ahead: 2,
+                    behind: 0,
+                }
+                .into(),
+            );
+            let behind_upstream: Option<UpstreamTracking> = Some(
+                UpstreamTrackingStatus {
+                    ahead: 0,
+                    behind: 2,
+                }
+                .into(),
+            );
+            let ahead_and_behind_upstream: Option<UpstreamTracking> = Some(
+                UpstreamTrackingStatus {
+                    ahead: 3,
+                    behind: 1,
+                }
+                .into(),
+            );
+
+            let not_ahead_or_behind_upstream: Option<UpstreamTracking> = Some(
+                UpstreamTrackingStatus {
+                    ahead: 0,
+                    behind: 0,
+                }
+                .into(),
+            );
+
+            fn branch(upstream: Option<UpstreamTracking>) -> Branch {
+                Branch {
+                    is_head: true,
+                    name: "some-branch".into(),
+                    upstream: upstream.map(|tracking| Upstream {
+                        ref_name: "origin/some-branch".into(),
+                        tracking,
+                    }),
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "abc123".into(),
+                        subject: "Modify stuff".into(),
+                        commit_timestamp: 1710932954,
+                        has_parent: true,
+                    }),
+                }
+            }
+
+            fn custom(branch_name: &str, upstream: Option<UpstreamTracking>) -> Branch {
+                Branch {
+                    is_head: true,
+                    name: branch_name.to_string().into(),
+                    upstream: upstream.map(|tracking| Upstream {
+                        ref_name: format!("zed/{}", branch_name).into(),
+                        tracking,
+                    }),
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "abc123".into(),
+                        subject: "Modify stuff".into(),
+                        commit_timestamp: 1710932954,
+                        has_parent: true,
+                    }),
+                }
+            }
+
+            let empty_state = ProjectDiffEmptyState {
+                can_push_and_pull: true,
+                focus_handle: None,
+                current_branch: Some(branch(not_ahead_or_behind_upstream)),
+            };
+
+            let no_permissions = ProjectDiffEmptyState {
+                can_push_and_pull: false,
+                focus_handle: None,
+                current_branch: Some(branch(not_ahead_or_behind_upstream)),
+            };
+
+            v_flex()
+                .gap_6()
+                .children(vec![example_group(vec![
+                    single_example(
+                        "Empty",
+                        div()
+                            .w(px(480.))
+                            .h(px(320.))
+                            .child(empty_state)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "No Permissions",
+                        div()
+                            .w(px(480.))
+                            .h(px(320.))
+                            .child(no_permissions)
+                            .into_any_element(),
+                    ),
+                ])
+                .vertical()])
+                .into_any_element()
+        }
     }
 }
 
