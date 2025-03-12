@@ -11915,6 +11915,8 @@ name = "scripting_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "buffer_diff",
+ "clock",
  "collections",
  "futures 0.3.31",
  "gpui",
