@@ -555,6 +555,12 @@
     //
     // Default: icon
     "status_style": "icon",
+    // What branch name to use if init.defaultBranch
+    // is not set
+    //
+    // Default: main
+    "fallback_branch_name": "main",
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
