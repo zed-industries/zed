@@ -79,9 +79,11 @@ fn main() {
                     Err(err) => println!("Error: {}", err),
                 }
             }
+
+            cx.update(|cx| cx.quit()).unwrap();
         })
         .detach();
     });
 
-    println!("Test succeeded!");
+    println!("Done running evals");
 }
