@@ -671,6 +671,7 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
+ "collections",
  "futures 0.3.31",
  "gpui",
  "language_model",

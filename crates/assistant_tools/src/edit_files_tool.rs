@@ -1,5 +1,6 @@
 mod edit_action;
 
+use collections::HashSet;
 use std::{path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -62,6 +63,7 @@ impl Tool for EditFilesTool {
                         content: vec![include_str!("./edit_files_tool/system.md").into()],
                         cache: true,
                     },
+                    // TODO: Include context?
                     LanguageModelRequestMessage {
                         role: Role::User,
                         content: vec![input.edit_instructions.into()],
@@ -78,6 +80,9 @@ impl Tool for EditFilesTool {
             let stream = model.stream_completion_text(request, &cx);
             let mut chunks = stream.await?;
 
+            let mut changed_buffers = HashSet::default();
+            let mut applied_edits = 0;
+
             while let Some(chunk) = chunks.stream.next().await {
                 for action in parser.parse_chunk(&chunk?) {
                     let project_path = ProjectPath {
@@ -93,7 +98,7 @@ impl Tool for EditFilesTool {
                         .read_with(&cx, |buffer, cx| {
                             let new_text = match action {
                                 EditAction::Replace { old, new, .. } => {
-                                    // TODO: Repalce in background?
+                                    // TODO: Replace in background?
                                     buffer.text().replace(&old, &new)
                                 }
                                 EditAction::Write { content, .. } => content,
@@ -106,13 +111,20 @@ impl Tool for EditFilesTool {
                     let _clock =
                         buffer.update(&mut cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
 
-                    project
-                        .update(&mut cx, |project, cx| project.save_buffer(buffer, cx))?
-                        .await?;
+                    changed_buffers.insert(buffer);
+
+                    applied_edits += 1;
                 }
             }
 
-            Ok("I applied all the edits".into())
+            // Save each buffer once at the end
+            for buffer in changed_buffers {
+                project
+                    .update(&mut cx, |project, cx| project.save_buffer(buffer, cx))?
+                    .await?;
+            }
+
+            Ok(format!("Applied {} edit(s)", applied_edits).into())
         })
     }
 }

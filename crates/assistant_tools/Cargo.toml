@@ -15,6 +15,7 @@ path = "src/assistant_tools.rs"
 anyhow.workspace = true
 assistant_tool.workspace = true
 chrono.workspace = true
+collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language_model.workspace = true
