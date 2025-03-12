@@ -1,5 +1,5 @@
 use crate::{
-    adapters::DebugAdapterBinary,
+    adapters::{DebugAdapterBinary, DebugAdapterName},
     transport::{IoKind, LogKind, TransportDelegate},
 };
 use anyhow::{anyhow, Result};
@@ -39,6 +39,7 @@ impl SessionId {
 /// Represents a connection to the debug adapter process, either via stdout/stdin or a socket.
 pub struct DebugAdapterClient {
     id: SessionId,
+    name: DebugAdapterName,
     sequence_count: AtomicU64,
     binary: DebugAdapterBinary,
     executor: BackgroundExecutor,
@@ -50,6 +51,7 @@ pub type DapMessageHandler = Box<dyn FnMut(Message) + 'static + Send + Sync>;
 impl DebugAdapterClient {
     pub async fn start(
         id: SessionId,
+        name: DebugAdapterName,
         binary: DebugAdapterBinary,
         message_handler: DapMessageHandler,
         cx: AsyncApp,
@@ -58,6 +60,7 @@ impl DebugAdapterClient {
             TransportDelegate::start(&binary, cx.clone()).await?;
         let this = Self {
             id,
+            name,
             binary,
             transport_delegate,
             sequence_count: AtomicU64::new(1),
@@ -102,7 +105,7 @@ impl DebugAdapterClient {
             _ => self.binary.clone(),
         };
 
-        Self::start(session_id, binary, message_handler, cx).await
+        Self::start(session_id, self.name(), binary, message_handler, cx).await
     }
 
     async fn handle_receive_messages(
@@ -202,6 +205,9 @@ impl DebugAdapterClient {
         self.id
     }
 
+    pub fn name(&self) -> DebugAdapterName {
+        self.name.clone()
+    }
     pub fn binary(&self) -> &DebugAdapterBinary {
         &self.binary
     }
@@ -301,6 +307,7 @@ mod tests {
 
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
+            DebugAdapterName("adapter".into()),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
@@ -369,6 +376,7 @@ mod tests {
 
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
+            DebugAdapterName("adapter".into()),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),

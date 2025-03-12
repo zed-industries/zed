@@ -561,7 +561,7 @@ impl DapLogView {
                 let client = client.read(cx).adapter_client()?;
                 Some(DapMenuItem {
                     client_id: client.id(),
-                    client_name: "debygpy (hard coded)".into(), // todo(debugger) Fix this hard coded
+                    client_name: client.name().0.as_ref().into(),
                     has_adapter_logs: client.has_adapter_logs(),
                     selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
                 })

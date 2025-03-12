@@ -237,7 +237,14 @@ impl LocalMode {
                     .reconnect(session_id, binary, message_handler, cx.clone())
                     .await?
             } else {
-                DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?
+                DebugAdapterClient::start(
+                    session_id,
+                    adapter.name(),
+                    binary,
+                    message_handler,
+                    cx.clone(),
+                )
+                .await?
             },
         );
 
