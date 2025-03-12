@@ -23,44 +23,17 @@ impl EditAction {
 }
 
 /// Parses edit actions from an LLM response.
-///
-/// A response might include many edit actions with the following format:
-///
-/// Replace content:
-///
-/// src/main.rs
-/// ```
-/// <<<<<<< SEARCH
-/// fn original() {}
-/// =======
-/// fn replacement() {}
-/// >>>>>>> REPLACE
-/// ```
-///
-/// Write new content:
-///
-/// src/main.rs
-/// ```
-/// <<<<<<< SEARCH
-/// =======
-/// fn new_function() {}
-/// >>>>>>> REPLACE
-/// ```
+/// See system.md for more details on the format.
 #[derive(Debug)]
 pub struct EditActionParser {
     state: State,
     pre_fence_line: Vec<u8>,
     marker_ix: usize,
-    offset: usize,
+    line: usize,
+    column: usize,
     old_bytes: Vec<u8>,
     new_bytes: Vec<u8>,
-    errors: Vec<(usize, ParseError)>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum ParseError {
-    ExpectedMarker { expected: &'static [u8], found: u8 },
-    NoOp,
+    errors: Vec<ParseError>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -86,7 +59,8 @@ impl EditActionParser {
             state: State::Default,
             pre_fence_line: Vec::new(),
             marker_ix: 0,
-            offset: 0,
+            line: 1,
+            column: 0,
             old_bytes: Vec::new(),
             new_bytes: Vec::new(),
             errors: Vec::new(),
@@ -114,6 +88,14 @@ impl EditActionParser {
         let mut actions = Vec::new();
 
         for byte in input.bytes() {
+            // Update line and column tracking
+            if byte == b'\n' {
+                self.line += 1;
+                self.column = 0;
+            } else {
+                self.column += 1;
+            }
+
             match self.state {
                 Default => match match_marker(byte, FENCE, &mut self.marker_ix) {
                     MarkerMatch::Complete => {
@@ -173,21 +155,19 @@ impl EditActionParser {
                     }
                 }
             };
-
-            self.offset += 1;
         }
 
         actions
     }
 
     /// Returns a reference to the errors encountered during parsing.
-    pub fn errors(&self) -> &[(usize, ParseError)] {
+    pub fn errors(&self) -> &[ParseError] {
         &self.errors
     }
 
     fn action(&mut self) -> Option<EditAction> {
         if self.old_bytes.is_empty() && self.new_bytes.is_empty() {
-            self.errors.push((self.offset, ParseError::NoOp));
+            self.push_error(ParseErrorKind::NoOp);
             return None;
         }
 
@@ -212,13 +192,10 @@ impl EditActionParser {
             MarkerMatch::Complete => true,
             MarkerMatch::Partial => false,
             MarkerMatch::None => {
-                self.errors.push((
-                    self.offset,
-                    ParseError::ExpectedMarker {
-                        expected: marker,
-                        found: byte,
-                    },
-                ));
+                self.push_error(ParseErrorKind::ExpectedMarker {
+                    expected: marker,
+                    found: byte,
+                });
                 self.reset();
                 false
             }
@@ -235,6 +212,14 @@ impl EditActionParser {
         self.old_bytes.clear();
         self.new_bytes.clear();
         self.to_state(State::Default);
+    }
+
+    fn push_error(&mut self, kind: ParseErrorKind) {
+        self.errors.push(ParseError {
+            line: self.line,
+            column: self.column,
+            kind,
+        });
     }
 }
 
@@ -295,6 +280,44 @@ fn collect_until_marker(
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParseError {
+    line: usize,
+    column: usize,
+    kind: ParseErrorKind,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParseErrorKind {
+    ExpectedMarker { expected: &'static [u8], found: u8 },
+    NoOp,
+}
+
+impl std::fmt::Display for ParseErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseErrorKind::ExpectedMarker { expected, found } => {
+                write!(
+                    f,
+                    "Expected marker {:?}, found {:?}",
+                    String::from_utf8_lossy(expected),
+                    *found as char
+                )
+            }
+            ParseErrorKind::NoOp => {
+                write!(f, "No search or replace")
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "input:{}:{}: {}", self.line, self.column, self.kind)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,8 +564,8 @@ fn this_will_be_deleted() {
 
         // Check that the NoOp error was added
         assert_eq!(parser.errors().len(), 1);
-        match parser.errors()[0].1 {
-            ParseError::NoOp => {}
+        match parser.errors()[0].kind {
+            ParseErrorKind::NoOp => {}
             _ => panic!("Expected NoOp error"),
         }
     }
@@ -630,10 +653,11 @@ fn replacement() {}
         assert_eq!(parser.errors().len(), 1);
         let error = &parser.errors()[0];
 
-        assert_eq!(error.0, 28);
+        assert_eq!(error.line, 3);
+        assert_eq!(error.column, 9);
         assert_eq!(
-            error.1,
-            ParseError::ExpectedMarker {
+            error.kind,
+            ParseErrorKind::ExpectedMarker {
                 expected: b"<<<<<<< SEARCH\n",
                 found: b'W'
             }
@@ -712,7 +736,7 @@ fn new_utils_func() {}
         }
     }
 
-    fn assert_examples_in_system_prompt(actions: &[EditAction], errors: &[(usize, ParseError)]) {
+    fn assert_examples_in_system_prompt(actions: &[EditAction], errors: &[ParseError]) {
         assert_eq!(actions.len(), 5);
 
         assert_eq!(
@@ -762,5 +786,27 @@ fn new_utils_func() {}
 
         // Ensure we have no parsing errors
         assert!(errors.is_empty(), "Parsing errors found: {:?}", errors);
+    }
+
+    #[test]
+    fn test_print_error() {
+        let input = r#"src/main.rs
+```rust
+<<<<<<< WRONG_MARKER
+fn original() {}
+=======
+fn replacement() {}
+>>>>>>> REPLACE
+```
+"#;
+
+        let mut parser = EditActionParser::new();
+        parser.parse_chunk(input);
+
+        assert_eq!(parser.errors().len(), 1);
+        let error = &parser.errors()[0];
+        let expected_error = r#"input:3:9: Expected marker "<<<<<<< SEARCH\n", found 'W'"#;
+
+        assert_eq!(format!("{}", error), expected_error);
     }
 }

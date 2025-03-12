@@ -124,7 +124,26 @@ impl Tool for EditFilesTool {
                     .await?;
             }
 
-            Ok(format!("Applied {} edit(s)", applied_edits).into())
+            let errors = parser.errors();
+
+            if !errors.is_empty() {
+                let error_message = errors
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                Err(if applied_edits > 0 {
+                    anyhow!(format!(
+                        "Applied {} edit(s), but some blocks failed to parse:\n{}",
+                        applied_edits, error_message
+                    ))
+                } else {
+                    anyhow!(error_message)
+                })
+            } else {
+                anyhow::Ok(format!("Applied {} edit(s)", applied_edits).into())
+            }
         })
     }
 }
