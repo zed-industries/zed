@@ -1,12 +1,12 @@
 # Git
 
-Zed currently offers a set of fundamental Git features, with support for more advanced ones—like conflict resolution tools, line by line staging, and more—coming in the future.
+Zed currently offers a set of fundamental Git features, with support coming in the future for more advanced ones—like conflict resolution tools, line by line staging.
 
 Here's an overview of all currently supported features:
 
 - Committing
 - Staging, pushing, pulling, and fetching
-- Changeset diff view
+- Project Diff: A multibuffer view of all changes
 - Diff indicators in buffers and editor scrollbars
 - Inline diff toggle and reverts in the editor for unstaged changes
 - Git status in the project panel
@@ -23,38 +23,46 @@ In the panel you can see  the state of your project at a glance – which reposi
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
-<!-- Add media and keybinding -->
 
-### Fetch, push, and pull
+## Project Diff
 
-You can fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
+You can see all of the changes captured by Git in Zed by opening the Project Diff ({#kb git::Diff}), accessible via the {#action git::Diff} action in the Command Palette or the Git Panel.
 
-### Staging Workflow
-
-Zed has two primary staging workflows: Staging using the Project Diff, and using the panel directly.
-
-#### Using the Project Diff
-
-#### Using the Panel
-
-From the panel you can simply type a commit message and hit the commit button, or {#action git::Commit}. This will automatically all tracked files (indicated by a `[·]` in the entry's checkbox) and commit them.
-
-<!-- Show a set of changes with default staged -->
-
-Entries can be staged using each individual entry's checkbox.
-
-
-## Diff View
-
-You can see all of the changes captured by Git in Zed by opening the Diff View, accessible via the {#action git::Diff} action in the Command Palette or the Git Panel.
-
-All of the changes displayed in the Diff View behave exactly the same as any other multibuffer: they are all editable excerpts of files.
+All of the changes displayed in the Project Diff behave exactly the same as any other multibuffer: they are all editable excerpts of files.
 
 You can stage or unstage each hunk as well as a whole file by hitting the buttons on the tab bar or their corresponding keybindings.
 
 <!-- Add media and keybinding -->
 
-## Git with AI
+## Fetch, push, and pull
+
+You can fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
+
+## Staging Workflow
+
+Zed has two primary staging workflows: Staging using the Project Diff, and using the panel directly.
+
+### Using the Project Diff
+
+### Using the Git Panel
+
+From the panel you can simply type a commit message and hit the commit button, or {#action git::Commit}. This will automatically all tracked files (indicated by a `[·]` in the entry's checkbox) and commit them.
+
+<!-- Show a set of changes with default staged -->
+
+Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}
+
+<!-- Add media and keybinding -->
+
+## Commiting
+
+TODO: Composing a commit
+
+### Undoing a Commit
+
+TODO: Undoing a commit
+
+## AI Support in Git
 
 Zed currently supports LLM-powered commit message generation. This can be done when focused on the commit message editor in the Git Panel.
 
@@ -92,29 +100,29 @@ by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 
-## All Commands
-
-Not all actions have default keybindings, but can be bound by [customizing your keymap](/key-bindings.md#user-keymaps).
+## Action Reference
 
 | Action | Keybinding |
 |--------|-------------|
 | {#action git::Add} | {#kb git::Add} |
-| {#action git::Push} | {#kb git::Push} |
-| {#action git::Pull} | {#kb git::Pull} |
-| {#action git::Diff} | {#kb git::Diff} |
-| {#action git::Fetch} | {#kb git::Fetch} |
-| {#action git::Switch} | {#kb git::Switch} |
-| {#action git::Commit} | {#kb git::Commit} |
-| {#action git::Branch} | {#kb git::Branch} |
-| {#action git::Restore} | {#kb git::Restore} |
 | {#action git::StageAll} | {#kb git::StageAll} |
-| {#action git::ForcePush} | {#kb git::ForcePush} |
 | {#action git::UnstageAll} | {#kb git::UnstageAll} |
-| {#action git::RestoreFile} | {#kb git::RestoreFile} |
 | {#action git::ToggleStaged} | {#kb git::ToggleStaged} |
 | {#action git::StageAndNext} | {#kb git::StageAndNext} |
-| {#action git::CheckoutBranch} | {#kb git::CheckoutBranch} |
 | {#action git::UnstageAndNext} | {#kb git::UnstageAndNext} |
+| {#action git::Commit} | {#kb git::Commit} |
 | {#action git::ExpandCommitEditor} | {#kb git::ExpandCommitEditor} |
+| {#action git::Push} | {#kb git::Push} |
+| {#action git::ForcePush} | {#kb git::ForcePush} |
+| {#action git::Pull} | {#kb git::Pull} |
+| {#action git::Fetch} | {#kb git::Fetch} |
+| {#action git::Diff} | {#kb git::Diff} |
+| {#action git::Restore} | {#kb git::Restore} |
+| {#action git::RestoreFile} | {#kb git::RestoreFile} |
+| {#action git::Branch} | {#kb git::Branch} |
+| {#action git::Switch} | {#kb git::Switch} |
+| {#action git::CheckoutBranch} | {#kb git::CheckoutBranch} |
 | {#action editor::ToggleGitBlame} | {#kb editor::ToggleGitBlame} |
 | {#action editor::ToggleGitBlameInline} | {#kb editor::ToggleGitBlameInline} |
+
+_Not all actions have default keybindings, but can be bound by [customizing your keymap](/key-bindings.md#user-keymaps)._
