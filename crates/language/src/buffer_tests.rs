@@ -13,6 +13,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
+use std::collections::BTreeSet;
 use std::{
     env,
     ops::Range,
@@ -254,6 +255,7 @@ fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
         path: Path::new(path).into(),
         root_name: "zed".into(),
+        local_root: None,
     })
 }
 
@@ -1642,7 +1644,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         // indent level, but the indentation of the first line was not included in
         // the copied text. This information is retained in the
         // 'original_indent_columns' vector.
-        let original_indent_columns = vec![4];
+        let original_indent_columns = vec![Some(4)];
         let inserted_text = r#"
             "
                   c
@@ -1657,7 +1659,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
             Some(AutoindentMode::Block {
-                original_start_columns: original_indent_columns.clone(),
+                original_indent_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1685,7 +1687,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
             Some(AutoindentMode::Block {
-                original_start_columns: original_indent_columns.clone(),
+                original_indent_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1734,7 +1736,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
             Some(AutoindentMode::Block {
-                original_start_columns: original_indent_columns.clone(),
+                original_indent_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1765,7 +1767,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 12)..Point::new(2, 12), inserted_text)],
             Some(AutoindentMode::Block {
-                original_start_columns: Vec::new(),
+                original_indent_columns: Vec::new(),
             }),
             cx,
         );
@@ -1821,7 +1823,7 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
                 (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
             ],
             Some(AutoindentMode::Block {
-                original_start_columns: vec![0, 0, 0],
+                original_indent_columns: vec![Some(0), Some(0), Some(0)],
             }),
             cx,
         );
@@ -3137,6 +3139,93 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         "wrong ranges for text lines:\n{:?}",
         text.split('\n').collect::<Vec<_>>()
     );
+}
+
+#[gpui::test]
+fn test_words_in_range(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+
+    let contents = r#"let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word"#;
+
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(contents, cx).with_language(Arc::new(rust_lang()), cx);
+        assert_eq!(buffer.text(), contents);
+        buffer.check_invariants();
+        buffer
+    });
+
+    buffer.update(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        assert_eq!(
+            BTreeSet::from_iter(["Pizza".to_string()]),
+            snapshot
+                .words_in_range(Some("piz"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "öäpple".to_string(),
+                "Öäpple".to_string(),
+                "öÄpPlE".to_string(),
+                "ÖÄPPLE".to_string(),
+            ]),
+            snapshot
+                .words_in_range(Some("öp"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+            ]),
+            snapshot
+                .words_in_range(Some("öÄ"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(Some("öÄ好"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter(["bar你".to_string(),]),
+            snapshot
+                .words_in_range(Some("你"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(Some(""), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "bar你".to_string(),
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+                "let".to_string(),
+                "Pizza".to_string(),
+                "word".to_string(),
+                "word2".to_string(),
+            ]),
+            snapshot
+                .words_in_range(None, 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+    });
 }
 
 fn ruby_lang() -> Language {

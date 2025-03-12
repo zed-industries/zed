@@ -18,10 +18,10 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName};
+use ui::{prelude::*, Icon, IconName, List};
 use util::ResultExt;
 
-use crate::AllLanguageModelSettings;
+use crate::{ui::InstructionListItem, AllLanguageModelSettings};
 
 const PROVIDER_ID: &str = "deepseek";
 const PROVIDER_NAME: &str = "DeepSeek";
@@ -607,13 +607,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DEEPSEEK_CONSOLE_URL: &str = "https://platform.deepseek.com/api_keys";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use DeepSeek in Zed, you need an API key:",
-            "- Get your API key from:",
-            "- Paste it below and press enter:",
-        ];
-
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -622,18 +615,18 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
+                .child(Label::new("To use DeepSeek in Zed, you need an API key:"))
                 .child(
-                    h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                        Button::new("deepseek_console", DEEPSEEK_CONSOLE_URL)
-                            .style(ButtonStyle::Subtle)
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .on_click(move |_, _window, cx| cx.open_url(DEEPSEEK_CONSOLE_URL)),
-                    ),
+                    List::new()
+                        .child(InstructionListItem::new(
+                            "Get your API key from the",
+                            Some("DeepSeek console"),
+                            Some("https://platform.deepseek.com/api_keys"),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste your API key below and hit enter to start using the assistant",
+                        )),
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()
@@ -643,7 +636,7 @@ impl Render for ConfigurationView {
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
+                        .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
                 .child(
@@ -651,7 +644,8 @@ impl Render for ConfigurationView {
                         "Or set the {} environment variable.",
                         DEEPSEEK_API_KEY_VAR
                     ))
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .into_any()
         } else {

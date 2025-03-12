@@ -299,34 +299,6 @@ pub struct AdapterServerCapabilities {
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
-/// Experimental: Informs the end user about the state of the server
-///
-/// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
-#[derive(Debug)]
-pub enum ServerStatus {}
-
-/// Other(String) variant to handle unknown values due to this still being experimental
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub enum ServerHealthStatus {
-    Ok,
-    Warning,
-    Error,
-    Other(String),
-}
-
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerStatusParams {
-    pub health: ServerHealthStatus,
-    pub message: Option<String>,
-}
-
-impl lsp_types::notification::Notification for ServerStatus {
-    type Params = ServerStatusParams;
-    const METHOD: &'static str = "experimental/serverStatus";
-}
-
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -336,6 +308,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
+        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
         cx: AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -383,6 +356,7 @@ impl LanguageServer {
             code_action_kinds,
             binary,
             root_uri,
+            workspace_folders,
             cx,
             move |notification| {
                 log::info!(
@@ -397,7 +371,6 @@ impl LanguageServer {
         Ok(server)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
         server_name: LanguageServerName,
@@ -409,6 +382,7 @@ impl LanguageServer {
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
         root_uri: Url,
+        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
         cx: AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -491,7 +465,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             server: Arc::new(Mutex::new(server)),
-            workspace_folders: Default::default(),
+            workspace_folders,
             root_uri,
         }
     }
@@ -617,6 +591,16 @@ impl LanguageServer {
     }
 
     pub fn default_initialize_params(&self, cx: &App) -> InitializeParams {
+        let workspace_folders = self
+            .workspace_folders
+            .lock()
+            .iter()
+            .cloned()
+            .map(|uri| WorkspaceFolder {
+                name: Default::default(),
+                uri,
+            })
+            .collect::<Vec<_>>();
         #[allow(deprecated)]
         InitializeParams {
             process_id: None,
@@ -665,6 +649,9 @@ impl LanguageServer {
                         ..Default::default()
                     }),
                     apply_edit: Some(true),
+                    execute_command: Some(ExecuteCommandClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -791,7 +778,7 @@ impl LanguageServer {
                 }),
             },
             trace: None,
-            workspace_folders: Some(vec![]),
+            workspace_folders: Some(workspace_folders),
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
                 ClientInfo {
                     name: release_channel.display_name().to_string(),
@@ -1260,24 +1247,27 @@ impl LanguageServer {
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
         let mut workspace_folders = self.workspace_folders.lock();
+
+        let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
-            .iter()
+            .difference(&old_workspace_folders)
             .map(|uri| WorkspaceFolder {
                 uri: uri.clone(),
                 name: String::default(),
             })
             .collect();
 
-        let removed: Vec<_> = std::mem::replace(&mut *workspace_folders, folders)
-            .into_iter()
+        let removed: Vec<_> = old_workspace_folders
+            .difference(&folders)
             .map(|uri| WorkspaceFolder {
                 uri: uri.clone(),
                 name: String::default(),
             })
             .collect();
         let should_notify = !added.is_empty() || !removed.is_empty();
-
         if should_notify {
+            *workspace_folders = folders;
+            drop(workspace_folders);
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
@@ -1392,6 +1382,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
+        let workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1403,6 +1394,7 @@ impl FakeLanguageServer {
             None,
             binary.clone(),
             root,
+            workspace_folders.clone(),
             cx.clone(),
             |_| {},
         );
@@ -1421,6 +1413,7 @@ impl FakeLanguageServer {
                     None,
                     binary,
                     Self::root_path(),
+                    workspace_folders,
                     cx.clone(),
                     move |msg| {
                         notifications_tx

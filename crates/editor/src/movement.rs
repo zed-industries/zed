@@ -238,7 +238,7 @@ pub fn indented_line_beginning(
 }
 
 /// Returns a position of the end of line.
-
+///
 /// If `stop_at_soft_boundaries` is true, the returned position is that of the
 /// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
 /// Otherwise it's always going to be the end of a logical line.
@@ -448,7 +448,9 @@ pub fn end_of_excerpt(
             if start.row() > DisplayRow(0) {
                 *start.row_mut() -= 1;
             }
-            map.clip_point(start, Bias::Left)
+            start = map.clip_point(start, Bias::Left);
+            *start.column_mut() = 0;
+            start
         }
         Direction::Next => {
             let mut end = excerpt.end_anchor().to_display_point(&map);

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity,
+    action_with_deprecated_aliases, Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
@@ -12,6 +12,12 @@ use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 use workspace::ShowConfiguration;
+
+action_with_deprecated_aliases!(
+    assistant,
+    ToggleModelSelector,
+    ["assistant2::ToggleModelSelector"]
+);
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
@@ -430,9 +436,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .pl_0p5()
                         .w(px(240.))
                         .child(
-                            div().max_w_40().child(
-                                Label::new(model_info.model.name().0.clone()).text_ellipsis(),
-                            ),
+                            div()
+                                .max_w_40()
+                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
                         )
                         .child(
                             h_flex()

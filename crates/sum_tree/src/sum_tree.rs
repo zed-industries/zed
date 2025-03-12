@@ -1468,7 +1468,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for u8 {
+    impl Dimension<'_, IntegersSummary> for u8 {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1478,7 +1478,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Count {
+    impl Dimension<'_, IntegersSummary> for Count {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1488,13 +1488,13 @@ mod tests {
         }
     }
 
-    impl<'a> SeekTarget<'a, IntegersSummary, IntegersSummary> for Count {
+    impl SeekTarget<'_, IntegersSummary, IntegersSummary> for Count {
         fn cmp(&self, cursor_location: &IntegersSummary, _: &()) -> Ordering {
             self.0.cmp(&cursor_location.count)
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Sum {
+    impl Dimension<'_, IntegersSummary> for Sum {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }

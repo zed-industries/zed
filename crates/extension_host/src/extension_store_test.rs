@@ -163,6 +163,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
+                        capabilities: Vec::new(),
                     }),
                     dev: false,
                 },
@@ -191,6 +192,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
+                        capabilities: Vec::new(),
                     }),
                     dev: false,
                 },
@@ -356,6 +358,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 slash_commands: BTreeMap::default(),
                 indexed_docs_providers: BTreeMap::default(),
                 snippets: None,
+                capabilities: Vec::new(),
             }),
             dev: false,
         },
@@ -777,6 +780,7 @@ fn init_test(cx: &mut TestAppContext) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         release_channel::init(SemanticVersion::default(), cx);
+        extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
         ExtensionSettings::register(cx);

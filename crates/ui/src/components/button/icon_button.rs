@@ -14,7 +14,7 @@ pub enum IconButtonShape {
 }
 
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct IconButton {
     base: ButtonLike,
     shape: IconButtonShape,
@@ -202,7 +202,7 @@ impl RenderOnce for IconButton {
 }
 
 impl ComponentPreview for IconButton {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

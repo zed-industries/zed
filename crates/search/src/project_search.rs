@@ -1,7 +1,7 @@
 use crate::{
     buffer_search::Deploy, BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery,
-    ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
-    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -90,7 +90,7 @@ pub fn init(cx: &mut App) {
         );
         register_workspace_action(
             workspace,
-            move |search_bar, action: &SelectPrevMatch, window, cx| {
+            move |search_bar, action: &SelectPreviousMatch, window, cx| {
                 search_bar.select_prev_match(action, window, cx)
             },
         );
@@ -372,7 +372,7 @@ impl Render for ProjectSearchView {
 
             let page_content = page_content.map(|text| div().child(text));
 
-            v_flex()
+            h_flex()
                 .size_full()
                 .items_center()
                 .justify_center()
@@ -383,7 +383,6 @@ impl Render for ProjectSearchView {
                     v_flex()
                         .id("project-search-landing-page")
                         .overflow_y_scroll()
-                        .max_w_80()
                         .gap_1()
                         .child(heading_text)
                         .children(page_content),
@@ -785,14 +784,16 @@ impl ProjectSearchView {
         );
 
         let focus_handle = cx.focus_handle();
-        subscriptions.push(cx.on_focus_in(&focus_handle, window, |this, window, cx| {
-            if this.focus_handle.is_focused(window) {
-                if this.has_matches() {
-                    this.results_editor.focus_handle(cx).focus(window);
-                } else {
-                    this.query_editor.focus_handle(cx).focus(window);
+        subscriptions.push(cx.on_focus(&focus_handle, window, |_, window, cx| {
+            cx.on_next_frame(window, |this, window, cx| {
+                if this.focus_handle.is_focused(window) {
+                    if this.has_matches() {
+                        this.results_editor.focus_handle(cx).focus(window);
+                    } else {
+                        this.query_editor.focus_handle(cx).focus(window);
+                    }
                 }
-            }
+            });
         }));
 
         let languages = project.read(cx).languages().clone();
@@ -894,6 +895,7 @@ impl ProjectSearchView {
                             editor.set_text(old_query.as_str(), window, cx);
                         });
                         search_view.search_options = SearchOptions::from_query(&old_query);
+                        search_view.adjust_query_regex_language(cx);
                     }
                 }
                 new_query
@@ -1238,6 +1240,7 @@ impl ProjectSearchView {
     fn update_match_index(&mut self, cx: &mut Context<Self>) {
         let results_editor = self.results_editor.read(cx);
         let new_index = active_match_index(
+            Direction::Next,
             &self.entity.read(cx).match_ranges,
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
@@ -1439,9 +1442,9 @@ impl ProjectSearchBar {
         self.cycle_field(Direction::Next, window, cx);
     }
 
-    fn tab_previous(
+    fn backtab(
         &mut self,
-        _: &editor::actions::TabPrev,
+        _: &editor::actions::Backtab,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1696,7 +1699,7 @@ impl ProjectSearchBar {
 
     fn select_prev_match(
         &mut self,
-        _: &SelectPrevMatch,
+        _: &SelectPreviousMatch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1895,7 +1898,7 @@ impl Render for ProjectSearchBar {
                         move |window, cx| {
                             Tooltip::for_action_in(
                                 "Go To Previous Match",
-                                &SelectPrevMatch,
+                                &SelectPreviousMatch,
                                 &focus_handle,
                                 window,
                                 cx,
@@ -2094,7 +2097,7 @@ impl Render for ProjectSearchBar {
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|this, action, window, cx| {
-                this.tab_previous(action, window, cx);
+                this.backtab(action, window, cx);
                 cx.stop_propagation();
             }))
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))

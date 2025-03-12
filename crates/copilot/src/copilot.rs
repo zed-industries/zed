@@ -475,6 +475,7 @@ impl Copilot {
                 binary,
                 root_path,
                 None,
+                Default::default(),
                 cx.clone(),
             )?;
 
@@ -622,16 +623,21 @@ impl Copilot {
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
-        if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
-            let server = server.clone();
-            cx.background_spawn(async move {
-                server
-                    .request::<request::SignOut>(request::SignOutParams {})
-                    .await?;
+        match &self.server {
+            CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
+                let server = server.clone();
+                cx.background_spawn(async move {
+                    server
+                        .request::<request::SignOut>(request::SignOutParams {})
+                        .await?;
+                    anyhow::Ok(())
+                })
+            }
+            CopilotServer::Disabled => cx.background_spawn(async move {
+                clear_copilot_config_dir().await;
                 anyhow::Ok(())
-            })
-        } else {
-            Task::ready(Err(anyhow!("copilot hasn't started yet")))
+            }),
+            _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
 
@@ -1013,6 +1019,10 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
+}
+
+async fn clear_copilot_config_dir() {
+    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {

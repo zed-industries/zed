@@ -269,6 +269,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
+        sel!(windowWillExitFullScreen:),
+        window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
         sel!(windowDidMove:),
         window_did_move as extern "C" fn(&Object, Sel, id),
     );
@@ -334,6 +338,7 @@ struct MacWindowState {
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -613,6 +618,9 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
+                transparent_titlebar: titlebar
+                    .as_ref()
+                    .map_or(true, |titlebar| titlebar.appears_transparent),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -1490,6 +1498,42 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.fullscreen_restore_bounds = lock.bounds();
+
+    if is_macos_version_at_least(15, 3, 0) {
+        unsafe {
+            lock.native_window.setTitlebarAppearsTransparent_(NO);
+        }
+    }
+}
+
+extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+
+    if is_macos_version_at_least(15, 3, 0) && lock.transparent_titlebar {
+        unsafe {
+            lock.native_window.setTitlebarAppearsTransparent_(YES);
+        }
+    }
+}
+
+#[repr(C)]
+struct NSOperatingSystemVersion {
+    major_version: NSInteger,
+    minor_version: NSInteger,
+    patch_version: NSInteger,
+}
+
+fn is_macos_version_at_least(major: NSInteger, minor: NSInteger, patch: NSInteger) -> bool {
+    unsafe {
+        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+        let os_version: NSOperatingSystemVersion = msg_send![process_info, operatingSystemVersion];
+        (os_version.major_version > major)
+            || (os_version.major_version == major && os_version.minor_version > minor)
+            || (os_version.major_version == major
+                && os_version.minor_version == minor
+                && os_version.patch_version >= patch)
+    }
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
