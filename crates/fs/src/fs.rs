@@ -776,7 +776,7 @@ impl Fs for RealFs {
 
         let branch_name;
 
-        if &config.status.success() && !config.stdout.is_empty() {
+        if config.status.success() && !config.stdout.is_empty() {
             branch_name = String::from_utf8_lossy(&config.stdout);
         } else {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());

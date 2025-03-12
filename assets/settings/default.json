@@ -558,7 +558,7 @@
     // What branch name to use if init.defaultBranch
     // is not set
     //
-    // Default: icon
+    // Default: main
     "fallback_branch_name": "main",
 
     "scrollbar": {
