@@ -123,7 +123,7 @@ impl Tool for DeletePathTool {
                 // Sort to group entries in the same directory together
                 deleted_paths.sort();
 
-                let mut buf = "Deleted these paths:\n".to_string();
+                let mut buf = format!("Deleted these {} paths:\n", deleted_paths.len());
 
                 for path in deleted_paths.iter() {
                     buf.push('\n');
