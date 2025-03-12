@@ -328,7 +328,7 @@ pub struct GitPanel {
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
-    settings_subscription: Subscription,
+    _settings_subscription: Subscription,
 }
 
 struct RemoteOperationGuard {
@@ -446,7 +446,7 @@ impl GitPanel {
         };
 
         let mut assistant_enabled = AssistantSettings::get_global(cx).enabled;
-        let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+        let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
             if assistant_enabled != AssistantSettings::get_global(cx).enabled {
                 assistant_enabled = AssistantSettings::get_global(cx).enabled;
                 cx.notify();
@@ -488,7 +488,7 @@ impl GitPanel {
             entry_count: 0,
             horizontal_scrollbar,
             vertical_scrollbar,
-            settings_subscription,
+            _settings_subscription,
         };
         git_panel.schedule_update(false, window, cx);
         git_panel
