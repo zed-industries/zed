@@ -63,7 +63,7 @@ You can install a local build on your machine with:
 
 This will build zed and the cli in release mode and make them available at `~/.local/bin/zed`, installing .desktop files to `~/.local/share`.
 
-> ***Note***: If you encounter linker errors similar to the following:
+> **_Note_**: If you encounter linker errors similar to the following:
 >
 > ```bash
 > error: linking with `cc` failed: exit status: 1 ...
