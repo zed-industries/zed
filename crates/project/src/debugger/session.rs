@@ -1376,6 +1376,11 @@ impl Session {
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
         if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped
             && self.requests.contains_key(&ThreadsCommand.type_id())
+            && self.threads.contains_key(&thread_id)
+        // ^ todo(debugger): We need a better way to check that we're not querying stale data
+        // We could still be using an old thread id and have sent a new thread's request
+        // This isn't the biggest concern right now because it hasn't caused any issues outside of tests
+        // But it very well could cause a minor bug in the future that is hard to track down
         {
             self.fetch(
                 super::dap_command::StackTraceCommand {

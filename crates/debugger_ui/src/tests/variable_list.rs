@@ -58,6 +58,17 @@ async fn test_basic_fetch_initial_scope_and_variables(
     let session = task.await.unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
+    client
+        .on_request::<dap::requests::Threads, _>(move |_, _| {
+            Ok(dap::ThreadsResponse {
+                threads: vec![dap::Thread {
+                    id: 1,
+                    name: "Thread 1".into(),
+                }],
+            })
+        })
+        .await;
+
     let stack_frames = vec![StackFrame {
         id: 1,
         name: "Stack Frame 1".into(),
@@ -119,17 +130,6 @@ async fn test_basic_fetch_initial_scope_and_variables(
                     scopes: (*scopes).clone(),
                 })
             }
-        })
-        .await;
-
-    client
-        .on_request::<dap::requests::Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
         })
         .await;
 

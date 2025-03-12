@@ -62,6 +62,7 @@ impl Render for RunningState {
         });
 
         let is_terminated = self.session.read(cx).is_terminated();
+        let is_stopped = matches!(thread_status, ThreadStatus::Stopped);
         let active_thread_item = &self.active_thread_item;
 
         let has_no_threads = threads.is_empty();
