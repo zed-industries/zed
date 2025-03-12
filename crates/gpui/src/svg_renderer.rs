@@ -1,7 +1,10 @@
 use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
 use anyhow::anyhow;
 use resvg::tiny_skia::Pixmap;
-use std::{hash::Hash, sync::Arc};
+use std::{
+    hash::Hash,
+    sync::{Arc, LazyLock},
+};
 
 /// When rendering SVGs, we render them at twice the size to get a higher-quality result.
 pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
@@ -25,10 +28,25 @@ pub enum SvgSize {
 
 impl SvgRenderer {
     pub fn new(asset_source: Arc<dyn AssetSource>) -> Self {
-        let mut font_db = usvg::fontdb::Database::new();
-        font_db.load_system_fonts();
+        let font_db = LazyLock::new(|| {
+            let mut db = usvg::fontdb::Database::new();
+            db.load_system_fonts();
+            Arc::new(db)
+        });
+        let default_font_resolver = usvg::FontResolver::default_font_selector();
+        let font_resolver = Box::new(
+            move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
+                if db.is_empty() {
+                    *db = font_db.clone();
+                }
+                default_font_resolver(font, db)
+            },
+        );
         let options = usvg::Options {
-            fontdb: Arc::new(font_db),
+            font_resolver: usvg::FontResolver {
+                select_font: font_resolver,
+                select_fallback: usvg::FontResolver::default_fallback_selector(),
+            },
             ..Default::default()
         };
         Self {
