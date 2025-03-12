@@ -15,6 +15,7 @@ path = "src/assistant_tool.rs"
 anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
+language_model.workspace = true
 gpui.workspace = true
 parking_lot.workspace = true
 project.workspace = true

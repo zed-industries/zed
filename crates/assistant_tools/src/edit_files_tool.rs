@@ -42,6 +42,7 @@ impl Tool for EditFilesTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
+        messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
@@ -55,21 +56,25 @@ impl Tool for EditFilesTool {
             return Task::ready(Err(anyhow!("No editor model configured")));
         };
 
+        let mut messages = messages.to_vec();
+        if let Some(last_message) = messages.last_mut() {
+            // Strip out tool use from the last message because we're in the middle of executing a tool call.
+            last_message
+                .content
+                .retain(|content| !matches!(content, language_model::MessageContent::ToolUse(_)))
+        }
+        messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                include_str!("./edit_files_tool/system.md").into(),
+                input.edit_instructions.into(),
+            ],
+            cache: false,
+        });
+
         cx.spawn(|mut cx| async move {
             let request = LanguageModelRequest {
-                messages: vec![
-                    LanguageModelRequestMessage {
-                        role: Role::System,
-                        content: vec![include_str!("./edit_files_tool/system.md").into()],
-                        cache: true,
-                    },
-                    // TODO: Include context?
-                    LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![input.edit_instructions.into()],
-                        cache: true,
-                    },
-                ],
+                messages,
                 tools: vec![],
                 stop: vec![],
                 temperature: None,
