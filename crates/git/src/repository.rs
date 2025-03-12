@@ -4,6 +4,7 @@ use crate::{blame::Blame, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
 use askpass::{AskPassResult, AskPassSession};
 use collections::{HashMap, HashSet};
+use futures::future::BoxFuture;
 use futures::{select_biased, FutureExt as _};
 use git2::BranchType;
 use gpui::SharedString;
@@ -189,10 +190,10 @@ pub trait GitRepository: Send + Sync {
     fn reset(&self, commit: &str, mode: ResetMode, env: &HashMap<String, String>) -> Result<()>;
     fn checkout_files(
         &self,
-        commit: &str,
-        paths: &[RepoPath],
-        env: &HashMap<String, String>,
-    ) -> Result<()>;
+        commit: String,
+        paths: Vec<RepoPath>,
+        env: HashMap<String, String>,
+    ) -> BoxFuture<Result<()>>;
 
     fn show(&self, commit: &str) -> Result<CommitDetails>;
 
@@ -228,12 +229,12 @@ pub trait GitRepository: Send + Sync {
 
     fn push(
         &self,
-        branch_name: &str,
-        upstream_name: &str,
+        branch_name: String,
+        upstream_name: String,
         options: Option<PushOptions>,
         askpass: AskPassSession,
-        env: &HashMap<String, String>,
-    ) -> Result<RemoteCommandOutput>;
+        env: HashMap<String, String>,
+    ) -> BoxFuture<Result<RemoteCommandOutput>>;
 
     fn pull(
         &self,
@@ -242,6 +243,7 @@ pub trait GitRepository: Send + Sync {
         askpass: AskPassSession,
         env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput>;
+
     fn fetch(
         &self,
         askpass: AskPassSession,
@@ -361,28 +363,33 @@ impl GitRepository for RealGitRepository {
 
     fn checkout_files(
         &self,
-        commit: &str,
-        paths: &[RepoPath],
-        env: &HashMap<String, String>,
-    ) -> Result<()> {
-        if paths.is_empty() {
-            return Ok(());
-        }
-        let working_directory = self.working_directory()?;
+        commit: String,
+        paths: Vec<RepoPath>,
+        env: HashMap<String, String>,
+    ) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        async {
+            if paths.is_empty() {
+                return Ok(());
+            }
 
-        let output = new_std_command(&self.git_binary_path)
-            .current_dir(&working_directory)
-            .envs(env)
-            .args(["checkout", commit, "--"])
-            .args(paths.iter().map(|path| path.as_ref()))
-            .output()?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to checkout files:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
+            let output = new_smol_command(&git_binary_path)
+                .current_dir(&working_directory?)
+                .envs(env)
+                .args(["checkout", &commit, "--"])
+                .args(paths.iter().map(|path| path.as_ref()))
+                .output()
+                .await?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to checkout files:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Ok(())
         }
-        Ok(())
+        .boxed()
     }
 
     fn load_index_text(&self, path: &RepoPath) -> Option<String> {
@@ -724,33 +731,41 @@ impl GitRepository for RealGitRepository {
 
     fn push(
         &self,
-        branch_name: &str,
-        remote_name: &str,
+        branch_name: String,
+        remote_name: String,
         options: Option<PushOptions>,
         ask_pass: AskPassSession,
-        env: &HashMap<String, String>,
-    ) -> Result<RemoteCommandOutput> {
-        let working_directory = self.working_directory()?;
+        env: HashMap<String, String>,
+    ) -> BoxFuture<Result<RemoteCommandOutput>> {
+        let working_directory = self.working_directory();
+        async move {
+            let working_directory = working_directory?;
 
-        let mut command = new_smol_command("git");
-        command
-            .envs(env)
-            .env("GIT_ASKPASS", ask_pass.script_path())
-            .env("SSH_ASKPASS", ask_pass.script_path())
-            .env("SSH_ASKPASS_REQUIRE", "force")
-            .current_dir(&working_directory)
-            .args(["push"])
-            .args(options.map(|option| match option {
-                PushOptions::SetUpstream => "--set-upstream",
-                PushOptions::Force => "--force-with-lease",
-            }))
-            .arg(remote_name)
-            .arg(format!("{}:{}", branch_name, branch_name))
-            .stdout(smol::process::Stdio::piped())
-            .stderr(smol::process::Stdio::piped());
-        let git_process = command.spawn()?;
+            let mut command = new_smol_command("git");
+            command
+                .envs(env)
+                .env("GIT_ASKPASS", ask_pass.script_path())
+                .env("SSH_ASKPASS", ask_pass.script_path())
+                .env("SSH_ASKPASS_REQUIRE", "force")
+                .env("GIT_TRACE", "/Users/max/.git_trace")
+                .env("GCM_TRACE", "/Users/max/.git_trace")
+                .env("GIT_HTTP_USER_AGENT", "Zed")
+                .current_dir(&working_directory)
+                .args(["push"])
+                .args(options.map(|option| match option {
+                    PushOptions::SetUpstream => "--set-upstream",
+                    PushOptions::Force => "--force-with-lease",
+                }))
+                .arg(remote_name)
+                .arg(format!("{}:{}", branch_name, branch_name))
+                .stdin(smol::process::Stdio::null())
+                .stdout(smol::process::Stdio::piped())
+                .stderr(smol::process::Stdio::piped());
+            let git_process = command.spawn()?;
 
-        run_remote_command(ask_pass, git_process)
+            run_remote_command(ask_pass, git_process).await
+        }
+        .boxed()
     }
 
     fn pull(
@@ -760,23 +775,24 @@ impl GitRepository for RealGitRepository {
         ask_pass: AskPassSession,
         env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput> {
-        let working_directory = self.working_directory()?;
+        todo!();
+        // let working_directory = self.working_directory()?;
 
-        let mut command = new_smol_command("git");
-        command
-            .envs(env)
-            .env("GIT_ASKPASS", ask_pass.script_path())
-            .env("SSH_ASKPASS", ask_pass.script_path())
-            .env("SSH_ASKPASS_REQUIRE", "force")
-            .current_dir(&working_directory)
-            .args(["pull"])
-            .arg(remote_name)
-            .arg(branch_name)
-            .stdout(smol::process::Stdio::piped())
-            .stderr(smol::process::Stdio::piped());
-        let git_process = command.spawn()?;
+        // let mut command = new_smol_command("git");
+        // command
+        //     .envs(env)
+        //     .env("GIT_ASKPASS", ask_pass.script_path())
+        //     .env("SSH_ASKPASS", ask_pass.script_path())
+        //     .env("SSH_ASKPASS_REQUIRE", "force")
+        //     .current_dir(&working_directory)
+        //     .args(["pull"])
+        //     .arg(remote_name)
+        //     .arg(branch_name)
+        //     .stdout(smol::process::Stdio::piped())
+        //     .stderr(smol::process::Stdio::piped());
+        // let git_process = command.spawn()?;
 
-        run_remote_command(ask_pass, git_process)
+        // run_remote_command(ask_pass, git_process)
     }
 
     fn fetch(
@@ -784,21 +800,22 @@ impl GitRepository for RealGitRepository {
         ask_pass: AskPassSession,
         env: &HashMap<String, String>,
     ) -> Result<RemoteCommandOutput> {
-        let working_directory = self.working_directory()?;
+        todo!();
+        // let working_directory = self.working_directory()?;
 
-        let mut command = new_smol_command("git");
-        command
-            .envs(env)
-            .env("GIT_ASKPASS", ask_pass.script_path())
-            .env("SSH_ASKPASS", ask_pass.script_path())
-            .env("SSH_ASKPASS_REQUIRE", "force")
-            .current_dir(&working_directory)
-            .args(["fetch", "--all"])
-            .stdout(smol::process::Stdio::piped())
-            .stderr(smol::process::Stdio::piped());
-        let git_process = command.spawn()?;
+        // let mut command = new_smol_command("git");
+        // command
+        //     .envs(env)
+        //     .env("GIT_ASKPASS", ask_pass.script_path())
+        //     .env("SSH_ASKPASS", ask_pass.script_path())
+        //     .env("SSH_ASKPASS_REQUIRE", "force")
+        //     .current_dir(&working_directory)
+        //     .args(["fetch", "--all"])
+        //     .stdout(smol::process::Stdio::piped())
+        //     .stderr(smol::process::Stdio::piped());
+        // let git_process = command.spawn()?;
 
-        run_remote_command(ask_pass, git_process)
+        // run_remote_command(ask_pass, git_process)
     }
 
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>> {
@@ -892,38 +909,36 @@ impl GitRepository for RealGitRepository {
     }
 }
 
-fn run_remote_command(
+async fn run_remote_command(
     mut ask_pass: AskPassSession,
     git_process: smol::process::Child,
 ) -> std::result::Result<RemoteCommandOutput, anyhow::Error> {
-    smol::block_on(async {
-        select_biased! {
-            result = ask_pass.run().fuse() => {
-                match result {
-                    AskPassResult::CancelledByUser => {
-                        Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
-                    }
-                    AskPassResult::Timedout => {
-                        Err(anyhow!("Connecting to host timed out"))?
-                    }
+    select_biased! {
+        result = ask_pass.run().fuse() => {
+            match result {
+                AskPassResult::CancelledByUser => {
+                    Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
-            }
-            output = git_process.output().fuse() => {
-                let output = output?;
-                if !output.status.success() {
-                    Err(anyhow!(
-                        "{}",
-                        String::from_utf8_lossy(&output.stderr)
-                    ))
-                } else {
-                    Ok(RemoteCommandOutput {
-                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                    })
+                AskPassResult::Timedout => {
+                    Err(anyhow!("Connecting to host timed out"))?
                 }
             }
         }
-    })
+        output = git_process.output().fuse() => {
+            let output = output?;
+            if !output.status.success() {
+                Err(anyhow!(
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            } else {
+                Ok(RemoteCommandOutput {
+                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                })
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1021,7 +1036,12 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn checkout_files(&self, _: &str, _: &[RepoPath], _: &HashMap<String, String>) -> Result<()> {
+    fn checkout_files(
+        &self,
+        _: String,
+        _: Vec<RepoPath>,
+        _: HashMap<String, String>,
+    ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 
@@ -1126,12 +1146,12 @@ impl GitRepository for FakeGitRepository {
 
     fn push(
         &self,
-        _branch: &str,
-        _remote: &str,
+        _branch: String,
+        _remote: String,
         _options: Option<PushOptions>,
         _ask_pass: AskPassSession,
-        _env: &HashMap<String, String>,
-    ) -> Result<RemoteCommandOutput> {
+        _env: HashMap<String, String>,
+    ) -> BoxFuture<Result<RemoteCommandOutput>> {
         unimplemented!()
     }
 

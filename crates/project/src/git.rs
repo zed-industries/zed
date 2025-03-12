@@ -1081,7 +1081,7 @@ impl Repository {
 
     fn send_job<F, Fut, R>(&self, job: F) -> oneshot::Receiver<R>
     where
-        F: FnOnce(GitRepo) -> Fut + 'static,
+        F: FnOnce(GitRepo, &mut AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
@@ -1090,7 +1090,7 @@ impl Repository {
 
     fn send_keyed_job<F, Fut, R>(&self, key: Option<GitJobKey>, job: F) -> oneshot::Receiver<R>
     where
-        F: FnOnce(GitRepo) -> Fut + 'static,
+        F: FnOnce(GitRepo, &mut AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
@@ -1100,8 +1100,8 @@ impl Repository {
             .unbounded_send(GitJob {
                 key,
                 job: Box::new(|cx: &mut AsyncApp| {
-                    let job = job(git_repo);
-                    cx.background_spawn(async move {
+                    let job = job(git_repo, cx);
+                    cx.spawn(|_| async move {
                         let result = job.await;
                         result_tx.send(result).ok();
                     })
@@ -1292,9 +1292,9 @@ impl Repository {
         let commit = commit.to_string();
         let env = self.worktree_environment(cx);
 
-        self.send_job(|git_repo| async move {
+        self.send_job(|git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(repo) => repo.checkout_files(&commit, &paths, &env.await),
+                GitRepo::Local(repo) => repo.checkout_files(commit, paths, env.await).await,
                 GitRepo::Remote {
                     project_id,
                     client,
@@ -1328,7 +1328,7 @@ impl Repository {
     ) -> oneshot::Receiver<Result<()>> {
         let commit = commit.to_string();
         let env = self.worktree_environment(cx);
-        self.send_job(|git_repo| async move {
+        self.send_job(|git_repo, cx| async move {
             match git_repo {
                 GitRepo::Local(git_repo) => {
                     let env = env.await;
@@ -1361,7 +1361,7 @@ impl Repository {
 
     pub fn show(&self, commit: &str) -> oneshot::Receiver<Result<CommitDetails>> {
         let commit = commit.to_string();
-        self.send_job(|git_repo| async move {
+        self.send_job(|git_repo, cx| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => git_repository.show(&commit),
                 GitRepo::Remote {
@@ -1433,7 +1433,7 @@ impl Repository {
             let env = env.await;
 
             this.update(&mut cx, |this, _| {
-                this.send_job(|git_repo| async move {
+                this.send_job(|git_repo, cx| async move {
                     match git_repo {
                         GitRepo::Local(repo) => repo.stage_paths(&entries, &env),
                         GitRepo::Remote {
@@ -1504,7 +1504,7 @@ impl Repository {
             let env = env.await;
 
             this.update(&mut cx, |this, _| {
-                this.send_job(|git_repo| async move {
+                this.send_job(|git_repo, cx| async move {
                     match git_repo {
                         GitRepo::Local(repo) => repo.unstage_paths(&entries, &env),
                         GitRepo::Remote {
@@ -1587,7 +1587,7 @@ impl Repository {
         cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let env = self.worktree_environment(cx);
-        self.send_job(|git_repo| async move {
+        self.send_job(|git_repo, cx| async move {
             match git_repo {
                 GitRepo::Local(repo) => {
                     let env = env.await;
@@ -1634,7 +1634,7 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
 
-        self.send_job(move |git_repo| async move {
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
@@ -1685,12 +1685,20 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
 
-        self.send_job(move |git_repo| async move {
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
                     let env = env.await;
                     let askpass = AskPassSession::new(&executor, askpass).await?;
-                    git_repository.push(&branch, &remote, options, askpass, &env)
+                    git_repository
+                        .push(
+                            branch.to_string(),
+                            remote.to_string(),
+                            options,
+                            askpass,
+                            env,
+                        )
+                        .await
                 }
                 GitRepo::Remote {
                     project_id,
@@ -1740,7 +1748,7 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
 
-        self.send_job(move |git_repo| async move {
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
@@ -1790,7 +1798,7 @@ impl Repository {
 
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
-            |git_repo| async move {
+            |git_repo, cx| async move {
                 match git_repo {
                     GitRepo::Local(repo) => repo.set_index_text(&path, content, &env.await),
                     GitRepo::Remote {
@@ -1819,7 +1827,7 @@ impl Repository {
         &self,
         branch_name: Option<String>,
     ) -> oneshot::Receiver<Result<Vec<Remote>>> {
-        self.send_job(|repo| async move {
+        self.send_job(|repo, cx| async move {
             match repo {
                 GitRepo::Local(git_repository) => {
                     git_repository.get_remotes(branch_name.as_deref())
@@ -1854,7 +1862,7 @@ impl Repository {
     }
 
     pub fn branches(&self) -> oneshot::Receiver<Result<Vec<Branch>>> {
-        self.send_job(|repo| async move {
+        self.send_job(|repo, cx| async move {
             match repo {
                 GitRepo::Local(git_repository) => git_repository.branches(),
                 GitRepo::Remote {
@@ -1884,7 +1892,7 @@ impl Repository {
     }
 
     pub fn diff(&self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
-        self.send_job(|repo| async move {
+        self.send_job(|repo, cx| async move {
             match repo {
                 GitRepo::Local(git_repository) => git_repository.diff(diff_type),
                 GitRepo::Remote {
@@ -1918,7 +1926,7 @@ impl Repository {
 
     pub fn create_branch(&self, branch_name: &str) -> oneshot::Receiver<Result<()>> {
         let branch_name = branch_name.to_owned();
-        self.send_job(|repo| async move {
+        self.send_job(|repo, cx| async move {
             match repo {
                 GitRepo::Local(git_repository) => git_repository.create_branch(&branch_name),
                 GitRepo::Remote {
@@ -1944,7 +1952,7 @@ impl Repository {
 
     pub fn change_branch(&self, branch_name: &str) -> oneshot::Receiver<Result<()>> {
         let branch_name = branch_name.to_owned();
-        self.send_job(|repo| async move {
+        self.send_job(|repo, cx| async move {
             match repo {
                 GitRepo::Local(git_repository) => git_repository.change_branch(&branch_name),
                 GitRepo::Remote {
@@ -1969,7 +1977,7 @@ impl Repository {
     }
 
     pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
-        self.send_job(|repo| async move {
+        self.send_job(|repo, cx| async move {
             match repo {
                 GitRepo::Local(git_repository) => git_repository.check_for_pushed_commit(),
                 GitRepo::Remote {
