@@ -841,12 +841,12 @@ impl Project {
             });
 
             let git_store = cx.new(|cx| {
-                GitStore::new(
+                GitStore::local(
                     &worktree_store,
                     buffer_store.clone(),
-                    Some(environment.clone()),
+                    environment.clone(),
+                    fs.clone(),
                     client.clone().into(),
-                    None,
                     cx,
                 )
             });
@@ -970,12 +970,12 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let git_store = cx.new(|cx| {
-                GitStore::new(
+                GitStore::ssh(
                     &worktree_store,
                     buffer_store.clone(),
-                    Some(environment.clone()),
+                    environment.clone(),
                     ssh_proto.clone(),
-                    Some(ProjectId(SSH_PROJECT_ID)),
+                    ProjectId(SSH_PROJECT_ID),
                     cx,
                 )
             });
@@ -1177,12 +1177,12 @@ impl Project {
         })?;
 
         let git_store = cx.new(|cx| {
-            GitStore::new(
+            GitStore::remote(
+                // In this remote case we pass None for the environment
                 &worktree_store,
                 buffer_store.clone(),
-                None,
                 client.clone().into(),
-                Some(ProjectId(remote_id)),
+                ProjectId(remote_id),
                 cx,
             )
         })?;
@@ -4441,6 +4441,17 @@ impl Project {
                 .next()
                 .is_some()
         })
+    }
+
+    pub fn git_init(
+        &self,
+        path: Arc<Path>,
+        fallback_branch_name: String,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        self.git_store
+            .read(cx)
+            .git_init(path, fallback_branch_name, cx)
     }
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {
