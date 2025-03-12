@@ -305,6 +305,10 @@ impl ScriptingSession {
         let read_fn = lua.create_function(Self::io_file_read)?;
         file.set("read", read_fn)?;
 
+        // lines method
+        let lines_fn = lua.create_function(Self::io_file_lines)?;
+        file.set("lines", lines_fn)?;
+
         // write method
         let write_fn = lua.create_function(Self::io_file_write)?;
         file.set("write", write_fn)?;
@@ -531,6 +535,23 @@ impl ScriptingSession {
             Some(bytes) => Ok(Some(lua.create_string(bytes)?)),
             None => Ok(None),
         }
+    }
+
+    fn io_file_lines(lua: &Lua, file_userdata: Table) -> mlua::Result<mlua::Function> {
+        let read_perm = file_userdata.get::<bool>("__read_perm")?;
+        if !read_perm {
+            return Err(mlua::Error::runtime("File not open for reading"));
+        }
+
+        // Create an iterator function that reads lines from the file
+        let lines_iter = lua.create_function::<_, _, mlua::Value>(move |lua, _: ()| {
+            let read_method = file_userdata.get::<mlua::Function>("read")?;
+            // Fix: need to pass the file table as first argument to the read method (self)
+            let line = read_method.call((&file_userdata, lua.create_string("*l")?))?;
+            Ok(line)
+        })?;
+
+        Ok(lines_iter)
     }
 
     fn io_file_read_format(format: Option<mlua::Value>) -> mlua::Result<FileReadFormat> {
@@ -957,6 +978,35 @@ mod tests {
 
         // Only read, should not be marked as changed
         assert!(!test_session.was_marked_changed("file1.txt", cx));
+    }
+
+    #[gpui::test]
+    async fn test_lines_iterator(cx: &mut TestAppContext) {
+        let script = r#"
+            -- Create a test file with multiple lines
+            local file = io.open("lines_test.txt", "w")
+            file:write("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+            file:close()
+
+            -- Read it back using the lines iterator
+            local read_file = io.open("lines_test.txt", "r")
+            local count = 0
+            for line in read_file:lines() do
+                count = count + 1
+                print(count .. ": " .. line)
+            end
+            read_file:close()
+
+            print("Total lines:", count)
+        "#;
+
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
+        assert_eq!(
+            output,
+            "1: Line 1\n2: Line 2\n3: Line 3\n4: Line 4\n5: Line 5\nTotal lines:\t5\n"
+        );
+        assert!(test_session.was_marked_changed("lines_test.txt", cx));
     }
 
     #[gpui::test]
