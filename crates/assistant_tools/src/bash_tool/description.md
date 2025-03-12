@@ -1,0 +1,1 @@
+Executes a bash one-liner and returns the combined output. This tool spawns a bash process, combines stdout and stderr into one interleaved stream as they are produced (preserving the order of writes), and captures that stream into a string which is returned. Use this tool when you need to run shell commands to get information about the system or process files.
