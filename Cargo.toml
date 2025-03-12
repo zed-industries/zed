@@ -181,7 +181,6 @@ members = [
     "extensions/test-extension",
     "extensions/toml",
     "extensions/uiua",
-    "extensions/zig",
 
     #
     # Tooling
