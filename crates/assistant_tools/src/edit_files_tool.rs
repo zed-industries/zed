@@ -74,13 +74,12 @@ impl Tool for EditFilesTool {
             };
 
             let mut parser = EditActionParser::new();
-            let mut actions = Vec::new();
 
             let stream = model.stream_completion_text(request, &cx);
             let mut chunks = stream.await?;
 
             while let Some(chunk) = chunks.stream.next().await {
-                for action in parser.parse_chunk(&chunk?, &mut actions) {
+                for action in parser.parse_chunk(&chunk?) {
                     let project_path = ProjectPath {
                         worktree_id: WorktreeId::from_usize(input.worktree_id),
                         path: Path::new(action.file_path()).into(),
@@ -94,11 +93,10 @@ impl Tool for EditFilesTool {
                         .read_with(&cx, |buffer, cx| {
                             let new_text = match action {
                                 EditAction::Replace { old, new, .. } => {
-                                    // todo! do in background?
-                                    buffer.text().replace(old, new)
+                                    // TODO: Repalce in background?
+                                    buffer.text().replace(&old, &new)
                                 }
-                                // todo! maybe parse_chunk can return owned Vec
-                                EditAction::Write { content, .. } => content.clone(),
+                                EditAction::Write { content, .. } => content,
                             };
 
                             buffer.diff(new_text, cx)

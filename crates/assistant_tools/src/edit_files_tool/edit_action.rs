@@ -101,11 +101,7 @@ impl EditActionParser {
     ///
     /// If a block fails to parse, it will simply be skipped and an error will be recorded.
     /// All errors can be accessed through the `EditActionsParser::errors` method.
-    pub fn parse_chunk<'a>(
-        &mut self,
-        input: &str,
-        actions: &'a mut Vec<EditAction>,
-    ) -> &'a [EditAction] {
+    pub fn parse_chunk(&mut self, input: &str) -> Vec<EditAction> {
         use State::*;
 
         const FENCE: &[u8] = b"\n```";
@@ -115,7 +111,7 @@ impl EditActionParser {
         const REPLACE_MARKER: &[u8] = b">>>>>>> REPLACE";
         const NL_REPLACE_MARKER: &[u8] = b"\n>>>>>>> REPLACE";
 
-        let start_index = actions.len();
+        let mut actions = Vec::new();
 
         for byte in input.bytes() {
             match self.state {
@@ -181,7 +177,7 @@ impl EditActionParser {
             self.offset += 1;
         }
 
-        &actions[start_index..]
+        actions
     }
 
     /// Returns a reference to the errors encountered during parsing.
@@ -316,8 +312,7 @@ fn replacement() {}
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(
@@ -343,8 +338,7 @@ fn replacement() {}
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(
@@ -374,8 +368,7 @@ This change makes the function better.
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(
@@ -412,8 +405,7 @@ fn new_util() -> bool { true }
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         assert_eq!(actions.len(), 2);
         assert_eq!(
@@ -461,8 +453,7 @@ fn replacement() {
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(
@@ -491,8 +482,7 @@ fn new_function() {
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(
@@ -519,8 +509,7 @@ fn this_will_be_deleted() {
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(
@@ -545,8 +534,7 @@ fn this_will_be_deleted() {
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         // Should not create an action when both sections are empty
         assert_eq!(actions.len(), 0);
@@ -576,20 +564,18 @@ fn replacement() {}"#;
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
+        let actions1 = parser.parse_chunk(input_part1);
+        assert_eq!(actions1.len(), 0);
 
-        parser.parse_chunk(input_part1, &mut actions);
-        assert_eq!(actions.len(), 0);
-
-        parser.parse_chunk(input_part2, &mut actions);
+        let actions2 = parser.parse_chunk(input_part2);
         // No actions should be complete yet
-        assert_eq!(actions.len(), 0);
+        assert_eq!(actions2.len(), 0);
 
-        parser.parse_chunk(input_part3, &mut actions);
+        let actions3 = parser.parse_chunk(input_part3);
         // The third chunk should complete the action
-        assert_eq!(actions.len(), 1);
+        assert_eq!(actions3.len(), 1);
         assert_eq!(
-            actions[0],
+            actions3[0],
             EditAction::Replace {
                 file_path: "src/main.rs".to_string(),
                 old: "fn original() {}".to_string(),
@@ -601,25 +587,28 @@ fn replacement() {}"#;
     #[test]
     fn test_parser_state_preservation() {
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk("src/main.rs\n```rust\n<<<<<<< SEARCH\n", &mut actions);
+        let actions1 = parser.parse_chunk("src/main.rs\n```rust\n<<<<<<< SEARCH\n");
 
         // Check parser is in the correct state
         assert_eq!(parser.state, State::SearchBlock);
         assert_eq!(parser.pre_fence_line, b"src/main.rs");
 
         // Continue parsing
-        parser.parse_chunk("original code\n=======\n", &mut actions);
+        let actions2 = parser.parse_chunk("original code\n=======\n");
         assert_eq!(parser.state, State::ReplaceBlock);
         assert_eq!(parser.old_bytes, b"original code");
 
-        parser.parse_chunk("replacement code\n>>>>>>> REPLACE\n```\n", &mut actions);
+        let actions3 = parser.parse_chunk("replacement code\n>>>>>>> REPLACE\n```\n");
 
         // After complete parsing, state should reset
         assert_eq!(parser.state, State::Default);
         assert!(parser.pre_fence_line.is_empty());
         assert!(parser.old_bytes.is_empty());
         assert!(parser.new_bytes.is_empty());
+
+        assert_eq!(actions1.len(), 0);
+        assert_eq!(actions2.len(), 0);
+        assert_eq!(actions3.len(), 1);
     }
 
     #[test]
@@ -635,8 +624,7 @@ fn replacement() {}
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
         assert_eq!(actions.len(), 0);
 
         assert_eq!(parser.errors().len(), 1);
@@ -674,8 +662,7 @@ fn new_utils_func() {}
 "#;
 
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(input, &mut actions);
+        let actions = parser.parse_chunk(input);
 
         // Only the second block should be parsed
         assert_eq!(actions.len(), 1);
@@ -697,8 +684,7 @@ fn new_utils_func() {}
     #[test]
     fn test_parse_examples_in_system_prompt() {
         let mut parser = EditActionParser::new();
-        let mut actions = vec![];
-        parser.parse_chunk(SYSTEM_PROMPT, &mut actions);
+        let actions = parser.parse_chunk(SYSTEM_PROMPT);
         assert_examples_in_system_prompt(&actions, parser.errors());
     }
 
@@ -718,7 +704,7 @@ fn new_utils_func() {}
 
                 let (chunk, rest) = remaining.split_at(chunk_size);
 
-                parser.parse_chunk(chunk, &mut actions);
+                actions.extend(parser.parse_chunk(chunk));
                 remaining = rest;
             }
 
