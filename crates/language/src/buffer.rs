@@ -526,8 +526,8 @@ impl DerefMut for ChunkRendererContext<'_, '_> {
 /// A set of edits to a given version of a buffer, computed asynchronously.
 #[derive(Debug)]
 pub struct Diff {
-    pub(crate) base_version: clock::Global,
-    line_ending: LineEnding,
+    pub base_version: clock::Global,
+    pub line_ending: LineEnding,
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 

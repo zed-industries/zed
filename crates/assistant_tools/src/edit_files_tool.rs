@@ -9,10 +9,12 @@ use gpui::{App, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
-use project::{Project, ProjectPath};
+use project::{search::SearchQuery, Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::Arc;
+use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFilesToolInput {
@@ -96,6 +98,14 @@ impl Tool for EditFilesTool {
             let mut changed_buffers = HashSet::default();
             let mut applied_edits = 0;
 
+            struct BadSearch {
+                file_path: String,
+                search: String,
+                matches: usize,
+            }
+
+            let mut bad_searches = Vec::new();
+
             while let Some(chunk) = chunks.stream.next().await {
                 for action in parser.parse_chunk(&chunk?) {
                     let project_path = project.read_with(&cx, |project, cx| {
@@ -122,26 +132,84 @@ impl Tool for EditFilesTool {
                         .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?
                         .await?;
 
-                    let diff = buffer
-                        .read_with(&cx, |buffer, cx| {
-                            let new_text = match action {
-                                EditAction::Replace { old, new, .. } => {
-                                    // TODO: Replace in background?
-                                    buffer.text().replace(&old, &new)
-                                }
-                                EditAction::Write { content, .. } => content,
-                            };
+                    enum DiffResult {
+                        InvalidReplace(BadSearch),
+                        Diff(language::Diff),
+                    }
 
-                            buffer.diff(new_text, cx)
-                        })?
-                        .await;
+                    let result = match action {
+                        EditAction::Replace {
+                            old,
+                            new,
+                            file_path,
+                        } => {
+                            let snapshot =
+                                buffer.read_with(&cx, |buffer, _cx| buffer.snapshot())?;
 
-                    let _clock =
-                        buffer.update(&mut cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+                            cx.background_executor()
+                                .spawn(async move {
+                                    let query = SearchQuery::text(
+                                        old.clone(),
+                                        false,
+                                        true,
+                                        true,
+                                        PathMatcher::new(&[])?,
+                                        PathMatcher::new(&[])?,
+                                        None,
+                                    )?;
 
-                    changed_buffers.insert(buffer);
+                                    let matches = query.search(&snapshot, None).await;
 
-                    applied_edits += 1;
+                                    if matches.len() != 1 {
+                                        return Ok(DiffResult::InvalidReplace(BadSearch {
+                                            search: new.clone(),
+                                            file_path: file_path.display().to_string(),
+                                            matches: matches.len(),
+                                        }));
+                                    }
+
+                                    let edit_range = matches[0].clone();
+                                    let diff = language::text_diff(&old, &new);
+
+                                    let edits = diff
+                                        .into_iter()
+                                        .map(|(old_range, text)| {
+                                            let start = edit_range.start + old_range.start;
+                                            let end = edit_range.start + old_range.end;
+                                            (start..end, text)
+                                        })
+                                        .collect::<Vec<_>>();
+
+                                    let diff = language::Diff {
+                                        base_version: snapshot.version().clone(),
+                                        line_ending: snapshot.line_ending(),
+                                        edits,
+                                    };
+
+                                    anyhow::Ok(DiffResult::Diff(diff))
+                                })
+                                .await
+                        }
+                        EditAction::Write { content, .. } => Ok(DiffResult::Diff(
+                            buffer
+                                .read_with(&cx, |buffer, cx| buffer.diff(content, cx))?
+                                .await,
+                        )),
+                    }?;
+
+                    match result {
+                        DiffResult::InvalidReplace(invalid_replace) => {
+                            bad_searches.push(invalid_replace);
+                        }
+                        DiffResult::Diff(diff) => {
+                            let _clock =
+                                buffer.update(&mut cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+
+                            changed_buffers.insert(buffer);
+
+                            applied_edits += 1;
+                        }
+                    }
                 }
             }
 
@@ -154,18 +222,45 @@ impl Tool for EditFilesTool {
 
             let errors = parser.errors();
 
-            if errors.is_empty() {
+            if errors.is_empty() && bad_searches.is_empty() {
                 Ok("Successfully applied all edits".into())
             } else {
-                let error_message = errors
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let mut error_message = String::new();
+
+                if !bad_searches.is_empty() {
+                    writeln!(
+                        &mut error_message,
+                        "These searches failed because they didn't match exactly one string:"
+                    )?;
+
+                    for replace in bad_searches {
+                        writeln!(
+                            &mut error_message,
+                            "- '{}' appears {} times in {}",
+                            replace.search.replace("\r", "\\r").replace("\n", "\\n"),
+                            replace.matches,
+                            replace.file_path
+                        )?;
+                    }
+
+                    writeln!(&mut error_message, "Make sure to use exact queries.")?;
+                }
+
+                if !errors.is_empty() {
+                    if !error_message.is_empty() {
+                        writeln!(&mut error_message, "\n")?;
+                    }
+
+                    writeln!(&mut error_message, "Some blocks failed to parse:")?;
+
+                    for error in errors {
+                        writeln!(&mut error_message, "- {}", error)?;
+                    }
+                }
 
                 if applied_edits > 0 {
                     Err(anyhow!(
-                        "Applied {} edit(s), but some blocks failed to parse:\n{}",
+                        "Applied {} edit(s), but there were errors.\n\n{}",
                         applied_edits,
                         error_message
                     ))
