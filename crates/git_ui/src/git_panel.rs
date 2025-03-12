@@ -1766,13 +1766,18 @@ impl GitPanel {
         let worktree = if worktrees.len() == 1 {
             Task::ready(Some(worktrees.first().unwrap().clone()))
         } else if worktrees.len() == 0 {
-            window.prompt(
+            let result = window.prompt(
                 PromptLevel::Warning,
                 "Unable to initialize a git repository",
                 Some("Open a directory first"),
                 &["Ok"],
                 cx,
             );
+            cx.background_executor()
+                .spawn(async move {
+                    result.await.ok();
+                })
+                .detach();
             return;
         } else {
             let worktree_directories = worktrees
@@ -1810,9 +1815,14 @@ impl GitPanel {
             };
 
             let Ok(result) = this.update(&mut cx, |this, cx| {
-                this.project
-                    .read(cx)
-                    .git_init(worktree.read(cx).abs_path(), cx)
+                let fallback_branch_name = GitPanelSettings::get_global(cx)
+                    .fallback_branch_name
+                    .clone();
+                this.project.read(cx).git_init(
+                    worktree.read(cx).abs_path(),
+                    fallback_branch_name,
+                    cx,
+                )
             }) else {
                 return;
             };
@@ -3019,25 +3029,29 @@ impl GitPanel {
             .items_center()
             .child(
                 v_flex()
-                    .gap_3()
-                    .child(if self.active_repository.is_some() {
-                        "No changes to commit"
-                    } else {
-                        "No Git repositories"
-                    })
-                    .child(
-                        panel_filled_button("Initialize Repository")
-                            .tooltip(Tooltip::for_action_title_in(
-                                "git init",
-                                &git::Init,
-                                &self.focus_handle,
-                            ))
-                            .on_click(move |_, _, cx| {
-                                cx.defer(move |cx| {
-                                    cx.dispatch_action(&git::Init);
-                                })
-                            }),
-                    )
+                    .gap_2()
+                    .child(h_flex().w_full().justify_around().child(
+                        if self.active_repository.is_some() {
+                            "No changes to commit"
+                        } else {
+                            "No Git repositories"
+                        },
+                    ))
+                    .children(self.active_repository.is_none().then(|| {
+                        h_flex().w_full().justify_around().child(
+                            panel_filled_button("Initialize Repository")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "git init",
+                                    &git::Init,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(move |_, _, cx| {
+                                    cx.defer(move |cx| {
+                                        cx.dispatch_action(&git::Init);
+                                    })
+                                }),
+                        )
+                    }))
                     .text_ui_sm(cx)
                     .mx_auto()
                     .text_color(Color::Placeholder.color(cx)),
