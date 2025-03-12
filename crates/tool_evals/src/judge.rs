@@ -1,20 +1,14 @@
 use crate::eval::EvalOutput;
-use language_model::LanguageModelProviderId;
 use std::path::Path;
 
 pub struct Judge {
     pub original_diff: Option<String>,
     pub original_message: Option<String>,
-    pub provider_id: LanguageModelProviderId,
     pub model_name: String,
 }
 
 impl Judge {
-    pub fn load(
-        eval_path: &Path,
-        provider_id: LanguageModelProviderId,
-        model_name: String,
-    ) -> anyhow::Result<Judge> {
+    pub fn load(eval_path: &Path, model_name: String) -> anyhow::Result<Judge> {
         // TODO: "original" seems confusing - rename?
         let original_diff_path = eval_path.join("original.diff");
         let original_diff = if std::fs::exists(&original_diff_path)? {
@@ -33,7 +27,6 @@ impl Judge {
         Ok(Self {
             original_diff,
             original_message,
-            provider_id,
             model_name,
         })
     }

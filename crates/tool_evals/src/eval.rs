@@ -4,7 +4,7 @@ use crate::headless_assistant::{
 use anyhow::anyhow;
 use assistant2::RequestKind;
 use gpui::{App, Task};
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
+use language_model::LanguageModelRegistry;
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
@@ -15,9 +15,7 @@ pub struct Eval {
     pub repo_path: PathBuf,
     pub system_prompt: Option<String>,
     pub user_query: String,
-    pub provider_id: LanguageModelProviderId,
     pub model_name: String,
-    pub editor_model_provider_id: LanguageModelProviderId,
     pub editor_model_name: String,
 }
 
@@ -40,9 +38,7 @@ impl Eval {
         eval_path: &Path,
         repo_path: &Path,
         system_prompt: Option<String>,
-        provider_id: LanguageModelProviderId,
         model_name: String,
-        editor_model_provider_id: LanguageModelProviderId,
         editor_model_name: String,
     ) -> anyhow::Result<Self> {
         let user_query = std::fs::read_to_string(eval_path.join("prompt.txt"))?;
@@ -55,9 +51,7 @@ impl Eval {
             repo_path: repo_path.to_path_buf(),
             system_prompt,
             user_query,
-            provider_id,
             model_name,
-            editor_model_provider_id,
             editor_model_name,
         })
     }
@@ -84,14 +78,14 @@ impl Eval {
             registry.set_editor_model(Some(editor_model.clone()), cx);
         });
 
-        let provider_id = self.provider_id.clone();
-        let editor_model_provider_id = self.editor_model_provider_id.clone();
+        let model_provider_id = model.provider_id();
+        let editor_model_provider_id = editor_model.provider_id();
         let repo_path = self.repo_path.clone();
         let system_prompt = self.system_prompt.clone();
         let user_query = self.user_query.clone();
 
         cx.spawn(move |mut cx| async move {
-            cx.update(|cx| authenticate_model_provider(provider_id.clone(), cx))?
+            cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))?
                 .await?;
 
             cx.update(|cx| authenticate_model_provider(editor_model_provider_id.clone(), cx))?
