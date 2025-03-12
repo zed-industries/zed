@@ -11,6 +11,7 @@ use crate::{
 use crate::{picker_prompt, project_diff, ProjectDiff};
 use anyhow::Result;
 use askpass::AskPassDelegate;
+use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
 
@@ -49,7 +50,7 @@ use project::{
     Fs, Project, ProjectPath,
 };
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use std::cell::RefCell;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -327,6 +328,7 @@ pub struct GitPanel {
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
+    _settings_subscription: Subscription,
 }
 
 struct RemoteOperationGuard {
@@ -443,6 +445,14 @@ impl GitPanel {
             hide_task: None,
         };
 
+        let mut assistant_enabled = AssistantSettings::get_global(cx).enabled;
+        let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
+            if assistant_enabled != AssistantSettings::get_global(cx).enabled {
+                assistant_enabled = AssistantSettings::get_global(cx).enabled;
+                cx.notify();
+            }
+        });
+
         let mut git_panel = Self {
             pending_remote_operations: Default::default(),
             remote_operation_id: 0,
@@ -478,6 +488,7 @@ impl GitPanel {
             entry_count: 0,
             horizontal_scrollbar,
             vertical_scrollbar,
+            _settings_subscription,
         };
         git_panel.schedule_update(false, window, cx);
         git_panel
@@ -3590,9 +3601,14 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-    let model = LanguageModelRegistry::read_global(cx).active_model()?;
-    provider.is_authenticated(cx).then(|| model)
+    assistant_settings::AssistantSettings::get_global(cx)
+        .enabled
+        .then(|| {
+            let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+            let model = LanguageModelRegistry::read_global(cx).active_model()?;
+            provider.is_authenticated(cx).then(|| model)
+        })
+        .flatten()
 }
 
 impl Render for GitPanel {
@@ -4326,6 +4342,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            AssistantSettings::register(cx);
             WorktreeSettings::register(cx);
             workspace::init_settings(cx);
             theme::init(LoadThemes::JustBase, cx);
