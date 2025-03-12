@@ -611,6 +611,7 @@ pub enum SessionEvent {
     Stopped,
     StackTrace,
     Variables,
+    Threads,
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -1047,13 +1048,28 @@ impl Session {
         self.fetch(
             dap_command::ThreadsCommand,
             |this, result, cx| {
-                this.threads = result
+                let new_threads: IndexMap<_, _> = result
                     .iter()
                     .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
                     .collect();
 
-                this.invalidate_command_type::<StackTraceCommand>();
-                cx.notify();
+                for (thread_id, thread) in new_threads.into_iter() {
+                    if this.threads.contains_key(&thread_id) {
+                        continue;
+                    }
+
+                    this.threads.insert(thread_id, thread);
+                    this.invalidate_state(
+                        &StackTraceCommand {
+                            thread_id: thread_id.0,
+                            start_frame: None,
+                            levels: None,
+                        }
+                        .into(),
+                    );
+                }
+
+                cx.emit(SessionEvent::Threads);
             },
             cx,
         );

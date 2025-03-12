@@ -426,6 +426,7 @@ mod tests {
 
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
+            DebugAdapterName(Arc::from("test-adapter")),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),

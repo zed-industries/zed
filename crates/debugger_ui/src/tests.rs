@@ -11,7 +11,7 @@ mod console;
 // mod debugger_panel; todo(debugger): enable this again
 mod module_list;
 mod stack_frame_list;
-// mod variable_list; todo(debugger): enable this again
+mod variable_list;
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
     if std::env::var("RUST_LOG").is_ok() {

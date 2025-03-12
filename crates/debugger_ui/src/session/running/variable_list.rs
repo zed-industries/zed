@@ -233,7 +233,7 @@ impl VariableList {
             }
 
             let var_state = self.entry_states.entry(path.clone()).or_insert(EntryState {
-                depth: path.indices.len() + path.leaf_name.is_some() as usize,
+                depth: path.indices.len(),
                 is_expanded: dap_kind.as_scope().is_some_and(|scope| {
                     scopes_count == 1 || &scope.name.to_lowercase() == "locals"
                 }),

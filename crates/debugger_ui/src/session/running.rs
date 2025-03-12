@@ -403,6 +403,12 @@ impl RunningState {
                             .log_err();
                         this.thread.take();
                     }
+                    SessionEvent::Threads => {
+                        if this.thread.is_none() {
+                            let threads = this.session.update(cx, |this, cx| this.threads(cx));
+                            this.select_first_thread(&threads, window, cx);
+                        }
+                    }
                     _ => {}
                 }
                 cx.notify()
