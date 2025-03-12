@@ -209,7 +209,7 @@ impl VariableList {
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
             session.scopes(stack_frame_id, cx).iter().cloned().collect()
         });
-        let scopes_count = scopes.len();
+
         let mut stack = scopes
             .into_iter()
             .rev()
@@ -226,6 +226,8 @@ impl VariableList {
                 )
             })
             .collect::<Vec<_>>();
+
+        let scopes_count = stack.len();
 
         while let Some((variable_reference, mut path, dap_kind)) = stack.pop() {
             if let Some(dap) = &dap_kind.as_variable() {
