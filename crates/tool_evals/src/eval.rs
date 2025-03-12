@@ -17,6 +17,8 @@ pub struct Eval {
     pub user_query: String,
     pub provider_id: LanguageModelProviderId,
     pub model_name: String,
+    pub original_diff: Option<String>,
+    pub original_message: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +41,21 @@ impl Eval {
         let setup_contents = std::fs::read_to_string(eval_path.join("setup.json"))?;
         let setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
 
+        // TODO: "original" seems confusing - rename?
+        let original_diff_path = eval_path.join("original.diff");
+        let original_diff = if std::fs::exists(&original_diff_path)? {
+            Some(std::fs::read_to_string(&original_diff_path)?)
+        } else {
+            None
+        };
+
+        let original_message_path = eval_path.join("original_message.txt");
+        let original_message = if std::fs::exists(&original_message_path)? {
+            Some(std::fs::read_to_string(&original_message_path)?)
+        } else {
+            None
+        };
+
         setup.checkout_repo(repo_path)?;
 
         Ok(Eval {
@@ -47,6 +64,8 @@ impl Eval {
             user_query,
             provider_id,
             model_name,
+            original_diff,
+            original_message,
         })
     }
 
