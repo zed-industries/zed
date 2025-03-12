@@ -324,6 +324,7 @@ fn handle_syskeydown_msg(
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    println!("parse_syskeydown_msg_keystroke {:#?}", keystroke);
     let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyDownEvent {
         keystroke,
@@ -362,8 +363,10 @@ fn handle_keydown_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+        println!("parse_keydown_msg_keystroke failed");
         return Some(1);
     };
+    println!("parse_keydown_msg_keystroke {:#?}", keystroke_or_modifier);
     let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
@@ -423,8 +426,10 @@ fn handle_char_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
+        println!("parse_char_msg_keystroke failed");
         return Some(1);
     };
+    println!("parse_char_msg_keystroke {:#?}", keystroke);
     let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
@@ -1269,6 +1274,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     })
 }
 
+#[derive(Debug)]
 enum KeystrokeOrModifier {
     Keystroke(Keystroke),
     Modifier(Modifiers),
@@ -1302,13 +1308,6 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));
             }
 
-            if modifiers.control || modifiers.alt {
-                let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-                if let Some(basic_key) = basic_key {
-                    return Some(KeystrokeOrModifier::Keystroke(basic_key));
-                }
-            }
-
             if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
                 let offset = vk_code - VK_F1.0;
                 return Some(KeystrokeOrModifier::Keystroke(Keystroke {
@@ -1317,6 +1316,13 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                     key_char: None,
                 }));
             };
+
+            // if modifiers.control || modifiers.alt {
+            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+            if let Some(basic_key) = basic_key {
+                return Some(KeystrokeOrModifier::Keystroke(basic_key));
+            }
+            // }
             return None;
         }
     }
@@ -1411,9 +1417,10 @@ fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> 
         raw_code => char::from_u32(raw_code),
     }?
     .to_ascii_lowercase();
+    println!("mapped_code: {}, {}", mapped_code, key);
 
     let key = if matches!(code as u32, 112..=135) {
-        format!("f{key}")
+        unreachable!()
     } else {
         key.to_string()
     };
