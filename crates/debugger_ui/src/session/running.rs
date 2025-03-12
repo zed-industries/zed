@@ -408,6 +408,9 @@ impl RunningState {
                             let threads = this.session.update(cx, |this, cx| this.threads(cx));
                             this.select_first_thread(&threads, window, cx);
                         }
+                        this.stack_frame_list.update(cx, |this, cx| {
+                            this.refresh(window, cx);
+                        });
                     }
                     _ => {}
                 }
