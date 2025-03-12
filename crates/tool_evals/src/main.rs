@@ -3,12 +3,16 @@ mod headless_assistant;
 mod judge;
 
 use clap::Parser;
-use eval::Eval;
-use gpui::Application;
+use eval::{Eval, EvalOutput};
+use gpui::{Application, AsyncApp};
+use headless_assistant::HeadlessAppState;
 use judge::Judge;
 use regex::Regex;
 use reqwest_client::ReqwestClient;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 // todo! no hardcoded system prompt
 const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
@@ -90,32 +94,25 @@ fn main() {
 
         cx.spawn(move |cx| async move {
             for eval_name in evals_to_run {
-                println!("Running eval named {eval_name}");
-                let eval_path = evaluation_data_dir.join(&eval_name).canonicalize().unwrap();
-                let repo_path = repos_dir.canonicalize().unwrap().join(&eval_name);
-                let eval = Eval::load(
-                    &eval_path,
-                    &repo_path,
-                    Some(SYSTEM_PROMPT.to_string()),
+                let result = run_eval(
+                    &eval_name,
+                    &evaluation_data_dir,
+                    &repos_dir,
                     args.model_name.clone(),
                     editor_model_name.clone(),
+                    judge_model_name.clone(),
+                    app_state.clone(),
+                    cx.clone(),
                 )
-                .unwrap();
-
-                let judge = Judge::load(&eval_path, judge_model_name.clone()).unwrap();
-
-                let task = cx.update(|cx| eval.run(app_state.clone(), cx)).unwrap();
-                match task.await {
-                    Ok(eval_result) => {
-                        println!("Eval result: {:?}", eval_result);
-                        let judge_result = cx
-                            .update(|cx| judge.run(&eval_result, cx))
-                            .unwrap()
-                            .await
-                            .unwrap();
-                        println!("Judge result: {judge_result}");
+                .await;
+                match result {
+                    Ok((eval_output, judge_output)) => {
+                        println!("Eval output: {:?}", eval_output);
+                        println!("Judge output: {judge_output}");
                     }
-                    Err(err) => println!("Error: {}", err),
+                    Err(err) => {
+                        println!("Error running {eval_name}: {err}");
+                    }
                 }
             }
 
@@ -125,4 +122,32 @@ fn main() {
     });
 
     println!("Done running evals");
+}
+
+async fn run_eval(
+    eval_name: &str,
+    evaluation_data_dir: &Path,
+    repos_dir: &Path,
+    model_name: String,
+    editor_model_name: String,
+    judge_model_name: String,
+    app_state: Arc<HeadlessAppState>,
+    cx: AsyncApp,
+) -> anyhow::Result<(EvalOutput, String)> {
+    println!("Running eval named {eval_name}");
+    let eval_path = evaluation_data_dir.join(eval_name).canonicalize()?;
+    let repo_path = repos_dir.canonicalize()?.join(eval_name);
+    let eval = Eval::load(
+        &eval_path,
+        &repo_path,
+        Some(SYSTEM_PROMPT.to_string()),
+        model_name.clone(),
+        editor_model_name.clone(),
+    )?;
+
+    let judge = Judge::load(&eval_path, judge_model_name.clone())?;
+
+    let eval_output = cx.update(|cx| eval.run(app_state, cx))?.await?;
+    let judge_output = cx.update(|cx| judge.run(&eval_output, cx))?.await?;
+    Ok((eval_output, judge_output))
 }
