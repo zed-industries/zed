@@ -1244,7 +1244,7 @@ impl GitRepository for FakeGitRepository {
         let result = state
             .blames
             .get(&path)
-            .with_context(|| format!("failed to get blame for {:?}", path))
+            .with_context(|| format!("failed to get blame for {:?}", path.0))
             .cloned();
         async { result }.boxed()
     }
