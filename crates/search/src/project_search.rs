@@ -2537,7 +2537,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
-                    "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                     "Search view results should match the query"
                 );
                 assert!(
@@ -2581,7 +2581,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
-                    "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                     "Results should be unchanged after search view 2nd open in a row"
                 );
                 assert!(
@@ -2773,7 +2773,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
-                    "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                     "Search view results should match the query"
                 );
                 assert!(
@@ -2828,7 +2828,7 @@ pub mod tests {
                         search_view
                             .results_editor
                             .update(cx, |editor, cx| editor.display_text(cx)),
-                        "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                        "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                         "Results of the first search view should not update too"
                     );
                     assert!(
@@ -2877,7 +2877,7 @@ pub mod tests {
                         search_view_2
                             .results_editor
                             .update(cx, |editor, cx| editor.display_text(cx)),
-                        "\n\n\nconst FOUR: usize = one::ONE + three::THREE;\n",
+                        "\n\nconst FOUR: usize = one::ONE + three::THREE;",
                         "New search view with the updated query should have new search results"
                     );
                     assert!(
@@ -3022,7 +3022,7 @@ pub mod tests {
                 search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx)),
-                "\n\n\nconst ONE: usize = 1;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                 "New search in directory should have a filter that matches a certain directory"
             );
                 })
