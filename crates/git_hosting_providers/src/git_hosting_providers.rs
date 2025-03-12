@@ -35,9 +35,9 @@ pub fn register_additional_providers(
         return;
     };
 
-    if let Ok(gitlab_self_hosted) = Gitlab::from_remote_url(&origin_url) {
+    if let Ok(gitlab_self_hosted) = Gitlab::from_self_hosted_remote_url(&origin_url) {
         provider_registry.register_hosting_provider(Arc::new(gitlab_self_hosted));
-    } else if let Ok(github_self_hosted) = Github::from_remote_url(&origin_url) {
+    } else if let Ok(github_self_hosted) = Github::from_self_hosted_remote_url(&origin_url) {
         provider_registry.register_hosting_provider(Arc::new(github_self_hosted));
     }
 }

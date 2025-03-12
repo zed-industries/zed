@@ -24,8 +24,12 @@ impl Gitlab {
         }
     }
 
-    pub fn from_remote_url(remote_url: &str) -> Result<Self> {
+    pub fn from_self_hosted_remote_url(remote_url: &str) -> Result<Self> {
         let host = get_host_from_git_remote_url(remote_url)?;
+
+        if host == "gitlab.com" {
+            bail!("the GitLab instance is not self-hosted");
+        }
 
         // TODO: detecting self hosted instances by checking whether "gitlab" is in the url or not
         // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
@@ -124,6 +128,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_invalid_self_hosted_remote_url() {
+        let remote_url = "https://gitlab.com/zed-industries/zed.git";
+        let github = Gitlab::from_self_hosted_remote_url(remote_url);
+        assert!(github.is_err());
+    }
+
+    #[test]
     fn test_parse_remote_url_given_ssh_url() {
         let parsed_remote = Gitlab::new()
             .parse_remote_url("git@gitlab.com:zed-industries/zed.git")
@@ -157,7 +168,7 @@ mod tests {
     fn test_parse_remote_url_given_self_hosted_ssh_url() {
         let remote_url = "git@gitlab.my-enterprise.com:zed-industries/zed.git";
 
-        let parsed_remote = Gitlab::from_remote_url(remote_url)
+        let parsed_remote = Gitlab::from_self_hosted_remote_url(remote_url)
             .unwrap()
             .parse_remote_url(remote_url)
             .unwrap();
@@ -174,7 +185,7 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_self_hosted_https_url_with_subgroup() {
         let remote_url = "https://gitlab.my-enterprise.com/group/subgroup/zed.git";
-        let parsed_remote = Gitlab::from_remote_url(remote_url)
+        let parsed_remote = Gitlab::from_self_hosted_remote_url(remote_url)
             .unwrap()
             .parse_remote_url(remote_url)
             .unwrap();
@@ -244,9 +255,10 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_self_hosted_permalink_from_ssh_url() {
-        let gitlab =
-            Gitlab::from_remote_url("git@gitlab.some-enterprise.com:zed-industries/zed.git")
-                .unwrap();
+        let gitlab = Gitlab::from_self_hosted_remote_url(
+            "git@gitlab.some-enterprise.com:zed-industries/zed.git",
+        )
+        .unwrap();
         let permalink = gitlab.build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
@@ -265,9 +277,10 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_self_hosted_permalink_from_https_url() {
-        let gitlab =
-            Gitlab::from_remote_url("https://gitlab-instance.big-co.com/zed-industries/zed.git")
-                .unwrap();
+        let gitlab = Gitlab::from_self_hosted_remote_url(
+            "https://gitlab-instance.big-co.com/zed-industries/zed.git",
+        )
+        .unwrap();
         let permalink = gitlab.build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
