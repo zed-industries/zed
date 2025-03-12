@@ -372,7 +372,6 @@ impl Thread {
 
             tools
         };
-        dbg!(&request.tools);
 
         self.stream_completion(request, model, cx);
     }
