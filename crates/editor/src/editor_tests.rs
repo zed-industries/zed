@@ -4739,6 +4739,31 @@ async fn test_rewrap(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_hard_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, cx| {
+        editor.set_hard_wrap(Some(14), cx);
+    });
+
+    cx.set_state(indoc!(
+        "
+        one two three ˇ
+        "
+    ));
+    cx.simulate_input("four");
+    cx.run_until_parked();
+
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        fourˇ
+        "
+    ));
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

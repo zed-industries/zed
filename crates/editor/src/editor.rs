@@ -608,12 +608,6 @@ pub trait Addon: 'static {
     fn to_any(&self) -> &dyn std::any::Any;
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum IsVimMode {
-    Yes,
-    No,
-}
-
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -645,6 +639,7 @@ pub struct Editor {
     inline_diagnostics_enabled: bool,
     inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
+    hard_wrap: Option<usize>,
 
     // TODO: make this a access method
     pub project: Option<Entity<Project>>,
@@ -1356,6 +1351,7 @@ impl Editor {
             inline_diagnostics_update: Task::ready(()),
             inline_diagnostics: Vec::new(),
             soft_wrap_mode_override,
+            hard_wrap: None,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             semantics_provider: project.clone().map(|project| Rc::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
@@ -3193,6 +3189,19 @@ impl Editor {
 
             let trigger_in_words =
                 this.show_edit_predictions_in_menu() || !had_active_inline_completion;
+            if this.hard_wrap.is_some() {
+                let latest: Range<Point> = this.selections.newest(cx).range();
+                if latest.is_empty()
+                    && this
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .line_len(MultiBufferRow(latest.start.row))
+                        == latest.start.column
+                {
+                    this.rewrap_impl(true, cx)
+                }
+            }
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
@@ -8597,10 +8606,10 @@ impl Editor {
     }
 
     pub fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
-        self.rewrap_impl(IsVimMode::No, cx)
+        self.rewrap_impl(false, cx)
     }
 
-    pub fn rewrap_impl(&mut self, is_vim_mode: IsVimMode, cx: &mut Context<Self>) {
+    pub fn rewrap_impl(&mut self, override_language_settings: bool, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
@@ -8674,7 +8683,9 @@ impl Editor {
                 RewrapBehavior::Anywhere => true,
             };
 
-            let should_rewrap = is_vim_mode == IsVimMode::Yes || allow_rewrap_based_on_language;
+            let should_rewrap = override_language_settings
+                || allow_rewrap_based_on_language
+                || self.hard_wrap.is_some();
             if !should_rewrap {
                 continue;
             }
@@ -8722,9 +8733,11 @@ impl Editor {
                 continue;
             };
 
-            let wrap_column = buffer
-                .language_settings_at(Point::new(start_row, 0), cx)
-                .preferred_line_length as usize;
+            let wrap_column = self.hard_wrap.unwrap_or_else(|| {
+                buffer
+                    .language_settings_at(Point::new(start_row, 0), cx)
+                    .preferred_line_length as usize
+            });
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
                 lines_without_prefixes.join(" "),
@@ -8735,7 +8748,7 @@ impl Editor {
             // TODO: should always use char-based diff while still supporting cursor behavior that
             // matches vim.
             let mut diff_options = DiffOptions::default();
-            if is_vim_mode == IsVimMode::Yes {
+            if override_language_settings {
                 diff_options.max_word_diff_len = 0;
                 diff_options.max_word_diff_line_count = 0;
             } else {
@@ -14302,6 +14315,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.soft_wrap_mode_override = Some(mode);
+        cx.notify();
+    }
+
+    pub fn set_hard_wrap(&mut self, hard_wrap: Option<usize>, cx: &mut Context<Self>) {
+        self.hard_wrap = hard_wrap;
         cx.notify();
     }
 
