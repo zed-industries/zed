@@ -14,6 +14,7 @@ use log::{EditToolLog, EditToolRequestId};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::Arc;
 use util::ResultExt;
 
@@ -65,7 +66,7 @@ impl Tool for EditFilesTool {
         match EditToolLog::try_global(cx) {
             Some(log) => {
                 let req_id = log.update(cx, |log, cx| {
-                    log.insert_request(input.edit_instructions.clone(), cx)
+                    log.new_request(input.edit_instructions.clone(), cx)
                 });
 
                 let task =
@@ -74,12 +75,15 @@ impl Tool for EditFilesTool {
                 cx.spawn(|mut cx| async move {
                     let result = task.await;
 
-                    if let Err(err) = &result {
-                        log.update(&mut cx, |log, cx| {
-                            log.set_request_error(req_id, err.to_string(), cx)
-                        })
-                        .log_err();
-                    }
+                    let str_result = result
+                        .as_ref()
+                        .map(|out| out.clone())
+                        .map_err(|err| err.to_string());
+
+                    log.update(&mut cx, |log, cx| {
+                        log.set_tool_output(req_id, str_result, cx)
+                    })
+                    .log_err();
 
                     result
                 })
@@ -142,7 +146,7 @@ impl EditFilesTool {
 
                 if let Some((ref log, req_id)) = log {
                     log.update(&mut cx, |log, cx| {
-                        log.push_response_chunk(req_id, &chunk, cx)
+                        log.push_editor_response_chunk(req_id, &chunk, cx)
                     })
                     .log_err();
                 }
@@ -195,17 +199,29 @@ impl EditFilesTool {
                 }
             }
 
+            let mut answer = match changed_buffers.len() {
+                0 => "No files were edited.".to_string(),
+                1 => "Successfully edited ".to_string(),
+                _ => "Successfully edited these files:\n\n".to_string(),
+            };
+
             // Save each buffer once at the end
             for buffer in changed_buffers {
                 project
-                    .update(&mut cx, |project, cx| project.save_buffer(buffer, cx))?
+                    .update(&mut cx, |project, cx| {
+                        if let Some(file) = buffer.read(&cx).file() {
+                            let _ = write!(&mut answer, "{}\n\n", &file.path().display());
+                        }
+
+                        project.save_buffer(buffer, cx)
+                    })?
                     .await?;
             }
 
             let errors = parser.errors();
 
             if errors.is_empty() {
-                Ok("Successfully applied all edits".into())
+                Ok(answer.trim_end().to_string())
             } else {
                 let error_message = errors
                     .iter()

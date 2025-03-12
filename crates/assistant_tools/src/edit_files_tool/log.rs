@@ -53,7 +53,7 @@ impl EditToolLog {
             .map(|log| log.0.clone())
     }
 
-    pub fn insert_request(
+    pub fn new_request(
         &mut self,
         instructions: String,
         cx: &mut Context<Self>,
@@ -61,23 +61,23 @@ impl EditToolLog {
         let id = EditToolRequestId(self.requests.len() as u32);
         self.requests.push(EditToolRequest {
             instructions,
-            response: None,
-            error: None,
+            editor_response: None,
+            tool_output: None,
         });
         cx.emit(EditToolLogEvent::Inserted);
         id
     }
 
-    pub fn push_response_chunk(
+    pub fn push_editor_response_chunk(
         &mut self,
         id: EditToolRequestId,
         chunk: &str,
         cx: &mut Context<Self>,
     ) {
         if let Some(request) = self.requests.get_mut(id.0 as usize) {
-            match &mut request.response {
+            match &mut request.editor_response {
                 None => {
-                    request.response = Some(chunk.to_string());
+                    request.editor_response = Some(chunk.to_string());
                 }
                 Some(response) => {
                     response.push_str(chunk);
@@ -87,14 +87,14 @@ impl EditToolLog {
         }
     }
 
-    pub fn set_request_error(
+    pub fn set_tool_output(
         &mut self,
         id: EditToolRequestId,
-        error: String,
+        tool_output: Result<String, String>,
         cx: &mut Context<Self>,
     ) {
         if let Some(request) = self.requests.get_mut(id.0 as usize) {
-            request.error = Some(error);
+            request.tool_output = Some(tool_output);
             cx.emit(EditToolLogEvent::Updated);
         }
     }
@@ -110,8 +110,8 @@ impl EventEmitter<EditToolLogEvent> for EditToolLog {}
 pub struct EditToolRequest {
     instructions: String,
     // we don't use a result here because the error might have occurred after we got a response
-    response: Option<String>,
-    error: Option<String>,
+    editor_response: Option<String>,
+    tool_output: Option<Result<String, String>>,
 }
 
 pub struct EditToolLogViewer {
@@ -132,7 +132,7 @@ impl EditToolLogViewer {
             log: log.clone(),
             list_state: ListState::new(
                 log.read(cx).requests.len(),
-                ListAlignment::Bottom,
+                ListAlignment::Top,
                 px(1024.),
                 {
                     let this = cx.entity().downgrade();
@@ -156,6 +156,7 @@ impl EditToolLogViewer {
             EditToolLogEvent::Inserted => {
                 let count = self.list_state.item_count();
                 self.list_state.splice(count..count, 1);
+                self.list_state.scroll_to_reveal_item(count + 1);
             }
             EditToolLogEvent::Updated => {}
         }
@@ -174,14 +175,14 @@ impl EditToolLogViewer {
         v_flex()
             .gap_3()
             .child(
-                Label::new("Instructions")
+                Label::new("Tool input")
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
             .child(request.instructions.clone())
-            .map(|parent| match &request.response {
+            .map(|parent| match &request.editor_response {
                 None => {
-                    if request.error.is_none() {
+                    if request.tool_output.is_none() {
                         parent.child("...")
                     } else {
                         parent
@@ -189,20 +190,23 @@ impl EditToolLogViewer {
                 }
                 Some(response) => parent
                     .child(
-                        Label::new("Response")
+                        Label::new("Editor response")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
                     .child(response.clone()),
             })
-            .when_some(request.error.as_ref(), |parent, error| {
+            .when_some(request.tool_output.as_ref(), |parent, output| {
                 parent
                     .child(
-                        Label::new("Error")
+                        Label::new("Tool output")
                             .size(LabelSize::Small)
-                            .color(Color::Error),
+                            .color(Color::Muted),
                     )
-                    .child(Label::new(error.clone()).color(Color::Error))
+                    .child(match output {
+                        Ok(output) => Label::new(output.clone()).color(Color::Success),
+                        Err(error) => Label::new(error.clone()).color(Color::Error),
+                    })
             })
             .child(ui::Divider::horizontal())
             .into_any()
