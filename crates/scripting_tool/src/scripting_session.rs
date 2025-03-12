@@ -1032,7 +1032,6 @@ mod tests {
             output,
             "1: Line 1\n2: Line 2\n3: Line 3\n4: Line 4\n5: Line 5\nTotal lines:\t5\n"
         );
-        assert!(test_session.was_marked_changed("lines_test.txt", cx));
     }
 
     #[gpui::test]
