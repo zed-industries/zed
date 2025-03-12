@@ -723,7 +723,7 @@ impl Session {
             thread_states: ThreadStates::default(),
 
             output_token: None,
-            output: Default::default(),
+            output: circular_buffer::CircularBuffer::boxed(),
             requests: HashMap::default(),
             modules: Vec::default(),
             loaded_sources: Vec::default(),
