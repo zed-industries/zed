@@ -3177,6 +3177,34 @@ impl Project {
         })
     }
 
+    pub fn code_lens<T: Clone + ToOffset>(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        range: Range<T>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        let snapshot = buffer_handle.read(cx).snapshot();
+        let range = snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end);
+        let code_lens_actions = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.code_lens(buffer_handle, cx));
+
+        cx.background_spawn(async move {
+            let mut code_lens_actions = code_lens_actions.await?;
+            code_lens_actions.retain(|code_lens_action| {
+                range
+                    .start
+                    .cmp(&code_lens_action.range.start, &snapshot)
+                    .is_le()
+                    && range
+                        .end
+                        .cmp(&code_lens_action.range.end, &snapshot)
+                        .is_ge()
+            });
+            Ok(code_lens_actions)
+        })
+    }
+
     pub fn apply_code_action(
         &self,
         buffer_handle: Entity<Buffer>,

@@ -1279,7 +1279,7 @@ message GetCodeLens {
 }
 
 message GetCodeLensResponse {
-    repeated CodeLens lens = 1;
+    repeated CodeAction lens_actions = 1;
     repeated VectorClockEntry version = 2;
 }
 
@@ -2372,6 +2372,7 @@ message MultiLspQuery {
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
         GetSignatureHelp get_signature_help = 7;
+        GetCodeLens get_code_lens = 8;
     }
 }
 
@@ -2391,6 +2392,7 @@ message LspResponse {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
         GetSignatureHelpResponse get_signature_help_response = 3;
+        GetCodeLensResponse get_code_lens_response = 4;
     }
 }
 

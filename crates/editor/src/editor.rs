@@ -16484,7 +16484,7 @@ impl Editor {
     }
 
     fn refresh_code_lens(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
-        // todo!("TODO kb")
+        // todo!("TODO kb do we need it? cannot get an editor on the CodeActionsProvider level")
     }
 }
 
@@ -17019,6 +17019,7 @@ impl CodeActionProvider for Entity<Project> {
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| {
+            // TODO kb get code_lens here too?
             project.code_actions(buffer, range, None, cx)
         })
     }

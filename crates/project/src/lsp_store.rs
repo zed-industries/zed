@@ -2972,9 +2972,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
-        client.add_entity_request_handler(Self::handle_code_lens);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
-        client.add_entity_request_handler(Self::handle_resolve_code_action);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
@@ -4349,6 +4347,7 @@ impl LspStore {
             cx,
         )
     }
+
     pub fn code_actions(
         &mut self,
         buffer_handle: &Entity<Buffer>,
@@ -4425,6 +4424,67 @@ impl LspStore {
             cx.spawn(
                 |_, _| async move { Ok(all_actions_task.await.into_iter().flatten().collect()) },
             )
+        }
+    }
+
+    // TODO kb use this?
+    pub fn code_lens(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request_task = upstream_client.request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetCodeLens(
+                    GetCodeLens.to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let code_lens = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetCodeLensResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|code_lens_response| {
+                            GetCodeLens.response_from_proto(
+                                code_lens_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(code_lens
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let code_lens_task =
+                self.request_multiple_lsp_locally(buffer_handle, None::<usize>, GetCodeLens, cx);
+            cx.spawn(|_, _| async move { Ok(code_lens_task.await.into_iter().flatten().collect()) })
         }
     }
 
@@ -6341,6 +6401,43 @@ impl LspStore {
                         .collect(),
                 })
             }
+            Some(proto::multi_lsp_query::Request::GetCodeLens(get_code_lens)) => {
+                let get_code_lens = GetCodeLens::from_proto(
+                    get_code_lens,
+                    this.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let code_lens_actions = this
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            None::<usize>,
+                            get_code_lens,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                this.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: code_lens_actions
+                        .map(|actions| proto::LspResponse {
+                            response: Some(proto::lsp_response::Response::GetCodeLensResponse(
+                                GetCodeLens::response_to_proto(
+                                    actions,
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
             None => anyhow::bail!("empty multi lsp query request"),
         }
     }
@@ -7253,14 +7350,6 @@ impl LspStore {
             cx.emit(LspStoreEvent::RefreshCodeLens);
         })?;
         Ok(proto::Ack {})
-    }
-
-    async fn handle_code_lens(
-        this: Entity<Self>,
-        _: TypedEnvelope<proto::GetCodeLens>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GetCodeLensResponse> {
-        todo!("TODO kb")
     }
 
     async fn handle_open_buffer_for_symbol(
