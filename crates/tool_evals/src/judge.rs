@@ -1,8 +1,5 @@
 use crate::eval::EvalOutput;
-use crate::headless_assistant::{
-    authenticate_model_provider, find_model, send_language_model_request, HeadlessAppState,
-    HeadlessAssistant,
-};
+use crate::headless_assistant::{find_model, send_language_model_request};
 use anyhow::anyhow;
 use gpui::{App, Task};
 use language_model::{LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role};
