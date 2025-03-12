@@ -358,7 +358,6 @@ pub(crate) fn commit_message_editor(
         EditorMode::AutoHeight { max_lines },
         buffer,
         None,
-        false,
         window,
         cx,
     );

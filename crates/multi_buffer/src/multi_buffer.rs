@@ -7158,7 +7158,10 @@ impl Iterator for MultiBufferRows<'_> {
                 enabled: buffer_point.row > 0,
                 excerpt_id: region.excerpt.id,
             })
-        } else if self.point.row + 1 == region.range.end.row && self.cursor.is_at_end_of_excerpt() {
+        } else if (region.range.end.column == 0 && self.point.row + 1 == region.range.end.row
+            || region.range.end.column > 0 && self.point.row == region.range.end.row)
+            && self.cursor.is_at_end_of_excerpt()
+        {
             Some(ExpandInfo {
                 direction: ExpandExcerptDirection::Down,
                 enabled: buffer_point.row + 1 < region.buffer.max_point().row,

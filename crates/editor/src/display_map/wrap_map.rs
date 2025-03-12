@@ -983,7 +983,7 @@ impl Iterator for WrapRows<'_> {
                 buffer_row: None,
                 multibuffer_row: None,
                 diff_status,
-                expand_info: None, // todo!() shunt expand_direction::Down down
+                expand_info: None,
             }
         } else {
             buffer_row

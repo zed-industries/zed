@@ -16,15 +16,15 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk,
-    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
-    EditPredictionPreview, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    ExpandExcerpts, FocusedBlock, GoToHunk, GoToPreviousHunk, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData,
-    LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk, GoToPreviousHunk,
+    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
+    InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp,
+    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
@@ -33,10 +33,10 @@ use file_icons::FileIcons;
 use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
-    relative, size, solid_background, svg, transparent_black, Action, AnyElement, App,
-    AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    relative, size, solid_background, transparent_black, Action, AnyElement, App, AvailableSpace,
+    Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, Window,
@@ -52,8 +52,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
-    RowInfo,
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
+    MultiBufferRow, RowInfo,
 };
 use project::project_settings::{self, GitGutterSetting, ProjectSettings};
 use settings::Settings;
@@ -72,7 +72,7 @@ use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{
-    h_flex, prelude::*, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
+    h_flex, prelude::*, ButtonLike, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -1518,19 +1518,13 @@ impl EditorElement {
     fn prepaint_expand_toggles(
         &self,
         expand_toggles: &mut [Option<(AnyElement, gpui::Point<Pixels>)>],
-        line_height: Pixels,
-        gutter_dimensions: &GutterDimensions,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        gutter_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
     ) {
-        for (ix, expand_toggle) in expand_toggles.iter_mut().enumerate() {
-            if let Some((expand_toggle, origin)) = expand_toggle {
-                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                expand_toggle.layout_as_root(available_space, window, cx);
-                expand_toggle.prepaint_as_root(*origin, available_space, window, cx);
-            }
+        for (expand_toggle, origin) in expand_toggles.iter_mut().flatten() {
+            let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+            expand_toggle.layout_as_root(available_space, window, cx);
+            expand_toggle.prepaint_as_root(*origin, available_space, window, cx);
         }
     }
 
@@ -2028,6 +2022,7 @@ impl EditorElement {
         &self,
         line_height: Pixels,
         range: Range<DisplayRow>,
+        row_infos: &[RowInfo],
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
@@ -2093,6 +2088,12 @@ impl EditorElement {
                         }
                     }
                     let display_row = multibuffer_point.to_display_point(snapshot).row();
+                    if row_infos
+                        .get((display_row - range.start).0 as usize)
+                        .is_some_and(|row_info| row_info.expand_info.is_some())
+                    {
+                        return None;
+                    }
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
@@ -2125,51 +2126,12 @@ impl EditorElement {
         buffer_rows: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
-    ) -> (
-        Vec<ExcerptLine>,
-        Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
-    ) {
-        let mut lines = Vec::new();
-
-        // get the font size a as a whole number
+    ) -> Vec<Option<(AnyElement, gpui::Point<Pixels>)>> {
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
-        let mut icon_size = editor_font_size.round();
-
-        // Ensure icon size will be odd, so the center line won't be blurry
-        // if icon_size.0.round() % 2.0 == 0.0 {
-        //     // todo: + or -?
-        //     icon_size += px(1.0);
-        // };
-
-        //                      button size (18px)
-        // | <----------> | <---------------------------------> |
-        //   leftmargin         <----------------------->
-        //                         icon size (font_size)
-        //                      <-------->|<->|<-------->
-        //                      7/15th     1/15
-
-        let mut line_scale = icon_size / 15.0;
-        let mut line_width = line_scale;
-        let mut line_color = cx
-            .theme()
-            .colors()
-            .editor_line_number
-            .opacity(line_scale / line_width);
+        let icon_size = editor_font_size.round();
         let button_h_padding = ((icon_size - px(1.0)) / 2.0).round();
-        let left_margin = px(0.);
 
-        let mut start_line = None;
-        let line_y_spacing = 8.0;
-        let line_x = (gutter_hitbox.origin.x + left_margin + button_h_padding + icon_size / 2.);
-        dbg!(
-            line_x - gutter_hitbox.origin.x,
-            line_width,
-            line_scale,
-            icon_size,
-            button_h_padding
-        );
-        let start_y = gutter_hitbox.origin.y + px(line_y_spacing);
         let scroll_top = scroll_position.y * line_height;
 
         let elements = buffer_rows
@@ -2187,29 +2149,6 @@ impl EditorElement {
                     ExpandExcerptDirection::Down => IconName::ExpandDown,
                     ExpandExcerptDirection::UpAndDown => IconName::Split,
                 };
-
-                match direction {
-                    ExpandExcerptDirection::Up => {
-                        start_line = Some(ix);
-                    }
-                    ExpandExcerptDirection::Down => {
-                        let length = line_height * (ix - start_line.unwrap_or(0)) - icon_size
-                            + icon_size / 4.
-                            - px(line_y_spacing + 2.0);
-                        let origin = gpui::Point::new(
-                            line_x,
-                            start_y + line_height * (start_line.unwrap_or(0)) + icon_size
-                                - (scroll_top % line_height),
-                        );
-                        let bounds = Bounds::new(origin, Size::new(line_width, length));
-                        lines.push(ExcerptLine {
-                            bounds,
-                            color: line_color,
-                        });
-                        start_line = None;
-                    }
-                    ExpandExcerptDirection::UpAndDown => {}
-                }
 
                 let editor = self.editor.clone();
                 let max_row = self
@@ -2231,51 +2170,36 @@ impl EditorElement {
                     return None;
                 }
 
-                let mut toggle = IconButton::new(("expand", ix), icon_name)
+                let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
-                    .icon_size(IconSize::Custom(
-                        self.style.text.font_size.to_rems(window.rem_size()),
-                    ))
+                    .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
+                    .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .width((icon_size + button_h_padding * 2).into())
-                    // .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
+                    .when(is_wide, |el| {
+                        el.width((icon_size + button_h_padding).into())
+                    })
                     .on_click(move |_, _, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.expand_excerpt(excerpt_id, direction, cx);
                         });
                     })
-                    .tooltip(Tooltip::text(tooltip_label))
+                    .tooltip(Tooltip::for_action_title(
+                        tooltip_label,
+                        &crate::actions::ExpandExcerpts::default(),
+                    ))
                     .into_any_element();
 
-                let position = point(px(0.), ix as f32 * line_height - (scroll_top % line_height));
-                // let x_offset = if *is_wide {
-                //     px(0.)
-                // } else {
-                //     px(0.)
-                //     // ((gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.)
-                //     //     .max(px(0.))
-                // };
+                let position = point(
+                    px(0.),
+                    ix as f32 * line_height - (scroll_top % line_height) + px(1.),
+                );
                 let origin = gutter_hitbox.origin + position;
 
                 Some((toggle, origin))
             })
             .collect();
 
-        if let Some(start_line) = start_line {
-            let origin = gpui::Point::new(
-                line_x,
-                start_y + line_height * (start_line) + icon_size - (scroll_top % line_height),
-            );
-            let length = gutter_hitbox.bottom() - origin.y;
-
-            let bounds = Bounds::new(origin, Size::new(line_width, length));
-            lines.push(ExcerptLine {
-                bounds,
-                color: line_color,
-            })
-        }
-
-        (lines, elements)
+        elements
     }
 
     fn layout_code_actions_indicator(
@@ -2495,6 +2419,9 @@ impl EditorElement {
                 .into_iter()
                 .enumerate()
                 .map(|(ix, info)| {
+                    if info.expand_info.is_some() {
+                        return None;
+                    }
                     let row = info.multibuffer_row?;
                     let display_row = DisplayRow(rows.start.0 + ix as u32);
                     let active = active_rows.contains_key(&display_row);
@@ -2517,6 +2444,9 @@ impl EditorElement {
         buffer_rows
             .into_iter()
             .map(|row_info| {
+                if row_info.expand_info.is_some() {
+                    return None;
+                }
                 if let Some(row) = row_info.multibuffer_row {
                     snapshot.render_crease_trailer(row, window, cx)
                 } else {
@@ -2694,11 +2624,11 @@ impl EditorElement {
 
             Block::FoldedBuffer {
                 first_excerpt,
-                prev_excerpt,
                 height,
+                ..
             } => {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
-                let mut result = v_flex().id(block_id).w_full();
+                let result = v_flex().id(block_id).w_full();
 
                 let jump_data = header_jump_data(snapshot, block_row_start, *height, first_excerpt);
                 result
@@ -2706,6 +2636,7 @@ impl EditorElement {
                         first_excerpt,
                         true,
                         selected,
+                        false,
                         jump_data,
                         window,
                         cx,
@@ -2714,10 +2645,10 @@ impl EditorElement {
             }
 
             Block::ExcerptBoundary {
-                prev_excerpt,
                 next_excerpt,
                 height,
                 starts_new_buffer,
+                ..
             } => {
                 let color = cx.theme().colors().clone();
                 let mut result = v_flex().id(block_id).w_full();
@@ -2734,6 +2665,7 @@ impl EditorElement {
                                 next_excerpt,
                                 false,
                                 selected,
+                                false,
                                 jump_data,
                                 window,
                                 cx,
@@ -2791,6 +2723,7 @@ impl EditorElement {
         for_excerpt: &ExcerptInfo,
         is_folded: bool,
         is_selected: bool,
+        is_sticky: bool,
         jump_data: JumpData,
         window: &mut Window,
         cx: &mut App,
@@ -2837,7 +2770,7 @@ impl EditorElement {
                     .pl_0p5()
                     .pr_5()
                     .rounded_sm()
-                    .shadow_md()
+                    .when(is_sticky, |el| el.shadow_md())
                     .border_1()
                     .map(|div| {
                         let border_color = if is_selected
@@ -2974,95 +2907,6 @@ impl EditorElement {
                             })),
                     ),
             )
-    }
-
-    fn render_expand_excerpt_control(
-        &self,
-        block_id: BlockId,
-        direction: ExpandExcerptDirection,
-        excerpt_id: ExcerptId,
-        gutter_dimensions: &GutterDimensions,
-        window: &Window,
-        cx: &mut App,
-    ) -> impl IntoElement {
-        let color = cx.theme().colors().clone();
-        let hover_color = color.border_variant.opacity(0.5);
-        let focus_handle = self.editor.focus_handle(cx).clone();
-
-        let icon_offset =
-            gutter_dimensions.width - (gutter_dimensions.left_padding + gutter_dimensions.margin);
-        let header_height = MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * window.line_height();
-        let group_name = if direction == ExpandExcerptDirection::Down {
-            "expand-down"
-        } else {
-            "expand-up"
-        };
-
-        let expand_area = |id: SharedString| {
-            h_flex()
-                .id(id)
-                .w_full()
-                .cursor_pointer()
-                .block_mouse_down()
-                .on_mouse_move(|_, _, cx| cx.stop_propagation())
-                .hover(|style| style.bg(hover_color))
-                .tooltip({
-                    let focus_handle = focus_handle.clone();
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Expand Excerpt",
-                            &ExpandExcerpts { lines: 0 },
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                })
-        };
-
-        expand_area(
-            format!(
-                "block-{}-{}",
-                block_id,
-                if direction == ExpandExcerptDirection::Down {
-                    "down"
-                } else {
-                    "up"
-                }
-            )
-            .into(),
-        )
-        .group(group_name)
-        .child(
-            h_flex()
-                .w(icon_offset)
-                .h(header_height)
-                .flex_none()
-                .justify_end()
-                .child(
-                    ButtonLike::new("expand-icon")
-                        .style(ButtonStyle::Transparent)
-                        .child(
-                            svg()
-                                .path(if direction == ExpandExcerptDirection::Down {
-                                    IconName::ArrowDownFromLine.path()
-                                } else {
-                                    IconName::ArrowUpFromLine.path()
-                                })
-                                .size(IconSize::XSmall.rems())
-                                .text_color(cx.theme().colors().editor_line_number)
-                                .group_hover(group_name, |style| {
-                                    style.text_color(cx.theme().colors().editor_active_line_number)
-                                }),
-                        ),
-                ),
-        )
-        .on_click(window.listener_for(&self.editor, {
-            move |editor, _, _, cx| {
-                editor.expand_excerpt(excerpt_id, direction, cx);
-                cx.stop_propagation();
-            }
-        }))
     }
 
     fn render_blocks(
@@ -3332,7 +3176,7 @@ impl EditorElement {
                     .top_0(),
             )
             .child(
-                self.render_buffer_header(excerpt, false, selected, jump_data, window, cx)
+                self.render_buffer_header(excerpt, false, selected, true, jump_data, window, cx)
                     .into_any_element(),
             )
             .into_any_element();
@@ -3342,7 +3186,7 @@ impl EditorElement {
         if let Some(next_buffer_row) = next_buffer_row {
             // Push up the sticky header when the excerpt is getting close to the top of the viewport
 
-            let mut max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
+            let max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
 
             let offset = scroll_position - max_row as f32;
 
@@ -4343,21 +4187,6 @@ impl EditorElement {
                 }
             }
         })
-    }
-
-    fn paint_excerpt_lines(
-        &mut self,
-        layout: &mut EditorLayout,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        for excerpt_line in &layout.excerpt_lines {
-            let mut path = gpui::PathBuilder::stroke(excerpt_line.bounds.size.width);
-            let offset = point(excerpt_line.bounds.size.width / 2., px(0.));
-            path.move_to(excerpt_line.bounds.origin + offset);
-            path.line_to(excerpt_line.bounds.bottom_left() + offset);
-            window.paint_path(path.build().unwrap(), excerpt_line.color);
-        }
     }
 
     fn paint_indent_guides(
@@ -7036,7 +6865,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let (excerpt_lines, mut expand_toggles) =
+                    let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
                             self.layout_excerpt_gutter(
                                 &gutter_hitbox,
@@ -7145,7 +6974,7 @@ impl Element for EditorElement {
                     let mut scroll_width = scroll_range_bounds.size.width;
 
                     let sticky_header_excerpt = if snapshot.buffer_snapshot.show_headers() {
-                        snapshot.sticky_header_excerpt(start_row)
+                        snapshot.sticky_header_excerpt(scroll_position.y)
                     } else {
                         None
                     };
@@ -7462,7 +7291,14 @@ impl Element for EditorElement {
                                             .tasks
                                             .contains_key(&(buffer_id, row));
 
-                                        if !has_test_indicator {
+                                        let has_expand_indicator = row_infos
+                                            .get(
+                                                (newest_selection_head.row() - start_row).0
+                                                    as usize,
+                                            )
+                                            .is_some_and(|row_info| row_info.expand_info.is_some());
+
+                                        if !has_test_indicator && !has_expand_indicator {
                                             code_actions_indicator = self
                                                 .layout_code_actions_indicator(
                                                     line_height,
@@ -7495,6 +7331,7 @@ impl Element for EditorElement {
                         self.layout_run_indicators(
                             line_height,
                             start_row..end_row,
+                            &row_infos,
                             scroll_pixel_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
@@ -7558,15 +7395,7 @@ impl Element for EditorElement {
                     });
 
                     window.with_element_namespace("expand_toggles", |window| {
-                        self.prepaint_expand_toggles(
-                            &mut expand_toggles,
-                            line_height,
-                            &gutter_dimensions,
-                            scroll_pixel_position,
-                            &gutter_hitbox,
-                            window,
-                            cx,
-                        )
+                        self.prepaint_expand_toggles(&mut expand_toggles, window, cx)
                     });
 
                     let invisible_symbol_font_size = font_size / 2.;
@@ -7671,7 +7500,6 @@ impl Element for EditorElement {
                         space_invisible,
                         sticky_buffer_header,
                         expand_toggles,
-                        excerpt_lines,
                     }
                 })
             })
@@ -7717,7 +7545,6 @@ impl Element for EditorElement {
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_blamed_display_rows(layout, window, cx);
                         self.paint_line_numbers(layout, window, cx);
-                        self.paint_excerpt_lines(layout, window, cx);
                     }
 
                     self.paint_text(layout, window, cx);
@@ -7847,7 +7674,6 @@ pub struct EditorLayout {
     test_indicators: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
-    excerpt_lines: Vec<ExcerptLine>,
     diff_hunk_controls: Vec<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     inline_completion_popover: Option<AnyElement>,
@@ -8113,12 +7939,6 @@ pub struct IndentGuideLayout {
     depth: u32,
     active: bool,
     settings: IndentGuideSettings,
-}
-
-#[derive(Debug)]
-pub struct ExcerptLine {
-    bounds: gpui::Bounds<Pixels>,
-    color: Hsla,
 }
 
 pub struct CursorLayout {
@@ -8487,7 +8307,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -8587,7 +8407,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -8691,7 +8511,7 @@ mod tests {
                 ],
                 cx,
             );
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let editor = window.root(cx).unwrap();
         let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
@@ -8742,7 +8562,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -8968,7 +8788,7 @@ mod tests {
         );
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(input_text, cx);
-            Editor::new(editor_mode, buffer, None, true, window, cx)
+            Editor::new(editor_mode, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
