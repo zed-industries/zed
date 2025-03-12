@@ -66,8 +66,7 @@ use crate::{
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
 };
-use terminal_view::{terminal_panel::TerminalPanel, SendText};
-use terminal;
+use terminal_view::terminal_panel::TerminalPanel;
 use terminal_view::TerminalView;
 use workspace::Panel;
 
@@ -2731,7 +2730,7 @@ fn render_shell_command_run_button(
     icon: IconName,
     label: SharedString,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
-    Arc::new(move |fold_id, fold_range, cx| {
+    Arc::new(move |fold_id, fold_range, _| {
         let editor = editor.clone();
         let workspace = workspace.clone();
 
