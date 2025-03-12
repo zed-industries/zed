@@ -6,7 +6,7 @@ use futures::{
 };
 use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use language::Buffer;
-use mlua::{ExternalResult, Lua, MultiValue, Table, UserData, UserDataMethods};
+use mlua::{ExternalResult, Lua, MultiValue, ObjectLike, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project, ProjectPath, WorktreeId};
 use regex::Regex;
@@ -543,15 +543,9 @@ impl ScriptingSession {
             return Err(mlua::Error::runtime("File not open for reading"));
         }
 
-        // Create an iterator function that reads lines from the file
-        let lines_iter = lua.create_function::<_, _, mlua::Value>(move |lua, _: ()| {
-            let read_method = file_userdata.get::<mlua::Function>("read")?;
-            // Fix: need to pass the file table as first argument to the read method (self)
-            let line = read_method.call((&file_userdata, lua.create_string("*l")?))?;
-            Ok(line)
-        })?;
-
-        Ok(lines_iter)
+        lua.create_function::<_, _, mlua::Value>(move |lua, _: ()| {
+            file_userdata.call_method("read", lua.create_string("*l")?)
+        })
     }
 
     fn io_file_read_format(format: Option<mlua::Value>) -> mlua::Result<FileReadFormat> {
