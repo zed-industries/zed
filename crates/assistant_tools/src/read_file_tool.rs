@@ -58,7 +58,16 @@ impl Tool for ReadFileTool {
                 })?
                 .await?;
 
-            cx.update(|cx| buffer.read(cx).text())
+            buffer.read_with(&cx, |buffer, _cx| {
+                if buffer
+                    .file()
+                    .map_or(false, |file| file.disk_state().exists())
+                {
+                    Ok(buffer.text())
+                } else {
+                    Err(anyhow!("File does not exist"))
+                }
+            })?
         })
     }
 }
