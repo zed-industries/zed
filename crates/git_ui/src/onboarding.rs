@@ -223,7 +223,7 @@ impl Render for GitBanner {
                         h_flex()
                             .h_full()
                             .items_center()
-                            .gap_1p5()
+                            .gap_1()
                             .child(Icon::new(IconName::GitBranchSmall).size(IconSize::Small))
                             .child(
                                 h_flex()
