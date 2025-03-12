@@ -92,7 +92,20 @@ impl HeadlessAssistant {
                     thread.use_pending_tools(cx);
                 });
             }
-            ThreadEvent::ToolFinished { .. } => {
+            ThreadEvent::ToolFinished {
+                tool_use_id,
+                pending_tool_use,
+            } => {
+                if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
+                    if let Some(pending_tool_use) = pending_tool_use {
+                        log::info!(
+                            "Used tool {} with input: {}",
+                            pending_tool_use.name,
+                            pending_tool_use.input
+                        );
+                    }
+                    log::info!("Tool result: {:?}", tool_result);
+                }
                 if thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {

@@ -242,6 +242,10 @@ impl Thread {
         self.tool_use.tool_results_for_message(id)
     }
 
+    pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
+        self.tool_use.tool_result(id)
+    }
+
     pub fn scripting_tool_results_for_message(
         &self,
         id: MessageId,
