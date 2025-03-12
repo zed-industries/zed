@@ -1002,10 +1002,13 @@ message Completion {
     bool resolved = 6;
     Source source = 7;
     optional bytes lsp_defaults = 8;
+    optional Anchor buffer_word_start = 9;
+    optional Anchor buffer_word_end = 10;
 
     enum Source {
         Lsp = 0;
         Custom = 1;
+        BufferWord = 2;
     }
 }
 
