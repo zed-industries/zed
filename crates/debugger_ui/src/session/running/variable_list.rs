@@ -8,7 +8,7 @@ use gpui::{
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{collections::HashMap, fmt::format, ops::Range, sync::Arc};
 use ui::{prelude::*, ContextMenu, ListItem, Scrollbar, ScrollbarState};
 use util::{debug_panic, maybe};
 
@@ -504,6 +504,8 @@ impl VariableList {
     #[track_caller]
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_visual_entries(&self, expected: Vec<&str>) {
+        use gpui::DebugBelow;
+
         const INDENT: &'static str = "    ";
 
         let entries = &self.entries;
@@ -516,7 +518,7 @@ impl VariableList {
 
             visual_entries.push(format!(
                 "{}{} {}",
-                INDENT.repeat(state.depth),
+                INDENT.repeat(state.depth - 1),
                 if state.is_expanded { "v" } else { ">" },
                 entry.dap_kind.name(),
             ));
@@ -776,7 +778,7 @@ impl VariableList {
                                             },
                                         )
                                         .child(
-                                            Label::new(&dap.value)
+                                            Label::new(format!("=  {}", &dap.value))
                                                 .single_line()
                                                 .truncate()
                                                 .size(LabelSize::Small)
