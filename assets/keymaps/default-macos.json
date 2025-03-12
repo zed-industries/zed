@@ -818,6 +818,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
+      "shift-escape": "menu::Cancel",
       "escape": "menu::Cancel",
       "cmd-enter": "git::Commit",
       "alt-tab": "git::GenerateCommitMessage"
