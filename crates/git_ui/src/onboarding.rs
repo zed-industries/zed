@@ -17,7 +17,7 @@ macro_rules! git_onboarding_event {
     };
 }
 
-/// Introduces user to Zed's Edit Prediction feature and terms of service
+/// Introduces user to the Git Panel and overall improved Git support
 pub struct GitOnboardingModal {
     focus_handle: FocusHandle,
     workspace: Entity<Workspace>,
