@@ -683,16 +683,15 @@ impl Default for Background {
 }
 
 /// Creates a hash pattern background
-pub fn pattern_slash(color: Hsla, height: f32, interval: f32) -> Background {
-    let height_scaled = (height * 255.0) as u32;
+pub fn pattern_slash(color: Hsla, width: f32, interval: f32) -> Background {
+    let width_scaled = (width * 255.0) as u32;
     let interval_scaled = (interval * 255.0) as u32;
+    let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
 
     Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
-        gradient_angle_or_pattern_height: f32::from_bits(
-            (height_scaled << 16) | (interval_scaled & 0xFFFF),
-        ),
+        gradient_angle_or_pattern_height: height,
         ..Default::default()
     }
 }

@@ -875,9 +875,9 @@ float4 fill_color(Background background,
       break;
     }
     case 2: {
-        uint gradient_angle_or_pattern_height = as_type<uint>(background.gradient_angle_or_pattern_height);
-        float pattern_width = ((gradient_angle_or_pattern_height >> 16) & 0xFFFF) / 255.0f;
-        float pattern_interval = ((gradient_angle_or_pattern_height >> 0) & 0xFFFF) / 255.0f;
+        float gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
+        float pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
+        float pattern_interval = fmod(gradient_angle_or_pattern_height, 65535.0f) / 255.0f;
         float pattern_height = pattern_width + pattern_interval;
         float stripe_angle = M_PI_F / 4.0;
         float pattern_period = pattern_height * sin(stripe_angle);

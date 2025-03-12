@@ -360,9 +360,9 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             }
         }
         case 2u: {
-            let gradient_angle_or_pattern_height = asuint(background.gradient_angle_or_pattern_height);
-            let pattern_width = ((gradient_angle_or_pattern_height >> 16) & 0xFFFF) / 255.0f;
-            let pattern_interval = ((gradient_angle_or_pattern_height >> 0) & 0xFFFF) / 255.0f;
+            let gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
+            let pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
+            let pattern_interval = (gradient_angle_or_pattern_height % 65535.0f) / 255.0f;
             let pattern_height = pattern_width + pattern_interval;
             let stripe_angle = M_PI_F / 4.0;
             let pattern_period = pattern_height * sin(stripe_angle);
