@@ -1,4 +1,11 @@
 use crate::eval::EvalOutput;
+use crate::headless_assistant::{
+    authenticate_model_provider, find_model, send_language_model_request, HeadlessAppState,
+    HeadlessAssistant,
+};
+use anyhow::anyhow;
+use gpui::{App, Task};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role};
 use std::path::Path;
 
 pub struct Judge {
@@ -31,10 +38,32 @@ impl Judge {
         })
     }
 
-    pub fn run(&self, eval_output: &EvalOutput) -> anyhow::Result<()> {
-        // todo! also compare last message, to handle Q/A eval.
+    pub fn run(&self, eval_output: &EvalOutput, cx: &mut App) -> Task<anyhow::Result<String>> {
+        let model = match find_model(&self.model_name, cx) {
+            Ok(model) => model,
+            Err(err) => return Task::ready(Err(err)),
+        };
 
-        Ok(())
+        // todo! also compare last message, to handle Q/A eval.
+        let Some(original_diff) = self.original_diff.as_ref() else {
+            return Task::ready(Err(anyhow!("No original.diff found")));
+        };
+
+        // todo! check for empty diff?
+        let prompt = diff_comparison_prompt(&original_diff, &eval_output.diff);
+
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text(prompt)],
+                cache: false,
+            }],
+            temperature: Some(0.0),
+            tools: Vec::new(),
+            stop: Vec::new(),
+        };
+
+        cx.spawn(move |cx| send_language_model_request(model, request, cx))
     }
 }
 

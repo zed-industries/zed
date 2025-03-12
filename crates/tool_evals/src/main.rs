@@ -90,9 +90,14 @@ fn main() {
 
                 let task = cx.update(|cx| eval.run(app_state.clone(), cx)).unwrap();
                 match task.await {
-                    Ok(result) => {
-                        println!("Result: {:?}", result);
-                        // judge.run(&result).unwrap();
+                    Ok(eval_result) => {
+                        println!("Eval result: {:?}", eval_result);
+                        let judge_result = cx
+                            .update(|cx| judge.run(&eval_result, cx))
+                            .unwrap()
+                            .await
+                            .unwrap();
+                        println!("Judge result: {judge_result}");
                     }
                     Err(err) => println!("Error: {}", err),
                 }
