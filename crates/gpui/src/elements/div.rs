@@ -1948,6 +1948,14 @@ impl Interactivity {
                             if pending_mouse_down.is_some() && hitbox.is_hovered(window) {
                                 captured_mouse_down = pending_mouse_down.take();
                                 window.refresh();
+                            } else if pending_mouse_down.is_some() {
+                                // Clear the pending mouse down event (without firing click handlers)
+                                // if the hitbox is not being hovered.
+                                // This avoids dragging elements that changed their position
+                                // immediately after being clicked.
+                                // See https://github.com/zed-industries/zed/issues/24600 for more details
+                                pending_mouse_down.take();
+                                window.refresh();
                             }
                         }
                         // Fire click handlers during the bubble phase.

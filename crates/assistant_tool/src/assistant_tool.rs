@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::{App, Entity, SharedString, Task};
+use language_model::LanguageModelRequestMessage;
 use project::Project;
 
 pub use crate::tool_registry::*;
@@ -44,6 +45,7 @@ pub trait Tool: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
+        messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>>;

@@ -658,6 +658,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "language_model",
  "parking_lot",
  "project",
  "serde",
@@ -671,11 +672,17 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
+ "collections",
+ "futures 0.3.31",
  "gpui",
+ "language",
+ "language_model",
  "project",
+ "rand 0.8.5",
  "schemars",
  "serde",
  "serde_json",
+ "util",
 ]
 
 [[package]]
@@ -3128,6 +3135,7 @@ dependencies = [
  "extension",
  "futures 0.3.31",
  "gpui",
+ "language_model",
  "log",
  "parking_lot",
  "postage",
@@ -4631,6 +4639,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "extension",
  "extension_host",
  "feature_flags",
  "fs",
@@ -5441,8 +5450,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "assistant_settings",
  "buffer_diff",
+ "chrono",
  "collections",
+ "command_palette_hooks",
  "component",
  "ctor",
  "db",
@@ -11914,6 +11926,8 @@ name = "scripting_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "buffer_diff",
+ "clock",
  "collections",
  "futures 0.3.31",
  "gpui",
@@ -13974,6 +13988,7 @@ dependencies = [
  "client",
  "collections",
  "feature_flags",
+ "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -16994,7 +17009,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.178.0"
+version = "0.179.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -17190,13 +17205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_purescript"
-version = "0.1.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_ruff"
 version = "0.1.0"
 dependencies = [
@@ -17228,13 +17236,6 @@ dependencies = [
 [[package]]
 name = "zed_uiua"
 version = "0.0.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_zig"
-version = "0.3.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

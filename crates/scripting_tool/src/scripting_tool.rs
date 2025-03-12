@@ -15,7 +15,7 @@ pub struct ScriptingTool;
 impl ScriptingTool {
     pub const NAME: &str = "lua-interpreter";
 
-    pub const DESCRIPTION: &str = include_str!("scripting_tool_description.txt");
+    pub const DESCRIPTION: &str = include_str!("scripting_tool_description.md");
 
     pub fn input_schema() -> serde_json::Value {
         let schema = schemars::schema_for!(ScriptingToolInput);
