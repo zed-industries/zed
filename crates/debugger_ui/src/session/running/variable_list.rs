@@ -653,6 +653,7 @@ impl VariableList {
             }
         };
 
+        let syntax_color_for = |name| cx.theme().syntax().get(name).color;
         let variable_name_color = match &dap
             .presentation_hint
             .as_ref()
@@ -662,11 +663,11 @@ impl VariableList {
             VariablePresentationHintKind::Class
             | VariablePresentationHintKind::BaseClass
             | VariablePresentationHintKind::InnerClass
-            | VariablePresentationHintKind::MostDerivedClass => cx.theme().syntax_color("type"),
-            VariablePresentationHintKind::Data => cx.theme().syntax_color("variable"),
-            VariablePresentationHintKind::Unknown | _ => cx.theme().syntax_color("variable"),
+            | VariablePresentationHintKind::MostDerivedClass => syntax_color_for("type"),
+            VariablePresentationHintKind::Data => syntax_color_for("variable"),
+            VariablePresentationHintKind::Unknown | _ => syntax_color_for("variable"),
         };
-        let variable_color = cx.theme().syntax_color("variable.special");
+        let variable_color = syntax_color_for("variable.special");
 
         let var_ref = dap.variables_reference;
         let colors = get_entry_color(cx);
@@ -740,7 +741,11 @@ impl VariableList {
                         .gap_1()
                         .text_ui_sm(cx)
                         .w_full()
-                        .child(Label::new(&dap.name).color(Color::from(variable_name_color)))
+                        .child(
+                            Label::new(&dap.name).when_some(variable_name_color, |this, color| {
+                                this.color(Color::from(color))
+                            }),
+                        )
                         .when(!dap.value.is_empty(), |this| {
                             this.child(div().w_full().id(variable.item_value_id()).map(|this| {
                                 if let Some((_, editor)) = self
@@ -785,7 +790,9 @@ impl VariableList {
                                                 .single_line()
                                                 .truncate()
                                                 .size(LabelSize::Small)
-                                                .color(Color::from(variable_color)),
+                                                .when_some(variable_color, |this, color| {
+                                                    this.color(Color::from(color))
+                                                }),
                                         )
                                 }
                             }))
