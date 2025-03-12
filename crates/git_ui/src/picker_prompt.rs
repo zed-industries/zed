@@ -1,4 +1,3 @@
-use anyhow::{anyhow, Result};
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate};
 
@@ -26,9 +25,9 @@ pub fn prompt(
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
-) -> Task<Result<Option<usize>>> {
+) -> Task<Option<usize>> {
     if options.is_empty() {
-        return Task::ready(Err(anyhow!("No options")));
+        return Task::ready(None);
     }
     let prompt = prompt.to_string().into();
 
@@ -37,15 +36,17 @@ pub fn prompt(
         let (tx, rx) = oneshot::channel();
         let delegate = PickerPromptDelegate::new(prompt, options, tx, 70);
 
-        workspace.update_in(&mut cx, |workspace, window, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| {
-                PickerPrompt::new(delegate, 34., window, cx)
+        workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    PickerPrompt::new(delegate, 34., window, cx)
+                })
             })
-        })?;
+            .ok();
 
         match rx.await {
-            Ok(selection) => Some(selection).transpose(),
-            Err(_) => anyhow::Ok(None), // User cancelled
+            Ok(selection) => Some(selection),
+            Err(_) => None, // User cancelled
         }
     })
 }
@@ -94,14 +95,14 @@ pub struct PickerPromptDelegate {
     all_options: Vec<SharedString>,
     selected_index: usize,
     max_match_length: usize,
-    tx: Option<oneshot::Sender<Result<usize>>>,
+    tx: Option<oneshot::Sender<usize>>,
 }
 
 impl PickerPromptDelegate {
     pub fn new(
         prompt: Arc<str>,
         options: Vec<SharedString>,
-        tx: oneshot::Sender<Result<usize>>,
+        tx: oneshot::Sender<usize>,
         max_chars: usize,
     ) -> Self {
         Self {
@@ -200,7 +201,7 @@ impl PickerDelegate for PickerPromptDelegate {
             return;
         };
 
-        self.tx.take().map(|tx| tx.send(Ok(option.candidate_id)));
+        self.tx.take().map(|tx| tx.send(option.candidate_id));
         cx.emit(DismissEvent);
     }
 

@@ -229,7 +229,6 @@ impl Database {
     }
 
     /// Creates a new channel message.
-    #[allow(clippy::too_many_arguments)]
     pub async fn create_channel_message(
         &self,
         channel_id: ChannelId,

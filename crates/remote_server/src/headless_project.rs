@@ -87,12 +87,14 @@ impl HeadlessProject {
             buffer_store
         });
 
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let git_store = cx.new(|cx| {
-            GitStore::new(
+            GitStore::local(
                 &worktree_store,
                 buffer_store.clone(),
+                environment.clone(),
+                fs.clone(),
                 session.clone().into(),
-                None,
                 cx,
             )
         });
@@ -105,7 +107,6 @@ impl HeadlessProject {
                 cx,
             )
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),

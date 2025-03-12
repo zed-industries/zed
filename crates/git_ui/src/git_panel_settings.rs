@@ -58,15 +58,22 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: inherits editor scrollbar settings
     pub scrollbar: Option<ScrollbarSettings>,
+
+    /// What the default branch name should be when
+    /// `init.defaultBranch` is not set in git
+    ///
+    /// Default: main
+    pub fallback_branch_name: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct GitPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
     pub status_style: StatusStyle,
     pub scrollbar: ScrollbarSettings,
+    pub fallback_branch_name: String,
 }
 
 impl Settings for GitPanelSettings {

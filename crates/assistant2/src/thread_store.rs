@@ -116,28 +116,35 @@ impl ThreadStore {
                 updated_at: thread.updated_at(),
                 messages: thread
                     .messages()
-                    .map(|message| SavedMessage {
-                        id: message.id,
-                        role: message.role,
-                        text: message.text.clone(),
-                        tool_uses: thread
+                    .map(|message| {
+                        let all_tool_uses = thread
                             .tool_uses_for_message(message.id)
                             .into_iter()
+                            .chain(thread.scripting_tool_uses_for_message(message.id))
                             .map(|tool_use| SavedToolUse {
                                 id: tool_use.id,
                                 name: tool_use.name,
                                 input: tool_use.input,
                             })
-                            .collect(),
-                        tool_results: thread
+                            .collect();
+                        let all_tool_results = thread
                             .tool_results_for_message(message.id)
                             .into_iter()
+                            .chain(thread.scripting_tool_results_for_message(message.id))
                             .map(|tool_result| SavedToolResult {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
                                 content: tool_result.content.clone(),
                             })
-                            .collect(),
+                            .collect();
+
+                        SavedMessage {
+                            id: message.id,
+                            role: message.role,
+                            text: message.text.clone(),
+                            tool_uses: all_tool_uses,
+                            tool_results: all_tool_results,
+                        }
                     })
                     .collect(),
             };

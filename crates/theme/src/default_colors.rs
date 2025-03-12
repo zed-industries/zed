@@ -136,14 +136,10 @@ impl ThemeColors {
             terminal_ansi_dim_white: neutral().light().step_11(),
             link_text_hover: orange().light().step_10(),
             version_control_added: ADDED_COLOR,
-            version_control_added_background: ADDED_COLOR.opacity(0.1),
             version_control_deleted: REMOVED_COLOR,
-            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
             version_control_modified: MODIFIED_COLOR,
-            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
-            version_control_conflict_background: orange().light().step_12().opacity(0.1),
             version_control_ignored: gray().light().step_12(),
         }
     }
@@ -253,14 +249,10 @@ impl ThemeColors {
             terminal_ansi_dim_white: neutral().dark().step_10(),
             link_text_hover: orange().dark().step_10(),
             version_control_added: ADDED_COLOR,
-            version_control_added_background: ADDED_COLOR.opacity(0.1),
             version_control_deleted: REMOVED_COLOR,
-            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
             version_control_modified: MODIFIED_COLOR,
-            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
-            version_control_conflict_background: orange().dark().step_12().opacity(0.1),
             version_control_ignored: gray().dark().step_12(),
         }
     }

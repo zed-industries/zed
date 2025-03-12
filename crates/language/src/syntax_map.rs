@@ -1250,7 +1250,6 @@ fn parse_text(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,

@@ -207,7 +207,7 @@ blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
 windows.workspace = true
-windows-core = "0.58"
+windows-core = "0.60"
 
 [dev-dependencies]
 backtrace = "0.3"

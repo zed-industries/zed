@@ -178,6 +178,7 @@ impl EntityMap {
     }
 }
 
+#[track_caller]
 fn double_lease_panic<T>(operation: &str) -> ! {
     panic!(
         "cannot {operation} {} while it is already being updated",

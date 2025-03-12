@@ -195,7 +195,6 @@ static mut EXTENSION: Option<Box<dyn Extension>> = None;
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
-    #![allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
 
     wit_bindgen::generate!({
         skip: ["init-extension"],

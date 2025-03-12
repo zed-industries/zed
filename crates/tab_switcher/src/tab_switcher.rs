@@ -325,8 +325,8 @@ impl PickerDelegate for TabSwitcherDelegate {
         Arc::default()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "No tabs".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No tabs".into())
     }
 
     fn match_count(&self) -> usize {

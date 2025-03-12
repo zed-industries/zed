@@ -167,8 +167,8 @@ impl PickerDelegate for FetchContextPickerDelegate {
         }
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "Enter the URL that you would like to fetch".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("Enter the URL that you would like to fetch".into())
     }
 
     fn selected_index(&self) -> usize {

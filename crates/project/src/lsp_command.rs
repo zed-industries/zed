@@ -1847,7 +1847,6 @@ impl LspCommand for GetCompletions {
         let mut completions = if let Some(completions) = completions {
             match completions {
                 lsp::CompletionResponse::Array(completions) => completions,
-
                 lsp::CompletionResponse::List(mut list) => {
                     let items = std::mem::take(&mut list.items);
                     response_list = Some(list);
@@ -1855,74 +1854,19 @@ impl LspCommand for GetCompletions {
                 }
             }
         } else {
-            Default::default()
+            Vec::new()
         };
 
         let language_server_adapter = lsp_store
             .update(&mut cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
-            .ok_or_else(|| anyhow!("no such language server"))?;
+            .with_context(|| format!("no language server with id {server_id}"))?;
 
-        let item_defaults = response_list
+        let lsp_defaults = response_list
             .as_ref()
-            .and_then(|list| list.item_defaults.as_ref());
-
-        if let Some(item_defaults) = item_defaults {
-            let default_data = item_defaults.data.as_ref();
-            let default_commit_characters = item_defaults.commit_characters.as_ref();
-            let default_edit_range = item_defaults.edit_range.as_ref();
-            let default_insert_text_format = item_defaults.insert_text_format.as_ref();
-            let default_insert_text_mode = item_defaults.insert_text_mode.as_ref();
-
-            if default_data.is_some()
-                || default_commit_characters.is_some()
-                || default_edit_range.is_some()
-                || default_insert_text_format.is_some()
-                || default_insert_text_mode.is_some()
-            {
-                for item in completions.iter_mut() {
-                    if item.data.is_none() && default_data.is_some() {
-                        item.data = default_data.cloned()
-                    }
-                    if item.commit_characters.is_none() && default_commit_characters.is_some() {
-                        item.commit_characters = default_commit_characters.cloned()
-                    }
-                    if item.text_edit.is_none() {
-                        if let Some(default_edit_range) = default_edit_range {
-                            match default_edit_range {
-                                CompletionListItemDefaultsEditRange::Range(range) => {
-                                    item.text_edit =
-                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                            range: *range,
-                                            new_text: item.label.clone(),
-                                        }))
-                                }
-                                CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                    insert,
-                                    replace,
-                                } => {
-                                    item.text_edit =
-                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                            lsp::InsertReplaceEdit {
-                                                new_text: item.label.clone(),
-                                                insert: *insert,
-                                                replace: *replace,
-                                            },
-                                        ))
-                                }
-                            }
-                        }
-                    }
-                    if item.insert_text_format.is_none() && default_insert_text_format.is_some() {
-                        item.insert_text_format = default_insert_text_format.cloned()
-                    }
-                    if item.insert_text_mode.is_none() && default_insert_text_mode.is_some() {
-                        item.insert_text_mode = default_insert_text_mode.cloned()
-                    }
-                }
-            }
-        }
+            .and_then(|list| list.item_defaults.clone())
+            .map(Arc::new);
 
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
@@ -1930,12 +1874,34 @@ impl LspCommand for GetCompletions {
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
             let mut range_for_token = None;
-            completions.retain_mut(|lsp_completion| {
-                let edit = match lsp_completion.text_edit.as_ref() {
+            completions.retain(|lsp_completion| {
+                let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
+                    let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
+                    match default_text_edit {
+                        CompletionListItemDefaultsEditRange::Range(range) => {
+                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: *range,
+                                new_text: lsp_completion.label.clone(),
+                            }))
+                        }
+                        CompletionListItemDefaultsEditRange::InsertAndReplace {
+                            insert,
+                            replace,
+                        } => Some(lsp::CompletionTextEdit::InsertAndReplace(
+                            lsp::InsertReplaceEdit {
+                                new_text: lsp_completion.label.clone(),
+                                insert: *insert,
+                                replace: *replace,
+                            },
+                        )),
+                    }
+                });
+
+                let edit = match lsp_edit {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
                     Some(completion_text_edit) => {
-                        match parse_completion_text_edit(completion_text_edit, &snapshot) {
+                        match parse_completion_text_edit(&completion_text_edit, &snapshot) {
                             Some(edit) => edit,
                             None => return false,
                         }
@@ -1949,14 +1915,15 @@ impl LspCommand for GetCompletions {
                             return false;
                         }
 
-                        let default_edit_range = response_list
-                            .as_ref()
-                            .and_then(|list| list.item_defaults.as_ref())
-                            .and_then(|defaults| defaults.edit_range.as_ref())
-                            .and_then(|range| match range {
-                                CompletionListItemDefaultsEditRange::Range(r) => Some(r),
-                                _ => None,
-                            });
+                        let default_edit_range = lsp_defaults.as_ref().and_then(|lsp_defaults| {
+                            lsp_defaults
+                                .edit_range
+                                .as_ref()
+                                .and_then(|range| match range {
+                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
+                                    _ => None,
+                                })
+                        });
 
                         let range = if let Some(range) = default_edit_range {
                             let range = range_from_lsp(*range);
@@ -2006,14 +1973,25 @@ impl LspCommand for GetCompletions {
         Ok(completions
             .into_iter()
             .zip(completion_edits)
-            .map(|(lsp_completion, (old_range, mut new_text))| {
+            .map(|(mut lsp_completion, (old_range, mut new_text))| {
                 LineEnding::normalize(&mut new_text);
+                if lsp_completion.data.is_none() {
+                    if let Some(default_data) = lsp_defaults
+                        .as_ref()
+                        .and_then(|item_defaults| item_defaults.data.clone())
+                    {
+                        // Servers (e.g. JDTLS) prefer unchanged completions, when resolving the items later,
+                        // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
+                        lsp_completion.data = Some(default_data);
+                    }
+                }
                 CoreCompletion {
                     old_range,
                     new_text,
                     source: CompletionSource::Lsp {
                         server_id,
                         lsp_completion: Box::new(lsp_completion),
+                        lsp_defaults: lsp_defaults.clone(),
                         resolved: false,
                     },
                 }

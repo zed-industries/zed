@@ -301,7 +301,6 @@ pub struct AdapterServerCapabilities {
 
 impl LanguageServer {
     /// Starts a language server process.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
@@ -372,7 +371,6 @@ impl LanguageServer {
         Ok(server)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
         server_name: LanguageServerName,

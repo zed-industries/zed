@@ -1,4 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+
+set -e
 
 which minio > /dev/null || (echo "installing minio..."; brew install minio/stable/minio)
 mkdir -p .blob_store/the-extensions-bucket

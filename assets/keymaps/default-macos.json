@@ -31,13 +31,13 @@
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
       "cmd-enter": "menu::SecondaryConfirm",
+      "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
-      "cmd-escape": "menu::Cancel",
       "cmd-o": "workspace::Open",
       "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
@@ -514,6 +514,7 @@
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
+      "alt-shift-enter": "toast::RunAction",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
@@ -763,28 +764,25 @@
       "cmd-up": "menu::SelectFirst",
       "cmd-down": "menu::SelectLast",
       "enter": "menu::Confirm",
+      "cmd-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
-      "cmd-shift-space": "git::StageAll",
-      "ctrl-shift-space": "git::UnstageAll",
+      "cmd-y": "git::StageFile",
+      "cmd-shift-y": "git::UnstageFile",
       "alt-down": "git_panel::FocusEditor",
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
-      "cmd-enter": "git::Commit"
+      "cmd-enter": "git::Commit",
+      "backspace": "git::RestoreFile"
     }
   },
   {
     "context": "GitDiff > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "git::Commit"
-    }
-  },
-  {
-    "context": "AskPass > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "menu::Confirm"
+      "cmd-enter": "git::Commit",
+      "cmd-ctrl-y": "git::StageAll",
+      "cmd-ctrl-shift-y": "git::UnstageAll"
     }
   },
   {
@@ -801,10 +799,26 @@
     }
   },
   {
+    "context": "GitPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-g ctrl-g": "git::Fetch",
+      "ctrl-g up": "git::Push",
+      "ctrl-g down": "git::Pull",
+      "ctrl-g shift-up": "git::ForcePush",
+      "ctrl-g d": "git::Diff",
+      "ctrl-g backspace": "git::RestoreTrackedFiles",
+      "ctrl-g shift-backspace": "git::TrashUntrackedFiles",
+      "cmd-ctrl-y": "git::StageAll",
+      "cmd-ctrl-shift-y": "git::UnstageAll"
+    }
+  },
+  {
     "context": "GitCommit > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
+      "escape": "menu::Cancel",
       "cmd-enter": "git::Commit",
       "alt-tab": "git::GenerateCommitMessage"
     }

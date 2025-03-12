@@ -170,7 +170,7 @@ fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
         let handle = GlobalLock(global);
         std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
         let _ = GlobalUnlock(global);
-        SetClipboardData(format, HANDLE(global.0))?;
+        SetClipboardData(format, Some(HANDLE(global.0)))?;
     }
     Ok(())
 }

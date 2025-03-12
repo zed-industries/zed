@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Notes for fixing this script if it's broken:
 # - if you see an error about "can't find perf_6.1" you need to install `linux-perf` from the

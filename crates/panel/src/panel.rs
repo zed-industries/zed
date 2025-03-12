@@ -18,8 +18,6 @@ pub trait PanelHeader: workspace::Panel {
             .w_full()
             .px_1()
             .flex_none()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
     }
 }
 

@@ -289,7 +289,6 @@ impl LlmDatabase {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn record_usage(
         &self,
         user_id: UserId,
@@ -554,7 +553,6 @@ impl LlmDatabase {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn update_usage_for_measure(
         &self,
         user_id: UserId,

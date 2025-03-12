@@ -5,7 +5,6 @@ use client::{Client, UserStore};
 use clock::RealSystemClock;
 use collections::BTreeMap;
 use feature_flags::FeatureFlagAppExt as _;
-use git::GitHostingProviderRegistry;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Entity};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
@@ -274,8 +273,7 @@ async fn run_evaluation(
     let repos_dir = Path::new(EVAL_REPOS_DIR);
     let db_path = Path::new(EVAL_DB_PATH);
     let api_key = std::env::var("OPENAI_API_KEY").unwrap();
-    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let fs = Arc::new(RealFs::new(git_hosting_provider_registry, None)) as Arc<dyn Fs>;
+    let fs = Arc::new(RealFs::new(None)) as Arc<dyn Fs>;
     let clock = Arc::new(RealSystemClock);
     let client = cx
         .update(|cx| {
@@ -399,7 +397,6 @@ async fn run_evaluation(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_eval_project(
     evaluation_project: EvaluationProject,
     user_store: &Entity<UserStore>,

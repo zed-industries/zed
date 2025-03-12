@@ -3378,6 +3378,17 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
             }
         }
     }
+
+    let point = snapshot.max_point();
+    let Some((buffer, offset)) = snapshot.point_to_buffer_offset(point) else {
+        return;
+    };
+    assert!(offset <= buffer.len(),);
+
+    let Some((buffer, point, _)) = snapshot.point_to_buffer_point(point) else {
+        return;
+    };
+    assert!(point <= buffer.max_point(),);
 }
 
 fn assert_line_indents(snapshot: &MultiBufferSnapshot) {

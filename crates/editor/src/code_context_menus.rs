@@ -500,7 +500,7 @@ impl CompletionsMenu {
                                     highlight.font_weight = None;
                                     if completion
                                         .source
-                                        .lsp_completion()
+                                        .lsp_completion(false)
                                         .and_then(|lsp_completion| lsp_completion.deprecated)
                                         .unwrap_or(false)
                                     {
@@ -711,10 +711,12 @@ impl CompletionsMenu {
 
                 let completion = &completions[mat.candidate_id];
                 let sort_key = completion.sort_key();
-                let sort_text = completion
-                    .source
-                    .lsp_completion()
-                    .and_then(|lsp_completion| lsp_completion.sort_text.as_deref());
+                let sort_text =
+                    if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
+                        lsp_completion.sort_text.as_deref()
+                    } else {
+                        None
+                    };
                 let score = Reverse(OrderedFloat(mat.score));
 
                 if mat.score >= 0.2 {

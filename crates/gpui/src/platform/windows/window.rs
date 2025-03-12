@@ -296,7 +296,7 @@ impl WindowsWindowStatePtr {
                 unsafe {
                     SetWindowPos(
                         state_ptr.hwnd,
-                        HWND::default(),
+                        None,
                         x,
                         y,
                         cx,
@@ -433,7 +433,7 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 None,
                 None,
-                hinstance,
+                Some(hinstance.into()),
                 lpparam,
             )
         };
@@ -650,7 +650,7 @@ impl PlatformWindow for WindowsWindow {
             .spawn(async move {
                 this.set_window_placement().log_err();
                 unsafe { SetActiveWindow(hwnd).log_err() };
-                unsafe { SetFocus(hwnd).log_err() };
+                unsafe { SetFocus(Some(hwnd)).log_err() };
                 // todo(windows)
                 // crate `windows 0.56` reports true as Err
                 unsafe { SetForegroundWindow(hwnd).as_bool() };
@@ -817,16 +817,13 @@ impl WindowsDragDropHandler {
 impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
         &self,
-        pdataobj: Option<&IDataObject>,
+        pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         unsafe {
-            let Some(idata_obj) = pdataobj else {
-                log::info!("no dragging file or directory detected");
-                return Ok(());
-            };
+            let idata_obj = pdataobj.ok()?;
             let config = FORMATETC {
                 cfFormat: CF_HDROP.0,
                 ptd: std::ptr::null_mut() as _,
@@ -905,7 +902,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
 
     fn Drop(
         &self,
-        _pdataobj: Option<&IDataObject>,
+        _pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         _pdweffect: *mut DROPEFFECT,

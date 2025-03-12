@@ -215,7 +215,7 @@ fn available_monitors() -> SmallVec<[HMONITOR; 4]> {
     let mut monitors: SmallVec<[HMONITOR; 4]> = SmallVec::new();
     unsafe {
         EnumDisplayMonitors(
-            HDC::default(),
+            None,
             None,
             Some(monitor_enum_proc),
             LPARAM(&mut monitors as *mut _ as _),

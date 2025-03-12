@@ -4,13 +4,14 @@ use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
+use collections::HashSet;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{prelude::*, App, AsyncApp, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
-use settings::watch_config_file;
+use settings::watch_config_dir;
 use strum::EnumIter;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
@@ -212,7 +213,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-fn copilot_chat_config_dir() -> &'static PathBuf {
+pub fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
@@ -237,27 +238,18 @@ impl CopilotChat {
     }
 
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &App) -> Self {
-        let config_paths = copilot_chat_config_paths();
-
-        let resolve_config_path = {
-            let fs = fs.clone();
-            async move {
-                for config_path in config_paths.iter() {
-                    if fs.metadata(config_path).await.is_ok_and(|v| v.is_some()) {
-                        return config_path.clone();
-                    }
-                }
-                config_paths[0].clone()
-            }
-        };
+        let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
+        let dir_path = copilot_chat_config_dir();
 
         cx.spawn(|cx| async move {
-            let config_file = resolve_config_path.await;
-            let mut config_file_rx = watch_config_file(cx.background_executor(), fs, config_file);
-
-            while let Some(contents) = config_file_rx.next().await {
+            let mut parent_watch_rx = watch_config_dir(
+                cx.background_executor(),
+                fs.clone(),
+                dir_path.clone(),
+                config_paths,
+            );
+            while let Some(contents) = parent_watch_rx.next().await {
                 let oauth_token = extract_oauth_token(contents);
-
                 cx.update(|cx| {
                     if let Some(this) = Self::global(cx).as_ref() {
                         this.update(cx, |this, cx| {

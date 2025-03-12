@@ -393,6 +393,7 @@
       "alt-shift-open": "projects::OpenRemote",
       "alt-ctrl-shift-o": "projects::OpenRemote",
       "alt-ctrl-shift-b": "branches::OpenRecent",
+      "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
       "save": "workspace::Save",
       "ctrl-s": "workspace::Save",
@@ -731,28 +732,48 @@
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
       "enter": "menu::Confirm",
+      "alt-y": "git::StageFile",
+      "alt-shift-y": "git::UnstageFile",
+      "ctrl-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
-      "ctrl-space": "git::StageAll",
-      "ctrl-shift-space": "git::UnstageAll",
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
-      "alt-enter": "menu::SecondaryConfirm"
+      "alt-enter": "menu::SecondaryConfirm",
+      "backspace": "git::RestoreFile"
     }
   },
   {
     "context": "GitCommit > Editor",
     "bindings": {
+      "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
       "alt-l": "git::GenerateCommitMessage"
     }
   },
   {
+    "context": "GitPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-g ctrl-g": "git::Fetch",
+      "ctrl-g up": "git::Push",
+      "ctrl-g down": "git::Pull",
+      "ctrl-g shift-up": "git::ForcePush",
+      "ctrl-g d": "git::Diff",
+      "ctrl-g backspace": "git::RestoreTrackedFiles",
+      "ctrl-g shift-backspace": "git::TrashUntrackedFiles",
+      "ctrl-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll"
+    }
+  },
+  {
     "context": "GitDiff > Editor",
     "bindings": {
-      "ctrl-enter": "git::Commit"
+      "ctrl-enter": "git::Commit",
+      "ctrl-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll"
     }
   },
   {
@@ -767,6 +788,7 @@
       "escape": "git_panel::FocusChanges",
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
+      "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage"
@@ -840,21 +862,22 @@
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       // Overrides for conflicting keybindings
+      "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
+      "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
       "find": "buffer_search::Deploy",
       "ctrl-shift-f": "buffer_search::Deploy",
       "ctrl-shift-l": "terminal::Clear",
       "ctrl-shift-w": "pane::CloseActiveItem",
-      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "shift-pageup": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
       "shift-up": "terminal::ScrollLineUp",
