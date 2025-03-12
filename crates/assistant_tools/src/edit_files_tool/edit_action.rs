@@ -321,6 +321,7 @@ impl std::fmt::Display for ParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::prelude::*;
 
     #[test]
     fn test_simple_edit_action() {
@@ -712,28 +713,22 @@ fn new_utils_func() {}
         assert_examples_in_system_prompt(&actions, parser.errors());
     }
 
-    #[test]
-    fn test_random_chunking_of_system_prompt() {
-        use rand::Rng;
+    #[gpui::test(iterations = 10)]
+    fn test_random_chunking_of_system_prompt(mut rng: StdRng) {
+        let mut parser = EditActionParser::new();
+        let mut remaining = SYSTEM_PROMPT;
+        let mut actions = Vec::with_capacity(5);
 
-        // Run the test multiple times with different random chunks
-        for _ in 0..5 {
-            let mut parser = EditActionParser::new();
-            let mut remaining = SYSTEM_PROMPT;
-            let mut actions = Vec::with_capacity(5);
+        while !remaining.is_empty() {
+            let chunk_size = rng.gen_range(1..=std::cmp::min(remaining.len(), 100));
 
-            while !remaining.is_empty() {
-                let mut rng = rand::thread_rng();
-                let chunk_size = rng.gen_range(1..=std::cmp::min(remaining.len(), 100));
+            let (chunk, rest) = remaining.split_at(chunk_size);
 
-                let (chunk, rest) = remaining.split_at(chunk_size);
-
-                actions.extend(parser.parse_chunk(chunk));
-                remaining = rest;
-            }
-
-            assert_examples_in_system_prompt(&actions, parser.errors());
+            actions.extend(parser.parse_chunk(chunk));
+            remaining = rest;
         }
+
+        assert_examples_in_system_prompt(&actions, parser.errors());
     }
 
     fn assert_examples_in_system_prompt(actions: &[EditAction], errors: &[ParseError]) {
