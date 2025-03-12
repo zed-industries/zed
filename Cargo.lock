@@ -5441,6 +5441,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "assistant_settings",
  "buffer_diff",
  "collections",
  "component",
