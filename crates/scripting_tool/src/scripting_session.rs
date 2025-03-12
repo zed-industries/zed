@@ -7,7 +7,7 @@ use futures::{
 };
 use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use language::Buffer;
-use mlua::{ExternalResult, Lua, MultiValue, Table, UserData, UserDataMethods};
+use mlua::{ExternalResult, Lua, MultiValue, ObjectLike, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project, ProjectPath, WorktreeId};
 use regex::Regex;
@@ -308,6 +308,10 @@ impl ScriptingSession {
         let read_fn = lua.create_function(Self::io_file_read)?;
         file.set("read", read_fn)?;
 
+        // lines method
+        let lines_fn = lua.create_function(Self::io_file_lines)?;
+        file.set("lines", lines_fn)?;
+
         // write method
         let write_fn = lua.create_function(Self::io_file_write)?;
         file.set("write", write_fn)?;
@@ -564,6 +568,17 @@ impl ScriptingSession {
             Some(bytes) => Ok(Some(lua.create_string(bytes)?)),
             None => Ok(None),
         }
+    }
+
+    fn io_file_lines(lua: &Lua, file_userdata: Table) -> mlua::Result<mlua::Function> {
+        let read_perm = file_userdata.get::<bool>("__read_perm")?;
+        if !read_perm {
+            return Err(mlua::Error::runtime("File not open for reading"));
+        }
+
+        lua.create_function::<_, _, mlua::Value>(move |lua, _: ()| {
+            file_userdata.call_method("read", lua.create_string("*l")?)
+        })
     }
 
     fn io_file_read_format(format: Option<mlua::Value>) -> mlua::Result<FileReadFormat> {
@@ -989,6 +1004,34 @@ mod tests {
         let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Content:\tHello world!\n");
         assert_eq!(test_session.diff(cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_lines_iterator(cx: &mut TestAppContext) {
+        let script = r#"
+            -- Create a test file with multiple lines
+            local file = io.open("lines_test.txt", "w")
+            file:write("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+            file:close()
+
+            -- Read it back using the lines iterator
+            local read_file = io.open("lines_test.txt", "r")
+            local count = 0
+            for line in read_file:lines() do
+                count = count + 1
+                print(count .. ": " .. line)
+            end
+            read_file:close()
+
+            print("Total lines:", count)
+        "#;
+
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
+        assert_eq!(
+            output,
+            "1: Line 1\n2: Line 2\n3: Line 3\n4: Line 4\n5: Line 5\nTotal lines:\t5\n"
+        );
     }
 
     #[gpui::test]
