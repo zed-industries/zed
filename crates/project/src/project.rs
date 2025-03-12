@@ -4443,6 +4443,10 @@ impl Project {
         })
     }
 
+    pub fn git_init(&self, path: Arc<Path>, cx: &App) -> Task<Result<()>> {
+        self.git_store.read(cx).git_init(path)
+    }
+
     pub fn buffer_store(&self) -> &Entity<BufferStore> {
         &self.buffer_store
     }

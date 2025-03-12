@@ -43,6 +43,7 @@ use util::{debug_panic, maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
 
 pub struct GitStore {
+    state: GitStoreState,
     buffer_store: Entity<BufferStore>,
     environment: Option<Entity<ProjectEnvironment>>,
     pub(super) project_id: Option<ProjectId>,
@@ -51,6 +52,14 @@ pub struct GitStore {
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<GitJob>,
     _subscriptions: [Subscription; 2],
+}
+
+enum GitStoreState {
+    Local,
+    Remote {
+        upstream_client: AnyProtoClient,
+        project_id: u64,
+    },
 }
 
 pub struct Repository {
@@ -350,6 +359,8 @@ impl GitStore {
         }
         result
     }
+
+    fn git_init(&self, path: Arc<Path>, cx: &App) -> Task<Result<()>> {}
 
     fn spawn_git_worker(cx: &mut Context<'_, GitStore>) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();

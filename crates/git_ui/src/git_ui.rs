@@ -82,6 +82,14 @@ pub fn init(cx: &mut App) {
                 panel.unstage_all(action, window, cx);
             });
         });
+        workspace.register_action(|workspace, action: &git::Init, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.init(window, cx);
+            });
+        });
     })
     .detach();
 }
