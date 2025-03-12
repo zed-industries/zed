@@ -223,7 +223,6 @@ impl ScrollManager {
         self.anchor.scroll_position(snapshot)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -298,7 +297,6 @@ impl ScrollManager {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_anchor(
         &mut self,
         anchor: ScrollAnchor,
@@ -494,6 +492,9 @@ impl Editor {
     ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
+
+        self.edit_prediction_preview
+            .set_previous_scroll_position(None);
 
         self.scroll_manager.set_scroll_position(
             scroll_position,

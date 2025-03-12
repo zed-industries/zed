@@ -399,31 +399,50 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
+    pub fn build_language_settings_menu(
+        &self,
+        mut menu: ContextMenu,
+        window: &Window,
+        cx: &mut App,
+    ) -> ContextMenu {
         let fs = self.fs.clone();
+        let line_height = window.line_height();
 
         menu = menu.header("Show Edit Predictions For");
 
+        let language_state = self.language.as_ref().map(|language| {
+            (
+                language.clone(),
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_edit_predictions,
+            )
+        });
+
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
-            menu = menu.toggleable_entry(
-                "This File",
-                self.editor_show_predictions,
-                IconPosition::Start,
-                Some(Box::new(ToggleEditPrediction)),
-                {
-                    let editor_focus_handle = editor_focus_handle.clone();
-                    move |window, cx| {
-                        editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
-                    }
-                },
-            );
+            let entry = ContextMenuEntry::new("This Buffer")
+                .toggleable(IconPosition::Start, self.editor_show_predictions)
+                .action(Box::new(ToggleEditPrediction))
+                .handler(move |window, cx| {
+                    editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
+                });
+
+            match language_state.clone() {
+                Some((language, false)) => {
+                    menu = menu.item(
+                        entry
+                            .disabled(true)
+                            .documentation_aside(move |_cx| {
+                                Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
+                                    .into_any_element()
+                            })
+                    );
+                }
+                Some(_) | None => menu = menu.item(entry),
+            }
         }
 
-        if let Some(language) = self.language.clone() {
+        if let Some((language, language_enabled)) = language_state {
             let fs = fs.clone();
-            let language_enabled =
-                language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_edit_predictions;
 
             menu = menu.toggleable_entry(
                 language.name(),
@@ -437,14 +456,11 @@ impl InlineCompletionButton {
         }
 
         let settings = AllLanguageSettings::get_global(cx);
-        let globally_enabled = settings.show_inline_completions(None, cx);
-        menu = menu.toggleable_entry(
-            "All Files",
-            globally_enabled,
-            IconPosition::Start,
-            None,
-            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
-        );
+        let globally_enabled = settings.show_edit_predictions(None, cx);
+        menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
+            let fs = fs.clone();
+            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
+        });
         menu = menu.separator().header("Privacy Settings");
 
         if let Some(provider) = &self.edit_prediction_provider {
@@ -454,33 +470,41 @@ impl InlineCompletionButton {
                 let enabled = data_collection.is_enabled();
                 let is_open_source = data_collection.is_project_open_source();
                 let is_collecting = data_collection.is_enabled();
+                let (icon_name, icon_color) = if is_open_source && is_collecting {
+                    (IconName::Check, Color::Success)
+                } else {
+                    (IconName::Check, Color::Accent)
+                };
 
                 menu = menu.item(
-                    ContextMenuEntry::new("Share Training Data")
+                    ContextMenuEntry::new("Training Data Collection")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        .icon_color(if is_open_source && is_collecting {
-                            Color::Success
-                        } else {
-                            Color::Accent
-                        })
+                        .icon(icon_name)
+                        .icon_color(icon_color)
                         .documentation_aside(move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
-                                    "Project identified as open-source, and you're sharing data.",
+                                    "Project identified as open source, and you're sharing data.",
                                     Color::Default,
                                     IconName::Check,
                                     Color::Success,
                                 ),
                                 (true, false) => (
-                                    "Project identified as open-source, but you're not sharing data.",
+                                    "Project identified as open source, but you're not sharing data.",
                                     Color::Muted,
-                                    IconName::XCircle,
+                                    IconName::Close,
                                     Color::Muted,
                                 ),
-                                (false, _) => (
-                                    "Project not identified as open-source. No data captured.",
+                                (false, true) => (
+                                    "Project not identified as open source. No data captured.",
                                     Color::Muted,
-                                    IconName::XCircle,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                                (false, false) => (
+                                    "Project not identified as open source, and setting turned off.",
+                                    Color::Muted,
+                                    IconName::Close,
                                     Color::Muted,
                                 ),
                             };
@@ -488,18 +512,20 @@ impl InlineCompletionButton {
                                 .gap_2()
                                 .child(
                                     Label::new(indoc!{
-                                        "Help us improve our open model by sharing data from open source repositories. \
+                                        "Help us improve our open dataset model by sharing data from open source repositories. \
                                         Zed must detect a license file in your repo for this setting to take effect."
                                     })
                                 )
                                 .child(
                                     h_flex()
+                                        .items_start()
                                         .pt_2()
+                                        .flex_1()
                                         .gap_1p5()
                                         .border_t_1()
                                         .border_color(cx.theme().colors().border_variant)
-                                        .child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color))
-                                        .child(div().child(Label::new(msg).size(LabelSize::Small).color(label_color)))
+                                        .child(h_flex().flex_shrink_0().h(line_height).child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color)))
+                                        .child(div().child(msg).w_full().text_sm().text_color(label_color.color(cx)))
                                 )
                                 .into_any_element()
                         })
@@ -519,6 +545,16 @@ impl InlineCompletionButton {
                             }
                         })
                 );
+
+                if is_collecting && !is_open_source {
+                    menu = menu.item(
+                        ContextMenuEntry::new("No data captured.")
+                            .disabled(true)
+                            .icon(IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small),
+                    );
+                }
             }
         }
 
@@ -554,6 +590,44 @@ impl InlineCompletionButton {
             );
         }
 
+        if cx.has_flag::<feature_flags::PredictEditsNonEagerModeFeatureFlag>() {
+            let is_eager_preview_enabled = match settings.edit_predictions_mode() {
+                language::EditPredictionsMode::Subtle => false,
+                language::EditPredictionsMode::Eager => true,
+            };
+            menu = menu.separator().toggleable_entry(
+                "Eager Preview Mode",
+                is_eager_preview_enabled,
+                IconPosition::Start,
+                None,
+                {
+                    let fs = fs.clone();
+                    move |_window, cx| {
+                        update_settings_file::<AllLanguageSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _cx| {
+                                let new_mode = match is_eager_preview_enabled {
+                                    true => language::EditPredictionsMode::Subtle,
+                                    false => language::EditPredictionsMode::Eager,
+                                };
+
+                                if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                                    edit_predictions.mode = new_mode;
+                                } else {
+                                    settings.edit_predictions =
+                                        Some(language_settings::EditPredictionSettingsContent {
+                                            mode: new_mode,
+                                            ..Default::default()
+                                        });
+                                }
+                            },
+                        );
+                    }
+                },
+            );
+        }
+
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu
                 .separator()
@@ -578,8 +652,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _, cx| {
-            self.build_language_settings_menu(menu, cx)
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .link(
                     "Go to Copilot Settings",
@@ -597,8 +671,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _, cx| {
-            self.build_language_settings_menu(menu, cx)
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
         })
@@ -609,8 +683,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _window, cx| {
-            self.build_language_settings_menu(menu, cx).when(
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
                 |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
@@ -628,7 +702,7 @@ impl InlineCompletionButton {
             Some(
                 file.map(|file| {
                     all_language_settings(Some(file), cx)
-                        .inline_completions_enabled_for_path(file.path())
+                        .edit_predictions_enabled_for_file(file, cx)
                 })
                 .unwrap_or(true),
             )
@@ -751,7 +825,7 @@ async fn open_disabled_globs_setting_in_editor(
 }
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_edit_predictions = all_language_settings(None, cx).show_inline_completions(None, cx);
+    let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_edit_predictions = Some(!show_edit_predictions)
     });
@@ -771,7 +845,7 @@ fn toggle_show_inline_completions_for_language(
     cx: &mut App,
 ) {
     let show_edit_predictions =
-        all_language_settings(None, cx).show_inline_completions(Some(&language), cx);
+        all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())

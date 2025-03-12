@@ -281,7 +281,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             query = alias.to_string();
         }
         let (mut tx, mut rx) = postage::dispatch::channel(1);
-        let task = cx.background_executor().spawn({
+        let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
@@ -402,7 +402,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let r#match = self.matches.get(ix)?;
         let command = self.commands.get(r#match.candidate_id)?;
@@ -424,6 +424,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                             &*command.action,
                             &self.previous_focus_handle,
                             window,
+                            cx,
                         )),
                 ),
         )

@@ -2,7 +2,7 @@ use std::fmt::{self, Display, Formatter};
 
 use gpui::{hsla, point, px, App, BoxShadow, Hsla};
 use smallvec::{smallvec, SmallVec};
-use theme::ActiveTheme;
+use theme::{ActiveTheme, Appearance};
 
 /// Today, elevation is primarily used to add shadows to elements, and set the correct background for elements like buttons.
 ///
@@ -40,19 +40,14 @@ impl Display for ElevationIndex {
 
 impl ElevationIndex {
     /// Returns an appropriate shadow for the given elevation index.
-    pub fn shadow(self) -> SmallVec<[BoxShadow; 2]> {
+    pub fn shadow(self, cx: &App) -> SmallVec<[BoxShadow; 2]> {
+        let is_light = cx.theme().appearance() == Appearance::Light;
+
         match self {
             ElevationIndex::Surface => smallvec![],
             ElevationIndex::EditorSurface => smallvec![],
 
-            ElevationIndex::ElevatedSurface => smallvec![BoxShadow {
-                color: hsla(0., 0., 0., 0.12),
-                offset: point(px(0.), px(2.)),
-                blur_radius: px(3.),
-                spread_radius: px(0.),
-            }],
-
-            ElevationIndex::ModalSurface => smallvec![
+            ElevationIndex::ElevatedSurface => smallvec![
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.12),
                     offset: point(px(0.), px(2.)),
@@ -60,7 +55,22 @@ impl ElevationIndex {
                     spread_radius: px(0.),
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.08),
+                    color: hsla(0., 0., 0., if is_light { 0.03 } else { 0.06 }),
+                    offset: point(px(1.), px(1.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(0.),
+                }
+            ],
+
+            ElevationIndex::ModalSurface => smallvec![
+                BoxShadow {
+                    color: hsla(0., 0., 0., if is_light { 0.06 } else { 0.12 }),
+                    offset: point(px(0.), px(2.)),
+                    blur_radius: px(3.),
+                    spread_radius: px(0.),
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., if is_light { 0.06 } else { 0.08 }),
                     offset: point(px(0.), px(3.)),
                     blur_radius: px(6.),
                     spread_radius: px(0.),
@@ -69,6 +79,12 @@ impl ElevationIndex {
                     color: hsla(0., 0., 0., 0.04),
                     offset: point(px(0.), px(6.)),
                     blur_radius: px(12.),
+                    spread_radius: px(0.),
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., if is_light { 0.04 } else { 0.12 }),
+                    offset: point(px(1.), px(1.)),
+                    blur_radius: px(0.),
                     spread_radius: px(0.),
                 },
             ],

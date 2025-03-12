@@ -43,7 +43,7 @@ use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, Under
 pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
-use invisibles::{is_invisible, replacement};
+pub use invisibles::{is_invisible, replacement};
 use language::{
     language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
     Subscription as BufferSubscription,
@@ -113,7 +113,6 @@ pub struct DisplayMap {
 }
 
 impl DisplayMap {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         buffer: Entity<MultiBuffer>,
         font: Font,
@@ -330,7 +329,11 @@ impl DisplayMap {
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
     }
 
-    pub fn fold_buffer(&mut self, buffer_id: language::BufferId, cx: &mut Context<Self>) {
+    pub fn fold_buffers(
+        &mut self,
+        buffer_ids: impl IntoIterator<Item = language::BufferId>,
+        cx: &mut Context<Self>,
+    ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -341,10 +344,14 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.fold_buffer(buffer_id, self.buffer.read(cx), cx)
+        block_map.fold_buffers(buffer_ids, self.buffer.read(cx), cx)
     }
 
-    pub fn unfold_buffer(&mut self, buffer_id: language::BufferId, cx: &mut Context<Self>) {
+    pub fn unfold_buffers(
+        &mut self,
+        buffer_ids: impl IntoIterator<Item = language::BufferId>,
+        cx: &mut Context<Self>,
+    ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -355,7 +362,7 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.unfold_buffer(buffer_id, self.buffer.read(cx), cx)
+        block_map.unfold_buffers(buffer_ids, self.buffer.read(cx), cx)
     }
 
     pub(crate) fn is_buffer_folded(&self, buffer_id: language::BufferId) -> bool {
@@ -1114,6 +1121,11 @@ impl DisplaySnapshot {
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
         self.block_snapshot.is_block_line(BlockRow(display_row.0))
+    }
+
+    pub fn is_folded_buffer_header(&self, display_row: DisplayRow) -> bool {
+        self.block_snapshot
+            .is_folded_buffer_header(BlockRow(display_row.0))
     }
 
     pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {
@@ -1912,6 +1924,67 @@ pub mod tests {
     }
 
     #[gpui::test]
+    fn test_inlays_with_newlines_after_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, |_| {}));
+
+        let buffer = cx.new(|cx| Buffer::local("a", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let font_size = px(14.0);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                true,
+                1,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
+
+        map.update(cx, |map, cx| {
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Above(
+                        buffer_snapshot.anchor_before(Point::new(0, 0)),
+                    ),
+                    height: 2,
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            );
+        });
+        map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\na"));
+
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                vec![Inlay {
+                    id: InlayId::InlineCompletion(0),
+                    position: buffer_snapshot.anchor_after(0),
+                    text: "\n".into(),
+                }],
+                cx,
+            );
+        });
+        map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\na"));
+
+        // Regression test: updating the display map does not crash when a
+        // block is immediately followed by a multi-line inlay.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "b")], None, cx);
+        });
+        map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\nab"));
+    }
+
+    #[gpui::test]
     async fn test_chunks(cx: &mut gpui::TestAppContext) {
         let text = r#"
             fn outer() {}
@@ -2070,18 +2143,30 @@ pub mod tests {
             )
         });
 
-        // Insert a block in the middle of a multi-line string literal
+        // Insert two blocks in the middle of a multi-line string literal.
+        // The second block has zero height.
         map.update(cx, |map, cx| {
             map.insert_blocks(
-                [BlockProperties {
-                    placement: BlockPlacement::Below(
-                        buffer_snapshot.anchor_before(Point::new(1, 0)),
-                    ),
-                    height: 1,
-                    style: BlockStyle::Sticky,
-                    render: Arc::new(|_| div().into_any()),
-                    priority: 0,
-                }],
+                [
+                    BlockProperties {
+                        placement: BlockPlacement::Below(
+                            buffer_snapshot.anchor_before(Point::new(1, 0)),
+                        ),
+                        height: 1,
+                        style: BlockStyle::Sticky,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    },
+                    BlockProperties {
+                        placement: BlockPlacement::Below(
+                            buffer_snapshot.anchor_before(Point::new(2, 0)),
+                        ),
+                        height: 0,
+                        style: BlockStyle::Sticky,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    },
+                ],
                 cx,
             )
         });
@@ -2766,6 +2851,7 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        workspace::init_settings(cx);
         language::init(cx);
         crate::init(cx);
         Project::init_settings(cx);

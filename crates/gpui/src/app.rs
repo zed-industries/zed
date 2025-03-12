@@ -82,7 +82,7 @@ impl AppCell {
 #[derive(Deref, DerefMut)]
 pub struct AppRef<'a>(Ref<'a, App>);
 
-impl<'a> Drop for AppRef<'a> {
+impl Drop for AppRef<'_> {
     fn drop(&mut self) {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
@@ -95,7 +95,7 @@ impl<'a> Drop for AppRef<'a> {
 #[derive(Deref, DerefMut)]
 pub struct AppRefMut<'a>(RefMut<'a, App>);
 
-impl<'a> Drop for AppRefMut<'a> {
+impl Drop for AppRefMut<'_> {
     fn drop(&mut self) {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
@@ -218,6 +218,7 @@ type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
+type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
@@ -260,6 +261,7 @@ pub struct App {
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
+    pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
@@ -325,6 +327,7 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
+                window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
@@ -1008,6 +1011,11 @@ impl App {
             if window.removed {
                 cx.window_handles.remove(&id);
                 cx.windows.remove(id);
+
+                cx.window_closed_observers.clone().retain(&(), |callback| {
+                    callback(cx);
+                    true
+                });
             } else {
                 cx.windows
                     .get_mut(id)
@@ -1367,6 +1375,14 @@ impl App {
         subscription
     }
 
+    /// Register a callback to be invoked when a window is closed
+    /// The window is no longer accessible at the point this callback is invoked.
+    pub fn on_window_closed(&self, mut on_closed: impl FnMut(&mut App) + 'static) -> Subscription {
+        let (subscription, activate) = self.window_closed_observers.insert((), Box::new(on_closed));
+        activate();
+        subscription
+    }
+
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
@@ -1408,6 +1424,11 @@ impl App {
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
         self.platform.set_dock_menu(menus, &self.keymap.borrow());
+    }
+
+    /// Performs the action associated with the given dock menu item, only used on Windows for now.
+    pub fn perform_dock_menu_action(&self, action: usize) {
+        self.platform.perform_dock_menu_action(action);
     }
 
     /// Adds given path to the bottom of the list of recent paths for the application.

@@ -273,6 +273,7 @@ impl Project {
                     status: TaskStatus::Running,
                     show_summary: spawn_task.show_summary,
                     show_command: spawn_task.show_command,
+                    show_rerun: spawn_task.show_rerun,
                     completion_rx,
                 });
 

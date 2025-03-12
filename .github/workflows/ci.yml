@@ -109,8 +109,16 @@ jobs:
       - name: cargo clippy
         run: ./script/clippy
 
+      - name: Install cargo-machete
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+        with:
+          command: install
+          args: cargo-machete@0.7.0
+
       - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+        with:
+          command: machete
 
       - name: Check licenses
         run: |
@@ -228,12 +236,24 @@ jobs:
         if: always()
         run: rm -rf ./../.cargo
 
-  windows_tests:
+  windows_clippy:
     timeout-minutes: 60
-    name: (Windows) Run Clippy and tests
+    name: (Windows) Run Clippy
     if: github.repository_owner == 'zed-industries'
-    runs-on: hosted-windows-1
+    runs-on: hosted-windows-2
     steps:
+      # Temporarily Collect some metadata about the hardware behind our runners.
+      - name: GHA Runner Info
+        run: |
+          Invoke-RestMethod -Headers @{"Metadata"="true"} -Method GET -Uri "http://169.254.169.254/metadata/instance/compute?api-version=2023-07-01" |
+            ConvertTo-Json -Depth 10 |
+            jq "{ vm_size: .vmSize, location: .location, os_disk_gb: (.storageProfile.osDisk.diskSizeGB | tonumber), rs_disk_gb: (.storageProfile.resourceDisk.size | tonumber / 1024) }"
+          @{
+              Cores = (Get-CimInstance Win32_Processor).NumberOfCores
+              vCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+              RamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
+              cpuid = (Get-CimInstance Win32_Processor).Name.Trim()
+          } | ConvertTo-Json
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
         run: git config --system core.longpaths true
@@ -265,8 +285,70 @@ jobs:
 
       - name: cargo clippy
         working-directory: ${{ env.ZED_WORKSPACE }}
-        # Windows can't run shell scripts, so we need to use `cargo xtask`.
-        run: cargo xtask clippy
+        run: ./script/clippy.ps1
+
+      - name: Check dev drive space
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
+        run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
+
+      # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
+      - name: Clean CI config file
+        if: always()
+        run: |
+          if (Test-Path "${{ env.CARGO_HOME }}/config.toml") {
+            Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+          }
+
+  # Windows CI takes twice as long as our other platforms and fast github hosted runners are expensive.
+  # But we still want to do CI, so let's only run tests on main and come back to this when we're
+  # ready to self host our Windows CI (e.g. during the push for full Windows support)
+  windows_tests:
+    timeout-minutes: 60
+    name: (Windows) Run Tests
+    if: ${{ github.repository_owner == 'zed-industries' && (github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'windows')) }}
+    runs-on: hosted-windows-2
+    steps:
+      # Temporarily Collect some metadata about the hardware behind our runners.
+      - name: GHA Runner Info
+        run: |
+          Invoke-RestMethod -Headers @{"Metadata"="true"} -Method GET -Uri "http://169.254.169.254/metadata/instance/compute?api-version=2023-07-01" |
+            ConvertTo-Json -Depth 10 |
+            jq "{ vm_size: .vmSize, location: .location, os_disk_gb: (.storageProfile.osDisk.diskSizeGB | tonumber), rs_disk_gb: (.storageProfile.resourceDisk.size | tonumber / 1024) }"
+          @{
+              Cores = (Get-CimInstance Win32_Processor).NumberOfCores
+              vCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+              RamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
+              cpuid = (Get-CimInstance Win32_Processor).Name.Trim()
+          } | ConvertTo-Json
+      # more info here:- https://github.com/rust-lang/cargo/issues/13020
+      - name: Enable longer pathnames for git
+        run: git config --system core.longpaths true
+
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Create Dev Drive using ReFS
+        run: ./script/setup-dev-driver.ps1
+
+      # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
+      - name: Copy Git Repo to Dev Drive
+        run: |
+          Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: ${{ env.ZED_WORKSPACE }}
+          cache-provider: "github"
+
+      - name: Configure CI
+        run: |
+          mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
+          cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
 
       - name: Run tests
         uses: ./.github/actions/run_tests_windows
@@ -285,7 +367,10 @@ jobs:
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
         if: always()
-        run: Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+        run: |
+          if (Test-Path "${{ env.CARGO_HOME }}/config.toml") {
+            Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+          }
 
   bundle-mac:
     timeout-minutes: 120
@@ -298,8 +383,9 @@ jobs:
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
-      APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -350,14 +436,14 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -408,11 +494,18 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
+
+      - name: Upload Linux remote server to workflow run if main branch or specific label
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.gz
+          path: target/zed-remote-server-linux-x86_64.gz
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -456,11 +549,18 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
+
+      - name: Upload Linux remote server to workflow run if main branch or specific label
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.gz
+          path: target/zed-remote-server-linux-aarch64.gz
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -482,6 +582,6 @@ jobs:
       - bundle
     steps:
       - name: gh release
-        run: gh release edit $GITHUB_REF_NAME --draft=false
+        run: gh release edit $GITHUB_REF_NAME --draft=true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

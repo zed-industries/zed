@@ -164,7 +164,7 @@ impl ReplStore {
 
         let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
 
-        let all_specs = cx.background_executor().spawn(async move {
+        let all_specs = cx.background_spawn(async move {
             let mut all_specs = local_kernel_specifications
                 .await?
                 .into_iter()

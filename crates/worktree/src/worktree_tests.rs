@@ -5,13 +5,15 @@ use crate::{
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::{
+    repository::RepoPath,
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, TrackedSummary, UnmergedStatus,
         UnmergedStatusCode,
     },
     GITIGNORE,
 };
-use gpui::{BorrowAppContext, Context, Task, TestAppContext};
+use git2::RepositoryInitOptions;
+use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -24,8 +26,9 @@ use std::{
     mem,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
-use util::{test::TempTree, ResultExt};
+use util::{path, test::TempTree, ResultExt};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
@@ -853,7 +856,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         "ignored-dir": {}
     }));
 
-    let tree = Worktree::local(
+    let worktree = Worktree::local(
         dir.path(),
         true,
         Arc::new(RealFs::default()),
@@ -866,32 +869,34 @@ async fn test_write_file(cx: &mut TestAppContext) {
     #[cfg(not(target_os = "macos"))]
     fs::fs_watcher::global(|_| {}).unwrap();
 
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
         .await;
-    tree.flush_fs_events(cx).await;
+    worktree.flush_fs_events(cx).await;
 
-    tree.update(cx, |tree, cx| {
-        tree.write_file(
-            Path::new("tracked-dir/file.txt"),
-            "hello".into(),
-            Default::default(),
-            cx,
-        )
-    })
-    .await
-    .unwrap();
-    tree.update(cx, |tree, cx| {
-        tree.write_file(
-            Path::new("ignored-dir/file.txt"),
-            "world".into(),
-            Default::default(),
-            cx,
-        )
-    })
-    .await
-    .unwrap();
+    worktree
+        .update(cx, |tree, cx| {
+            tree.write_file(
+                Path::new("tracked-dir/file.txt"),
+                "hello".into(),
+                Default::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    worktree
+        .update(cx, |tree, cx| {
+            tree.write_file(
+                Path::new("ignored-dir/file.txt"),
+                "world".into(),
+                Default::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
 
-    tree.read_with(cx, |tree, _| {
+    worktree.read_with(cx, |tree, _| {
         let tracked = tree.entry_for_path("tracked-dir/file.txt").unwrap();
         let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
         assert!(!tracked.is_ignored);
@@ -1504,6 +1509,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
         &[(Path::new("b/c.txt"), StatusCode::Modified.index())],
     );
     cx.executor().run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(1));
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
@@ -1648,7 +1654,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         .map(|o| o.parse().unwrap())
         .unwrap_or(20);
 
-    let root_dir = Path::new("/test");
+    let root_dir = Path::new(path!("/test"));
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
@@ -1739,7 +1745,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         .map(|o| o.parse().unwrap())
         .unwrap_or(20);
 
-    let root_dir = Path::new("/test");
+    let root_dir = Path::new(path!("/test"));
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
@@ -1952,7 +1958,7 @@ fn randomly_mutate_worktree(
                 new_path
             );
             let task = worktree.rename_entry(entry.id, new_path, cx);
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 task.await?.to_included().unwrap();
                 Ok(())
             })
@@ -1967,7 +1973,7 @@ fn randomly_mutate_worktree(
                     child_path,
                 );
                 let task = worktree.create_entry(child_path, is_dir, cx);
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     task.await?;
                     Ok(())
                 })
@@ -1975,7 +1981,7 @@ fn randomly_mutate_worktree(
                 log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
                 let task =
                     worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     task.await?;
                     Ok(())
                 })
@@ -2237,6 +2243,73 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
             Some(FileStatus::Untracked),
         );
     });
+}
+
+#[gpui::test]
+async fn test_home_dir_as_git_repository(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "home": {
+                ".git": {},
+                "project": {
+                    "a.txt": "A"
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
+
+    let tree = Worktree::local(
+        Path::new(path!("/root/home/project")),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _cx| {
+        let tree = tree.as_local().unwrap();
+
+        let repo = tree.repository_for_path(path!("a.txt").as_ref());
+        assert!(repo.is_none());
+    });
+
+    let home_tree = Worktree::local(
+        Path::new(path!("/root/home")),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| home_tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    home_tree.flush_fs_events(cx).await;
+
+    home_tree.read_with(cx, |home_tree, _cx| {
+        let home_tree = home_tree.as_local().unwrap();
+
+        let repo = home_tree.repository_for_path(path!("project/a.txt").as_ref());
+        assert_eq!(
+            repo.map(|repo| &repo.work_directory),
+            Some(&WorkDirectory::InProject {
+                relative_path: Path::new("").into()
+            })
+        );
+    })
 }
 
 #[gpui::test]
@@ -3239,6 +3312,87 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_conflicted_cherry_pick(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "a.txt": "a",
+        },
+    }));
+    let root_path = root.path();
+
+    let tree = Worktree::local(
+        root_path,
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    let repo = git_init(&root_path.join("project"));
+    git_add("a.txt", &repo);
+    git_commit("init", &repo);
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.flush_fs_events(cx).await;
+
+    git_branch("other-branch", &repo);
+    git_checkout("refs/heads/other-branch", &repo);
+    std::fs::write(root_path.join("project/a.txt"), "A").unwrap();
+    git_add("a.txt", &repo);
+    git_commit("capitalize", &repo);
+    let commit = repo
+        .head()
+        .expect("Failed to get HEAD")
+        .peel_to_commit()
+        .expect("HEAD is not a commit");
+    git_checkout("refs/heads/main", &repo);
+    std::fs::write(root_path.join("project/a.txt"), "b").unwrap();
+    git_add("a.txt", &repo);
+    git_commit("improve letter", &repo);
+    git_cherry_pick(&commit, &repo);
+    std::fs::read_to_string(root_path.join("project/.git/CHERRY_PICK_HEAD"))
+        .expect("No CHERRY_PICK_HEAD");
+    pretty_assertions::assert_eq!(
+        git_status(&repo),
+        collections::HashMap::from_iter([("a.txt".to_owned(), git2::Status::CONFLICTED)])
+    );
+    tree.flush_fs_events(cx).await;
+    let conflicts = tree.update(cx, |tree, _| {
+        let entry = tree.git_entries().nth(0).expect("No git entry").clone();
+        entry
+            .current_merge_conflicts
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(conflicts, [RepoPath::from("a.txt")]);
+
+    git_add("a.txt", &repo);
+    // Attempt to manually simulate what `git cherry-pick --continue` would do.
+    git_commit("whatevs", &repo);
+    std::fs::remove_file(root.path().join("project/.git/CHERRY_PICK_HEAD"))
+        .expect("Failed to remove CHERRY_PICK_HEAD");
+    pretty_assertions::assert_eq!(git_status(&repo), collections::HashMap::default());
+    tree.flush_fs_events(cx).await;
+    let conflicts = tree.update(cx, |tree, _| {
+        let entry = tree.git_entries().nth(0).expect("No git entry").clone();
+        entry
+            .current_merge_conflicts
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(conflicts, []);
+}
+
+#[gpui::test]
 async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -3259,6 +3413,43 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         let entry = tree.entry_for_path("").unwrap();
         assert!(entry.is_private);
     });
+}
+
+#[gpui::test]
+fn test_unrelativize() {
+    let work_directory = WorkDirectory::in_project("");
+    pretty_assertions::assert_eq!(
+        work_directory.try_unrelativize(&"crates/gpui/gpui.rs".into()),
+        Some(Path::new("crates/gpui/gpui.rs").into())
+    );
+
+    let work_directory = WorkDirectory::in_project("vendor/some-submodule");
+    pretty_assertions::assert_eq!(
+        work_directory.try_unrelativize(&"src/thing.c".into()),
+        Some(Path::new("vendor/some-submodule/src/thing.c").into())
+    );
+
+    let work_directory = WorkDirectory::AboveProject {
+        absolute_path: Path::new("/projects/zed").into(),
+        location_in_repo: Path::new("crates/gpui").into(),
+    };
+
+    pretty_assertions::assert_eq!(
+        work_directory.try_unrelativize(&"crates/util/util.rs".into()),
+        None,
+    );
+
+    pretty_assertions::assert_eq!(
+        work_directory.unrelativize(&"crates/util/util.rs".into()),
+        Path::new("../util/util.rs").into()
+    );
+
+    pretty_assertions::assert_eq!(work_directory.try_unrelativize(&"README.md".into()), None,);
+
+    pretty_assertions::assert_eq!(
+        work_directory.unrelativize(&"README.md".into()),
+        Path::new("../../README.md").into()
+    );
 }
 
 #[track_caller]
@@ -3291,7 +3482,9 @@ const MODIFIED: GitSummary = GitSummary {
 
 #[track_caller]
 fn git_init(path: &Path) -> git2::Repository {
-    git2::Repository::init(path).expect("Failed to initialize git repository")
+    let mut init_opts = RepositoryInitOptions::new();
+    init_opts.initial_head("main");
+    git2::Repository::init_opts(path, &init_opts).expect("Failed to initialize git repository")
 }
 
 #[track_caller]
@@ -3337,6 +3530,11 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
 }
 
 #[track_caller]
+fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
+    repo.cherrypick(commit, None).expect("Failed to cherrypick");
+}
+
+#[track_caller]
 fn git_stash(repo: &mut git2::Repository) {
     use git2::Signature;
 
@@ -3359,6 +3557,22 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
         .expect("Not enough history");
     repo.reset(new_head.as_object(), git2::ResetType::Soft, None)
         .expect("Could not reset");
+}
+
+#[track_caller]
+fn git_branch(name: &str, repo: &git2::Repository) {
+    let head = repo
+        .head()
+        .expect("Couldn't get repo head")
+        .peel_to_commit()
+        .expect("HEAD is not a commit");
+    repo.branch(name, &head, false).expect("Failed to commit");
+}
+
+#[track_caller]
+fn git_checkout(name: &str, repo: &git2::Repository) {
+    repo.set_head(name).expect("Failed to set head");
+    repo.checkout_head(None).expect("Failed to check out head");
 }
 
 #[allow(dead_code)]

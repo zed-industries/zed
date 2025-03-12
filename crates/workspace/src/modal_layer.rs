@@ -1,6 +1,7 @@
 use gpui::{AnyView, DismissEvent, Entity, FocusHandle, Focusable as _, ManagedView, Subscription};
 use ui::prelude::*;
 
+#[derive(Debug)]
 pub enum DismissDecision {
     Dismiss(bool),
     Pending,
@@ -112,7 +113,7 @@ impl ModalLayer {
         cx.notify();
     }
 
-    fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
             self.dismiss_on_focus_lost = false;
             return false;
@@ -162,6 +163,7 @@ impl Render for ModalLayer {
         };
 
         div()
+            .occlude()
             .absolute()
             .size_full()
             .top_0()

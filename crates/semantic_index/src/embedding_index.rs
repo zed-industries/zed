@@ -10,7 +10,7 @@ use fs::Fs;
 use fs::MTime;
 use futures::{stream::StreamExt, FutureExt as _};
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use log;
@@ -102,7 +102,7 @@ impl EmbeddingIndex {
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -185,7 +185,7 @@ impl EmbeddingIndex {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             for (path, entry_id, status) in updated_entries.iter() {
                 match status {
                     project::PathChange::Added
@@ -278,7 +278,7 @@ impl EmbeddingIndex {
     ) -> EmbedFiles {
         let embedding_provider = embedding_provider.clone();
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut chunked_file_batches =
                 pin!(chunked_files.chunks_timeout(512, Duration::from_secs(2)));
             while let Some(chunked_files) = chunked_file_batches.next().await {
@@ -361,7 +361,7 @@ impl EmbeddingIndex {
         let db_connection = self.db_connection.clone();
         let db = self.db;
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut deleted_entry_ranges = pin!(deleted_entry_ranges);
             let mut embedded_files = pin!(embedded_files);
             loop {
@@ -397,7 +397,7 @@ impl EmbeddingIndex {
     pub fn paths(&self, cx: &App) -> Task<Result<Vec<Arc<Path>>>> {
         let connection = self.db_connection.clone();
         let db = self.db;
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -413,7 +413,7 @@ impl EmbeddingIndex {
     pub fn chunks_for_path(&self, path: Arc<Path>, cx: &App) -> Task<Result<Vec<EmbeddedChunk>>> {
         let connection = self.db_connection.clone();
         let db = self.db;
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;

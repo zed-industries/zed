@@ -145,7 +145,7 @@ impl Rope {
 
         // We also round up the capacity up by one, for a good measure; we *really* don't want to realloc here, as we assume that the # of characters
         // we're working with there is large.
-        let capacity = (text.len() + MIN_CHUNK_SIZE - 1) / MIN_CHUNK_SIZE;
+        let capacity = text.len().div_ceil(MIN_CHUNK_SIZE);
         let mut new_chunks = Vec::with_capacity(capacity);
 
         while !text.is_empty() {
@@ -591,6 +591,7 @@ impl<'a> Cursor<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
@@ -780,6 +781,40 @@ impl<'a> Chunks<'a> {
             reversed,
         }
     }
+
+    pub fn equals_str(&self, other: &str) -> bool {
+        let chunk = self.clone();
+        if chunk.reversed {
+            let mut offset = other.len();
+            for chunk in chunk {
+                if other[0..offset].ends_with(chunk) {
+                    offset -= chunk.len();
+                } else {
+                    return false;
+                }
+            }
+            if offset != 0 {
+                return false;
+            }
+        } else {
+            let mut offset = 0;
+            for chunk in chunk {
+                if offset >= other.len() {
+                    return false;
+                }
+                if other[offset..].starts_with(chunk) {
+                    offset += chunk.len();
+                } else {
+                    return false;
+                }
+            }
+            if offset != other.len() {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
 
 impl<'a> Iterator for Chunks<'a> {
@@ -855,7 +890,7 @@ impl<'a> Iterator for Bytes<'a> {
     }
 }
 
-impl<'a> io::Read for Bytes<'a> {
+impl io::Read for Bytes<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if let Some(chunk) = self.peek() {
             let len = cmp::min(buf.len(), chunk.len());
@@ -889,7 +924,7 @@ pub struct Lines<'a> {
     reversed: bool,
 }
 
-impl<'a> Lines<'a> {
+impl Lines<'_> {
     pub fn next(&mut self) -> Option<&str> {
         if self.done {
             return None;
@@ -975,7 +1010,10 @@ pub struct TextSummary {
     pub chars: usize,
     /// Length in UTF-16 code units
     pub len_utf16: OffsetUtf16,
-    /// A point representing the number of lines and the length of the last line
+    /// A point representing the number of lines and the length of the last line.
+    ///
+    /// In other words, it marks the point after the last byte in the text, (if
+    /// EOF was a character, this would be its position).
     pub lines: Point,
     /// How many `char`s are in the first line
     pub first_line_chars: u32,
@@ -1850,6 +1888,53 @@ mod tests {
                 longest_line_len,
             );
         }
+    }
+
+    #[test]
+    fn test_chunks_equals_str() {
+        let text = "This is a multi-chunk\n& multi-line test string!";
+        let rope = Rope::from(text);
+        for start in 0..text.len() {
+            for end in start..text.len() {
+                let range = start..end;
+                let correct_substring = &text[start..end];
+
+                // Test that correct range returns true
+                assert!(rope
+                    .chunks_in_range(range.clone())
+                    .equals_str(correct_substring));
+                assert!(rope
+                    .reversed_chunks_in_range(range.clone())
+                    .equals_str(correct_substring));
+
+                // Test that all other ranges return false (unless they happen to match)
+                for other_start in 0..text.len() {
+                    for other_end in other_start..text.len() {
+                        if other_start == start && other_end == end {
+                            continue;
+                        }
+                        let other_substring = &text[other_start..other_end];
+
+                        // Only assert false if the substrings are actually different
+                        if other_substring == correct_substring {
+                            continue;
+                        }
+                        assert!(!rope
+                            .chunks_in_range(range.clone())
+                            .equals_str(other_substring));
+                        assert!(!rope
+                            .reversed_chunks_in_range(range.clone())
+                            .equals_str(other_substring));
+                    }
+                }
+            }
+        }
+
+        let rope = Rope::from("");
+        assert!(rope.chunks_in_range(0..0).equals_str(""));
+        assert!(rope.reversed_chunks_in_range(0..0).equals_str(""));
+        assert!(!rope.chunks_in_range(0..0).equals_str("foo"));
+        assert!(!rope.reversed_chunks_in_range(0..0).equals_str("foo"));
     }
 
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {

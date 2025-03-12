@@ -129,7 +129,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         let paths = self.search_paths(query.clone(), cancellation_flag.clone(), &workspace, cx);
         let executor = cx.background_executor().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut matches: Vec<String> = paths
                 .await
                 .into_iter()

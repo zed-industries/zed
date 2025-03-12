@@ -2,9 +2,10 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
-    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
+    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
+    InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
+    ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -30,9 +31,7 @@ use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
-pub use signature_help::{
-    SignatureHelp, SIGNATURE_HELP_HIGHLIGHT_CURRENT, SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
-};
+pub use signature_help::SignatureHelp;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -941,9 +940,11 @@ fn language_server_for_buffer(
 ) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
     lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store
-                .language_server_for_local_buffer(buffer.read(cx), server_id, cx)
-                .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            })
         })?
         .ok_or_else(|| anyhow!("no language server found for buffer"))
 }
@@ -1509,12 +1510,11 @@ impl LspCommand for GetSignatureHelp {
         self,
         message: Option<lsp::SignatureHelp>,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
+        _: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
-        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
-        Ok(message.and_then(|message| SignatureHelp::new(message, language)))
+        Ok(message.and_then(SignatureHelp::new))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1566,14 +1566,13 @@ impl LspCommand for GetSignatureHelp {
         self,
         response: proto::GetSignatureHelpResponse,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
-        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         Ok(response
             .signature_help
             .map(proto_to_lsp_signature)
-            .and_then(|lsp_help| SignatureHelp::new(lsp_help, language)))
+            .and_then(SignatureHelp::new))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
@@ -1848,7 +1847,6 @@ impl LspCommand for GetCompletions {
         let mut completions = if let Some(completions) = completions {
             match completions {
                 lsp::CompletionResponse::Array(completions) => completions,
-
                 lsp::CompletionResponse::List(mut list) => {
                     let items = std::mem::take(&mut list.items);
                     response_list = Some(list);
@@ -1856,74 +1854,19 @@ impl LspCommand for GetCompletions {
                 }
             }
         } else {
-            Default::default()
+            Vec::new()
         };
 
         let language_server_adapter = lsp_store
             .update(&mut cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
-            .ok_or_else(|| anyhow!("no such language server"))?;
+            .with_context(|| format!("no language server with id {server_id}"))?;
 
-        let item_defaults = response_list
+        let lsp_defaults = response_list
             .as_ref()
-            .and_then(|list| list.item_defaults.as_ref());
-
-        if let Some(item_defaults) = item_defaults {
-            let default_data = item_defaults.data.as_ref();
-            let default_commit_characters = item_defaults.commit_characters.as_ref();
-            let default_edit_range = item_defaults.edit_range.as_ref();
-            let default_insert_text_format = item_defaults.insert_text_format.as_ref();
-            let default_insert_text_mode = item_defaults.insert_text_mode.as_ref();
-
-            if default_data.is_some()
-                || default_commit_characters.is_some()
-                || default_edit_range.is_some()
-                || default_insert_text_format.is_some()
-                || default_insert_text_mode.is_some()
-            {
-                for item in completions.iter_mut() {
-                    if item.data.is_none() && default_data.is_some() {
-                        item.data = default_data.cloned()
-                    }
-                    if item.commit_characters.is_none() && default_commit_characters.is_some() {
-                        item.commit_characters = default_commit_characters.cloned()
-                    }
-                    if item.text_edit.is_none() {
-                        if let Some(default_edit_range) = default_edit_range {
-                            match default_edit_range {
-                                CompletionListItemDefaultsEditRange::Range(range) => {
-                                    item.text_edit =
-                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                            range: *range,
-                                            new_text: item.label.clone(),
-                                        }))
-                                }
-                                CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                    insert,
-                                    replace,
-                                } => {
-                                    item.text_edit =
-                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                            lsp::InsertReplaceEdit {
-                                                new_text: item.label.clone(),
-                                                insert: *insert,
-                                                replace: *replace,
-                                            },
-                                        ))
-                                }
-                            }
-                        }
-                    }
-                    if item.insert_text_format.is_none() && default_insert_text_format.is_some() {
-                        item.insert_text_format = default_insert_text_format.cloned()
-                    }
-                    if item.insert_text_mode.is_none() && default_insert_text_mode.is_some() {
-                        item.insert_text_mode = default_insert_text_mode.cloned()
-                    }
-                }
-            }
-        }
+            .and_then(|list| list.item_defaults.clone())
+            .map(Arc::new);
 
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
@@ -1931,12 +1874,34 @@ impl LspCommand for GetCompletions {
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
             let mut range_for_token = None;
-            completions.retain_mut(|lsp_completion| {
-                let edit = match lsp_completion.text_edit.as_ref() {
+            completions.retain(|lsp_completion| {
+                let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
+                    let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
+                    match default_text_edit {
+                        CompletionListItemDefaultsEditRange::Range(range) => {
+                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: *range,
+                                new_text: lsp_completion.label.clone(),
+                            }))
+                        }
+                        CompletionListItemDefaultsEditRange::InsertAndReplace {
+                            insert,
+                            replace,
+                        } => Some(lsp::CompletionTextEdit::InsertAndReplace(
+                            lsp::InsertReplaceEdit {
+                                new_text: lsp_completion.label.clone(),
+                                insert: *insert,
+                                replace: *replace,
+                            },
+                        )),
+                    }
+                });
+
+                let edit = match lsp_edit {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
                     Some(completion_text_edit) => {
-                        match parse_completion_text_edit(completion_text_edit, &snapshot) {
+                        match parse_completion_text_edit(&completion_text_edit, &snapshot) {
                             Some(edit) => edit,
                             None => return false,
                         }
@@ -1950,14 +1915,15 @@ impl LspCommand for GetCompletions {
                             return false;
                         }
 
-                        let default_edit_range = response_list
-                            .as_ref()
-                            .and_then(|list| list.item_defaults.as_ref())
-                            .and_then(|defaults| defaults.edit_range.as_ref())
-                            .and_then(|range| match range {
-                                CompletionListItemDefaultsEditRange::Range(r) => Some(r),
-                                _ => None,
-                            });
+                        let default_edit_range = lsp_defaults.as_ref().and_then(|lsp_defaults| {
+                            lsp_defaults
+                                .edit_range
+                                .as_ref()
+                                .and_then(|range| match range {
+                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
+                                    _ => None,
+                                })
+                        });
 
                         let range = if let Some(range) = default_edit_range {
                             let range = range_from_lsp(*range);
@@ -2007,14 +1973,27 @@ impl LspCommand for GetCompletions {
         Ok(completions
             .into_iter()
             .zip(completion_edits)
-            .map(|(lsp_completion, (old_range, mut new_text))| {
+            .map(|(mut lsp_completion, (old_range, mut new_text))| {
                 LineEnding::normalize(&mut new_text);
+                if lsp_completion.data.is_none() {
+                    if let Some(default_data) = lsp_defaults
+                        .as_ref()
+                        .and_then(|item_defaults| item_defaults.data.clone())
+                    {
+                        // Servers (e.g. JDTLS) prefer unchanged completions, when resolving the items later,
+                        // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
+                        lsp_completion.data = Some(default_data);
+                    }
+                }
                 CoreCompletion {
                     old_range,
                     new_text,
-                    server_id,
-                    lsp_completion,
-                    resolved: false,
+                    source: CompletionSource::Lsp {
+                        server_id,
+                        lsp_completion: Box::new(lsp_completion),
+                        lsp_defaults: lsp_defaults.clone(),
+                        resolved: false,
+                    },
                 }
             })
             .collect())
@@ -2220,10 +2199,10 @@ impl LspCommand for GetCodeActions {
     async fn response_from_lsp(
         self,
         actions: Option<lsp::CodeActionResponse>,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
         server_id: LanguageServerId,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
         let requested_kinds_set = if let Some(kinds) = self.kinds {
             Some(kinds.into_iter().collect::<HashSet<_>>())
@@ -2231,18 +2210,47 @@ impl LspCommand for GetCodeActions {
             None
         };
 
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
+
+        let server_capabilities = language_server.capabilities();
+        let available_commands = server_capabilities
+            .execute_command_provider
+            .as_ref()
+            .map(|options| options.commands.as_slice())
+            .unwrap_or_default();
         Ok(actions
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry else {
-                    return None;
+                let lsp_action = match entry {
+                    lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
+                        if let Some(command) = lsp_action.command.as_ref() {
+                            if !available_commands.contains(&command.command) {
+                                return None;
+                            }
+                        }
+                        LspAction::Action(Box::new(lsp_action))
+                    }
+                    lsp::CodeActionOrCommand::Command(command) => {
+                        if available_commands.contains(&command.command) {
+                            LspAction::Command(command)
+                        } else {
+                            return None;
+                        }
+                    }
                 };
 
                 if let Some((requested_kinds, kind)) =
-                    requested_kinds_set.as_ref().zip(lsp_action.kind.as_ref())
+                    requested_kinds_set.as_ref().zip(lsp_action.action_kind())
                 {
-                    if !requested_kinds.contains(kind) {
+                    if !requested_kinds.contains(&kind) {
                         return None;
                     }
                 }

@@ -22,7 +22,7 @@ use ui::{
     h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::notifications::NotificationId;
+use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -183,8 +183,7 @@ impl NotificationPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
-                .background_executor()
-                .spawn(async move { KEY_VALUE_STORE.read_kvp(NOTIFICATION_PANEL_KEY) })
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(NOTIFICATION_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
@@ -209,7 +208,7 @@ impl NotificationPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -301,7 +300,7 @@ impl NotificationPanel {
                                         .hover(|style| {
                                             style
                                                 .bg(cx.theme().colors().element_selected)
-                                                .rounded_md()
+                                                .rounded_sm()
                                         })
                                         .child(Label::new(relative_timestamp).color(Color::Muted))
                                         .tooltip(move |_, cx| {
@@ -571,11 +570,12 @@ impl NotificationPanel {
                 workspace.dismiss_notification(&id, cx);
                 workspace.show_notification(id, cx, |cx| {
                     let workspace = cx.entity().downgrade();
-                    cx.new(|_| NotificationToast {
+                    cx.new(|cx| NotificationToast {
                         notification_id,
                         actor,
                         text,
                         workspace,
+                        focus_handle: cx.focus_handle(),
                     })
                 })
             })
@@ -772,7 +772,16 @@ pub struct NotificationToast {
     actor: Option<Arc<User>>,
     text: String,
     workspace: WeakEntity<Workspace>,
+    focus_handle: FocusHandle,
 }
+
+impl Focusable for NotificationToast {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl WorkspaceNotification for NotificationToast {}
 
 impl NotificationToast {
     fn focus_notification_panel(&self, window: &mut Window, cx: &mut Context<Self>) {

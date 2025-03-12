@@ -19,18 +19,15 @@ use gpui::{
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
-    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUseId, MessageContent, Role, StopReason,
-};
-use language_models::{
-    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
-    report_assistant_event,
+    report_assistant_event, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolUseId, MaxMonthlySpendReachedError,
+    MessageContent, PaymentRequiredError, Role, StopReason,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -650,7 +647,6 @@ impl AssistantContext {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
@@ -771,7 +767,6 @@ impl AssistantContext {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn deserialize(
         saved_context: SavedContext,
         path: PathBuf,
@@ -851,7 +846,7 @@ impl AssistantContext {
             .collect::<Vec<_>>();
         context_ops.extend(self.pending_ops.iter().cloned());
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let buffer_ops = buffer_ops.await;
             context_ops.sort_unstable_by_key(|op| op.timestamp());
             buffer_ops
@@ -1192,11 +1187,14 @@ impl AssistantContext {
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
+        let debounce = self.token_count.is_some();
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
+                if debounce {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(200))
+                        .await;
+                }
 
                 let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
                 this.update(&mut cx, |this, cx| {
@@ -3363,7 +3361,7 @@ impl SavedContextV0_1_0 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,

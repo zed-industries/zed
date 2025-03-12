@@ -9,6 +9,7 @@ use std::{ops::Range, sync::Arc};
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
+use extension::ExtensionEvents;
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use feature_flags::FeatureFlagAppExt as _;
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -212,7 +213,7 @@ pub struct ExtensionsPage {
     query_editor: Entity<Editor>,
     query_contains_error: bool,
     provides_filter: Option<ExtensionProvides>,
-    _subscriptions: [gpui::Subscription; 2],
+    _subscriptions: Vec<gpui::Subscription>,
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
 }
@@ -226,15 +227,12 @@ impl ExtensionsPage {
         cx.new(|cx| {
             let store = ExtensionStore::global(cx);
             let workspace_handle = workspace.weak_handle();
-            let subscriptions = [
+            let subscriptions = vec![
                 cx.observe(&store, |_: &mut Self, _, cx| cx.notify()),
                 cx.subscribe_in(
                     &store,
                     window,
                     move |this, _, event, window, cx| match event {
-                        extension_host::Event::ExtensionsUpdated => {
-                            this.fetch_extensions_debounced(cx)
-                        }
                         extension_host::Event::ExtensionInstalled(extension_id) => this
                             .on_extension_installed(
                                 workspace_handle.clone(),
@@ -243,6 +241,15 @@ impl ExtensionsPage {
                                 cx,
                             ),
                         _ => {}
+                    },
+                ),
+                cx.subscribe_in(
+                    &ExtensionEvents::global(cx),
+                    window,
+                    move |this, _, event, _window, cx| match event {
+                        extension::Event::ExtensionsUpdated => {
+                            this.fetch_extensions_debounced(cx);
+                        }
                     },
                 ),
             ];
@@ -522,7 +529,7 @@ impl ExtensionsPage {
                             extension.authors.join(", ")
                         ))
                         .size(LabelSize::Small)
-                        .text_ellipsis(),
+                        .truncate(),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
@@ -534,7 +541,7 @@ impl ExtensionsPage {
                         Label::new(description.clone())
                             .size(LabelSize::Small)
                             .color(Color::Default)
-                            .text_ellipsis()
+                            .truncate()
                     }))
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
@@ -632,7 +639,7 @@ impl ExtensionsPage {
                                                     .px_0p5()
                                                     .border_1()
                                                     .border_color(cx.theme().colors().border)
-                                                    .rounded_md()
+                                                    .rounded_sm()
                                                     .child(
                                                         Label::new(label).size(LabelSize::XSmall),
                                                     )
@@ -665,7 +672,7 @@ impl ExtensionsPage {
                             extension.manifest.authors.join(", ")
                         ))
                         .size(LabelSize::Small)
-                        .text_ellipsis(),
+                        .truncate(),
                     )
                     .child(
                         Label::new(format!(
@@ -683,7 +690,7 @@ impl ExtensionsPage {
                         Label::new(description.clone())
                             .size(LabelSize::Small)
                             .color(Color::Default)
-                            .text_ellipsis()
+                            .truncate()
                     }))
                     .child(
                         h_flex()

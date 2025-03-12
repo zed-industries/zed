@@ -27,7 +27,7 @@ fn authorize_access_to_model(
     }
 
     if provider == LanguageModelProvider::Anthropic {
-        if model == "claude-3-5-sonnet" {
+        if model == "claude-3-5-sonnet" || model == "claude-3-7-sonnet" {
             return Ok(());
         }
 

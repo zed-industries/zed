@@ -9,14 +9,14 @@ use clock::ReplicaId;
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::ContextServerFactoryRegistry;
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use regex::Regex;
 use rpc::AnyProtoClient;
 use std::sync::LazyLock;
@@ -104,49 +104,53 @@ impl ContextStore {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
-            let this = cx.new(|cx: &mut Context<Self>| {
-                let context_server_factory_registry =
-                    ContextServerFactoryRegistry::default_global(cx);
-                let context_server_manager = cx.new(|cx| {
-                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-                });
-                let mut this = Self {
-                    contexts: Vec::new(),
-                    contexts_metadata: Vec::new(),
-                    context_server_manager,
-                    context_server_slash_command_ids: HashMap::default(),
-                    host_contexts: Vec::new(),
-                    fs,
-                    languages,
-                    slash_commands,
-                    telemetry,
-                    _watch_updates: cx.spawn(|this, mut cx| {
-                        async move {
-                            while events.next().await.is_some() {
-                                this.update(&mut cx, |this, cx| this.reload(cx))?
-                                    .await
-                                    .log_err();
+            let this =
+                cx.new(|cx: &mut Context<Self>| {
+                    let context_server_factory_registry =
+                        ContextServerFactoryRegistry::default_global(cx);
+                    let context_server_manager = cx.new(|cx| {
+                        ContextServerManager::new(
+                            context_server_factory_registry,
+                            project.clone(),
+                            cx,
+                        )
+                    });
+                    let mut this = Self {
+                        contexts: Vec::new(),
+                        contexts_metadata: Vec::new(),
+                        context_server_manager,
+                        context_server_slash_command_ids: HashMap::default(),
+                        host_contexts: Vec::new(),
+                        fs,
+                        languages,
+                        slash_commands,
+                        telemetry,
+                        _watch_updates: cx.spawn(|this, mut cx| {
+                            async move {
+                                while events.next().await.is_some() {
+                                    this.update(&mut cx, |this, cx| this.reload(cx))?
+                                        .await
+                                        .log_err();
+                                }
+                                anyhow::Ok(())
                             }
-                            anyhow::Ok(())
-                        }
-                        .log_err()
-                    }),
-                    client_subscription: None,
-                    _project_subscriptions: vec![
-                        cx.observe(&project, Self::handle_project_changed),
-                        cx.subscribe(&project, Self::handle_project_event),
-                    ],
-                    project_is_shared: false,
-                    client: project.read(cx).client(),
-                    project: project.clone(),
-                    prompt_builder,
-                };
-                this.handle_project_changed(project.clone(), cx);
-                this.synchronize_contexts(cx);
-                this.register_context_server_handlers(cx);
-                this.reload(cx).detach_and_log_err(cx);
-                this
-            })?;
+                            .log_err()
+                        }),
+                        client_subscription: None,
+                        _project_subscriptions: vec![
+                            cx.subscribe(&project, Self::handle_project_event)
+                        ],
+                        project_is_shared: false,
+                        client: project.read(cx).client(),
+                        project: project.clone(),
+                        prompt_builder,
+                    };
+                    this.handle_project_shared(project.clone(), cx);
+                    this.synchronize_contexts(cx);
+                    this.register_context_server_handlers(cx);
+                    this.reload(cx).detach_and_log_err(cx);
+                    this
+                })?;
 
             Ok(this)
         })
@@ -265,19 +269,18 @@ impl ContextStore {
                     local_versions.push(context.version(cx).to_proto(context_id.clone()));
                     let client = this.client.clone();
                     let project_id = envelope.payload.project_id;
-                    cx.background_executor()
-                        .spawn(async move {
-                            let operations = operations.await;
-                            for operation in operations {
-                                client.send(proto::UpdateContext {
-                                    project_id,
-                                    context_id: context_id.to_proto(),
-                                    operation: Some(operation),
-                                })?;
-                            }
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
+                    cx.background_spawn(async move {
+                        let operations = operations.await;
+                        for operation in operations {
+                            client.send(proto::UpdateContext {
+                                project_id,
+                                context_id: context_id.to_proto(),
+                                operation: Some(operation),
+                            })?;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
                 }
             }
 
@@ -289,7 +292,7 @@ impl ContextStore {
         })?
     }
 
-    fn handle_project_changed(&mut self, _: Entity<Project>, cx: &mut Context<Self>) {
+    fn handle_project_shared(&mut self, _: Entity<Project>, cx: &mut Context<Self>) {
         let is_shared = self.project.read(cx).is_shared();
         let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
         if is_shared == was_shared {
@@ -319,11 +322,14 @@ impl ContextStore {
 
     fn handle_project_event(
         &mut self,
-        _: Entity<Project>,
+        project: Entity<Project>,
         event: &project::Event,
         cx: &mut Context<Self>,
     ) {
         match event {
+            project::Event::RemoteIdChanged(_) => {
+                self.handle_project_shared(project, cx);
+            }
             project::Event::Reshared => {
                 self.advertise_contexts(cx);
             }
@@ -349,6 +355,12 @@ impl ContextStore {
             }
             _ => {}
         }
+    }
+
+    pub fn contexts(&self) -> Vec<SavedContextMetadata> {
+        let mut contexts = self.contexts_metadata.iter().cloned().collect::<Vec<_>>();
+        contexts.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.mtime));
+        contexts
     }
 
     pub fn create(&mut self, cx: &mut Context<Self>) -> Entity<AssistantContext> {
@@ -401,8 +413,7 @@ impl ContextStore {
                 )
             })?;
             let operations = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     context_proto
                         .operations
                         .into_iter()
@@ -436,7 +447,7 @@ impl ContextStore {
         let languages = self.languages.clone();
         let project = self.project.clone();
         let telemetry = self.telemetry.clone();
-        let load = cx.background_executor().spawn({
+        let load = cx.background_spawn({
             let path = path.clone();
             async move {
                 let saved_context = fs.load(&path).await?;
@@ -468,6 +479,38 @@ impl ContextStore {
                     context
                 }
             })
+        })
+    }
+
+    pub fn delete_local_context(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let fs = self.fs.clone();
+
+        cx.spawn(|this, mut cx| async move {
+            fs.remove_file(
+                &path,
+                RemoveOptions {
+                    recursive: false,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.contexts.retain(|context| {
+                    context
+                        .upgrade()
+                        .and_then(|context| context.read(cx).path())
+                        != Some(&path)
+                });
+                this.contexts_metadata
+                    .retain(|context| context.path != path);
+            })?;
+
+            Ok(())
         })
     }
 
@@ -539,8 +582,7 @@ impl ContextStore {
                 )
             })?;
             let operations = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     context_proto
                         .operations
                         .into_iter()
@@ -693,7 +735,7 @@ impl ContextStore {
     pub fn search(&self, query: String, cx: &App) -> Task<Vec<SavedContextMetadata>> {
         let metadata = self.contexts_metadata.clone();
         let executor = cx.background_executor().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             if query.is_empty() {
                 metadata
             } else {

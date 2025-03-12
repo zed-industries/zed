@@ -229,7 +229,7 @@ impl MarkdownPreviewView {
                                                 s.bg(cx.theme().colors().border_variant)
                                             }
                                         })
-                                        .rounded_sm();
+                                        .rounded_xs();
 
                                     container.child(
                                         div()
@@ -317,7 +317,9 @@ impl MarkdownPreviewView {
             window,
             |this, editor, event: &EditorEvent, window, cx| {
                 match event {
-                    EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
+                    EditorEvent::Edited { .. }
+                    | EditorEvent::DirtyChanged
+                    | EditorEvent::ExcerptsEdited { .. } => {
                         this.parse_markdown_from_active_editor(true, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
@@ -383,7 +385,7 @@ impl MarkdownPreviewView {
                 (contents, file_location)
             })?;
 
-            let parsing_task = cx.background_executor().spawn(async move {
+            let parsing_task = cx.background_spawn(async move {
                 parse_markdown(&contents, file_location, Some(language_registry)).await
             });
             let contents = parsing_task.await;

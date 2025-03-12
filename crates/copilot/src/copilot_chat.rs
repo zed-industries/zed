@@ -4,13 +4,14 @@ use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
+use collections::HashSet;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{prelude::*, App, AsyncApp, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
-use settings::watch_config_file;
+use settings::watch_config_dir;
 use strum::EnumIter;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
@@ -40,13 +41,21 @@ pub enum Model {
     O3Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,
+    #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
+    Claude3_7Sonnet,
+    #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
+    Gemini20Flash,
 }
 
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
-            Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
-            Self::O3Mini | Self::O1 => false,
+            Self::Gpt4o
+            | Self::Gpt4
+            | Self::Gpt3_5Turbo
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet => true,
+            Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
         }
     }
 
@@ -58,6 +67,8 @@ impl Model {
             "o1" => Ok(Self::O1),
             "o3-mini" => Ok(Self::O3Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
+            "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
+            "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
@@ -70,6 +81,8 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
+            Self::Claude3_7Sonnet => "claude-3-7-sonnet",
+            Self::Gemini20Flash => "gemini-2.0-flash-001",
         }
     }
 
@@ -81,17 +94,21 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
+            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
+            Self::Gemini20Flash => "Gemini 2.0 Flash",
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::Gpt4o => 64000,
-            Self::Gpt4 => 32768,
-            Self::Gpt3_5Turbo => 12288,
-            Self::O3Mini => 20000,
-            Self::O1 => 20000,
+            Self::Gpt4o => 64_000,
+            Self::Gpt4 => 32_768,
+            Self::Gpt3_5Turbo => 12_288,
+            Self::O3Mini => 64_000,
+            Self::O1 => 20_000,
             Self::Claude3_5Sonnet => 200_000,
+            Self::Claude3_7Sonnet => 90_000,
+            Model::Gemini20Flash => 128_000,
         }
     }
 }
@@ -196,7 +213,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-fn copilot_chat_config_dir() -> &'static PathBuf {
+pub fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
@@ -221,27 +238,18 @@ impl CopilotChat {
     }
 
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &App) -> Self {
-        let config_paths = copilot_chat_config_paths();
-
-        let resolve_config_path = {
-            let fs = fs.clone();
-            async move {
-                for config_path in config_paths.iter() {
-                    if fs.metadata(config_path).await.is_ok_and(|v| v.is_some()) {
-                        return config_path.clone();
-                    }
-                }
-                config_paths[0].clone()
-            }
-        };
+        let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
+        let dir_path = copilot_chat_config_dir();
 
         cx.spawn(|cx| async move {
-            let config_file = resolve_config_path.await;
-            let mut config_file_rx = watch_config_file(cx.background_executor(), fs, config_file);
-
-            while let Some(contents) = config_file_rx.next().await {
+            let mut parent_watch_rx = watch_config_dir(
+                cx.background_executor(),
+                fs.clone(),
+                dir_path.clone(),
+                config_paths,
+            );
+            while let Some(contents) = parent_watch_rx.next().await {
                 let oauth_token = extract_oauth_token(contents);
-
                 cx.update(|cx| {
                     if let Some(this) = Self::global(cx).as_ref() {
                         this.update(cx, |this, cx| {
@@ -395,7 +403,7 @@ async fn stream_completion(
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.first().is_none()
+                                if response.choices.is_empty()
                                     || response.choices.first().unwrap().finish_reason.is_some()
                                 {
                                     None

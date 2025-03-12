@@ -241,7 +241,7 @@ impl ActiveCall {
                 })
                 .shared();
             self.pending_room_creation = Some(room.clone());
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 room.await.map_err(|err| anyhow!("{:?}", err))?;
                 anyhow::Ok(())
             })
@@ -278,7 +278,7 @@ impl ActiveCall {
         };
 
         let client = self.client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             client
                 .request(proto::CancelCall {
                     room_id,

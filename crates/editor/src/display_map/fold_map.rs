@@ -2,7 +2,7 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use gpui::{AnyElement, App, ElementId, Window};
+use gpui::{AnyElement, App, ElementId};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
@@ -21,8 +21,7 @@ use util::post_inc;
 #[derive(Clone)]
 pub struct FoldPlaceholder {
     /// Creates an element to represent this fold's placeholder.
-    pub render:
-        Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement>,
+    pub render: Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of an ellipsis.
     pub constrain_width: bool,
     /// If true, merges the fold with an adjacent one.
@@ -34,7 +33,7 @@ pub struct FoldPlaceholder {
 impl Default for FoldPlaceholder {
     fn default() -> Self {
         Self {
-            render: Arc::new(|_, _, _, _| gpui::Empty.into_any_element()),
+            render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -46,7 +45,7 @@ impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
-            render: Arc::new(|_id, _range, _window, _cx| gpui::Empty.into_any_element()),
+            render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -133,7 +132,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
 
 pub(crate) struct FoldMapWriter<'a>(&'a mut FoldMap);
 
-impl<'a> FoldMapWriter<'a> {
+impl FoldMapWriter<'_> {
     pub(crate) fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
@@ -486,7 +485,6 @@ impl FoldMap {
                                             (fold.placeholder.render)(
                                                 fold_id,
                                                 fold.range.0.clone(),
-                                                cx.window,
                                                 cx.context,
                                             )
                                         }),
@@ -1123,7 +1121,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, FoldSummary, FoldRange> for FoldRange {
+impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for FoldRange {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
@@ -1146,7 +1144,7 @@ pub struct FoldRows<'a> {
     fold_point: FoldPoint,
 }
 
-impl<'a> FoldRows<'a> {
+impl FoldRows<'_> {
     pub(crate) fn seek(&mut self, row: u32) {
         let fold_point = FoldPoint::new(row, 0);
         self.cursor.seek(&fold_point, Bias::Left, &());
@@ -1157,7 +1155,7 @@ impl<'a> FoldRows<'a> {
     }
 }
 
-impl<'a> Iterator for FoldRows<'a> {
+impl Iterator for FoldRows<'_> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1192,7 +1190,7 @@ pub struct FoldChunks<'a> {
     max_output_offset: FoldOffset,
 }
 
-impl<'a> FoldChunks<'a> {
+impl FoldChunks<'_> {
     pub(crate) fn seek(&mut self, range: Range<FoldOffset>) {
         self.transform_cursor.seek(&range.start, Bias::Right, &());
 

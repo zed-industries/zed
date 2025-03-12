@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
-use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
 use rope::Rope;
@@ -208,12 +208,18 @@ impl ContextStore {
             let mut text_tasks = Vec::new();
             this.update(&mut cx, |_, cx| {
                 for (path, buffer_entity) in files.into_iter().zip(buffers) {
-                    let buffer_entity = buffer_entity?;
-                    let buffer = buffer_entity.read(cx);
-                    let (buffer_info, text_task) =
-                        collect_buffer_info_and_text(path, buffer_entity, buffer, cx.to_async());
-                    buffer_infos.push(buffer_info);
-                    text_tasks.push(text_task);
+                    // Skip all binary files and other non-UTF8 files
+                    if let Ok(buffer_entity) = buffer_entity {
+                        let buffer = buffer_entity.read(cx);
+                        let (buffer_info, text_task) = collect_buffer_info_and_text(
+                            path,
+                            buffer_entity,
+                            buffer,
+                            cx.to_async(),
+                        );
+                        buffer_infos.push(buffer_info);
+                        text_tasks.push(text_task);
+                    }
                 }
                 anyhow::Ok(())
             })??;
@@ -456,9 +462,7 @@ fn collect_buffer_info_and_text(
     };
     // Important to collect version at the same time as content so that staleness logic is correct.
     let content = buffer.as_rope().clone();
-    let text_task = cx
-        .background_executor()
-        .spawn(async move { to_fenced_codeblock(&path, content) });
+    let text_task = cx.background_spawn(async move { to_fenced_codeblock(&path, content) });
     (buffer_info, text_task)
 }
 

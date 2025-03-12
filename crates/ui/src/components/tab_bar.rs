@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use gpui::{AnyElement, ScrollHandle};
 use smallvec::SmallVec;
 

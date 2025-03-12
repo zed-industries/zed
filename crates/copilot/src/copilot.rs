@@ -16,6 +16,7 @@ use gpui::{
 };
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
+use language::language_settings::CopilotSettings;
 use language::{
     language_settings::{all_language_settings, language_settings, EditPredictionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
@@ -234,8 +235,7 @@ impl RegisteredBuffer {
                 let new_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
-                    .background_executor()
-                    .spawn({
+                    .background_spawn({
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
@@ -368,13 +368,13 @@ impl Copilot {
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        if all_language_settings(None, cx).edit_predictions.provider
-            == EditPredictionProvider::Copilot
-        {
+        let language_settings = all_language_settings(None, cx);
+        if language_settings.edit_predictions.provider == EditPredictionProvider::Copilot {
             if matches!(self.server, CopilotServer::Disabled) {
+                let env = self.build_env(&language_settings.edit_predictions.copilot);
                 let start_task = cx
                     .spawn(move |this, cx| {
-                        Self::start_language_server(server_id, http, node_runtime, this, cx)
+                        Self::start_language_server(server_id, http, node_runtime, env, this, cx)
                     })
                     .shared();
                 self.server = CopilotServer::Starting { task: start_task };
@@ -384,6 +384,30 @@ impl Copilot {
             self.server = CopilotServer::Disabled;
             cx.notify();
         }
+    }
+
+    fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
+        let proxy_url = copilot_settings.proxy.clone()?;
+        let no_verify = copilot_settings.proxy_no_verify;
+        let http_or_https_proxy = if proxy_url.starts_with("http:") {
+            "HTTP_PROXY"
+        } else if proxy_url.starts_with("https:") {
+            "HTTPS_PROXY"
+        } else {
+            log::error!(
+                "Unsupported protocol scheme for language server proxy (must be http or https)"
+            );
+            return None;
+        };
+
+        let mut env = HashMap::default();
+        env.insert(http_or_https_proxy.to_string(), proxy_url);
+
+        if let Some(true) = no_verify {
+            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+        };
+
+        Some(env)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -423,6 +447,7 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
+        env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
         mut cx: AsyncApp,
     ) {
@@ -433,8 +458,7 @@ impl Copilot {
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
-                // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
-                env: None,
+                env,
             };
 
             let root_path = if cfg!(target_os = "windows") {
@@ -451,6 +475,7 @@ impl Copilot {
                 binary,
                 root_path,
                 None,
+                Default::default(),
                 cx.clone(),
             )?;
 
@@ -458,12 +483,14 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let initialize_params = None;
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
             let server = cx
-                .update(|cx| server.initialize(initialize_params, configuration.into(), cx))?
+                .update(|cx| {
+                    let params = server.default_initialize_params(cx);
+                    server.initialize(params, configuration.into(), cx)
+                })?
                 .await?;
 
             let status = server
@@ -586,8 +613,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_executor()
-                .spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
@@ -597,20 +623,27 @@ impl Copilot {
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
-        if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
-            let server = server.clone();
-            cx.background_executor().spawn(async move {
-                server
-                    .request::<request::SignOut>(request::SignOutParams {})
-                    .await?;
+        match &self.server {
+            CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
+                let server = server.clone();
+                cx.background_spawn(async move {
+                    server
+                        .request::<request::SignOut>(request::SignOutParams {})
+                        .await?;
+                    anyhow::Ok(())
+                })
+            }
+            CopilotServer::Disabled => cx.background_spawn(async move {
+                clear_copilot_config_dir().await;
                 anyhow::Ok(())
-            })
-        } else {
-            Task::ready(Err(anyhow!("copilot hasn't started yet")))
+            }),
+            _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let language_settings = all_language_settings(None, cx);
+        let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
@@ -618,7 +651,7 @@ impl Copilot {
                 let server_id = self.server_id;
                 move |this, cx| async move {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, http, node_runtime, this, cx).await
+                    Self::start_language_server(server_id, http, node_runtime, env, this, cx).await
                 }
             })
             .shared();
@@ -629,7 +662,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.background_executor().spawn(start_task)
+        cx.background_spawn(start_task)
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
@@ -811,7 +844,7 @@ impl Copilot {
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -835,7 +868,7 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -882,7 +915,7 @@ impl Copilot {
             .map(|file| file.path().to_path_buf())
             .unwrap_or_default();
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
                 .request::<R>(request::GetCompletionsParams {
@@ -986,6 +1019,10 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
+}
+
+async fn clear_copilot_config_dir() {
+    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
@@ -1277,5 +1314,13 @@ mod tests {
         fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
             unimplemented!()
         }
+    }
+}
+
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
     }
 }
