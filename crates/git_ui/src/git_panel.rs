@@ -367,6 +367,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
+    commit_editor.set_hard_wrap(Some(72), cx);
     let placeholder = placeholder.unwrap_or("Enter commit message");
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -1501,15 +1502,17 @@ impl GitPanel {
         telemetry::event!("Git Uncommitted");
 
         let confirmation = self.check_for_pushed_commits(window, cx);
-        let prior_head = self.load_commit_details("HEAD", cx);
+        let prior_head = self.load_commit_details("HEAD".to_string(), cx);
 
         let task = cx.spawn_in(window, |this, mut cx| async move {
             let result = maybe!(async {
                 if let Ok(true) = confirmation.await {
                     let prior_head = prior_head.await?;
 
-                    repo.update(&mut cx, |repo, cx| repo.reset("HEAD^", ResetMode::Soft, cx))?
-                        .await??;
+                    repo.update(&mut cx, |repo, cx| {
+                        repo.reset("HEAD^".to_string(), ResetMode::Soft, cx)
+                    })?
+                    .await??;
 
                     Ok(Some(prior_head))
                 } else {
@@ -3401,7 +3404,7 @@ impl GitPanel {
 
     fn load_commit_details(
         &self,
-        sha: &str,
+        sha: String,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<CommitDetails>> {
         let Some(repo) = self.active_repository.clone() else {
@@ -3911,7 +3914,7 @@ impl GitPanelMessageTooltip {
             cx.spawn_in(window, |this, mut cx| async move {
                 let details = git_panel
                     .update(&mut cx, |git_panel, cx| {
-                        git_panel.load_commit_details(&sha, cx)
+                        git_panel.load_commit_details(sha.to_string(), cx)
                     })?
                     .await?;
 
