@@ -1,7 +1,6 @@
 use crate::{
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     remote_button::{render_publish_button, render_push_button},
-    GitStatusIcon,
 };
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
@@ -14,12 +13,12 @@ use editor::{
 use futures::StreamExt;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
-    status::{FileStatus, StatusCode},
+    status::FileStatus,
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
 };
 use gpui::{
-    actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, DefaultColor,
-    Entity, EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
+    actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
+    EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
@@ -1040,7 +1039,7 @@ pub struct ProjectDiffEmptyState {
 }
 
 impl RenderOnce for ProjectDiffEmptyState {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let status_against_remote = |ahead_by: usize, behind_by: usize| -> bool {
             match self.current_branch {
                 Some(Branch {
@@ -1203,25 +1202,10 @@ mod preview {
     impl ComponentPreview for ProjectDiffEmptyState {
         fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
             let unknown_upstream: Option<UpstreamTracking> = None;
-            let no_remote_upstream: Option<UpstreamTracking> = Some(UpstreamTracking::Gone);
             let ahead_of_upstream: Option<UpstreamTracking> = Some(
                 UpstreamTrackingStatus {
                     ahead: 2,
                     behind: 0,
-                }
-                .into(),
-            );
-            let behind_upstream: Option<UpstreamTracking> = Some(
-                UpstreamTrackingStatus {
-                    ahead: 0,
-                    behind: 2,
-                }
-                .into(),
-            );
-            let ahead_and_behind_upstream: Option<UpstreamTracking> = Some(
-                UpstreamTrackingStatus {
-                    ahead: 3,
-                    behind: 1,
                 }
                 .into(),
             );
@@ -1282,12 +1266,6 @@ mod preview {
                 current_branch: Some(branch(not_ahead_or_behind_upstream)),
             };
 
-            let no_permissions_state = ProjectDiffEmptyState {
-                no_repo: false,
-                can_push_and_pull: false,
-                focus_handle: None,
-                current_branch: Some(branch(not_ahead_or_behind_upstream)),
-            };
             let ahead_of_upstream_state = ProjectDiffEmptyState {
                 no_repo: false,
                 can_push_and_pull: true,
