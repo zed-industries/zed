@@ -1235,7 +1235,7 @@ impl Editor {
                     window,
                     |editor, _, event, window, cx| match event {
                         project::Event::RefreshCodeLens => {
-                            editor.refresh_code_lens(cx);
+                            editor.refresh_code_lens(window, cx);
                         }
                         project::Event::RefreshInlayHints => {
                             editor
@@ -1261,6 +1261,7 @@ impl Editor {
                                 }
                             }
                         }
+                        _ => {}
                     },
                 ));
                 if let Some(task_inventory) = project
@@ -15550,6 +15551,7 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
+                self.refresh_code_lens(window, cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }
@@ -16479,6 +16481,10 @@ impl Editor {
                 snapshot.clip_offset(start, Bias::Left)..snapshot.clip_offset(end, Bias::Right)
             }));
         });
+    }
+
+    fn refresh_code_lens(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        // todo!("TODO kb")
     }
 }
 
