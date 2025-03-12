@@ -367,6 +367,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
+    commit_editor.set_hard_wrap(Some(72), cx);
     let placeholder = placeholder.unwrap_or("Enter commit message");
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
