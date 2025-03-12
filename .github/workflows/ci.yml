@@ -360,9 +360,6 @@ jobs:
       - name: Create Dev Drive using ReFS
         run: ./script/setup-dev-driver.ps1
 
-      - name: Install trusted signing
-        uses: ./.github/actions/install_trusted_signing
-
       # TODO: Remove this
       - name: Test
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
