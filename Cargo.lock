@@ -14727,14 +14727,12 @@ dependencies = [
 name = "ui_prompt"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui",
  "markdown",
  "menu",
  "settings",
  "theme",
  "ui",
- "util",
 ]
 
 [[package]]
@@ -17070,7 +17068,6 @@ dependencies = [
  "languages",
  "libc",
  "log",
- "markdown",
  "markdown_preview",
  "menu",
  "migrator",

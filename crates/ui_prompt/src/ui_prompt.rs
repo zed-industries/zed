@@ -20,7 +20,6 @@ pub fn activate(cx: &mut App) {
 /// Note that on Linux and FreeBSD, Zed's prompt system is built-in and cannot be deactivated,
 /// as there isn't a system provided prompt.
 pub fn deactivate(cx: &mut App) {
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     cx.reset_prompt_builder();
 }
 
