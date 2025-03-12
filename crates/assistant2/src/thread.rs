@@ -376,7 +376,13 @@ impl Thread {
         _cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
-            messages: vec![],
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![MessageContent::Text(
+                    include_str!("./system_prompt.md").to_string(),
+                )],
+                cache: true,
+            }],
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,

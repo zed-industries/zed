@@ -15,13 +15,24 @@ pub struct ToolWorkingSet {
     state: Mutex<WorkingSetState>,
 }
 
-#[derive(Default)]
 struct WorkingSetState {
     context_server_tools_by_id: HashMap<ToolId, Arc<dyn Tool>>,
     context_server_tools_by_name: HashMap<String, Arc<dyn Tool>>,
     disabled_tools_by_source: HashMap<ToolSource, HashSet<Arc<str>>>,
     is_scripting_tool_disabled: bool,
     next_tool_id: ToolId,
+}
+
+impl Default for WorkingSetState {
+    fn default() -> Self {
+        Self {
+            context_server_tools_by_id: Default::default(),
+            context_server_tools_by_name: Default::default(),
+            disabled_tools_by_source: Default::default(),
+            is_scripting_tool_disabled: true,
+            next_tool_id: Default::default(),
+        }
+    }
 }
 
 impl ToolWorkingSet {
