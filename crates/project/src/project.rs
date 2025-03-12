@@ -1589,6 +1589,11 @@ impl Project {
         self.worktree_store.read(cx).visible_worktrees(cx)
     }
 
+    pub fn worktree_for_root_name(&self, root_name: &str, cx: &App) -> Option<Entity<Worktree>> {
+        self.visible_worktrees(cx)
+            .find(|tree| tree.read(cx).root_name() == root_name)
+    }
+
     pub fn worktree_root_names<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
             .map(|tree| tree.read(cx).root_name())

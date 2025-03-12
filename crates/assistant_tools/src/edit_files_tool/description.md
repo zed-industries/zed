@@ -1,3 +1,5 @@
-Edit files in a worktree by providing its id and a description of how to modify the code to complete the request.
+Edit files in the current project.
 
-Make instructions unambiguous and complete. Explain all needed code changes clearly and completely, but concisely. Just show the changes needed. DO NOT show the entire updated function/file/etc!
+When using this tool, you should suggest one coherent edit that can be made to the codebase.
+
+When the set of edits you want to make is large or complex, feel free to invoke this tool multiple times, each time focusing on a specific change you wanna make.

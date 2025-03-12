@@ -26,11 +26,11 @@ struct WorkingSetState {
 impl Default for WorkingSetState {
     fn default() -> Self {
         Self {
-            context_server_tools_by_id: Default::default(),
-            context_server_tools_by_name: Default::default(),
-            disabled_tools_by_source: Default::default(),
+            context_server_tools_by_id: HashMap::default(),
+            context_server_tools_by_name: HashMap::default(),
+            disabled_tools_by_source: HashMap::default(),
             is_scripting_tool_disabled: true,
-            next_tool_id: Default::default(),
+            next_tool_id: ToolId::default(),
         }
     }
 }
@@ -56,6 +56,34 @@ impl ToolWorkingSet {
         );
 
         tools
+    }
+
+    pub fn are_all_tools_enabled(&self) -> bool {
+        let state = self.state.lock();
+
+        state.disabled_tools_by_source.is_empty() && !state.is_scripting_tool_disabled
+    }
+
+    pub fn enable_all_tools(&self) {
+        let mut state = self.state.lock();
+
+        state.disabled_tools_by_source.clear();
+        state.is_scripting_tool_disabled = false;
+    }
+
+    pub fn disable_all_tools(&self, cx: &App) {
+        let tools = self.tools_by_source(cx);
+
+        for (source, tools) in tools {
+            let tool_names = tools
+                .into_iter()
+                .map(|tool| tool.name().into())
+                .collect::<Vec<_>>();
+
+            self.disable(source, &tool_names);
+        }
+
+        self.disable_scripting_tool();
     }
 
     pub fn enabled_tools(&self, cx: &App) -> Vec<Arc<dyn Tool>> {

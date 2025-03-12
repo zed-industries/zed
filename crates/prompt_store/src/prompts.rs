@@ -12,6 +12,11 @@ use text::LineEnding;
 use util::ResultExt;
 
 #[derive(Serialize)]
+pub struct AssistantSystemPromptContext {
+    pub worktree_root_names: Vec<String>,
+}
+
+#[derive(Serialize)]
 pub struct ContentPromptDiagnosticContext {
     pub line_number: usize,
     pub error_message: String,
@@ -214,6 +219,18 @@ impl PromptBuilder {
         }
 
         Ok(())
+    }
+
+    pub fn generate_assistant_system_prompt(
+        &self,
+        worktree_root_names: Vec<String>,
+    ) -> Result<String, RenderError> {
+        let prompt = AssistantSystemPromptContext {
+            worktree_root_names,
+        };
+        self.handlebars
+            .lock()
+            .render("assistant_system_prompt", &prompt)
     }
 
     pub fn generate_inline_transformation_prompt(
