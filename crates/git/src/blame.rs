@@ -2,8 +2,8 @@ use crate::commit::get_messages;
 use crate::Oid;
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
+use futures::AsyncWriteExt;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::process::Stdio;
 use std::{ops::Range, path::Path};
 use text::Rope;
@@ -21,14 +21,14 @@ pub struct Blame {
 }
 
 impl Blame {
-    pub fn for_path(
+    pub async fn for_path(
         git_binary: &Path,
         working_directory: &Path,
         path: &Path,
         content: &Rope,
         remote_url: Option<String>,
     ) -> Result<Self> {
-        let output = run_git_blame(git_binary, working_directory, path, content)?;
+        let output = run_git_blame(git_binary, working_directory, path, content).await?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -39,8 +39,9 @@ impl Blame {
         }
 
         let shas = unique_shas.into_iter().collect::<Vec<_>>();
-        let messages =
-            get_messages(working_directory, &shas).context("failed to get commit messages")?;
+        let messages = get_messages(working_directory, &shas)
+            .await
+            .context("failed to get commit messages")?;
 
         Ok(Self {
             entries,
@@ -53,13 +54,13 @@ impl Blame {
 const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 
-fn run_git_blame(
+async fn run_git_blame(
     git_binary: &Path,
     working_directory: &Path,
     path: &Path,
     contents: &Rope,
 ) -> Result<String> {
-    let child = util::command::new_std_command(git_binary)
+    let mut child = util::command::new_smol_command(git_binary)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
@@ -72,18 +73,19 @@ fn run_git_blame(
         .spawn()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
-    let mut stdin = child
+    let stdin = child
         .stdin
-        .as_ref()
+        .as_mut()
         .context("failed to get pipe to stdin of git blame command")?;
 
     for chunk in contents.chunks() {
-        stdin.write_all(chunk.as_bytes())?;
+        stdin.write_all(chunk.as_bytes()).await?;
     }
-    stdin.flush()?;
+    stdin.flush().await?;
 
     let output = child
-        .wait_with_output()
+        .output()
+        .await
         .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
 
     if !output.status.success() {

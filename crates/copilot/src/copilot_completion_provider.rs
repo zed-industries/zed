@@ -271,7 +271,10 @@ mod tests {
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
+        language_settings::{
+            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+            WordsCompletionMode,
+        },
         Point,
     };
     use project::Project;
@@ -286,7 +289,13 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         // flaky
-        init_test(cx, |_| {});
+        init_test(cx, |settings| {
+            settings.defaults.completions = Some(CompletionSettings {
+                words: WordsCompletionMode::Disabled,
+                lsp: true,
+                lsp_fetch_timeout_ms: 0,
+            });
+        });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
         let mut cx = EditorLspTestContext::new_rust(
@@ -511,7 +520,13 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         // flaky
-        init_test(cx, |_| {});
+        init_test(cx, |settings| {
+            settings.defaults.completions = Some(CompletionSettings {
+                words: WordsCompletionMode::Disabled,
+                lsp: true,
+                lsp_fetch_timeout_ms: 0,
+            });
+        });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
         let mut cx = EditorLspTestContext::new_rust(

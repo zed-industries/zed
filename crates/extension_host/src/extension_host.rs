@@ -14,7 +14,7 @@ use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 pub use extension::ExtensionManifest;
 use extension::{
-    ExtensionContextServerProxy, ExtensionGrammarProxy, ExtensionHostProxy,
+    ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
     ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
     ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
@@ -127,7 +127,6 @@ pub enum ExtensionOperation {
 
 #[derive(Clone)]
 pub enum Event {
-    ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
     ExtensionFailedToLoad(Arc<str>),
@@ -1214,7 +1213,9 @@ impl ExtensionStore {
 
         self.extension_index = new_index;
         cx.notify();
-        cx.emit(Event::ExtensionsUpdated);
+        ExtensionEvents::global(cx).update(cx, |this, cx| {
+            this.emit(extension::Event::ExtensionsUpdated, cx)
+        });
 
         cx.spawn(|this, mut cx| async move {
             cx.background_spawn({

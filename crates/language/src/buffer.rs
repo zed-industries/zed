@@ -4145,6 +4145,63 @@ impl BufferSnapshot {
             None
         }
     }
+
+    pub fn words_in_range(
+        &self,
+        query: Option<&str>,
+        range: Range<usize>,
+    ) -> HashMap<String, Range<Anchor>> {
+        if query.map_or(false, |query| query.is_empty()) {
+            return HashMap::default();
+        }
+
+        let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
+            language,
+            override_id: None,
+        }));
+
+        let mut query_ix = 0;
+        let query = query.map(|query| query.chars().collect::<Vec<_>>());
+        let query_len = query.as_ref().map_or(0, |query| query.len());
+
+        let mut words = HashMap::default();
+        let mut current_word_start_ix = None;
+        let mut chunk_ix = range.start;
+        for chunk in self.chunks(range, false) {
+            for (i, c) in chunk.text.char_indices() {
+                let ix = chunk_ix + i;
+                if classifier.is_word(c) {
+                    if current_word_start_ix.is_none() {
+                        current_word_start_ix = Some(ix);
+                    }
+
+                    if let Some(query) = &query {
+                        if query_ix < query_len {
+                            let query_c = query.get(query_ix).expect(
+                                "query_ix is a vec of chars, which we access only if before the end",
+                            );
+                            if c.to_lowercase().eq(query_c.to_lowercase()) {
+                                query_ix += 1;
+                            }
+                        }
+                    }
+                    continue;
+                } else if let Some(word_start) = current_word_start_ix.take() {
+                    if query_ix == query_len {
+                        let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
+                        words.insert(
+                            self.text_for_range(word_start..ix).collect::<String>(),
+                            word_range,
+                        );
+                    }
+                }
+                query_ix = 0;
+            }
+            chunk_ix += chunk.text.len();
+        }
+
+        words
+    }
 }
 
 fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {

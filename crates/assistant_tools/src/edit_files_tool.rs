@@ -96,18 +96,17 @@ impl Tool for EditFilesTool {
             let mut chunks = stream.await?;
 
             let mut changed_buffers = HashSet::default();
-            let mut applied_edits = 0;
+            let mut bad_searches = Vec::new();
 
+            #[derive(Debug)]
             struct BadSearch {
                 file_path: String,
                 search: String,
                 matches: usize,
             }
 
-            let mut bad_searches = Vec::new();
-
             while let Some(chunk) = chunks.stream.next().await {
-                for action in parser.parse_chunk(&chunk?) {
+                for action in dbg!(parser.parse_chunk(&chunk?)) {
                     let project_path = project.read_with(&cx, |project, cx| {
                         let worktree_root_name = action
                             .file_path()
@@ -132,6 +131,7 @@ impl Tool for EditFilesTool {
                         .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?
                         .await?;
 
+                    #[derive(Debug)]
                     enum DiffResult {
                         InvalidReplace(BadSearch),
                         Diff(language::Diff),
@@ -197,7 +197,7 @@ impl Tool for EditFilesTool {
                         )),
                     }?;
 
-                    match result {
+                    match dbg!(result) {
                         DiffResult::InvalidReplace(invalid_replace) => {
                             bad_searches.push(invalid_replace);
                         }
@@ -206,36 +206,53 @@ impl Tool for EditFilesTool {
                                 buffer.update(&mut cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
 
                             changed_buffers.insert(buffer);
-
-                            applied_edits += 1;
                         }
                     }
                 }
             }
 
+            let mut answer = match changed_buffers.len() {
+                0 => "No files were edited.".to_string(),
+                1 => "Successfully edited ".to_string(),
+                _ => "Successfully edited these files:\n\n".to_string(),
+            };
+
             // Save each buffer once at the end
             for buffer in changed_buffers {
-                project
-                    .update(&mut cx, |project, cx| project.save_buffer(buffer, cx))?
-                    .await?;
+                let (path, save_task) = project.update(&mut cx, |project, cx| {
+                    let path = buffer
+                        .read(cx)
+                        .file()
+                        .map(|file| file.path().display().to_string());
+
+                    let task = project.save_buffer(buffer.clone(), cx);
+
+                    (path, task)
+                })?;
+
+                save_task.await?;
+
+                if let Some(path) = path {
+                    writeln!(&mut answer, "{}", path)?;
+                }
             }
 
             let errors = parser.errors();
 
-            if errors.is_empty() && bad_searches.is_empty() {
-                Ok("Successfully applied all edits".into())
+            if errors.is_empty() {
+                Ok(answer.trim_end().to_string())
             } else {
-                let mut error_message = String::new();
+                writeln!(&mut answer, "\nThe following errors occurred:")?;
 
                 if !bad_searches.is_empty() {
                     writeln!(
-                        &mut error_message,
+                        &mut answer,
                         "These searches failed because they didn't match exactly one string:"
                     )?;
 
                     for replace in bad_searches {
                         writeln!(
-                            &mut error_message,
+                            &mut answer,
                             "- '{}' appears {} times in {}",
                             replace.search.replace("\r", "\\r").replace("\n", "\\n"),
                             replace.matches,
@@ -243,30 +260,22 @@ impl Tool for EditFilesTool {
                         )?;
                     }
 
-                    writeln!(&mut error_message, "Make sure to use exact queries.")?;
+                    writeln!(&mut answer, "Make sure to use exact queries.")?;
                 }
 
                 if !errors.is_empty() {
-                    if !error_message.is_empty() {
-                        writeln!(&mut error_message, "\n")?;
+                    if !answer.is_empty() {
+                        writeln!(&mut answer, "\n")?;
                     }
 
-                    writeln!(&mut error_message, "Some blocks failed to parse:")?;
+                    writeln!(&mut answer, "These SEARCH/REPLACE blocks failed to parse:")?;
 
                     for error in errors {
-                        writeln!(&mut error_message, "- {}", error)?;
+                        writeln!(&mut answer, "- {}", error)?;
                     }
                 }
 
-                if applied_edits > 0 {
-                    Err(anyhow!(
-                        "Applied {} edit(s), but there were errors.\n\n{}",
-                        applied_edits,
-                        error_message
-                    ))
-                } else {
-                    Err(anyhow!(error_message))
-                }
+                Err(anyhow!(answer))
             }
         })
     }
