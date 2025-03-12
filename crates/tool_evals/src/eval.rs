@@ -2,7 +2,7 @@ use crate::headless_assistant::{
     authenticate_model_provider, find_model, HeadlessAppState, HeadlessAssistant,
 };
 use anyhow::anyhow;
-use assistant2::{Message, RequestKind};
+use assistant2::RequestKind;
 use gpui::{App, Task};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use serde::Deserialize;
@@ -19,8 +19,12 @@ pub struct Eval {
     pub model_name: String,
     pub editor_model_provider_id: LanguageModelProviderId,
     pub editor_model_name: String,
-    pub original_diff: Option<String>,
-    pub original_message: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct EvalOutput {
+    pub diff: String,
+    pub last_message: String,
 }
 
 #[derive(Deserialize)]
@@ -45,22 +49,7 @@ impl Eval {
         let setup_contents = std::fs::read_to_string(eval_path.join("setup.json"))?;
         let setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
 
-        // TODO: "original" seems confusing - rename?
-        let original_diff_path = eval_path.join("original.diff");
-        let original_diff = if std::fs::exists(&original_diff_path)? {
-            Some(std::fs::read_to_string(&original_diff_path)?)
-        } else {
-            None
-        };
-
-        let original_message_path = eval_path.join("original_message.txt");
-        let original_message = if std::fs::exists(&original_message_path)? {
-            Some(std::fs::read_to_string(&original_message_path)?)
-        } else {
-            None
-        };
-
-        setup.checkout_repo(repo_path)?;
+        checkout_repo(&setup, repo_path)?;
 
         Ok(Eval {
             repo_path: repo_path.to_path_buf(),
@@ -70,8 +59,6 @@ impl Eval {
             model_name,
             editor_model_provider_id,
             editor_model_name,
-            original_diff,
-            original_message,
         })
     }
 
@@ -81,7 +68,7 @@ impl Eval {
         &self,
         app_state: Arc<HeadlessAppState>,
         cx: &mut App,
-    ) -> Task<anyhow::Result<Vec<Message>>> {
+    ) -> Task<anyhow::Result<EvalOutput>> {
         let model = match find_model(&self.model_name, cx) {
             Ok(model) => model,
             Err(err) => return Task::ready(Err(err)),
@@ -138,84 +125,103 @@ impl Eval {
 
             done_rx.recv().await??;
 
-            assistant.update(&mut cx, |assistant, cx| {
-                assistant
-                    .thread
-                    .read(cx)
-                    .messages()
-                    .cloned()
-                    .collect::<Vec<_>>()
+            let last_message = assistant
+                .update(&mut cx, |assistant, cx| {
+                    assistant.thread.read(cx).messages().last().cloned()
+                })?
+                .unwrap();
+            if last_message.role != language_model::Role::Assistant {
+                return Err(anyhow!("Last message is not from assistant"));
+            }
+
+            Ok(EvalOutput {
+                diff: repo_diff(&repo_path)?,
+                last_message: last_message.text,
             })
         })
     }
 }
 
-impl EvalSetup {
-    fn checkout_repo(&self, repo_path: &Path) -> anyhow::Result<()> {
-        if !repo_path.exists() {
-            if let Some(parent) = repo_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let mut child = std::process::Command::new("git")
-                .arg("clone")
-                .arg(&self.url)
-                .arg(repo_path)
-                .spawn()?;
-            let exit_status = child.wait()?;
-            if !exit_status.success() {
-                return Err(anyhow!(
-                    "git clone exited with failure status {exit_status}"
-                ));
-            }
+fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Result<()> {
+    if !repo_path.exists() {
+        if let Some(parent) = repo_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-
-        let output = std::process::Command::new("git")
-            .arg("remote")
-            .arg("get-url")
-            .arg("origin")
-            .current_dir(repo_path)
-            .output()?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "`git remote get-url origin` exited with failure status {}",
-                output.status
-            ));
-        }
-        let stdout = String::from_utf8(output.stdout)?;
-        let actual_origin = stdout.trim();
-        if actual_origin != self.url {
-            return Err(anyhow!(
-                "remote origin {} does not match expected origin {}",
-                actual_origin,
-                self.url
-            ));
-        }
-
         let mut child = std::process::Command::new("git")
-            .arg("reset")
-            .arg("--hard")
-            .arg("HEAD")
-            .current_dir(repo_path)
+            .arg("clone")
+            .arg(&eval_setup.url)
+            .arg(repo_path)
             .spawn()?;
         let exit_status = child.wait()?;
         if !exit_status.success() {
             return Err(anyhow!(
-                "`git reset --hard` exited with failure status {exit_status}"
+                "git clone exited with failure status {exit_status}"
             ));
         }
-
-        let mut child = std::process::Command::new("git")
-            .arg("checkout")
-            .arg(&self.base_sha)
-            .current_dir(repo_path)
-            .spawn()?;
-        let exit_status = child.wait()?;
-        if !exit_status.success() {
-            return Err(anyhow!(
-                "`git checkout` exited with failure status {exit_status}"
-            ));
-        }
-
-        Ok(())
     }
+
+    let output = std::process::Command::new("git")
+        .arg("remote")
+        .arg("get-url")
+        .arg("origin")
+        .current_dir(repo_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "`git remote get-url origin` exited with failure status {}",
+            output.status
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)?;
+    let actual_origin = stdout.trim();
+    if actual_origin != eval_setup.url {
+        return Err(anyhow!(
+            "remote origin {} does not match expected origin {}",
+            actual_origin,
+            eval_setup.url
+        ));
+    }
+
+    let mut child = std::process::Command::new("git")
+        .arg("reset")
+        .arg("--hard")
+        .arg("HEAD")
+        .current_dir(repo_path)
+        .spawn()?;
+    let exit_status = child.wait()?;
+    if !exit_status.success() {
+        return Err(anyhow!(
+            "`git reset --hard` exited with failure status {exit_status}"
+        ));
+    }
+
+    let mut child = std::process::Command::new("git")
+        .arg("checkout")
+        .arg(&eval_setup.base_sha)
+        .current_dir(repo_path)
+        .spawn()?;
+    let exit_status = child.wait()?;
+    if !exit_status.success() {
+        return Err(anyhow!(
+            "`git checkout` exited with failure status {exit_status}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn repo_diff(repo_path: &Path) -> anyhow::Result<String> {
+    // Run git diff in repo_path
+    let output = std::process::Command::new("git")
+        .arg("diff")
+        .current_dir(repo_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "`git diff` exited with failure status {}",
+            output.status
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)?;
+    Ok(stdout)
 }

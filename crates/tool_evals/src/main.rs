@@ -1,17 +1,17 @@
 mod eval;
 mod headless_assistant;
+mod judge;
 
 use clap::Parser;
 use eval::Eval;
 use gpui::Application;
+use judge::Judge;
 use language_model::{LanguageModelProviderId, ANTHROPIC_PROVIDER_ID};
 use reqwest_client::ReqwestClient;
 use std::{path::PathBuf, sync::Arc};
 
 // todo! no hardcoded system prompt
-const SYSTEM_PROMPT: &str = "You are an expert software engineering assistant in a code editor. \
-    Use the tools provided to respond to the user's query. \
-    If the user requests changes, these should be written to files using the lua interpreter.";
+const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
 
 #[derive(Parser, Debug)]
 #[command(
@@ -30,12 +30,18 @@ struct Args {
     /// Name of the model (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model_name: String,
-    /// Name of the model provider (default: value of `--provider_id`).
+    /// Name of the editor model provider (default: value of `--provider_id`).
     #[arg(long)]
     editor_model_provider_id: Option<String>,
     /// Name of the editor model (default: value of `--model_name`).
     #[arg(long)]
     editor_model_name: Option<String>,
+    /// Name of the judge model provider (default: value of `--provider_id`).
+    #[arg(long)]
+    judge_model_provider_id: Option<String>,
+    /// Name of the judge model (default: value of `--model_name`).
+    #[arg(long)]
+    judge_model_name: Option<String>,
 }
 
 fn main() {
@@ -74,6 +80,18 @@ fn main() {
         args.model_name.clone()
     };
 
+    let judge_model_provider_id = if let Some(provider_id) = args.judge_model_provider_id {
+        LanguageModelProviderId(provider_id.into())
+    } else {
+        provider_id.clone()
+    };
+
+    let judge_model_name = if let Some(model_name) = args.judge_model_name {
+        model_name
+    } else {
+        args.model_name.clone()
+    };
+
     app.run(move |cx| {
         let app_state = headless_assistant::init(cx);
 
@@ -92,9 +110,19 @@ fn main() {
                 )
                 .unwrap();
 
+                let judge = Judge::load(
+                    &eval_path,
+                    judge_model_provider_id.clone(),
+                    judge_model_name.clone(),
+                )
+                .unwrap();
+
                 let task = cx.update(|cx| eval.run(app_state.clone(), cx)).unwrap();
                 match task.await {
-                    Ok(response) => println!("Response: {:?}", response),
+                    Ok(result) => {
+                        println!("Result: {:?}", result);
+                        // judge.run(&result).unwrap();
+                    }
                     Err(err) => println!("Error: {}", err),
                 }
             }
