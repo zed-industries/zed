@@ -205,9 +205,9 @@ impl BranchListDelegate {
             return;
         };
         cx.spawn(|_, cx| async move {
-            cx.update(|cx| repo.read(cx).create_branch(&new_branch_name))?
+            cx.update(|cx| repo.read(cx).create_branch(new_branch_name.to_string()))?
                 .await??;
-            cx.update(|cx| repo.read(cx).change_branch(&new_branch_name))?
+            cx.update(|cx| repo.read(cx).change_branch(new_branch_name.to_string()))?
                 .await??;
             Ok(())
         })
@@ -358,7 +358,7 @@ impl PickerDelegate for BranchListDelegate {
                     let cx = cx.to_async();
 
                     anyhow::Ok(async move {
-                        cx.update(|cx| repo.read(cx).change_branch(&branch.name))?
+                        cx.update(|cx| repo.read(cx).change_branch(branch.name.to_string()))?
                             .await?
                     })
                 })??;

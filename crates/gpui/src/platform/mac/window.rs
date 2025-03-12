@@ -1498,18 +1498,41 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.fullscreen_restore_bounds = lock.bounds();
-    unsafe {
-        lock.native_window.setTitlebarAppearsTransparent_(NO);
+
+    if is_macos_version_at_least(15, 3, 0) {
+        unsafe {
+            lock.native_window.setTitlebarAppearsTransparent_(NO);
+        }
     }
 }
 
 extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if lock.transparent_titlebar {
+
+    if is_macos_version_at_least(15, 3, 0) && lock.transparent_titlebar {
         unsafe {
             lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
+    }
+}
+
+#[repr(C)]
+struct NSOperatingSystemVersion {
+    major_version: NSInteger,
+    minor_version: NSInteger,
+    patch_version: NSInteger,
+}
+
+fn is_macos_version_at_least(major: NSInteger, minor: NSInteger, patch: NSInteger) -> bool {
+    unsafe {
+        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+        let os_version: NSOperatingSystemVersion = msg_send![process_info, operatingSystemVersion];
+        (os_version.major_version > major)
+            || (os_version.major_version == major && os_version.minor_version > minor)
+            || (os_version.major_version == major
+                && os_version.minor_version == minor
+                && os_version.patch_version >= patch)
     }
 }
 

@@ -112,7 +112,7 @@ impl AssistantPanel {
             log::info!("[assistant2-debug] initializing ThreadStore");
             let thread_store = workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
-                ThreadStore::new(project, tools.clone(), cx)
+                ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
             })??;
             log::info!("[assistant2-debug] finished initializing ThreadStore");
 

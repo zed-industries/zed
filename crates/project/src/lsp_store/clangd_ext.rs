@@ -35,6 +35,10 @@ pub fn register_notifications(
     }
     let server_id = language_server.server_id();
 
+    // TODO: inactiveRegions support needs do add diagnostics, not replace them as `this.update_diagnostics` call below does
+    if true {
+        return;
+    }
     language_server
         .on_notification::<InactiveRegions, _>({
             let adapter = adapter.clone();
