@@ -702,7 +702,10 @@ impl GitPanel {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
 
-        if self.is_focused(window, cx) {
+        if window
+            .focused(cx)
+            .map_or(false, |focused| self.focus_handle == focused)
+        {
             dispatch_context.add("menu");
             dispatch_context.add("ChangesList");
         }
@@ -712,12 +715,6 @@ impl GitPanel {
         }
 
         dispatch_context
-    }
-
-    fn is_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
-        window
-            .focused(cx)
-            .map_or(false, |focused| self.focus_handle == focused)
     }
 
     fn close_panel(&mut self, _: &Close, _window: &mut Window, cx: &mut Context<Self>) {
@@ -3811,8 +3808,12 @@ impl Render for GitPanel {
 }
 
 impl Focusable for GitPanel {
-    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        if self.entries.is_empty() {
+            self.commit_editor.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
