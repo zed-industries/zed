@@ -58,11 +58,10 @@ impl Github {
         }
     }
 
-    pub fn from_self_hosted_remote_url(remote_url: &str) -> Result<Self> {
+    pub fn from_remote_url(remote_url: &str) -> Result<Self> {
         let host = get_host_from_git_remote_url(remote_url)?;
-
         if host == "github.com" {
-            bail!("the GitHub instance is not self-hosted")
+            bail!("the GitHub instance is not self-hosted");
         }
 
         // TODO: detecting self hosted instances by checking whether "github" is in the url or not
@@ -243,14 +242,14 @@ mod tests {
     #[test]
     fn test_invalid_self_hosted_remote_url() {
         let remote_url = "git@github.com:zed-industries/zed.git";
-        let github = Github::from_self_hosted_remote_url(remote_url);
+        let github = Github::from_remote_url(remote_url);
         assert!(github.is_err());
     }
 
     #[test]
-    fn test_from_self_hosted_remote_url_ssh() {
+    fn test_from_remote_url_ssh() {
         let remote_url = "git@github.my-enterprise.com:zed-industries/zed.git";
-        let github = Github::from_self_hosted_remote_url(remote_url).unwrap();
+        let github = Github::from_remote_url(remote_url).unwrap();
 
         assert!(!github.supports_avatars());
         assert_eq!(github.name, "GitHub Self-Hosted".to_string());
@@ -261,9 +260,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_self_hosted_remote_url_https() {
+    fn test_from_remote_url_https() {
         let remote_url = "https://github.my-enterprise.com/zed-industries/zed.git";
-        let github = Github::from_self_hosted_remote_url(remote_url).unwrap();
+        let github = Github::from_remote_url(remote_url).unwrap();
 
         assert!(!github.supports_avatars());
         assert_eq!(github.name, "GitHub Self-Hosted".to_string());
@@ -276,7 +275,7 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_self_hosted_ssh_url() {
         let remote_url = "git@github.my-enterprise.com:zed-industries/zed.git";
-        let parsed_remote = Github::from_self_hosted_remote_url(remote_url)
+        let parsed_remote = Github::from_remote_url(remote_url)
             .unwrap()
             .parse_remote_url(remote_url)
             .unwrap();
@@ -293,7 +292,7 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_self_hosted_https_url_with_subgroup() {
         let remote_url = "https://github.my-enterprise.com/zed-industries/zed.git";
-        let parsed_remote = Github::from_self_hosted_remote_url(remote_url)
+        let parsed_remote = Github::from_remote_url(remote_url)
             .unwrap()
             .parse_remote_url(remote_url)
             .unwrap();
