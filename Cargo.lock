@@ -17234,13 +17234,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_uiua"
-version = "0.0.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zeno"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
