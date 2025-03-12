@@ -12,6 +12,7 @@ use language_model::{
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -145,17 +146,29 @@ impl Tool for EditFilesTool {
                 }
             }
 
+            let mut answer = match changed_buffers.len() {
+                0 => "No files were edited.".to_string(),
+                1 => "Successfully edited ".to_string(),
+                _ => "Successfully edited these files:\n\n".to_string(),
+            };
+
             // Save each buffer once at the end
             for buffer in changed_buffers {
                 project
-                    .update(&mut cx, |project, cx| project.save_buffer(buffer, cx))?
+                    .update(&mut cx, |project, cx| {
+                        if let Some(file) = buffer.read(&cx).file() {
+                            let _ = write!(&mut answer, "{}\n\n", &file.path().display());
+                        }
+
+                        project.save_buffer(buffer, cx)
+                    })?
                     .await?;
             }
 
             let errors = parser.errors();
 
             if errors.is_empty() {
-                Ok("Successfully applied all edits".into())
+                Ok(answer.trim_end().to_string())
             } else {
                 let error_message = errors
                     .iter()
