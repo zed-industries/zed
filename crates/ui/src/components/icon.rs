@@ -8,7 +8,7 @@ pub use decorated_icon::*;
 use gpui::{img, svg, AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation};
 pub use icon_decoration::*;
 use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoStaticStr};
+use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
 use crate::{prelude::*, Indicator};
@@ -109,6 +109,7 @@ impl IconSize {
 
 #[derive(
     Debug,
+    Display,
     PartialEq,
     Eq,
     Copy,

@@ -16,11 +16,12 @@ default = []
 
 [dependencies]
 client.workspace = true
+collections.workspace = true
 component.workspace = true
 gpui.workspace = true
 languages.workspace = true
+notifications.workspace = true
 project.workspace = true
+strum.workspace = true
 ui.workspace = true
 workspace.workspace = true
-notifications.workspace = true
-collections.workspace = true

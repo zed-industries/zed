@@ -3051,6 +3051,7 @@ dependencies = [
  "languages",
  "notifications",
  "project",
+ "strum",
  "ui",
  "workspace",
 ]

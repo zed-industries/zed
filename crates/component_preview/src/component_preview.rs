@@ -18,6 +18,7 @@ use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
+use strum::IntoEnumIterator;
 use ui::{prelude::*, Divider, ListItem, ListSubHeader};
 
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
@@ -62,6 +63,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
 enum PreviewEntry {
     AllComponents,
+    AllIcons,
     Separator,
     Component(ComponentMetadata),
     SectionHeader(SharedString),
@@ -83,6 +85,7 @@ impl From<SharedString> for PreviewEntry {
 enum PreviewPage {
     #[default]
     AllComponents,
+    AllIcons,
     Component(ComponentId),
 }
 
@@ -196,6 +199,7 @@ impl ComponentPreview {
 
         // Always show all components first
         entries.push(PreviewEntry::AllComponents);
+        entries.push(PreviewEntry::AllIcons);
         entries.push(PreviewEntry::Separator);
 
         for scope in known_scopes.iter() {
@@ -245,6 +249,20 @@ impl ComponentPreview {
         entry: &PreviewEntry,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let custom_entry = |ix: usize, label: &str, page: PreviewPage| {
+            let selected = self.active_page == page.clone();
+
+            ListItem::new(ix)
+                .child(Label::new(label.to_string()).color(Color::Default))
+                .selectable(true)
+                .toggle_state(selected)
+                .inset(true)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_active_page(page.clone(), cx);
+                }))
+                .into_any_element()
+        };
+
         match entry {
             PreviewEntry::Component(component_metadata) => {
                 let id = component_metadata.id();
@@ -264,18 +282,9 @@ impl ComponentPreview {
                 .inset(true)
                 .into_any_element(),
             PreviewEntry::AllComponents => {
-                let selected = self.active_page == PreviewPage::AllComponents;
-
-                ListItem::new(ix)
-                    .child(Label::new("All Components").color(Color::Default))
-                    .selectable(true)
-                    .toggle_state(selected)
-                    .inset(true)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_active_page(PreviewPage::AllComponents, cx);
-                    }))
-                    .into_any_element()
+                custom_entry(ix, "All Components", PreviewPage::AllComponents)
             }
+            PreviewEntry::AllIcons => custom_entry(ix, "All Icons", PreviewPage::AllIcons),
             PreviewEntry::Separator => ListItem::new(ix)
                 .child(h_flex().pt_3().child(Divider::horizontal_dashed()))
                 .into_any_element(),
@@ -303,6 +312,7 @@ impl ComponentPreview {
                             .render_scope_header(ix, shared_string.clone(), window, cx)
                             .into_any_element(),
                         PreviewEntry::AllComponents => div().w_full().h_0().into_any_element(),
+                        PreviewEntry::AllIcons => div().w_full().h_0().into_any_element(),
                         PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
                     })
                     .unwrap()
@@ -431,6 +441,34 @@ impl ComponentPreview {
             });
         }
     }
+
+    fn render_icon_preview(&self, icon: IconName, cx: &App) -> impl IntoElement {
+        v_flex()
+            .items_center()
+            .justify_center()
+            .flex_none()
+            .size_10()
+            .rounded_md()
+            .bg(cx.theme().colors().surface_background)
+            .child(Icon::new(icon))
+    }
+
+    fn render_all_icons(&self, cx: &App) -> impl IntoElement {
+        let all_icons = IconName::iter().collect::<Vec<_>>();
+
+        div()
+            .p_8()
+            .flex()
+            .items_start()
+            .justify_start()
+            .flex_wrap()
+            .gap_1()
+            .children(
+                all_icons
+                    .into_iter()
+                    .map(|icon| self.render_icon_preview(icon, cx)),
+            )
+    }
 }
 
 impl Render for ComponentPreview {
@@ -484,6 +522,7 @@ impl Render for ComponentPreview {
             )
             .child(match active_page {
                 PreviewPage::AllComponents => self.render_all_components().into_any_element(),
+                PreviewPage::AllIcons => self.render_all_icons(cx).into_any_element(),
                 PreviewPage::Component(id) => self
                     .render_component_page(&id, window, cx)
                     .into_any_element(),
