@@ -6351,7 +6351,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Set a delay for the next assertions
     project.update(cx, |project, cx| {
-        project.git_store().update(cx, |git, cx| {
+        project.git_store().update(cx, |git, _cx| {
             git.simulate_slow_index_write = true;
         });
     });

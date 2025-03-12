@@ -13,7 +13,7 @@ pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner,
     secondary_diff: Option<Entity<BufferDiff>>,
-    pending_ops: usize,
+    version: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -833,20 +833,15 @@ impl BufferDiff {
         self.secondary_diff.clone()
     }
 
-    pub fn start_pending_op(&mut self) {
-        self.pending_ops += 1;
-        dbg!("start_pending_op", self.pending_ops);
+    pub fn version(&self) -> usize {
+        self.version
     }
 
-    pub fn end_pending_op(&mut self, result: &Option<anyhow::Result<()>>, cx: &mut Context<Self>) {
-        self.pending_ops = self.pending_ops.saturating_sub(1);
-        dbg!("end_pending_op", self.pending_ops);
-        if let Some(Err(_)) = result {
-            if let Some(changed_range) = self.clear_pending_hunks() {
-                cx.emit(BufferDiffEvent::DiffChanged {
-                    changed_range: Some(changed_range),
-                });
-            }
+    pub fn failed_to_persist(&mut self, cx: &mut Context<Self>) {
+        if let Some(changed_range) = self.clear_pending_hunks() {
+            cx.emit(BufferDiffEvent::DiffChanged {
+                changed_range: Some(changed_range),
+            });
         }
     }
 
@@ -867,6 +862,7 @@ impl BufferDiff {
         file_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<Rope> {
+        self.version += 1;
         let new_index_text = self.inner.stage_or_unstage_hunks(
             &self.secondary_diff.as_ref()?.read(cx).inner,
             stage,
@@ -950,9 +946,10 @@ impl BufferDiff {
         new_snapshot: BufferDiffSnapshot,
         language_changed: bool,
         secondary_changed_range: Option<Range<Anchor>>,
+        read_at_version: usize,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
-        let changed_range = self.set_state(new_snapshot.inner, buffer);
+        let changed_range = self.set_state(new_snapshot.inner, read_at_version, buffer);
         if language_changed {
             cx.emit(BufferDiffEvent::LanguageChanged);
         }
@@ -982,6 +979,7 @@ impl BufferDiff {
     fn set_state(
         &mut self,
         mut new_state: BufferDiffInner,
+        read_at_version: usize,
         buffer: &text::BufferSnapshot,
     ) -> Option<Range<Anchor>> {
         let mut changed_range = match (self.inner.base_text_exists, new_state.base_text_exists) {
@@ -992,8 +990,7 @@ impl BufferDiff {
             _ => Some(text::Anchor::MIN..text::Anchor::MAX),
         };
 
-        dbg!("set state", self.pending_ops);
-        if self.pending_ops == 0 {
+        if read_at_version == self.version {
             if let Some(cleared_range) = self.clear_pending_hunks() {
                 if let Some(changed_range) = changed_range.as_mut() {
                     changed_range.start = changed_range.start.min(&cleared_range.start, &buffer);
@@ -1007,6 +1004,7 @@ impl BufferDiff {
         }
 
         self.inner = new_state;
+        self.version += 1;
         changed_range
     }
 
@@ -1100,7 +1098,7 @@ impl BufferDiff {
                 return;
             };
             this.update(&mut cx, |this, _| {
-                this.set_state(snapshot, &buffer);
+                this.set_state(snapshot, this.version, &buffer);
             })
             .log_err();
             drop(complete_on_drop)
@@ -1120,7 +1118,7 @@ impl BufferDiff {
             buffer_id: buffer.remote_id(),
             inner: BufferDiff::build_empty(buffer, cx),
             secondary_diff: None,
-            pending_ops: 0,
+            version: 0,
         }
     }
 
@@ -1144,7 +1142,7 @@ impl BufferDiff {
             buffer_id: buffer.read(cx).remote_id(),
             inner: snapshot,
             secondary_diff: None,
-            pending_ops: 0,
+            version: 0,
         }
     }
 
@@ -1158,7 +1156,7 @@ impl BufferDiff {
             cx,
         );
         let snapshot = cx.background_executor().block(snapshot);
-        let changed_range = self.set_state(snapshot, &buffer);
+        let changed_range = self.set_state(snapshot, self.version, &buffer);
         cx.emit(BufferDiffEvent::DiffChanged { changed_range });
     }
 }
@@ -1674,13 +1672,13 @@ mod tests {
 
             let unstaged_diff = cx.new(|cx| {
                 let mut diff = BufferDiff::new(&buffer, cx);
-                diff.set_state(unstaged, &buffer);
+                diff.set_state(unstaged, diff.version, &buffer);
                 diff
             });
 
             let uncommitted_diff = cx.new(|cx| {
                 let mut diff = BufferDiff::new(&buffer, cx);
-                diff.set_state(uncommitted, &buffer);
+                diff.set_state(uncommitted, diff.version, &buffer);
                 diff.set_secondary_diff(unstaged_diff);
                 diff
             });
@@ -1917,7 +1915,6 @@ mod tests {
         ) -> Entity<BufferDiff> {
             let inner = BufferDiff::build_sync(working_copy.text.clone(), head_text, cx);
             let secondary = BufferDiff {
-                pending_ops: 0,
                 buffer_id: working_copy.remote_id(),
                 inner: BufferDiff::build_sync(
                     working_copy.text.clone(),
@@ -1925,13 +1922,14 @@ mod tests {
                     cx,
                 ),
                 secondary_diff: None,
+                version: 0,
             };
             let secondary = cx.new(|_| secondary);
             cx.new(|_| BufferDiff {
-                pending_ops: 0,
                 buffer_id: working_copy.remote_id(),
                 inner,
                 secondary_diff: Some(secondary),
+                version: 0,
             })
         }
 

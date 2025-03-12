@@ -296,7 +296,6 @@ impl GitStore {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some((repo, path)) = this.repository_and_path_for_buffer_id(buffer_id, cx) {
-                diff.update(cx, |diff, _| diff.start_pending_op());
                 let recv = repo.update(cx, |repo, cx| {
                     repo.set_index_text(
                         &path,
@@ -318,12 +317,10 @@ impl GitStore {
                             .await;
                     }
 
-                    diff.update(&mut cx, |diff, cx| {
-                        diff.end_pending_op(&result, cx);
-                    })
-                    .ok();
                     if let Some(result) = result {
                         if let Err(error) = result {
+                            diff.update(&mut cx, |diff, cx| diff.failed_to_persist(cx))
+                                .ok();
                             this.update(&mut cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
                                 .ok();
                         }

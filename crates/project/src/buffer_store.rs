@@ -209,6 +209,10 @@ impl BufferDiffState {
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
+        let unstaged_diff_version = unstaged_diff.as_ref().map(|diff| diff.read(cx).version());
+        let uncommitted_diff_version = uncommitted_diff
+            .as_ref()
+            .map(|diff| diff.read(cx).version());
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
@@ -253,18 +257,32 @@ impl BufferDiffState {
                 }
             }
 
-            let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
-                unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
-            {
-                unstaged_diff.update(&mut cx, |diff, cx| {
-                    diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
-                })?
-            } else {
-                None
-            };
+            let unstaged_changed_range =
+                if let Some(((unstaged_diff, new_unstaged_diff), unstaged_diff_version)) =
+                    unstaged_diff
+                        .as_ref()
+                        .zip(new_unstaged_diff.clone())
+                        .zip(unstaged_diff_version)
+                {
+                    unstaged_diff.update(&mut cx, |diff, cx| {
+                        diff.set_snapshot(
+                            &buffer,
+                            new_unstaged_diff,
+                            language_changed,
+                            None,
+                            unstaged_diff_version,
+                            cx,
+                        )
+                    })?
+                } else {
+                    None
+                };
 
-            if let Some((uncommitted_diff, new_uncommitted_diff)) =
-                uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
+            if let Some(((uncommitted_diff, new_uncommitted_diff), uncommitted_diff_version)) =
+                uncommitted_diff
+                    .as_ref()
+                    .zip(new_uncommitted_diff.clone())
+                    .zip(uncommitted_diff_version)
             {
                 uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
                     uncommitted_diff.set_snapshot(
@@ -272,6 +290,7 @@ impl BufferDiffState {
                         new_uncommitted_diff,
                         language_changed,
                         unstaged_changed_range,
+                        uncommitted_diff_version,
                         cx,
                     );
                 })?;
