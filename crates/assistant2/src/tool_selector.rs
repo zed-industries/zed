@@ -20,13 +20,14 @@ impl ToolSelector {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
+            let icon_position = IconPosition::End;
             let tools_by_source = self.tools.tools_by_source(cx);
 
             let all_tools_enabled = self.tools.are_all_tools_enabled();
             menu = menu.header("Tools").toggleable_entry(
                 "All Tools",
                 all_tools_enabled,
-                IconPosition::End,
+                icon_position,
                 None,
                 {
                     let tools = self.tools.clone();
@@ -61,31 +62,51 @@ impl ToolSelector {
                     tools.sort_by(|(_, name_a, _), (_, name_b, _)| name_a.cmp(name_b));
                 }
 
-                menu = match source {
+                menu = match &source {
                     ToolSource::Native => menu.header("Zed"),
-                    ToolSource::ContextServer { id } => menu.separator().header(id),
+                    ToolSource::ContextServer { id } => {
+                        let all_tools_from_source_enabled =
+                            self.tools.are_all_tools_from_source_enabled(&source);
+
+                        menu.separator().header(id).toggleable_entry(
+                            "All Tools",
+                            all_tools_from_source_enabled,
+                            icon_position,
+                            None,
+                            {
+                                let tools = self.tools.clone();
+                                let source = source.clone();
+                                move |_window, cx| {
+                                    if all_tools_from_source_enabled {
+                                        tools.disable_source(source.clone(), cx);
+                                    } else {
+                                        tools.enable_source(&source);
+                                    }
+                                }
+                            },
+                        )
+                    }
                 };
 
                 for (source, name, is_enabled) in tools {
-                    menu =
-                        menu.toggleable_entry(name.clone(), is_enabled, IconPosition::End, None, {
-                            let tools = self.tools.clone();
-                            move |_window, _cx| {
-                                if name.as_ref() == ScriptingTool::NAME {
-                                    if is_enabled {
-                                        tools.disable_scripting_tool();
-                                    } else {
-                                        tools.enable_scripting_tool();
-                                    }
+                    menu = menu.toggleable_entry(name.clone(), is_enabled, icon_position, None, {
+                        let tools = self.tools.clone();
+                        move |_window, _cx| {
+                            if name.as_ref() == ScriptingTool::NAME {
+                                if is_enabled {
+                                    tools.disable_scripting_tool();
                                 } else {
-                                    if is_enabled {
-                                        tools.disable(source.clone(), &[name.clone()]);
-                                    } else {
-                                        tools.enable(source.clone(), &[name.clone()]);
-                                    }
+                                    tools.enable_scripting_tool();
+                                }
+                            } else {
+                                if is_enabled {
+                                    tools.disable(source.clone(), &[name.clone()]);
+                                } else {
+                                    tools.enable(source.clone(), &[name.clone()]);
                                 }
                             }
-                        });
+                        }
+                    });
                 }
             }
 
