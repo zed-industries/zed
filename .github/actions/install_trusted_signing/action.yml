@@ -1,0 +1,64 @@
+name: "Trusted Signing on Windows"
+description: "Install trusted signing on Windows."
+
+# Modified from https://github.com/Azure/trusted-signing-action
+runs:
+  using: "composite"
+  steps:
+    - name: Set variables
+      id: set-variables
+      shell: "pwsh"
+      run: |
+        $defaultPath = $env:PSModulePath -split ';' | Select-Object -First 1
+        "PSMODULEPATH=$defaultPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+        "TRUSTED_SIGNING_MODULE_VERSION=0.5.3" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        "BUILD_TOOLS_NUGET_VERSION=10.0.22621.3233" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        "TRUSTED_SIGNING_NUGET_VERSION=1.0.53" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        "DOTNET_SIGNCLI_NUGET_VERSION=0.9.1-beta.24469.1" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+    - name: Cache TrustedSigning PowerShell module
+      id: cache-module
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-module
+      with:
+        path: ${{ steps.set-variables.outputs.PSMODULEPATH }}\TrustedSigning\${{ steps.set-variables.outputs.TRUSTED_SIGNING_MODULE_VERSION }}
+        key: TrustedSigning-${{ steps.set-variables.outputs.TRUSTED_SIGNING_MODULE_VERSION }}
+      if: ${{ inputs.cache-dependencies == 'true' }}
+
+    - name: Cache Microsoft.Windows.SDK.BuildTools NuGet package
+      id: cache-buildtools
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-buildtools
+      with:
+        path: ~\AppData\Local\TrustedSigning\Microsoft.Windows.SDK.BuildTools\Microsoft.Windows.SDK.BuildTools.${{ steps.set-variables.outputs.BUILD_TOOLS_NUGET_VERSION }}
+        key: Microsoft.Windows.SDK.BuildTools-${{ steps.set-variables.outputs.BUILD_TOOLS_NUGET_VERSION }}
+      if: ${{ inputs.cache-dependencies == 'true' }}
+
+    - name: Cache Microsoft.Trusted.Signing.Client NuGet package
+      id: cache-tsclient
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-tsclient
+      with:
+        path: ~\AppData\Local\TrustedSigning\Microsoft.Trusted.Signing.Client\Microsoft.Trusted.Signing.Client.${{ steps.set-variables.outputs.TRUSTED_SIGNING_NUGET_VERSION }}
+        key: Microsoft.Trusted.Signing.Client-${{ steps.set-variables.outputs.TRUSTED_SIGNING_NUGET_VERSION }}
+      if: ${{ inputs.cache-dependencies == 'true' }}
+
+    - name: Cache SignCli NuGet package
+      id: cache-signcli
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-signcli
+      with:
+        path: ~\AppData\Local\TrustedSigning\sign\sign.${{ steps.set-variables.outputs.DOTNET_SIGNCLI_NUGET_VERSION }}
+        key: SignCli-${{ steps.set-variables.outputs.DOTNET_SIGNCLI_NUGET_VERSION }}
+      if: ${{ inputs.cache-dependencies == 'true' }}
+
+    - name: Install Trusted Signing module
+      shell: "pwsh"
+      run: |
+        Install-Module -Name TrustedSigning -RequiredVersion ${{ steps.set-variables.outputs.TRUSTED_SIGNING_MODULE_VERSION }} -Force -Repository PSGallery
+      if: ${{ inputs.cache-dependencies != 'true' || steps.cache-module.outputs.cache-hit != 'true' }}
