@@ -256,8 +256,8 @@ impl GitStore {
     fn project_id(&self) -> Option<ProjectId> {
         match &self.state {
             GitStoreState::Local { .. } => None,
-            GitStoreState::Ssh { project_id, .. } => Some(project_id.clone()),
-            GitStoreState::Remote { project_id, .. } => Some(project_id.clone()),
+            GitStoreState::Ssh { project_id, .. } => Some(*project_id),
+            GitStoreState::Remote { project_id, .. } => Some(*project_id),
         }
     }
 
@@ -512,7 +512,7 @@ impl GitStore {
                 project_id,
             } => {
                 let client = upstream_client.clone();
-                let project_id = project_id.clone();
+                let project_id = *project_id;
                 cx.background_executor().spawn(async move {
                     client
                         .request(proto::GitInit {
