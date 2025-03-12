@@ -37,8 +37,8 @@ jobs:
           fetch-depth: 350
       # 350 is arbitrary. Full fetch is ~18secs; 350 is ~5s
       # This will fail if your branch is >350 commits behind main
-      - name: Fetch main branch
-        run: git fetch origin main --depth=350
+      - name: Fetch main branch (or PR target) branch
+        run: git fetch origin ${{ github.event.pull_request.base.ref }} --depth=350
       - name:
         id: filter
         run: |
