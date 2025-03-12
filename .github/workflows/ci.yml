@@ -190,7 +190,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
-      - buildjet-32vcpu-ubuntu-2204
+      - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -282,18 +282,6 @@ jobs:
       needs.job_spec.outputs.run_tests == 'true'
     runs-on: windows-2025-16
     steps:
-      # Temporarily Collect some metadata about the hardware behind our runners.
-      - name: GHA Runner Info
-        run: |
-          Invoke-RestMethod -Headers @{"Metadata"="true"} -Method GET -Uri "http://169.254.169.254/metadata/instance/compute?api-version=2023-07-01" |
-            ConvertTo-Json -Depth 10 |
-            jq "{ vm_size: .vmSize, location: .location, os_disk_gb: (.storageProfile.osDisk.diskSizeGB | tonumber), rs_disk_gb: (.storageProfile.resourceDisk.size | tonumber / 1024) }"
-          @{
-              Cores = (Get-CimInstance Win32_Processor).NumberOfCores
-              vCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
-              RamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
-              cpuid = (Get-CimInstance Win32_Processor).Name.Trim()
-          } | ConvertTo-Json
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
         run: git config --system core.longpaths true
@@ -352,18 +340,6 @@ jobs:
       needs.job_spec.outputs.run_tests == 'true'
     runs-on: windows-2025-64
     steps:
-      # Temporarily Collect some metadata about the hardware behind our runners.
-      - name: GHA Runner Info
-        run: |
-          Invoke-RestMethod -Headers @{"Metadata"="true"} -Method GET -Uri "http://169.254.169.254/metadata/instance/compute?api-version=2023-07-01" |
-            ConvertTo-Json -Depth 10 |
-            jq "{ vm_size: .vmSize, location: .location, os_disk_gb: (.storageProfile.osDisk.diskSizeGB | tonumber), rs_disk_gb: (.storageProfile.resourceDisk.size | tonumber / 1024) }"
-          @{
-              Cores = (Get-CimInstance Win32_Processor).NumberOfCores
-              vCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
-              RamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
-              cpuid = (Get-CimInstance Win32_Processor).Name.Trim()
-          } | ConvertTo-Json
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
         run: git config --system core.longpaths true
@@ -428,16 +404,17 @@ jobs:
       - windows_tests
     if: |
       always() && (
-        (needs.job_spec.outputs.run_tests == 'false' && needs.style.result == 'success')
-        || (needs.linux_tests.result == 'true'
-            && needs.macos_tests.result == 'success'
-            && needs.linux_tests.result == 'success'
-            && needs.windows_tests.result == 'success'
-            && needs.windows_clippy.result == 'success'
-            && needs.build_remote_server.result == 'success'
-            && needs.migration_checks.result == 'success'
+        needs.style.result == 'success'
+        && (
+          needs.job_spec.outputs.run_tests == 'false'
+          || (needs.linux_tests.result == 'success'
+              && needs.macos_tests.result == 'success'
+              && needs.linux_tests.result == 'success'
+              && needs.windows_tests.result == 'success'
+              && needs.windows_clippy.result == 'success'
+              && needs.build_remote_server.result == 'success'
+              && needs.migration_checks.result == 'success')
         )
-      )
     steps:
       - name: All tests passed
         run: echo "All tests passed successfully!"
