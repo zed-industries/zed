@@ -3,10 +3,10 @@
 use std::{os::windows::ffi::OsStringExt, path::PathBuf};
 
 use windows::{
-    core::implement,
+    core::{implement, Interface, Ref, Result, BOOL, GUID, HRESULT, HSTRING},
     Win32::{
         Foundation::{
-            GetLastError, BOOL, CLASS_E_CLASSNOTAVAILABLE, ERROR_INSUFFICIENT_BUFFER, E_FAIL,
+            GetLastError, CLASS_E_CLASSNOTAVAILABLE, ERROR_INSUFFICIENT_BUFFER, E_FAIL,
             E_INVALIDARG, E_NOTIMPL, HINSTANCE, MAX_PATH,
         },
         Globalization::u_strlen,
@@ -21,7 +21,6 @@ use windows::{
         },
     },
 };
-use windows_core::{Interface, GUID, HRESULT, HSTRING};
 
 static mut DLL_INSTANCE: HINSTANCE = HINSTANCE(std::ptr::null_mut());
 
@@ -43,39 +42,33 @@ struct ExplorerCommandInjector;
 
 #[allow(non_snake_case)]
 impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
-    fn GetTitle(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
+    fn GetTitle(&self, _: Ref<IShellItemArray>) -> Result<windows_core::PWSTR> {
         let command_description =
             retrieve_command_description().unwrap_or(HSTRING::from("Open with Zed"));
         unsafe { SHStrDupW(&command_description) }
     }
 
-    fn GetIcon(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
+    fn GetIcon(&self, _: Ref<IShellItemArray>) -> Result<windows_core::PWSTR> {
         let Some(zed_exe) = get_zed_exe_path() else {
             return Err(E_FAIL.into());
         };
         unsafe { SHStrDupW(&HSTRING::from(zed_exe)) }
     }
 
-    fn GetToolTip(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
+    fn GetToolTip(&self, _: Ref<IShellItemArray>) -> Result<windows_core::PWSTR> {
         Err(E_NOTIMPL.into())
     }
 
-    fn GetCanonicalName(&self) -> windows_core::Result<windows_core::GUID> {
+    fn GetCanonicalName(&self) -> Result<windows_core::GUID> {
         Ok(GUID::zeroed())
     }
 
-    fn GetState(&self, _: Option<&IShellItemArray>, _: BOOL) -> windows_core::Result<u32> {
+    fn GetState(&self, _: Ref<IShellItemArray>, _: BOOL) -> Result<u32> {
         Ok(ECS_ENABLED.0 as _)
     }
 
-    fn Invoke(
-        &self,
-        psiitemarray: Option<&IShellItemArray>,
-        _: Option<&IBindCtx>,
-    ) -> windows_core::Result<()> {
-        let Some(items) = psiitemarray else {
-            return Ok(());
-        };
+    fn Invoke(&self, psiitemarray: Ref<IShellItemArray>, _: Ref<IBindCtx>) -> Result<()> {
+        let items = psiitemarray.ok()?;
         let Some(zed_exe) = get_zed_exe_path() else {
             return Ok(());
         };
@@ -93,11 +86,11 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
         Ok(())
     }
 
-    fn GetFlags(&self) -> windows_core::Result<u32> {
+    fn GetFlags(&self) -> Result<u32> {
         Ok(ECF_DEFAULT.0 as _)
     }
 
-    fn EnumSubCommands(&self) -> windows_core::Result<IEnumExplorerCommand> {
+    fn EnumSubCommands(&self) -> Result<IEnumExplorerCommand> {
         Err(E_NOTIMPL.into())
     }
 }
@@ -108,10 +101,10 @@ struct ExplorerCommandInjectorFactory;
 impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
     fn CreateInstance(
         &self,
-        punkouter: Option<&windows_core::IUnknown>,
+        punkouter: Ref<windows_core::IUnknown>,
         riid: *const windows_core::GUID,
         ppvobject: *mut *mut core::ffi::c_void,
-    ) -> windows_core::Result<()> {
+    ) -> Result<()> {
         unsafe {
             *ppvobject = std::ptr::null_mut();
         }
@@ -129,7 +122,7 @@ impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
         }
     }
 
-    fn LockServer(&self, _: BOOL) -> windows_core::Result<()> {
+    fn LockServer(&self, _: BOOL) -> Result<()> {
         Ok(())
     }
 }
@@ -171,11 +164,11 @@ extern "system" fn DllGetClassObject(
 
 fn get_zed_install_folder() -> Option<PathBuf> {
     let mut buf = vec![0u16; MAX_PATH as usize];
-    unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
+    unsafe { GetModuleFileNameW(Some(DLL_INSTANCE.into()), &mut buf) };
 
     while unsafe { GetLastError() } == ERROR_INSUFFICIENT_BUFFER {
         buf = vec![0u16; buf.len() * 2];
-        unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
+        unsafe { GetModuleFileNameW(Some(DLL_INSTANCE.into()), &mut buf) };
     }
     let len = unsafe { u_strlen(buf.as_ptr()) };
     let path: PathBuf = std::ffi::OsString::from_wide(&buf[..len as usize])
@@ -191,7 +184,7 @@ fn get_zed_exe_path() -> Option<String> {
 }
 
 #[inline]
-fn retrieve_command_description() -> windows_core::Result<HSTRING> {
+fn retrieve_command_description() -> Result<HSTRING> {
     #[cfg(all(feature = "stable", not(feature = "preview"), not(feature = "nightly")))]
     const REG_PATH: &str = "Software\\Classes\\ZedEditorContextMenu";
     #[cfg(all(feature = "preview", not(feature = "stable"), not(feature = "nightly")))]

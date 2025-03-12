@@ -5053,7 +5053,7 @@ version = "0.1.0"
 dependencies = [
  "windows 0.60.0",
  "windows-core 0.60.1",
- "windows-registry",
+ "windows-registry 0.5.0",
 ]
 
 [[package]]
