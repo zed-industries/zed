@@ -66,7 +66,7 @@ impl Tool for EditFilesTool {
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
-                include_str!("./edit_files_tool/system.md").into(),
+                include_str!("./edit_files_tool/edit_prompt.md").into(),
                 input.edit_instructions.into(),
             ],
             cache: false,
@@ -131,23 +131,24 @@ impl Tool for EditFilesTool {
 
             let errors = parser.errors();
 
-            if !errors.is_empty() {
+            if errors.is_empty() {
+                Ok("Successfully applied all edits".into())
+            } else {
                 let error_message = errors
                     .iter()
                     .map(|e| e.to_string())
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                Err(if applied_edits > 0 {
-                    anyhow!(format!(
+                if applied_edits > 0 {
+                    Err(anyhow!(
                         "Applied {} edit(s), but some blocks failed to parse:\n{}",
-                        applied_edits, error_message
+                        applied_edits,
+                        error_message
                     ))
                 } else {
-                    anyhow!(error_message)
-                })
-            } else {
-                anyhow::Ok(format!("Applied {} edit(s)", applied_edits).into())
+                    Err(anyhow!(error_message))
+                }
             }
         })
     }

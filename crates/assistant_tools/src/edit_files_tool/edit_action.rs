@@ -704,7 +704,7 @@ fn new_utils_func() {}
         assert_eq!(parser.state, State::Default);
     }
 
-    const SYSTEM_PROMPT: &str = include_str!("./system.md");
+    const SYSTEM_PROMPT: &str = include_str!("./edit_prompt.md");
 
     #[test]
     fn test_parse_examples_in_system_prompt() {
