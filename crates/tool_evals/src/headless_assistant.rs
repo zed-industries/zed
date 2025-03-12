@@ -81,7 +81,7 @@ impl HeadlessAssistant {
             ThreadEvent::DoneStreaming => {
                 let thread = thread.read(cx);
                 if let Some(message) = thread.messages().last() {
-                    log::info!("Message: {}", message.text,);
+                    println!("Message: {}", message.text,);
                 }
                 if thread.all_tools_finished() {
                     self.done_tx.send_blocking(Ok(())).unwrap()
@@ -98,13 +98,12 @@ impl HeadlessAssistant {
             } => {
                 if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
                     if let Some(pending_tool_use) = pending_tool_use {
-                        log::info!(
+                        println!(
                             "Used tool {} with input: {}",
-                            pending_tool_use.name,
-                            pending_tool_use.input
+                            pending_tool_use.name, pending_tool_use.input
                         );
                     }
-                    log::info!("Tool result: {:?}", tool_result);
+                    println!("Tool result: {:?}", tool_result);
                 }
                 if thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
