@@ -101,6 +101,7 @@ use itertools::Itertools;
 use language::{
     language_settings::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
+        WordsCompletionMode,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
     Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
@@ -4012,9 +4013,8 @@ impl Editor {
             } else {
                 return;
             };
-        let show_completion_documentation = buffer
-            .read(cx)
-            .snapshot()
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let show_completion_documentation = buffer_snapshot
             .settings_at(buffer_position, cx)
             .show_completion_documentation;
 
@@ -4038,6 +4038,51 @@ impl Editor {
         };
         let completions =
             provider.completions(&buffer, buffer_position, completion_context, window, cx);
+        let (old_range, word_kind) = buffer_snapshot.surrounding_word(buffer_position);
+        let (old_range, word_to_exclude) = if word_kind == Some(CharKind::Word) {
+            let word_to_exclude = buffer_snapshot
+                .text_for_range(old_range.clone())
+                .collect::<String>();
+            (
+                buffer_snapshot.anchor_before(old_range.start)
+                    ..buffer_snapshot.anchor_after(old_range.end),
+                Some(word_to_exclude),
+            )
+        } else {
+            (buffer_position..buffer_position, None)
+        };
+
+        let completion_settings = language_settings(
+            buffer_snapshot
+                .language_at(buffer_position)
+                .map(|language| language.name()),
+            buffer_snapshot.file(),
+            cx,
+        )
+        .completions;
+
+        // The document can be large, so stay in reasonable bounds when searching for words,
+        // otherwise completion pop-up might be slow to appear.
+        const WORD_LOOKUP_ROWS: u32 = 5_000;
+        let buffer_row = text::ToPoint::to_point(&buffer_position, &buffer_snapshot).row;
+        let min_word_search = buffer_snapshot.clip_point(
+            Point::new(buffer_row.saturating_sub(WORD_LOOKUP_ROWS), 0),
+            Bias::Left,
+        );
+        let max_word_search = buffer_snapshot.clip_point(
+            Point::new(buffer_row + WORD_LOOKUP_ROWS, 0).min(buffer_snapshot.max_point()),
+            Bias::Right,
+        );
+        let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
+            ..buffer_snapshot.point_to_offset(max_word_search);
+        let words = match completion_settings.words {
+            WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
+            WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => {
+                cx.background_spawn(async move {
+                    buffer_snapshot.words_in_range(None, word_search_range)
+                })
+            }
+        };
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
@@ -4046,8 +4091,55 @@ impl Editor {
                 editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
-                let completions = completions.await.log_err();
-                let menu = if let Some(completions) = completions {
+                let mut completions = completions.await.log_err().unwrap_or_default();
+
+                match completion_settings.words {
+                    WordsCompletionMode::Enabled => {
+                        completions.extend(
+                            words
+                                .await
+                                .into_iter()
+                                .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
+                                .map(|(word, word_range)| Completion {
+                                    old_range: old_range.clone(),
+                                    new_text: word.clone(),
+                                    label: CodeLabel::plain(word, None),
+                                    documentation: None,
+                                    source: CompletionSource::BufferWord {
+                                        word_range,
+                                        resolved: false,
+                                    },
+                                    confirm: None,
+                                }),
+                        );
+                    }
+                    WordsCompletionMode::Fallback => {
+                        if completions.is_empty() {
+                            completions.extend(
+                                words
+                                    .await
+                                    .into_iter()
+                                    .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
+                                    .map(|(word, word_range)| Completion {
+                                        old_range: old_range.clone(),
+                                        new_text: word.clone(),
+                                        label: CodeLabel::plain(word, None),
+                                        documentation: None,
+                                        source: CompletionSource::BufferWord {
+                                            word_range,
+                                            resolved: false,
+                                        },
+                                        confirm: None,
+                                    }),
+                            );
+                        }
+                    }
+                    WordsCompletionMode::Disabled => {}
+                }
+
+                let menu = if completions.is_empty() {
+                    None
+                } else {
                     let mut menu = CompletionsMenu::new(
                         id,
                         sort_completions,
@@ -4061,8 +4153,6 @@ impl Editor {
                         .await;
 
                     menu.visible().then_some(menu)
-                } else {
-                    None
                 };
 
                 editor.update_in(&mut cx, |editor, window, cx| {
