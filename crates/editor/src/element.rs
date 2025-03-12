@@ -32,15 +32,14 @@ use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, svg, transparent_black, Action, AnyElement,
-    App, AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner,
-    Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    Focusable as _, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
-    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
-    TextStyleRefinement, Window,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
+    relative, size, solid_background, svg, transparent_black, Action, AnyElement, App,
+    AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, Window,
 };
 use inline_completion::Direction;
 use itertools::Itertools;
@@ -56,7 +55,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
     RowInfo,
 };
-use project::project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings};
+use project::project_settings::{self, GitGutterSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -4356,13 +4355,6 @@ impl EditorElement {
     }
 
     fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        let is_light = cx.theme().appearance().is_light();
-
-        let hunk_style = ProjectSettings::get_global(cx)
-            .git
-            .hunk_style
-            .unwrap_or_default();
-
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -4423,28 +4415,7 @@ impl EditorElement {
                     }),
                 };
 
-                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
-                    hunk_to_paint
-                {
-                    match hunk_style {
-                        GitHunkStyleSetting::Transparent | GitHunkStyleSetting::Pattern => {
-                            if secondary_status.has_secondary_hunk() {
-                                background_color =
-                                    background_color.opacity(if is_light { 0.2 } else { 0.32 });
-                            }
-                        }
-                        GitHunkStyleSetting::StagedPattern
-                        | GitHunkStyleSetting::StagedTransparent => {
-                            if !secondary_status.has_secondary_hunk() {
-                                background_color =
-                                    background_color.opacity(if is_light { 0.2 } else { 0.32 });
-                            }
-                        }
-                        GitHunkStyleSetting::StagedBorder | GitHunkStyleSetting::Border => {
-                            // Don't change the background color
-                        }
-                    }
-
+                if let Some((hunk_bounds, background_color, corner_radii, _)) = hunk_to_paint {
                     // Flatten the background color with the editor color to prevent
                     // elements below transparent hunks from showing through
                     let flattened_background_color = cx
@@ -6798,10 +6769,6 @@ impl Element for EditorElement {
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     let is_light = cx.theme().appearance().is_light();
-                    let hunk_style = ProjectSettings::get_global(cx)
-                        .git
-                        .hunk_style
-                        .unwrap_or_default();
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
@@ -6821,69 +6788,23 @@ impl Element for EditorElement {
 
                         let unstaged = diff_status.has_secondary_hunk();
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
-                        let slash_width = line_height.0 / 1.5; // ~16 by default
 
-                        let staged_highlight: LineHighlight = match hunk_style {
-                            GitHunkStyleSetting::Transparent
-                            | GitHunkStyleSetting::Pattern
-                            | GitHunkStyleSetting::Border => {
-                                solid_background(background_color.opacity(hunk_opacity)).into()
-                            }
-                            GitHunkStyleSetting::StagedPattern => {
-                                pattern_slash(background_color.opacity(hunk_opacity), slash_width)
-                                    .into()
-                            }
-                            GitHunkStyleSetting::StagedTransparent => {
-                                solid_background(background_color.opacity(if is_light {
-                                    0.08
-                                } else {
-                                    0.04
-                                }))
-                                .into()
-                            }
-                            GitHunkStyleSetting::StagedBorder => LineHighlight {
-                                background: (background_color.opacity(if is_light {
-                                    0.08
-                                } else {
-                                    0.06
-                                }))
-                                .into(),
-                                border: Some(if is_light {
-                                    background_color.opacity(0.48)
-                                } else {
-                                    background_color.opacity(0.36)
-                                }),
-                            },
+                        let staged_highlight = LineHighlight {
+                            background: (background_color.opacity(if is_light {
+                                0.08
+                            } else {
+                                0.06
+                            }))
+                            .into(),
+                            border: Some(if is_light {
+                                background_color.opacity(0.48)
+                            } else {
+                                background_color.opacity(0.36)
+                            }),
                         };
 
-                        let unstaged_highlight = match hunk_style {
-                            GitHunkStyleSetting::Transparent => {
-                                solid_background(background_color.opacity(if is_light {
-                                    0.08
-                                } else {
-                                    0.04
-                                }))
-                                .into()
-                            }
-                            GitHunkStyleSetting::Pattern => {
-                                pattern_slash(background_color.opacity(hunk_opacity), slash_width)
-                                    .into()
-                            }
-                            GitHunkStyleSetting::Border => LineHighlight {
-                                background: (background_color.opacity(if is_light {
-                                    0.08
-                                } else {
-                                    0.02
-                                }))
-                                .into(),
-                                border: Some(background_color.opacity(0.5)),
-                            },
-                            GitHunkStyleSetting::StagedPattern
-                            | GitHunkStyleSetting::StagedTransparent
-                            | GitHunkStyleSetting::StagedBorder => {
-                                solid_background(background_color.opacity(hunk_opacity)).into()
-                            }
-                        };
+                        let unstaged_highlight =
+                            solid_background(background_color.opacity(hunk_opacity)).into();
 
                         let background = if unstaged {
                             unstaged_highlight
