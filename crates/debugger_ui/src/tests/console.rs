@@ -23,6 +23,11 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
     let project = Project::test(fs, ["/project".as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.focus_panel::<DebugPanel>(window, cx);
+        })
+        .unwrap();
 
     let task = project.update(cx, |project, cx| {
         project.start_debug_session(dap::test_config(None), cx)
@@ -84,6 +89,21 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
 
     cx.run_until_parked();
 
+    let running_state =
+        active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
+            cx.focus_self(window);
+            item.mode()
+                .as_running()
+                .expect("Session should be running by this point")
+                .clone()
+        });
+
+    running_state.update(cx, |state, cx| {
+        state.set_thread_item(session::ThreadItem::Console, cx);
+        cx.refresh_windows();
+    });
+    cx.run_until_parked();
+
     // assert we have output from before the thread stopped
     workspace
         .update(cx, |workspace, _window, cx| {
@@ -127,6 +147,11 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         }))
         .await;
 
+    cx.run_until_parked();
+    running_state.update(cx, |state, cx| {
+        state.set_thread_item(session::ThreadItem::Console, cx);
+        cx.refresh_windows();
+    });
     cx.run_until_parked();
 
     // assert we have output from before and after the thread stopped

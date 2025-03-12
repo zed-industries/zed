@@ -37,7 +37,7 @@ pub struct Console {
     _subscriptions: Vec<Subscription>,
     variable_list: Entity<VariableList>,
     stack_frame_list: Entity<StackFrameList>,
-    last_token: Option<OutputToken>,
+    last_token: OutputToken,
     update_output_task: Task<()>,
 }
 
@@ -91,7 +91,7 @@ impl Console {
             _subscriptions,
             stack_frame_list,
             update_output_task: Task::ready(()),
-            last_token: None,
+            last_token: OutputToken(0),
             groups: Vec::default(),
         }
     }

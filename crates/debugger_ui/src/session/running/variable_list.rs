@@ -8,7 +8,7 @@ use gpui::{
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
-use std::{collections::HashMap, fmt::format, ops::Range, sync::Arc};
+use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{prelude::*, ContextMenu, ListItem, Scrollbar, ScrollbarState};
 use util::{debug_panic, maybe};
 
@@ -504,8 +504,6 @@ impl VariableList {
     #[track_caller]
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_visual_entries(&self, expected: Vec<&str>) {
-        use gpui::DebugBelow;
-
         const INDENT: &'static str = "    ";
 
         let entries = &self.entries;

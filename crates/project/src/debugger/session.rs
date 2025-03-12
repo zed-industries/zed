@@ -506,7 +506,7 @@ impl ThreadStates {
 const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, PartialOrd, Eq, Ord)]
-pub struct OutputToken(usize);
+pub struct OutputToken(pub usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
@@ -516,7 +516,7 @@ pub struct Session {
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
-    output_token: Option<OutputToken>,
+    output_token: OutputToken,
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
@@ -683,7 +683,7 @@ impl Session {
                     variables: Default::default(),
                     capabilities,
                     thread_states: ThreadStates::default(),
-                    output_token: None,
+                    output_token: OutputToken(0),
                     ignore_breakpoints: false,
                     output: circular_buffer::CircularBuffer::boxed(),
                     requests: HashMap::default(),
@@ -718,7 +718,7 @@ impl Session {
             stack_frames: Default::default(),
             thread_states: ThreadStates::default(),
 
-            output_token: None,
+            output_token: OutputToken(0),
             output: circular_buffer::CircularBuffer::boxed(),
             requests: HashMap::default(),
             modules: Vec::default(),
@@ -774,16 +774,13 @@ impl Session {
 
     pub fn output(
         &self,
-        since: Option<OutputToken>,
-    ) -> (impl Iterator<Item = &dap::OutputEvent>, Option<OutputToken>) {
-        let Some(output_token) = self.output_token else {
-            return (self.output.range(0..0), None);
+        since: OutputToken,
+    ) -> (impl Iterator<Item = &dap::OutputEvent>, OutputToken) {
+        if self.output_token.0 == 0 {
+            return (self.output.range(0..0), OutputToken(0));
         };
 
-        let events_since = output_token
-            .0
-            .checked_sub(since.map_or(0, |token| token.0))
-            .unwrap_or(0);
+        let events_since = self.output_token.0.checked_sub(since.0).unwrap_or(0);
 
         let clamped_events_since = events_since.clamp(0, self.output.len());
         (
@@ -883,12 +880,9 @@ impl Session {
                 {
                     return;
                 }
-                if let Some(index) = self.output_token.as_mut() {
-                    index.0 += 1;
-                } else {
-                    self.output_token = Some(OutputToken(0));
-                }
+
                 self.output.push_back(event);
+                self.output_token.0 += 1;
                 cx.notify();
             }
             Events::Breakpoint(_) => {}

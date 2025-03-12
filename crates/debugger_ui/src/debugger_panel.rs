@@ -15,7 +15,7 @@ use project::{
 };
 use rpc::proto::{self};
 use settings::Settings;
-use std::{any::TypeId, f32::consts::PI};
+use std::any::TypeId;
 use ui::prelude::*;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
