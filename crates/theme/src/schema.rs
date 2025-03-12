@@ -554,27 +554,27 @@ pub struct ThemeColorsContent {
     pub link_text_hover: Option<String>,
 
     /// Added version control color.
-    #[serde(rename = "version_control.added")]
+    #[serde(rename = "version_control_added")]
     pub version_control_added: Option<String>,
 
     /// Deleted version control color.
-    #[serde(rename = "version_control.deleted")]
+    #[serde(rename = "version_control_deleted")]
     pub version_control_deleted: Option<String>,
 
     /// Modified version control color.
-    #[serde(rename = "version_control.modified")]
+    #[serde(rename = "version_control_modified")]
     pub version_control_modified: Option<String>,
 
     /// Renamed version control color.
-    #[serde(rename = "version_control.renamed")]
+    #[serde(rename = "version_control_renamed")]
     pub version_control_renamed: Option<String>,
 
     /// Conflict version control color.
-    #[serde(rename = "version_control.conflict")]
+    #[serde(rename = "version_control_conflict")]
     pub version_control_conflict: Option<String>,
 
     /// Ignored version control color.
-    #[serde(rename = "version_control.ignored")]
+    #[serde(rename = "version_control_ignored")]
     pub version_control_ignored: Option<String>,
 }
 
