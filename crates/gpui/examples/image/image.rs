@@ -80,7 +80,7 @@ impl Render for ImageShowcase {
             .size_full()
             .flex()
             .flex_col()
-            .justify_center()
+            .justify_start()
             .items_center()
             .gap_8()
             .bg(rgb(0xffffff))
