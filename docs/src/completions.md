@@ -34,7 +34,7 @@ Clicking on it would take you to a modal with a button to set `zed` as your `edi
 
 ![Asking a question](https://zed.dev/img/assistant/ask-a-question.png)
 
-If haven't come across the banner, start using Zed's Edit Prediction by adding this to your settings:
+If you haven't come across the banner, start using Zed's Edit Prediction by adding this to your settings:
 
 ```json
 "features": {
