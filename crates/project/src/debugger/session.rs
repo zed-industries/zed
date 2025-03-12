@@ -457,22 +457,22 @@ struct ThreadStates {
 }
 
 impl ThreadStates {
-    fn all_threads_stopped(&mut self) {
+    fn stop_all_threads(&mut self) {
         self.global_state = Some(ThreadStatus::Stopped);
         self.known_thread_states.clear();
     }
 
-    fn all_threads_continued(&mut self) {
+    fn continue_all_threads(&mut self) {
         self.global_state = Some(ThreadStatus::Running);
         self.known_thread_states.clear();
     }
 
-    fn thread_stopped(&mut self, thread_id: ThreadId) {
+    fn stop_thread(&mut self, thread_id: ThreadId) {
         self.known_thread_states
             .insert(thread_id, ThreadStatus::Stopped);
     }
 
-    fn thread_continued(&mut self, thread_id: ThreadId) {
+    fn continue_thread(&mut self, thread_id: ThreadId) {
         self.known_thread_states
             .insert(thread_id, ThreadStatus::Running);
     }
@@ -489,7 +489,7 @@ impl ThreadStates {
             .or(self.global_state)
     }
 
-    fn thread_exited(&mut self, thread_id: ThreadId) {
+    fn exit_thread(&mut self, thread_id: ThreadId) {
         self.known_thread_states
             .insert(thread_id, ThreadStatus::Exited);
     }
@@ -519,10 +519,10 @@ pub struct Session {
     output_token: OutputToken,
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
+    thread_states: ThreadStates,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
-    thread_states: ThreadStates,
     is_session_terminated: bool,
     requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     _background_tasks: Vec<Task<()>>,
@@ -811,9 +811,9 @@ impl Session {
         // todo(debugger): We should query for all threads here if we don't get a thread id
         // maybe in both cases too?
         if event.all_threads_stopped.unwrap_or_default() {
-            self.thread_states.all_threads_stopped();
+            self.thread_states.stop_all_threads();
         } else if let Some(thread_id) = event.thread_id {
-            self.thread_states.thread_stopped(ThreadId(thread_id));
+            self.thread_states.stop_thread(ThreadId(thread_id));
         } else {
             // TODO(debugger): all threads should be stopped
         }
@@ -841,10 +841,10 @@ impl Session {
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
             Events::Continued(event) => {
                 if event.all_threads_continued.unwrap_or_default() {
-                    self.thread_states.all_threads_continued();
+                    self.thread_states.continue_all_threads();
                 } else {
                     self.thread_states
-                        .thread_continued(ThreadId(event.thread_id));
+                        .continue_thread(ThreadId(event.thread_id));
                 }
                 self.invalidate_generic();
             }
@@ -860,10 +860,10 @@ impl Session {
 
                 match event.reason {
                     dap::ThreadEventReason::Started => {
-                        self.thread_states.thread_continued(thread_id);
+                        self.thread_states.continue_thread(thread_id);
                     }
                     dap::ThreadEventReason::Exited => {
-                        self.thread_states.thread_exited(thread_id);
+                        self.thread_states.exit_thread(thread_id);
                     }
                     reason => {
                         log::error!("Unhandled thread event reason {:?}", reason);
@@ -1024,6 +1024,7 @@ impl Session {
         self.invalidate_command_type::<ModulesCommand>();
         self.invalidate_command_type::<StackTraceCommand>();
         self.invalidate_command_type::<LoadedSourcesCommand>();
+        self.invalidate_command_type::<ThreadsCommand>();
     }
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
@@ -1047,11 +1048,9 @@ impl Session {
                     .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
                     .collect();
 
-                for (thread_id, thread) in new_threads.into_iter() {
-                    if this.threads.contains_key(&thread_id) {
-                        continue;
-                    }
+                this.threads.clear();
 
+                for (thread_id, thread) in new_threads.into_iter() {
                     this.threads.insert(thread_id, thread);
                     this.invalidate_state(
                         &StackTraceCommand {
