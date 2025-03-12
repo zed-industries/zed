@@ -834,6 +834,7 @@ impl Session {
             .for_each(|thread| thread.stack_frame_ids.clear());
 
         self.invalidate_generic();
+        self.variables.clear();
         cx.emit(SessionEvent::Stopped(event.thread_id.map(Into::into)));
         cx.notify();
     }

@@ -159,14 +159,14 @@ impl VariableList {
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.subscribe(&session, |this, _, event, cx| {
-                match event {
-                    SessionEvent::Stopped(_) => {
-                        this.entry_states.clear();
-                    }
-                    _ => {}
+            cx.subscribe(&session, |this, _, event, _| match event {
+                SessionEvent::Stopped(_) => {
+                    this.selection.take();
+                    this.edited_path.take();
+                    this.selected_stack_frame_id.take();
+                    this.entry_states.clear();
                 }
-                this.build_entries(cx);
+                _ => {}
             }),
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
                 this.edited_path.take();
