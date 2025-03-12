@@ -1524,6 +1524,11 @@ impl App {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
 
+    /// Reset the prompt builder to the default implementation.
+    pub fn reset_prompt_builder(&mut self) {
+        self.prompt_builder = Some(PromptBuilder::Default);
+    }
+
     /// Remove an asset from GPUI's cache
     pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
         let asset_id = (TypeId::of::<A>(), hash(source));
