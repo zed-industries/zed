@@ -3121,6 +3121,97 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     assert_eq!(point_2, Point::new(3, 0));
 }
 
+#[gpui::test]
+fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
+    let base_text = "one\ntwo".to_owned();
+    let text = "one\n".to_owned();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            - two
+            "
+        ),
+    );
+
+    assert_eq!(snapshot.max_point(), Point::new(2, 0));
+    assert_eq!(snapshot.len(), 8);
+
+    assert_eq!(
+        snapshot.clip_point(Point::new(2, 0), Bias::Left),
+        Point::new(2, 0)
+    );
+    assert_eq!(
+        snapshot.clip_point(Point::new(2, 0), Bias::Right),
+        Point::new(2, 0)
+    );
+    assert_eq!(
+        snapshot.clip_point(Point::new(2, 1), Bias::Right),
+        Point::new(2, 0)
+    );
+    assert_eq!(
+        snapshot.clip_point(Point::new(2, 1), Bias::Left),
+        Point::new(2, 0)
+    );
+    assert_eq!(
+        snapshot.clip_point(Point::new(3, 0), Bias::Left),
+        Point::new(2, 0)
+    );
+    assert_eq!(
+        snapshot.clip_point(Point::new(3, 0), Bias::Right),
+        Point::new(2, 0)
+    );
+
+    let anchor = snapshot.anchor_before(Point::new(2, 0));
+    assert_eq!(
+        snapshot.summary_for_anchor::<Point>(&anchor),
+        Point::new(2, 0)
+    );
+    let anchor = snapshot.anchor_after(Point::new(2, 0));
+    assert_eq!(
+        snapshot.summary_for_anchor::<Point>(&anchor),
+        Point::new(2, 0)
+    );
+    assert_eq!(
+        snapshot.summary_for_anchor::<usize>(&anchor),
+        "one\ntwo\n".len()
+    );
+
+    assert_eq!(
+        snapshot
+            .dimensions_from_points::<Point>([Point::new(2, 0)])
+            .collect::<Vec<_>>(),
+        vec![Point::new(2, 0)]
+    );
+
+    let (_, translated_point, is_main_buffer) =
+        snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
+    assert_eq!(translated_point, Point::new(1, 0));
+    assert!(is_main_buffer);
+    let (_, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    assert_eq!(translated_offset, "one\n".len());
+}
+
 fn format_diff(
     text: &str,
     row_infos: &Vec<RowInfo>,

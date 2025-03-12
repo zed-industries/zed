@@ -4733,6 +4733,9 @@ impl MultiBufferSnapshot {
                         .buffer
                         .text_summary_for_range(region.buffer_range.start.key..buffer_point),
                 );
+                if point == region.range.end.key && region.has_trailing_newline {
+                    position.add_assign(&D::from_text_summary(&TextSummary::newline()));
+                }
                 return Some(position);
             } else {
                 return Some(D::from_text_summary(&self.text_summary()));
