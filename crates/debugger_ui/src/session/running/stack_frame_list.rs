@@ -66,7 +66,7 @@ impl StackFrameList {
 
         let _subscription =
             cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
-                SessionEvent::Stopped => {
+                SessionEvent::Stopped(_) => {
                     this.build_entries(true, window, cx);
                 }
                 SessionEvent::StackTrace => {
@@ -94,7 +94,7 @@ impl StackFrameList {
 
     fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
         self.state
-            .read_with(cx, |state, _| state.thread.as_ref().map(|(id, _)| *id))
+            .read_with(cx, |state, _| state.thread_id)
             .log_err()
             .flatten()
             .map(|thread_id| {

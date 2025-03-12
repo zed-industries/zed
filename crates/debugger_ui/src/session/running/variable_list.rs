@@ -161,7 +161,7 @@ impl VariableList {
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.subscribe(&session, |this, _, event, cx| {
                 match event {
-                    SessionEvent::Stopped => {
+                    SessionEvent::Stopped(_) => {
                         this.entry_states.clear();
                     }
                     _ => {}

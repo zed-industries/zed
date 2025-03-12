@@ -53,6 +53,12 @@ impl ThreadId {
     pub const MAX: ThreadId = ThreadId(u64::MAX);
 }
 
+impl From<u64> for ThreadId {
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StackFrame {
     pub dap: dap::StackFrame,
@@ -608,7 +614,7 @@ impl CompletionsQuery {
 pub enum SessionEvent {
     Modules,
     LoadedSources,
-    Stopped,
+    Stopped(Option<ThreadId>),
     StackTrace,
     Variables,
     Threads,
@@ -812,9 +818,11 @@ impl Session {
         // maybe in both cases too?
         if event.all_threads_stopped.unwrap_or_default() {
             self.thread_states.stop_all_threads();
-        } else if let Some(thread_id) = event.thread_id {
+        }
+
+        if let Some(thread_id) = event.thread_id {
             self.thread_states.stop_thread(ThreadId(thread_id));
-        } else {
+        } else if event.all_threads_stopped.is_none() {
             // TODO(debugger): all threads should be stopped
         }
 
@@ -826,7 +834,7 @@ impl Session {
             .for_each(|thread| thread.stack_frame_ids.clear());
 
         self.invalidate_generic();
-        cx.emit(SessionEvent::Stopped);
+        cx.emit(SessionEvent::Stopped(event.thread_id.map(Into::into)));
         cx.notify();
     }
 
@@ -1022,7 +1030,6 @@ impl Session {
 
     fn invalidate_generic(&mut self) {
         self.invalidate_command_type::<ModulesCommand>();
-        self.invalidate_command_type::<StackTraceCommand>();
         self.invalidate_command_type::<LoadedSourcesCommand>();
         self.invalidate_command_type::<ThreadsCommand>();
     }
@@ -1043,25 +1050,12 @@ impl Session {
         self.fetch(
             dap_command::ThreadsCommand,
             |this, result, cx| {
-                let new_threads: IndexMap<_, _> = result
+                this.threads = result
                     .iter()
                     .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
                     .collect();
 
-                this.threads.clear();
-
-                for (thread_id, thread) in new_threads.into_iter() {
-                    this.threads.insert(thread_id, thread);
-                    this.invalidate_state(
-                        &StackTraceCommand {
-                            thread_id: thread_id.0,
-                            start_frame: None,
-                            levels: None,
-                        }
-                        .into(),
-                    );
-                }
-
+                this.invalidate_command_type::<StackTraceCommand>();
                 cx.emit(SessionEvent::Threads);
             },
             cx,
@@ -1379,9 +1373,7 @@ impl Session {
     }
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
-        if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped
-            && self.requests.contains_key(&ThreadsCommand.type_id())
-        {
+        if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped {
             self.fetch(
                 super::dap_command::StackTraceCommand {
                     thread_id: thread_id.0,
