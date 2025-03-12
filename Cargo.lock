@@ -658,6 +658,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "language_model",
  "parking_lot",
  "project",
  "serde",
@@ -671,11 +672,16 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
+ "collections",
+ "futures 0.3.31",
  "gpui",
+ "language_model",
  "project",
+ "rand 0.8.5",
  "schemars",
  "serde",
  "serde_json",
+ "util",
 ]
 
 [[package]]
@@ -3128,6 +3134,7 @@ dependencies = [
  "extension",
  "futures 0.3.31",
  "gpui",
+ "language_model",
  "log",
  "parking_lot",
  "postage",

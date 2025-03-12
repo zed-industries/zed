@@ -652,7 +652,7 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => div()
+            Role::Assistant => v_flex()
                 .id(("message-container", ix))
                 .child(message_content)
                 .map(|parent| {
