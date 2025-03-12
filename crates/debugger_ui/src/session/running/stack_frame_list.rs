@@ -28,6 +28,7 @@ pub struct StackFrameList {
     _subscription: Subscription,
     session: Entity<Session>,
     state: WeakEntity<RunningState>,
+    invalidate: bool,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     current_stack_frame_id: Option<StackFrameId>,
@@ -67,10 +68,11 @@ impl StackFrameList {
         let _subscription =
             cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
                 SessionEvent::Stopped(_) => {
-                    this.build_entries(true, window, cx);
+                    this.invalidate = true;
                 }
                 SessionEvent::StackTrace => {
-                    this.build_entries(this.entries.is_empty(), window, cx);
+                    this.invalidate = true;
+                    cx.notify();
                 }
                 _ => {}
             });
@@ -82,6 +84,7 @@ impl StackFrameList {
             focus_handle,
             state,
             _subscription,
+            invalidate: true,
             entries: Default::default(),
             current_stack_frame_id: None,
         }
@@ -123,10 +126,9 @@ impl StackFrameList {
         self.current_stack_frame_id
     }
 
-    pub(super) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.defer_in(window, |this, window, cx| {
-            this.build_entries(this.entries.is_empty(), window, cx);
-        });
+    pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.invalidate = true;
+        cx.notify();
     }
 
     pub fn build_entries(
@@ -456,7 +458,12 @@ impl StackFrameList {
 }
 
 impl Render for StackFrameList {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.invalidate {
+            self.build_entries(self.entries.is_empty(), window, cx);
+            self.invalidate = false;
+        }
+
         div()
             .size_full()
             .p_1()

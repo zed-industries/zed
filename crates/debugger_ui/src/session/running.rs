@@ -407,12 +407,12 @@ impl RunningState {
                         }
                     }
                     SessionEvent::Threads => {
-                        // if this.thread_id.is_none() {
-                        //     let threads = this.session.update(cx, |this, cx| this.threads(cx));
-                        //     this.select_first_thread(&threads, window, cx);
-                        // } // this.stack_frame_list.update(cx, |this, cx| {
-                        //     this.refresh(window, cx);
-                        // });
+                        if let Some(thread_id) = this.thread_id {
+                            this.select_thread(thread_id, window, cx);
+                        } else {
+                            let threads = this.session.update(cx, |this, cx| this.threads(cx));
+                            this.select_first_thread(&threads, window, cx);
+                        }
                     }
                     _ => {}
                 }
@@ -500,7 +500,7 @@ impl RunningState {
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
-            .update(cx, |list, cx| list.refresh(window, cx));
+            .update(cx, |list, cx| list.refresh(cx));
         cx.notify();
     }
 
