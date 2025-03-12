@@ -1949,11 +1949,12 @@ impl Interactivity {
                                 captured_mouse_down = pending_mouse_down.take();
                                 window.refresh();
                             } else if pending_mouse_down.is_some() {
-                                // Clear the pending mouse (without fire click handlers) if the
-                                // hitbox is not being hovered.
-                                // This avoid dragging elements that changed its position
+                                // Clear the pending mouse down event (without firing click handlers)
+                                // if the hitbox is not being hovered.
+                                // This avoids dragging elements that changed their position
                                 // immediately after being clicked.
-                                let _capt = pending_mouse_down.take();
+                                // See https://github.com/zed-industries/zed/issues/24600 for more details
+                                pending_mouse_down.take();
                                 window.refresh();
                             }
                         }
