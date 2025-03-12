@@ -38,10 +38,14 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     item::{BreadcrumbText, FollowEvent},
     searchable::SearchOptions,
+    OpenVisible,
+};
+use workspace::{
+    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
+    OpenOptions,
 };
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
@@ -618,11 +622,8 @@ impl Item for Editor {
         ItemSettings::get_global(cx)
             .file_icons
             .then(|| {
-                self.buffer
-                    .read(cx)
-                    .as_singleton()
-                    .and_then(|buffer| buffer.read(cx).project_path(cx))
-                    .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
+                path_for_buffer(&self.buffer, 0, true, cx)
+                    .and_then(|path| FileIcons::get_icon(path.as_ref(), cx))
             })
             .flatten()
             .map(Icon::from_path)
@@ -1160,7 +1161,15 @@ impl SerializableItem for Editor {
                     }
                     None => {
                         let open_by_abs_path = workspace.update(cx, |workspace, cx| {
-                            workspace.open_abs_path(abs_path.clone(), false, window, cx)
+                            workspace.open_abs_path(
+                                abs_path.clone(),
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
                         });
                         window.spawn(cx, |mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
@@ -1592,11 +1601,13 @@ impl SearchableItem for Editor {
 
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Range<Anchor>],
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         active_match_index(
+            direction,
             matches,
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
@@ -1609,6 +1620,7 @@ impl SearchableItem for Editor {
 }
 
 pub fn active_match_index(
+    direction: Direction,
     ranges: &[Range<Anchor>],
     cursor: &Anchor,
     buffer: &MultiBufferSnapshot,
@@ -1616,7 +1628,7 @@ pub fn active_match_index(
     if ranges.is_empty() {
         None
     } else {
-        match ranges.binary_search_by(|probe| {
+        let r = ranges.binary_search_by(|probe| {
             if probe.end.cmp(cursor, buffer).is_lt() {
                 Ordering::Less
             } else if probe.start.cmp(cursor, buffer).is_gt() {
@@ -1624,8 +1636,15 @@ pub fn active_match_index(
             } else {
                 Ordering::Equal
             }
-        }) {
-            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+        });
+        match direction {
+            Direction::Prev => match r {
+                Ok(i) => Some(i),
+                Err(i) => Some(i.saturating_sub(1)),
+            },
+            Direction::Next => match r {
+                Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+            },
         }
     }
 }

@@ -13,7 +13,7 @@ use itertools::Itertools;
 use language::{
     Anchor, Buffer, DiagnosticEntry, DiagnosticSeverity, LanguageServerId, OffsetRangeExt,
 };
-use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::project_settings::ProjectSettings;
 use project::Project;
 use project::{DiagnosticSummary, ProjectPath};
@@ -355,7 +355,7 @@ impl DiagnosticsView {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         match self.selected_entry() {
             Some(selected_entry) => {
                 if self

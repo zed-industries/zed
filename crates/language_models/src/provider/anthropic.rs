@@ -639,7 +639,9 @@ pub fn map_to_language_model_completion_events(
                                                 id: tool_use.id.into(),
                                                 name: tool_use.name.into(),
                                                 input: if tool_use.input_json.is_empty() {
-                                                    serde_json::Value::Null
+                                                    serde_json::Value::Object(
+                                                        serde_json::Map::default(),
+                                                    )
                                                 } else {
                                                     serde_json::Value::from_str(
                                                         &tool_use.input_json,
@@ -835,7 +837,7 @@ impl Render for ConfigurationView {
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
+                        .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
                 .child(

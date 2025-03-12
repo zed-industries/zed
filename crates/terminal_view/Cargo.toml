@@ -29,6 +29,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 menu.workspace = true
+log.workspace = true
 project.workspace = true
 task.workspace = true
 rope.workspace = true
@@ -53,3 +54,6 @@ gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["log"]

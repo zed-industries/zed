@@ -28,7 +28,7 @@ pub(crate) struct MoveToNext {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MoveToPrev {
+pub(crate) struct MoveToPrevious {
     #[serde(default = "default_true")]
     case_sensitive: bool,
     #[serde(default)]
@@ -67,15 +67,15 @@ pub(crate) struct Replacement {
     is_case_sensitive: bool,
 }
 
-actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPrevMatch]);
-impl_actions!(vim, [FindCommand, Search, MoveToPrev, MoveToNext]);
+actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPreviousMatch]);
+impl_actions!(vim, [FindCommand, Search, MoveToPrevious, MoveToNext]);
 impl_internal_actions!(vim, [ReplaceCommand]);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
-    Vim::action(editor, cx, Vim::move_to_prev);
+    Vim::action(editor, cx, Vim::move_to_previous);
     Vim::action(editor, cx, Vim::move_to_next_match);
-    Vim::action(editor, cx, Vim::move_to_prev_match);
+    Vim::action(editor, cx, Vim::move_to_previous_match);
     Vim::action(editor, cx, Vim::search);
     Vim::action(editor, cx, Vim::search_deploy);
     Vim::action(editor, cx, Vim::find_command);
@@ -94,7 +94,12 @@ impl Vim {
         )
     }
 
-    fn move_to_prev(&mut self, action: &MoveToPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn move_to_previous(
+        &mut self,
+        action: &MoveToPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.move_to_internal(
             Direction::Prev,
             action.case_sensitive,
@@ -114,9 +119,9 @@ impl Vim {
         self.move_to_match_internal(self.search.direction, window, cx)
     }
 
-    fn move_to_prev_match(
+    fn move_to_previous_match(
         &mut self,
-        _: &MoveToPrevMatch,
+        _: &MoveToPreviousMatch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -148,6 +153,9 @@ impl Vim {
                     let mut options = SearchOptions::NONE;
                     if action.regex {
                         options |= SearchOptions::REGEX;
+                    }
+                    if action.backwards {
+                        options |= SearchOptions::BACKWARDS;
                     }
                     search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {
@@ -193,7 +201,7 @@ impl Vim {
                     .last()
                     .map_or(true, |range| range.start != new_head);
 
-                if is_different_head && self.search.direction == Direction::Next {
+                if is_different_head {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
@@ -296,6 +304,7 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(window, cx);
+        let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity().clone();
 
         let searched = pane.update(cx, |pane, cx| {
@@ -317,10 +326,14 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar.query_suggestion(window, cx) else {
+                let Some(query) = search_bar
+                    .query_suggestion(window, cx)
+                    .or_else(|| cursor_word)
+                else {
                     drop(search_bar.search("", None, window, cx));
                     return None;
                 };
+
                 let query = regex::escape(&query);
                 Some(search_bar.search(&query, Some(options), window, cx))
             });
@@ -737,6 +750,12 @@ mod test {
         cx.assert_editor_state("«oneˇ» two one");
         cx.simulate_keystrokes("*");
         cx.assert_state("one two ˇone", Mode::Normal);
+
+        // check that a backward search after last match works correctly
+        cx.set_state("aa\naa\nbbˇ", Mode::Normal);
+        cx.simulate_keystrokes("? a a");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("aa\nˇaa\nbb", Mode::Normal);
 
         // check that searching with unable search wrap
         cx.update_global(|store: &mut SettingsStore, cx| {

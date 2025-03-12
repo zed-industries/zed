@@ -43,7 +43,7 @@ use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, Under
 pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
-use invisibles::{is_invisible, replacement};
+pub use invisibles::{is_invisible, replacement};
 use language::{
     language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
     Subscription as BufferSubscription,
@@ -113,7 +113,6 @@ pub struct DisplayMap {
 }
 
 impl DisplayMap {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         buffer: Entity<MultiBuffer>,
         font: Font,
@@ -1122,6 +1121,11 @@ impl DisplaySnapshot {
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
         self.block_snapshot.is_block_line(BlockRow(display_row.0))
+    }
+
+    pub fn is_folded_buffer_header(&self, display_row: DisplayRow) -> bool {
+        self.block_snapshot
+            .is_folded_buffer_header(BlockRow(display_row.0))
     }
 
     pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {

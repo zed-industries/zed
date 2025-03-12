@@ -42,7 +42,7 @@ pub struct ItemSettings {
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
     pub show_diagnostics: ShowDiagnostics,
-    pub always_show_close_button: bool,
+    pub show_close_button: ShowCloseButton,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +58,15 @@ pub enum ClosePosition {
     Left,
     #[default]
     Right,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ShowCloseButton {
+    Always,
+    #[default]
+    Hover,
+    Hidden,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -104,7 +113,7 @@ pub struct ItemSettingsContent {
     /// Whether to always show the close button on tabs.
     ///
     /// Default: false
-    always_show_close_button: Option<bool>,
+    show_close_button: Option<ShowCloseButton>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -793,6 +802,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
 
                         ItemEvent::UpdateTab => {
+                            workspace.update_item_dirty_state(item, window, cx);
                             pane.update(cx, |_, cx| {
                                 cx.emit(pane::Event::ChangeItemTitle);
                                 cx.notify();
@@ -842,6 +852,7 @@ impl<T: Item> ItemHandle for Entity<T> {
             .detach();
 
             let item_id = self.item_id();
+            workspace.update_item_dirty_state(self, window, cx);
             cx.observe_release_in(self, window, move |workspace, _, _, _| {
                 workspace.panes_by_item.remove(&item_id);
                 event_subscription.take();
