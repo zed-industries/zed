@@ -14605,7 +14605,7 @@ impl Editor {
 
     pub fn toggle_git_blame(
         &mut self,
-        _: &ToggleGitBlame,
+        _: &::git::Blame,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
