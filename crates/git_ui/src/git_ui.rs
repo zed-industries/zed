@@ -103,6 +103,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
             clear_dismissed(cx);
             window.refresh();
+        });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
