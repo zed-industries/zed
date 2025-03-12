@@ -94,6 +94,7 @@ fn main() {
 
         cx.spawn(move |cx| async move {
             for eval_name in evals_to_run {
+                println!("Running eval named {eval_name}");
                 let result = run_eval(
                     &eval_name,
                     &evaluation_data_dir,
@@ -107,8 +108,11 @@ fn main() {
                 .await;
                 match result {
                     Ok((eval_output, judge_output)) => {
-                        println!("Eval output: {:?}", eval_output);
-                        println!("Judge output: {judge_output}");
+                        println!("Generated diff for {eval_name}:\n");
+                        println!("{}\n", eval_output.diff);
+                        println!("Last message for {eval_name}:\n");
+                        println!("{}\n", eval_output.last_message);
+                        println!("Judge output for {eval_name}: {judge_output}");
                     }
                     Err(err) => {
                         println!("Error running {eval_name}: {err}");
@@ -134,7 +138,6 @@ async fn run_eval(
     app_state: Arc<HeadlessAppState>,
     cx: AsyncApp,
 ) -> anyhow::Result<(EvalOutput, String)> {
-    println!("Running eval named {eval_name}");
     let eval_path = evaluation_data_dir.join(eval_name).canonicalize()?;
     let repo_path = repos_dir.canonicalize()?.join(eval_name);
     let eval = Eval::load(
