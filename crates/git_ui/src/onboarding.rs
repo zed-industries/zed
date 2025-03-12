@@ -2,7 +2,7 @@ use gpui::{
     svg, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
     MouseDownEvent, Render,
 };
-use ui::{prelude::*, ButtonLike, Tooltip};
+use ui::{prelude::*, ButtonLike, TintColor, Tooltip};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -49,13 +49,6 @@ impl GitOnboardingModal {
         git_onboarding_event!("Blog Link Clicked");
     }
 
-    fn view_announcement(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/git");
-        cx.notify();
-
-        git_onboarding_event!("Announcement Link Clicked");
-    }
-
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
@@ -80,13 +73,14 @@ impl Render for GitOnboardingModal {
             .id("git-onboarding")
             .key_context("GitOnboardingModal")
             .relative()
-            .w(px(550.))
+            .w(px(450.))
             .h_full()
             .max_h(max_height)
             .p_4()
             .gap_2()
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
+            .overflow_hidden()
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
                 git_onboarding_event!("Cancelled", trigger = "Action");
@@ -113,16 +107,15 @@ impl Render for GitOnboardingModal {
                     ),
             )
             .child(
-                h_flex().w_full().mb_2().justify_between().child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            Label::new("Introducing")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(Headline::new("Native Git Support").size(HeadlineSize::Large)),
-                ),
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        Label::new("Introducing")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(Headline::new("Native Git Support").size(HeadlineSize::Large)),
             )
             .child(h_flex().absolute().top_2().right_2().child(
                 IconButton::new("cancel", IconName::X).on_click(cx.listener(
@@ -135,35 +128,26 @@ impl Render for GitOnboardingModal {
 
         let open_panel_button = Button::new("open-panel", "Get Started with the Git Panel")
             .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
+            .style(ButtonStyle::Tinted(TintColor::Accent))
+            .full_width()
             .on_click(cx.listener(Self::open_panel));
-
-        let announcement_button = Button::new("view-announcement", "Read the Announcement")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
-            .on_click(cx.listener(Self::view_announcement));
 
         let blog_post_button = Button::new("view-blog", "Check out the Blog Post")
             .icon(IconName::ArrowUpRight)
             .icon_size(IconSize::Indicator)
             .icon_color(Color::Muted)
+            .full_width()
             .on_click(cx.listener(Self::view_blog));
 
-        let copy = "You can now add, commit, and push changes to your Git repositories.\nAll without leaving Zed.";
+        let copy = "First-class support for staging, committing, pulling, pushing, viewing diffs, and more. All without leaving Zed.";
 
         base.child(Label::new(copy).color(Color::Muted)).child(
             v_flex()
+                .w_full()
                 .mt_2()
                 .gap_2()
-                .child(h_flex().w_full().justify_around().child(open_panel_button))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_around()
-                        .child(announcement_button),
-                )
-                .child(h_flex().w_full().justify_around().child(blog_post_button)),
+                .child(open_panel_button)
+                .child(blog_post_button),
         )
     }
 }
