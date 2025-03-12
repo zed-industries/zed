@@ -179,7 +179,6 @@ members = [
     "extensions/snippets",
     "extensions/test-extension",
     "extensions/toml",
-    "extensions/uiua",
 
     #
     # Tooling
