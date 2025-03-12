@@ -1,25 +1,33 @@
 mod edit_action;
 
-use collections::HashSet;
-use std::{path::Path, sync::Arc};
-
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use assistant_tool::Tool;
+use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
-use project::{Project, ProjectPath, WorktreeId};
+use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFilesToolInput {
-    /// The ID of the worktree in which the files reside.
-    pub worktree_id: usize,
-    /// Instruct how to modify the files.
+    /// High-level edit instructions. These will be interpreted by a smaller model,
+    /// so explain the edits you want that model to make and to which files need changing.
+    /// The description should be concise and clear. We will show this description to the user
+    /// as well.
+    ///
+    /// <example>
+    /// If you want to rename a function you can say "Rename the function 'foo' to 'bar'".
+    /// </example>
+    ///
+    /// <example>
+    /// If you want to add a new function you can say "Add a new method to the `User` struct that prints the age".
+    /// </example>
     pub edit_instructions: String,
 }
 
@@ -90,10 +98,25 @@ impl Tool for EditFilesTool {
 
             while let Some(chunk) = chunks.stream.next().await {
                 for action in parser.parse_chunk(&chunk?) {
-                    let project_path = ProjectPath {
-                        worktree_id: WorktreeId::from_usize(input.worktree_id),
-                        path: Path::new(action.file_path()).into(),
-                    };
+                    let project_path = project.read_with(&cx, |project, cx| {
+                        let worktree_root_name = action
+                            .file_path()
+                            .components()
+                            .next()
+                            .context("Invalid path")?;
+                        let worktree = project
+                            .worktree_for_root_name(
+                                &worktree_root_name.as_os_str().to_string_lossy(),
+                                cx,
+                            )
+                            .context("Directory not found in project")?;
+                        anyhow::Ok(ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: Arc::from(
+                                action.file_path().strip_prefix(worktree_root_name).unwrap(),
+                            ),
+                        })
+                    })??;
 
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?

@@ -5,17 +5,24 @@ use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
-use project::{Project, ProjectPath, WorktreeId};
+use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
-    /// The ID of the worktree in which the file resides.
-    pub worktree_id: usize,
-    /// The path to the file to read.
+    /// The relative path of the file to read.
     ///
-    /// This path is relative to the worktree root, it must not be an absolute path.
+    /// This path should never be absolute, and the first component
+    /// of the path should always be a top-level directory in a project.
+    ///
+    /// For example, if the project has the following top-level directories:
+    ///
+    /// - directory1
+    /// - directory2
+    ///
+    /// If you wanna access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.
+    /// If you wanna access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     pub path: Arc<Path>,
 }
 
@@ -27,7 +34,7 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> String {
-        "Reads the content of a file specified by a worktree ID and path. Use this tool when you need to access the contents of a file in the project.".into()
+        include_str!("./read_file_tool/description.md").into()
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -47,9 +54,18 @@ impl Tool for ReadFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
+        let Some(worktree_root_name) = input.path.components().next() else {
+            return Task::ready(Err(anyhow!("Invalid path")));
+        };
+        let Some(worktree) = project
+            .read(cx)
+            .worktree_for_root_name(&worktree_root_name.as_os_str().to_string_lossy(), cx)
+        else {
+            return Task::ready(Err(anyhow!("Directory not found in the project")));
+        };
         let project_path = ProjectPath {
-            worktree_id: WorktreeId::from_usize(input.worktree_id),
-            path: input.path,
+            worktree_id: worktree.read(cx).id(),
+            path: Arc::from(input.path.strip_prefix(worktree_root_name).unwrap()),
         };
         cx.spawn(|cx| async move {
             let buffer = cx
