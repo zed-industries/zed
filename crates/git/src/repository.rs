@@ -842,8 +842,6 @@ impl GitRepository for RealGitRepository {
                 .env("GIT_ASKPASS", ask_pass.script_path())
                 .env("SSH_ASKPASS", ask_pass.script_path())
                 .env("SSH_ASKPASS_REQUIRE", "force")
-                .env("GIT_TRACE", "/Users/max/.git_trace")
-                .env("GCM_TRACE", "/Users/max/.git_trace")
                 .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory)
                 .args(["push"])
