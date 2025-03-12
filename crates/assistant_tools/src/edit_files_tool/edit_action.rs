@@ -96,9 +96,7 @@ impl EditActionParser {
                 self.column += 1;
             }
 
-            dbg!(byte as char);
-
-            match dbg!(&self.state) {
+            match &self.state {
                 Default => match match_marker(byte, FENCE, false, &mut self.marker_ix) {
                     MarkerMatch::Complete => {
                         self.to_state(OpenFence);
@@ -150,11 +148,11 @@ impl EditActionParser {
                     }
                 }
                 CloseFence => {
-                    if dbg!(self.expect_marker(byte, FENCE, false)) {
-                        if let Some(action) = dbg!(self.action()) {
+                    if self.expect_marker(byte, FENCE, false) {
+                        if let Some(action) = self.action() {
                             actions.push(action);
                         }
-                        dbg!(self.errors());
+                        self.errors();
                         self.reset();
                     }
                 }
