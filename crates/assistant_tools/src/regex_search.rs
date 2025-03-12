@@ -47,7 +47,6 @@ impl Tool for RegexSearchTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        dbg!(&input.regex);
         let query = match SearchQuery::regex(
             &input.regex,
             false,
@@ -101,8 +100,6 @@ impl Tool for RegexSearchTool {
                                     break;
                                 }
                             }
-
-                            dbg!(&path, &range);
 
                             writeln!(output, "```").unwrap();
                             output.extend(buffer.text_for_range(range));
