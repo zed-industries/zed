@@ -675,6 +675,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "language",
  "language_model",
  "project",
  "rand 0.8.5",
