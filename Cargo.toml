@@ -174,7 +174,6 @@ members = [
     "extensions/html",
     "extensions/perplexity",
     "extensions/proto",
-    "extensions/purescript",
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
