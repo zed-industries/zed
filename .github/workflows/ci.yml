@@ -395,6 +395,7 @@ jobs:
     name: Tests Pass
     runs-on: ubuntu-latest
     needs:
+      - job_spec
       - style
       - migration_checks
       - linux_tests
@@ -407,14 +408,14 @@ jobs:
         needs.style.result == 'success'
         && (
           needs.job_spec.outputs.run_tests == 'false'
-          || (needs.linux_tests.result == 'success'
-              && needs.macos_tests.result == 'success'
+          || (needs.macos_tests.result == 'success'
               && needs.linux_tests.result == 'success'
               && needs.windows_tests.result == 'success'
               && needs.windows_clippy.result == 'success'
               && needs.build_remote_server.result == 'success'
               && needs.migration_checks.result == 'success')
         )
+      )
     steps:
       - name: All tests passed
         run: echo "All tests passed successfully!"
