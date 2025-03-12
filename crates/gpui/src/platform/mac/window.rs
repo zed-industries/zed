@@ -1499,7 +1499,7 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let mut lock = window_state.as_ref().lock();
     lock.fullscreen_restore_bounds = lock.bounds();
 
-    if is_macos_version_at_least(15, 0, 3) {
+    if is_macos_version_at_least(15, 3, 0) {
         unsafe {
             lock.native_window.setTitlebarAppearsTransparent_(NO);
         }
@@ -1510,7 +1510,7 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
-    if is_macos_version_at_least(15, 0, 3) && lock.transparent_titlebar {
+    if is_macos_version_at_least(15, 3, 0) && lock.transparent_titlebar {
         unsafe {
             lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
