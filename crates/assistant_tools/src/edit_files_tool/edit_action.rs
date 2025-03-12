@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use util::ResultExt;
 
 /// Represents an edit action to be performed on a file.
@@ -5,16 +6,16 @@ use util::ResultExt;
 pub enum EditAction {
     /// Replace specific content in a file with new content
     Replace {
-        file_path: String,
+        file_path: PathBuf,
         old: String,
         new: String,
     },
     /// Write content to a file (create or overwrite)
-    Write { file_path: String, content: String },
+    Write { file_path: PathBuf, content: String },
 }
 
 impl EditAction {
-    pub fn file_path(&self) -> &str {
+    pub fn file_path(&self) -> &Path {
         match self {
             EditAction::Replace { file_path, .. } => file_path,
             EditAction::Write { file_path, .. } => file_path,
@@ -180,7 +181,7 @@ impl EditActionParser {
             pop_carriage_return(&mut pre_fence_line);
         }
 
-        let file_path = String::from_utf8(pre_fence_line).log_err()?;
+        let file_path = PathBuf::from(String::from_utf8(pre_fence_line).log_err()?);
         let content = String::from_utf8(std::mem::take(&mut self.new_bytes)).log_err()?;
 
         if self.old_bytes.is_empty() {
@@ -374,7 +375,7 @@ fn replacement() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
@@ -401,7 +402,7 @@ fn replacement() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
@@ -432,7 +433,7 @@ This change makes the function better.
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
@@ -470,7 +471,7 @@ fn new_util() -> bool { true }
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
@@ -478,7 +479,7 @@ fn new_util() -> bool { true }
         assert_eq!(
             actions[1],
             EditAction::Replace {
-                file_path: "src/utils.rs".to_string(),
+                file_path: PathBuf::from("src/utils.rs"),
                 old: "fn old_util() -> bool { false }".to_string(),
                 new: "fn new_util() -> bool { true }".to_string(),
             }
@@ -519,7 +520,7 @@ fn replacement() {
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {\n    println!(\"This is the original function\");\n    let x = 42;\n    if x > 0 {\n        println!(\"Positive number\");\n    }\n}".to_string(),
                 new: "fn replacement() {\n    println!(\"This is the replacement function\");\n    let x = 100;\n    if x > 50 {\n        println!(\"Large number\");\n    } else {\n        println!(\"Small number\");\n    }\n}".to_string(),
             }
@@ -549,7 +550,7 @@ fn new_function() {
         assert_eq!(
             actions[0],
             EditAction::Write {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 content: "fn new_function() {\n    println!(\"This function is being added\");\n}"
                     .to_string(),
             }
@@ -576,7 +577,7 @@ fn this_will_be_deleted() {
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn this_will_be_deleted() {\n    println!(\"Deleting this function\");\n}"
                     .to_string(),
                 new: "".to_string(),
@@ -589,7 +590,7 @@ fn this_will_be_deleted() {
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old:
                     "fn this_will_be_deleted() {\r\n    println!(\"Deleting this function\");\r\n}"
                         .to_string(),
@@ -655,7 +656,7 @@ fn replacement() {}"#;
         assert_eq!(
             actions3[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
@@ -747,7 +748,7 @@ fn new_utils_func() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/utils.rs".to_string(),
+                file_path: PathBuf::from("src/utils.rs"),
                 old: "fn utils_func() {}".to_string(),
                 new: "fn new_utils_func() {}".to_string(),
             }
@@ -795,7 +796,7 @@ fn new_utils_func() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "mathweb/flask/app.py".to_string(),
+                file_path: PathBuf::from("mathweb/flask/app.py"),
                 old: "from flask import Flask".to_string(),
                 new: "import math\nfrom flask import Flask".to_string(),
             }
@@ -804,7 +805,7 @@ fn new_utils_func() {}
         assert_eq!(
                     actions[1],
                     EditAction::Replace {
-                        file_path: "mathweb/flask/app.py".to_string(),
+                        file_path: PathBuf::from("mathweb/flask/app.py"),
                         old: "def factorial(n):\n    \"compute factorial\"\n\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n".to_string(),
                         new: "".to_string(),
                     }
@@ -813,7 +814,7 @@ fn new_utils_func() {}
         assert_eq!(
             actions[2],
             EditAction::Replace {
-                file_path: "mathweb/flask/app.py".to_string(),
+                file_path: PathBuf::from("mathweb/flask/app.py"),
                 old: "    return str(factorial(n))".to_string(),
                 new: "    return str(math.factorial(n))".to_string(),
             }
@@ -822,7 +823,7 @@ fn new_utils_func() {}
         assert_eq!(
             actions[3],
             EditAction::Write {
-                file_path: "hello.py".to_string(),
+                file_path: PathBuf::from("hello.py"),
                 content: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")"
                     .to_string(),
             }
@@ -831,7 +832,7 @@ fn new_utils_func() {}
         assert_eq!(
             actions[4],
             EditAction::Replace {
-                file_path: "main.py".to_string(),
+                file_path: PathBuf::from("main.py"),
                 old: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")".to_string(),
                 new: "from hello import hello".to_string(),
             }
