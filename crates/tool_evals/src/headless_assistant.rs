@@ -14,13 +14,16 @@ use settings::SettingsStore;
 use smol::channel;
 use std::sync::Arc;
 
-/// Subset of `workspace::AppState` needed by `HeadlessAssistant`.
+/// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.
 pub struct HeadlessAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub node_runtime: NodeRuntime,
+
+    // Additional fields not present in `workspace::AppState`.
+    pub prompt_builder: Arc<PromptBuilder>,
 }
 
 pub struct HeadlessAssistant {
@@ -47,7 +50,8 @@ impl HeadlessAssistant {
         );
 
         let tools = Arc::new(ToolWorkingSet::default());
-        let thread_store = ThreadStore::new(project.clone(), tools, cx)?;
+        let thread_store =
+            ThreadStore::new(project.clone(), tools, app_state.prompt_builder.clone(), cx)?;
 
         let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
 
@@ -144,6 +148,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
         user_store,
         fs,
         node_runtime: NodeRuntime::unavailable(),
+        prompt_builder,
     })
 }
 
