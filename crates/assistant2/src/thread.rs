@@ -103,7 +103,9 @@ pub struct Thread {
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
     initial_project_snapshot: Option<ProjectSnapshot>,
+    initial_project_snapshot_task: Option<Task<()>>,
     final_project_snapshot: Option<ProjectSnapshot>,
+    final_project_snapshot_task: Option<Task<()>>,
 }
 
 impl Thread {
@@ -343,7 +345,7 @@ impl Thread {
         let snapshot_task = Self::start_project_snapshot(project.clone(), cx);
 
         // Create a thread instance with initial_project_snapshot set to None
-        let thread = Self {
+        let mut thread = Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
             summary: None,
@@ -361,17 +363,19 @@ impl Thread {
             scripting_session,
             scripting_tool_use: ToolUseState::new(),
             initial_project_snapshot: None,
+            initial_project_snapshot_task: None,
             final_project_snapshot: None,
+            final_project_snapshot_task: None,
         };
 
         // Spawn a task to update the initial_project_snapshot when the async work completes
-        cx.spawn(move |this, mut cx| async move {
+        thread.initial_project_snapshot_task = Some(cx.spawn(move |this, mut cx| async move {
             let snapshot = snapshot_task.await;
             this.update(&mut cx, |this, _| {
                 this.initial_project_snapshot = Some(snapshot);
             })
             .ok();
-        });
+        }));
 
         thread
     }
@@ -423,7 +427,9 @@ impl Thread {
             scripting_session,
             scripting_tool_use,
             initial_project_snapshot: saved.initial_project_snapshot,
+            initial_project_snapshot_task: None,
             final_project_snapshot: saved.final_project_snapshot,
+            final_project_snapshot_task: None,
         }
     }
 
@@ -491,13 +497,13 @@ impl Thread {
         let project = self.project.clone();
         let snapshot_task = Self::start_project_snapshot(project, cx);
 
-        cx.spawn(move |this, mut cx| async move {
+        self.final_project_snapshot_task = Some(cx.spawn(move |this, mut cx| async move {
             let snapshot = snapshot_task.await;
             this.update(&mut cx, |this, _| {
                 this.final_project_snapshot = Some(snapshot);
             })
             .ok();
-        });
+        }));
     }
 
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
