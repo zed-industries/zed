@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
-use project::{Project, ProjectPath};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -178,23 +178,9 @@ impl EditFilesTool {
 
                 for action in new_actions {
                     let project_path = project.read_with(&cx, |project, cx| {
-                        let worktree_root_name = action
-                            .file_path()
-                            .components()
-                            .next()
-                            .context("Invalid path")?;
-                        let worktree = project
-                            .worktree_for_root_name(
-                                &worktree_root_name.as_os_str().to_string_lossy(),
-                                cx,
-                            )
-                            .context("Directory not found in project")?;
-                        anyhow::Ok(ProjectPath {
-                            worktree_id: worktree.read(cx).id(),
-                            path: Arc::from(
-                                action.file_path().strip_prefix(worktree_root_name).unwrap(),
-                            ),
-                        })
+                        project
+                            .find_project_path(action.file_path(), cx)
+                            .context("Path not found in project")
                     })??;
 
                     let buffer = project

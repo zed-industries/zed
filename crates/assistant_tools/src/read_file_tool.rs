@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
-use project::{Project, ProjectPath};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -56,18 +56,8 @@ impl Tool for ReadFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree_root_name) = input.path.components().next() else {
-            return Task::ready(Err(anyhow!("Invalid path")));
-        };
-        let Some(worktree) = project
-            .read(cx)
-            .worktree_for_root_name(&worktree_root_name.as_os_str().to_string_lossy(), cx)
-        else {
-            return Task::ready(Err(anyhow!("Directory not found in the project")));
-        };
-        let project_path = ProjectPath {
-            worktree_id: worktree.read(cx).id(),
-            path: Arc::from(input.path.strip_prefix(worktree_root_name).unwrap()),
+        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+            return Task::ready(Err(anyhow!("Path not found in project")));
         };
         cx.spawn(|cx| async move {
             let buffer = cx
