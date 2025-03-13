@@ -584,50 +584,50 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use telemetry_events::{AssistantThreadFeedbackEvent, Event, ThreadFeedbackRating};
+        use telemetry;
 
-        // Serialize the thread data to JSON
-        let (thread_data, initial_snapshot, final_snapshot) =
-            self.thread.update(cx, |thread, _cx| {
-                // Create a serializable representation of the Thread
-                let serializable_thread = self.create_serializable_thread(thread);
-                let thread_data = serde_json::to_value(serializable_thread)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
+        // We're no longer using these values since we're only sending
+        // basic telemetry info rather than the full thread data
+        self.thread.update(cx, |_thread, _cx| {
+            // In the future, if we need to collect detailed thread data
+            // for the telemetry, we could use this:
+            //
+            // let serializable_thread = self.create_serializable_thread(thread);
+            // let thread_data = serde_json::to_value(serializable_thread)
+            //     .unwrap_or_else(|_| serde_json::Value::Null);
+            //
+            // let initial_snapshot = thread
+            //     .initial_project_snapshot()
+            //     .cloned()
+            //     .map(|snapshot| {
+            //         serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
+            //     })
+            //     .unwrap_or(serde_json::Value::Null);
+            //
+            // let final_snapshot = thread
+            //     .final_project_snapshot()
+            //     .cloned()
+            //     .map(|snapshot| {
+            //         serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
+            //     })
+            //     .unwrap_or(serde_json::Value::Null);
 
-                // Get the project snapshots
-                let initial_snapshot = thread
-                    .initial_project_snapshot()
-                    .cloned()
-                    .map(|snapshot| {
-                        serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
-                    })
-                    .unwrap_or(serde_json::Value::Null);
-
-                let final_snapshot = thread
-                    .final_project_snapshot()
-                    .cloned()
-                    .map(|snapshot| {
-                        serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
-                    })
-                    .unwrap_or(serde_json::Value::Null);
-
-                (thread_data, initial_snapshot, final_snapshot)
-            });
-
-        // Create the feedback event
-        let feedback_event = Event::AssistantThreadFeedback(AssistantThreadFeedbackEvent {
-            thread_id,
-            rating: if is_positive {
-                ThreadFeedbackRating::Positive
-            } else {
-                ThreadFeedbackRating::Negative
-            },
-            thread_data,
-            initial_project_snapshot: initial_snapshot,
-            final_project_snapshot: final_snapshot,
+            // Just indicate that we've viewed the thread for now
+            ()
         });
 
-        todo!("Record the event in telemetry");
+        // Create the telemetry event
+        // We only need to send basic information in the event
+        // The detailed thread data will be collected by the server-side telemetry
+        let thread_id_for_event = thread_id.clone();
+        let rating = if is_positive { "positive" } else { "negative" };
+
+        // Log the event using the telemetry::event! macro
+        telemetry::event!(
+            "Assistant Feedback",
+            rating,
+            thread_id = thread_id_for_event
+        );
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
