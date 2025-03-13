@@ -4639,7 +4639,6 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "extension",
  "extension_host",
  "feature_flags",
  "fs",

@@ -29,7 +29,7 @@ impl ExtensionEvents {
 
 #[derive(Clone)]
 pub enum Event {
-    ExtensionsUpdated,
+    ExtensionsInstalledChanged,
 }
 
 impl EventEmitter<Event> for ExtensionEvents {}
