@@ -107,7 +107,98 @@ pub struct Thread {
 }
 
 impl Thread {
-    /// Creates a snapshot of the current project state including git information and unsaved buffers
+    /// Starts creating a snapshot of the current project state including git information and unsaved buffers.
+    /// Returns a task that will complete when all the async operations have finished.
+    pub fn start_project_snapshot(
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Task<ProjectSnapshot> {
+        // Get all worktrees in the project
+        let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+
+        // Create a vector of tasks for each worktree
+        let worktree_tasks: Vec<_> = worktrees
+            .into_iter()
+            .map(|worktree_handle| {
+                let worktree_clone = worktree_handle.clone();
+                cx.spawn(move |_, mut cx| {
+                    async move {
+                        let worktree = worktree_clone.read(&cx);
+                        let worktree_path = worktree.abs_path().to_string_lossy().to_string();
+
+                        // Get git information
+                        let git_state = if let Some(repository) = worktree.git_repository() {
+                            // Get remote URL (typically from 'origin')
+                            let remote_url = repository.remote_url("origin");
+
+                            // Get the current HEAD commit SHA
+                            let head_sha = repository.head_sha();
+
+                            // Get current branch name
+                            let current_branch =
+                                worktree.branch().map(|branch| branch.name.to_string());
+
+                            // Fetch diff asynchronously
+                            let diff = match repository
+                                .diff(git::repository::DiffType::HeadToWorktree, &cx)
+                            {
+                                Ok(diff_future) => {
+                                    // Await the diff future
+                                    diff_future.await.ok()
+                                }
+                                Err(_) => None,
+                            };
+
+                            Some(GitState {
+                                remote_url,
+                                head_sha,
+                                current_branch,
+                                diff,
+                            })
+                        } else {
+                            None
+                        };
+
+                        WorktreeSnapshot {
+                            worktree_path,
+                            git_state,
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Spawn a task to collect unsaved buffers and wait for all worktree tasks
+        cx.spawn(move |_, cx| {
+            async move {
+                // Wait for all worktree snapshots to complete
+                let worktree_snapshots_futures = futures::future::join_all(worktree_tasks);
+                let worktree_snapshots = worktree_snapshots_futures.await;
+
+                // Get unsaved buffers
+                let mut unsaved_buffers = Vec::new();
+                let buffer_store = project.read(&cx).buffer_store();
+                for buffer_handle in buffer_store.read(&cx).buffers() {
+                    let buffer = buffer_handle.read(&cx);
+                    if buffer.is_dirty() {
+                        if let Some(file) = buffer.file() {
+                            let path = file.path().to_string_lossy().to_string();
+                            unsaved_buffers.push(path);
+                        }
+                    }
+                }
+
+                ProjectSnapshot {
+                    worktree_snapshots,
+                    unsaved_buffer_paths: unsaved_buffers,
+                    timestamp: Utc::now(),
+                }
+            }
+        })
+    }
+
+    /// Creates a snapshot of the current project state including git information and unsaved buffers.
+    /// This is a synchronous version that doesn't include git diffs.
     pub fn create_project_snapshot(project: Entity<Project>, cx: &App) -> ProjectSnapshot {
         let mut worktree_snapshots = Vec::new();
         let mut unsaved_buffers = Vec::new();
@@ -131,9 +222,7 @@ impl Thread {
                 // Get current branch name
                 let current_branch = worktree.branch().map(|branch| branch.name.to_string());
 
-                // For the diff, we'll capture the current state without awaiting futures
-                // The diff is optional, so it's okay to not include it if we can't get it immediately
-                // This is consistent with other parts of the codebase that handle git info in snapshots
+                // Diff is set to None here since we're not doing async work in this synchronous version
                 let diff = None;
 
                 GitState {
@@ -177,10 +266,11 @@ impl Thread {
     ) -> Self {
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
 
-        // Take an initial snapshot of the project state
-        let initial_snapshot = Self::create_project_snapshot(project.clone(), cx);
+        // Start an asynchronous task to get the full project snapshot including git diffs
+        let snapshot_task = Self::start_project_snapshot(project.clone(), cx);
 
-        Self {
+        // Create a thread instance with initial_project_snapshot set to None
+        let mut thread = Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
             summary: None,
@@ -197,9 +287,20 @@ impl Thread {
             tool_use: ToolUseState::new(),
             scripting_session,
             scripting_tool_use: ToolUseState::new(),
-            initial_project_snapshot: Some(initial_snapshot),
+            initial_project_snapshot: None,
             final_project_snapshot: None,
-        }
+        };
+
+        // Spawn a task to update the initial_project_snapshot when the async work completes
+        cx.spawn(move |this, mut cx| async move {
+            let snapshot = snapshot_task.await;
+            this.update(&mut cx, |this, _| {
+                this.initial_project_snapshot = Some(snapshot);
+            })
+            .ok();
+        });
+
+        thread
     }
 
     pub fn from_saved(
@@ -309,6 +410,21 @@ impl Thread {
 
     pub fn set_final_project_snapshot(&mut self, snapshot: ProjectSnapshot) {
         self.final_project_snapshot = Some(snapshot);
+    }
+
+    /// Starts creating a final snapshot of the project state with all git information
+    /// including diffs, and sets it when the async work completes.
+    pub fn start_final_project_snapshot(&mut self, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        let snapshot_task = Self::start_project_snapshot(project, cx);
+
+        cx.spawn(move |this, mut cx| async move {
+            let snapshot = snapshot_task.await;
+            this.update(&mut cx, |this, _| {
+                this.final_project_snapshot = Some(snapshot);
+            })
+            .ok();
+        });
     }
 
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
