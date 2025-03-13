@@ -19,9 +19,13 @@ pub fn activate(cx: &mut App) {
 /// Deactivate Zed's built-in prompt system, reverting to the default/system provided one.
 /// Note that on Linux and FreeBSD, Zed's prompt system is built-in and cannot be deactivated,
 /// as there isn't a system provided prompt.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub fn deactivate(cx: &mut App) {
     cx.reset_prompt_builder();
 }
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub fn deactivate(_cx: &mut App) {}
 
 /// Use this function in conjunction with [App::set_prompt_builder] to force
 /// GPUI to use the internal prompt system.

@@ -249,9 +249,7 @@ impl Settings for WorkspaceSettings {
         let settings = sources.json_merge::<WorkspaceSettings>();
 
         if let Ok(settings) = &settings {
-            if settings.use_system_prompts
-                && cfg!(not(any(target_os = "linux", target_os = "freebsd")))
-            {
+            if settings.use_system_prompts {
                 ui_prompt::deactivate(cx);
             } else {
                 ui_prompt::activate(cx);
