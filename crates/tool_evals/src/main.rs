@@ -175,6 +175,8 @@ async fn run_eval(
     let eval = Eval::load(&eval_path, &repo_path, Some(SYSTEM_PROMPT.to_string()))?;
     let judge = Judge::load(&eval_path, judge_model)?;
     let eval_output = cx.update(|cx| eval.run(app_state, model, cx))?.await?;
+    let output_dir = Path::new(evaluation_data_dir);
     let judge_output = cx.update(|cx| judge.run(&eval_output, cx))?.await?;
+    eval_output.save_to_directory(eval_name, output_dir, judge_output.to_string())?;
     Ok((eval_output, judge_output))
 }

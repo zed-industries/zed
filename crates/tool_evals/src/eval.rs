@@ -4,8 +4,10 @@ use assistant2::RequestKind;
 use collections::HashMap;
 use gpui::{App, Task};
 use language_model::LanguageModel;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
+    fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -17,7 +19,7 @@ pub struct Eval {
     pub user_query: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct EvalOutput {
     pub diff: String,
     pub last_message: String,
@@ -117,6 +119,68 @@ impl Eval {
                 })
             })?
         })
+    }
+}
+
+impl EvalOutput {
+    // Method to save the output to a directory
+    pub fn save_to_directory(
+        &self,
+        eval_name: &str,
+        output_dir: &Path,
+        eval_output_value: String,
+    ) -> anyhow::Result<PathBuf> {
+        // Create the output directory if it doesn't exist
+        let eval_output_dir = output_dir.join(eval_name);
+        fs::create_dir_all(&eval_output_dir)?;
+
+        // Save the diff to a file
+        let diff_path = eval_output_dir.join("diff.patch");
+        let mut diff_file = fs::File::create(&diff_path)?;
+        diff_file.write_all(self.diff.as_bytes())?;
+
+        // Save the last message to a file
+        let message_path = eval_output_dir.join("assistant_response.txt");
+        let mut message_file = fs::File::create(&message_path)?;
+        message_file.write_all(self.last_message.as_bytes())?;
+
+        // Current metrics for this run
+        let current_metrics = serde_json::json!({
+            "elapsed_time_ms": self.elapsed_time.as_millis(),
+            "assistant_response_count": self.assistant_response_count,
+            "tool_use_counts": self.tool_use_counts,
+            "eval_output_value": eval_output_value,
+        });
+
+        // Get current timestamp in milliseconds
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+            .to_string();
+
+        // Path to metrics file
+        let metrics_path = eval_output_dir.join("metrics.json");
+
+        // Load existing metrics if the file exists, or create a new object
+        let mut historical_metrics = if metrics_path.exists() {
+            let metrics_content = fs::read_to_string(&metrics_path)?;
+            serde_json::from_str::<serde_json::Value>(&metrics_content)
+                .unwrap_or_else(|_| serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        // Add new run with timestamp as key
+        if let serde_json::Value::Object(ref mut map) = historical_metrics {
+            map.insert(timestamp, current_metrics);
+        }
+
+        // Write updated metrics back to file
+        let metrics_json = serde_json::to_string_pretty(&historical_metrics)?;
+        let mut metrics_file = fs::File::create(&metrics_path)?;
+        metrics_file.write_all(metrics_json.as_bytes())?;
+
+        Ok(eval_output_dir)
     }
 }
 

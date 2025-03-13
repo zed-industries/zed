@@ -9,7 +9,7 @@ use std::{path::Path, sync::Arc};
 
 pub struct Judge {
     pub original_diff: Option<String>,
-    pub original_message: Option<String>,
+    pub _original_message: Option<String>,
     pub model: Arc<dyn LanguageModel>,
 }
 
@@ -23,7 +23,7 @@ impl Judge {
         };
 
         let original_message_path = eval_path.join("original_message.txt");
-        let original_message = if std::fs::exists(&original_message_path)? {
+        let _original_message = if std::fs::exists(&original_message_path)? {
             Some(std::fs::read_to_string(&original_message_path)?)
         } else {
             None
@@ -31,7 +31,7 @@ impl Judge {
 
         Ok(Self {
             original_diff,
-            original_message,
+            _original_message,
             model,
         })
     }

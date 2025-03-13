@@ -14221,6 +14221,7 @@ dependencies = [
  "reqwest_client",
  "scripting_tool",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "settings",
  "smol",
