@@ -121,12 +121,8 @@ impl ThreadStore {
     }
 
     pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        // We can't easily get an App context from a Context<Self> in this method,
-        // so instead of trying to create a project snapshot here, we'll just use
-        // whatever snapshot we already have
         let (metadata, thread) = thread.update(cx, |thread, _cx| {
             let id = thread.id().clone();
-            // We'll rely on the snapshot being created elsewhere if needed
 
             let thread = SavedThread {
                 summary: thread.summary_or_default(),
