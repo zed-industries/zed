@@ -293,7 +293,7 @@ impl LspAdapter for JsonLspAdapter {
         true
     }
 
-    async fn clear_zed_json_schema_cache(self: Arc<Self>) {
+    async fn clear_zed_json_schema_cache(&self) {
         self.workspace_config.write().await.take();
     }
 }

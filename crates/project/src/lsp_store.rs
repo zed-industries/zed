@@ -3363,7 +3363,7 @@ impl LspStore {
                 return;
             };
             for (adapter, server, delegate) in servers {
-                adapter.clone().clear_zed_json_schema_cache().await;
+                adapter.clear_zed_json_schema_cache().await;
 
                 let Some(json_workspace_config) = adapter
                     .workspace_configuration(

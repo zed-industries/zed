@@ -569,7 +569,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// autocompletion and diagnostics in Zed settings and keybinds files.
     /// Should not be called unless the callee is sure that
     /// `Self::is_primary_zed_json_schema_adapter` returns `true`
-    async fn clear_zed_json_schema_cache(self: Arc<Self>) {
+    async fn clear_zed_json_schema_cache(&self) {
         unreachable!("Not implemented for this adapter. This method should only be called on the default JSON language server adapter");
     }
 }
