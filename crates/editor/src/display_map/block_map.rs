@@ -2598,7 +2598,7 @@ mod tests {
 
         assert_eq!(
             blocks_snapshot.text(),
-            "\n\n\n111\n\n\n\n\n222\n\n\n333\n\n\n444\n\n\n\n\n555\n\n\n666\n"
+            "\n\n111\n\n\n222\n\n333\n\n444\n\n\n555\n\n666"
         );
         assert_eq!(
             blocks_snapshot
@@ -2608,28 +2608,19 @@ mod tests {
             vec![
                 None,
                 None,
-                None,
                 Some(0),
-                None,
-                None,
                 None,
                 None,
                 Some(1),
                 None,
-                None,
                 Some(2),
-                None,
                 None,
                 Some(3),
                 None,
                 None,
-                None,
-                None,
                 Some(4),
                 None,
-                None,
                 Some(5),
-                None,
             ]
         );
 
@@ -2677,7 +2668,7 @@ mod tests {
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         assert_eq!(
             blocks_snapshot.text(),
-            "\n\n\n111\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
+            "\n\n111\n\n\n\n222\n\n\n333\n\n444\n\n\n\n\n555\n\n666\n"
         );
         assert_eq!(
             blocks_snapshot
@@ -2687,32 +2678,23 @@ mod tests {
             vec![
                 None,
                 None,
-                None,
                 Some(0),
-                None,
-                None,
                 None,
                 None,
                 None,
                 Some(1),
                 None,
                 None,
-                None,
                 Some(2),
-                None,
                 None,
                 Some(3),
                 None,
                 None,
                 None,
                 None,
-                None,
-                None,
                 Some(4),
                 None,
-                None,
                 Some(5),
-                None,
                 None,
             ]
         );
@@ -2755,7 +2737,7 @@ mod tests {
         );
         assert_eq!(
             blocks_snapshot.text(),
-            "\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
+            "\n\n\n\n\n222\n\n\n333\n\n444\n\n\n\n\n555\n\n666\n"
         );
         assert_eq!(
             blocks_snapshot
@@ -2768,26 +2750,19 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
                 Some(1),
                 None,
                 None,
-                None,
                 Some(2),
-                None,
                 None,
                 Some(3),
                 None,
                 None,
                 None,
                 None,
-                None,
-                None,
                 Some(4),
                 None,
-                None,
                 Some(5),
-                None,
                 None,
             ]
         );
@@ -2824,7 +2799,7 @@ mod tests {
                 .count(),
             "Should have two folded blocks, producing headers"
         );
-        assert_eq!(blocks_snapshot.text(), "\n\n\n\n\n\n\n\n555\n\n\n666\n\n");
+        assert_eq!(blocks_snapshot.text(), "\n\n\n\n\n\n\n555\n\n666\n");
         assert_eq!(
             blocks_snapshot
                 .row_infos(BlockRow(0))
@@ -2838,12 +2813,9 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
                 Some(4),
                 None,
-                None,
                 Some(5),
-                None,
                 None,
             ]
         );
@@ -2879,7 +2851,7 @@ mod tests {
         );
         assert_eq!(
             blocks_snapshot.text(),
-            "\n\n\n\n111\n\n\n\n\n\n\n\n555\n\n\n666\n\n",
+            "\n\n\n111\n\n\n\n\n\n555\n\n666\n",
             "Should have extra newline for 111 buffer, due to a new block added when it was folded"
         );
         assert_eq!(
@@ -2891,10 +2863,7 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
                 Some(0),
-                None,
-                None,
                 None,
                 None,
                 None,
@@ -2902,9 +2871,7 @@ mod tests {
                 None,
                 Some(4),
                 None,
-                None,
                 Some(5),
-                None,
                 None,
             ]
         );
@@ -2936,7 +2903,7 @@ mod tests {
 
         assert_eq!(
             blocks_snapshot.text(),
-            "\n\n\n\n111\n\n\n\n\n",
+            "\n\n\n111\n\n\n\n",
             "Should have a single, first buffer left after folding"
         );
         assert_eq!(
@@ -2944,18 +2911,7 @@ mod tests {
                 .row_infos(BlockRow(0))
                 .map(|i| i.buffer_row)
                 .collect::<Vec<_>>(),
-            vec![
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ]
+            vec![None, None, None, Some(0), None, None, None, None,]
         );
     }
 
