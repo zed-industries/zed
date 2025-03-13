@@ -74,12 +74,14 @@ pub struct Markdown {
     open_url: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
+    run_code: Option<Box<dyn Fn(String, &str, &mut Window, &mut App)>>,
 }
 
 #[derive(Debug)]
 struct Options {
     parse_links_only: bool,
     copy_code_block_buttons: bool,
+    run_code_block_buttons: bool,
 }
 
 actions!(markdown, [Copy]);
@@ -108,9 +110,11 @@ impl Markdown {
             options: Options {
                 parse_links_only: false,
                 copy_code_block_buttons: true,
+                run_code_block_buttons: true,
             },
             open_url: None,
             copied_code_blocks: HashSet::new(),
+            run_code: None,
         };
         this.parse(cx);
         this
@@ -143,9 +147,11 @@ impl Markdown {
             options: Options {
                 parse_links_only: true,
                 copy_code_block_buttons: true,
+                run_code_block_buttons: true,
             },
             open_url: None,
             copied_code_blocks: HashSet::new(),
+            run_code: None,
         };
         this.parse(cx);
         this
@@ -251,6 +257,21 @@ impl Markdown {
 
     pub fn copy_code_block_buttons(mut self, should_copy: bool) -> Self {
         self.options.copy_code_block_buttons = should_copy;
+        self
+    }
+
+    pub fn run_code(
+        self,
+        run_code: impl Fn(String, &str, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            run_code: Some(Box::new(run_code)),
+            ..self
+        }
+    }
+
+    pub fn run_code_block_buttons(mut self, should_run: bool) -> Self {
+        self.options.run_code_block_buttons = should_run;
         self
     }
 }
@@ -762,6 +783,7 @@ impl Element for MarkdownElement {
 
                         if self.markdown.read(cx).options.copy_code_block_buttons {
                             builder.flush_text();
+                            
                             builder.modify_current_div(|el| {
                                 let id =
                                     ElementId::NamedInteger("copy-markdown-code".into(), range.end);
@@ -812,15 +834,66 @@ impl Element for MarkdownElement {
                                     }
                                 });
                                 
-                                // Run button
-                                let run_id = ElementId::NamedInteger("run-markdown-code".into(), range.end);
-                                let run_button = IconButton::new(run_id, IconName::Play)
-                                    .icon_color(Color::Muted)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .tooltip(Tooltip::text("Run Code"));
+                                // Add the copy button to the container
+                                let mut container = buttons_container.child(copy_button);
+                                
+                                // Extract language from the code block content
+                                let code_text = parsed_markdown.source()[range.clone()].trim();
+                                let language = if code_text.starts_with("```") {
+                                    // Extract language from the first line
+                                    let first_line_end = code_text.find('\n').unwrap_or(code_text.len());
+                                    let first_line = &code_text[3..first_line_end];
+                                    first_line.trim().to_string()
+                                } else {
+                                    String::new()
+                                };
+                                
+                                // Check if we should show the run button:
+                                // 1. If run_code_block_buttons is enabled and run_code is provided
+                                // 2. OR if it's a shell command (language is "sh", "bash", "shell", etc.)
+                                let is_shell_command = language.eq_ignore_ascii_case("sh") || 
+                                                      language.eq_ignore_ascii_case("bash") || 
+                                                      language.eq_ignore_ascii_case("shell") ||
+                                                      language.eq_ignore_ascii_case("zsh");
+                                
+                                let show_run_button = (self.markdown.read(cx).options.run_code_block_buttons && 
+                                                      self.markdown.read(cx).run_code.is_some()) ||
+                                                      is_shell_command;
+                                
+                                if show_run_button {
+                                    let run_id = ElementId::NamedInteger("run-markdown-code".into(), range.end);
                                     
-                                // Add both buttons to the container and return it
-                                el.child(buttons_container.child(copy_button).child(run_button))
+                                    let run_button = IconButton::new(run_id, IconName::Play)
+                                        .icon_color(Color::Muted)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .tooltip(Tooltip::text("Run Code"))
+                                        .on_click({
+                                            let markdown = self.markdown.clone();
+                                            let code = without_fences(
+                                                parsed_markdown.source()[range.clone()].trim(),
+                                            ).to_string();
+                                            let language = language.clone();
+                                            
+                                            move |_event, window, cx| {
+                                                markdown.update(cx, |this, cx| {
+                                                    if let Some(run_code) = &this.run_code {
+                                                        run_code(code.clone(), &language, window, cx);
+                                                    } else if is_shell_command {
+                                                        // If no run_code handler is provided but it's a shell command,
+                                                        // we could implement a default shell command runner here
+                                                        // or show a message that shell execution is not configured
+                                                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                                                        // Optionally show a notification that the command was copied
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    
+                                    container = container.child(run_button);
+                                }
+                                
+                                // Return the container with buttons
+                                el.child(container)
                             });
                         }
 
