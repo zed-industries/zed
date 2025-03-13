@@ -8,9 +8,7 @@ mod read_file_tool;
 mod regex_search;
 
 use assistant_tool::ToolRegistry;
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::App;
-use release_channel::ReleaseChannel;
 
 use crate::bash_tool::BashTool;
 use crate::delete_path_tool::DeletePathTool;

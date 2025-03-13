@@ -144,14 +144,16 @@ impl EditFilesTool {
             while let Some(chunk) = chunks.stream.next().await {
                 let chunk = chunk?;
 
+                let new_actions = parser.parse_chunk(&chunk);
+
                 if let Some((ref log, req_id)) = log {
                     log.update(&mut cx, |log, cx| {
-                        log.push_editor_response_chunk(req_id, &chunk, cx)
+                        log.push_editor_response_chunk(req_id, &chunk, &new_actions, cx)
                     })
                     .log_err();
                 }
 
-                for action in parser.parse_chunk(&chunk) {
+                for action in new_actions {
                     let project_path = project.read_with(&cx, |project, cx| {
                         let worktree_root_name = action
                             .file_path()
@@ -210,7 +212,7 @@ impl EditFilesTool {
                 project
                     .update(&mut cx, |project, cx| {
                         if let Some(file) = buffer.read(&cx).file() {
-                            let _ = write!(&mut answer, "{}\n\n", &file.path().display());
+                            let _ = writeln!(&mut answer, "{}", &file.path().display());
                         }
 
                         project.save_buffer(buffer, cx)
