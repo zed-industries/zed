@@ -308,14 +308,12 @@ impl settings::Settings for AllLanguageModelSettings {
             // Bedrock
             let bedrock = value.bedrock.clone();
             merge(
-
                 &mut settings.bedrock.profile_name,
-                bedrock.as_ref().and_then(|s| Some(s.profile.clone())),
+                bedrock.as_ref().map(|s| s.profile.clone()),
             );
             merge(
-
                 &mut settings.bedrock.authentication_method,
-                bedrock.as_ref().and_then(|s| Some(s.authentication_method.clone())),
+                bedrock.as_ref().map(|s| s.authentication_method.clone()),
             );
 
             // Ollama
