@@ -15615,9 +15615,9 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     assert_eq!(
         hunks,
         [
-            DisplayRow(3)..DisplayRow(5),
-            DisplayRow(10)..DisplayRow(12),
-            DisplayRow(17)..DisplayRow(19),
+            DisplayRow(2)..DisplayRow(4),
+            DisplayRow(7)..DisplayRow(9),
+            DisplayRow(12)..DisplayRow(14),
         ]
     );
 }
