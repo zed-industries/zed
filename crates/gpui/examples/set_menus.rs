@@ -31,6 +31,14 @@ fn main() {
         }]);
         cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| SetMenus {}))
             .unwrap();
+
+        // close window
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
     });
 }
 

@@ -59,6 +59,15 @@ fn main() {
             |_, cx| cx.new(|_| HelloWorld {}),
         )
         .unwrap();
+
+        // close window
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+
         cx.activate(true);
     });
 }
