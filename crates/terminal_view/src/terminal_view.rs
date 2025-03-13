@@ -1064,18 +1064,36 @@ fn possible_open_target(
 
     for worktree in &worktree_candidates {
         let worktree_root = worktree.read(cx).abs_path();
-        let paths_to_check = potential_paths
-            .iter()
-            .map(|path_with_position| PathWithPosition {
-                path: path_with_position
-                    .path
-                    .strip_prefix(&worktree_root)
-                    .unwrap_or(&path_with_position.path)
-                    .to_owned(),
-                row: path_with_position.row,
-                column: path_with_position.column,
-            })
-            .collect::<Vec<_>>();
+        let mut paths_to_check = Vec::with_capacity(potential_paths.len());
+
+        for path_with_position in &potential_paths {
+            if worktree_root.ends_with(&path_with_position.path) {
+                let root_path_with_posiition = PathWithPosition {
+                    path: worktree_root.to_path_buf(),
+                    row: path_with_position.row,
+                    column: path_with_position.column,
+                };
+                match worktree.read(cx).root_entry() {
+                    Some(root_entry) => {
+                        return Task::ready(Some(OpenTarget::Worktree(
+                            root_path_with_posiition,
+                            root_entry.clone(),
+                        )))
+                    }
+                    None => paths_to_check.push(root_path_with_posiition),
+                }
+            } else {
+                paths_to_check.push(PathWithPosition {
+                    path: path_with_position
+                        .path
+                        .strip_prefix(&worktree_root)
+                        .unwrap_or(&path_with_position.path)
+                        .to_owned(),
+                    row: path_with_position.row,
+                    column: path_with_position.column,
+                });
+            };
+        }
 
         let mut traversal = worktree
             .read(cx)

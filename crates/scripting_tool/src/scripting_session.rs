@@ -1,12 +1,13 @@
 use anyhow::anyhow;
-use collections::HashSet;
+use buffer_diff::BufferDiff;
+use collections::{HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     pin_mut, SinkExt, StreamExt,
 };
 use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use language::Buffer;
-use mlua::{ExternalResult, Lua, MultiValue, Table, UserData, UserDataMethods};
+use mlua::{ExternalResult, Lua, MultiValue, ObjectLike, Table, UserData, UserDataMethods};
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Fs, Project, ProjectPath, WorktreeId};
 use regex::Regex;
@@ -18,10 +19,15 @@ use util::{paths::PathMatcher, ResultExt};
 
 struct ForegroundFn(Box<dyn FnOnce(WeakEntity<ScriptingSession>, AsyncApp) + Send>);
 
+struct BufferChanges {
+    diff: Entity<BufferDiff>,
+    edit_ids: Vec<clock::Lamport>,
+}
+
 pub struct ScriptingSession {
     project: Entity<Project>,
     scripts: Vec<Script>,
-    changed_buffers: HashSet<Entity<Buffer>>,
+    changes_by_buffer: HashMap<Entity<Buffer>, BufferChanges>,
     foreground_fns_tx: mpsc::Sender<ForegroundFn>,
     _invoke_foreground_fns: Task<()>,
 }
@@ -32,7 +38,7 @@ impl ScriptingSession {
         ScriptingSession {
             project,
             scripts: Vec::new(),
-            changed_buffers: HashSet::default(),
+            changes_by_buffer: HashMap::default(),
             foreground_fns_tx,
             _invoke_foreground_fns: cx.spawn(|this, cx| async move {
                 while let Some(foreground_fn) = foreground_fns_rx.next().await {
@@ -43,7 +49,7 @@ impl ScriptingSession {
     }
 
     pub fn changed_buffers(&self) -> impl ExactSizeIterator<Item = &Entity<Buffer>> {
-        self.changed_buffers.iter()
+        self.changes_by_buffer.keys()
     }
 
     pub fn run_script(
@@ -188,9 +194,6 @@ impl ScriptingSession {
 
                 lua.load(SANDBOX_PREAMBLE).exec_async().await?;
 
-                // Drop Lua instance to decrement reference count.
-                drop(lua);
-
                 anyhow::Ok(())
             }
         });
@@ -305,6 +308,10 @@ impl ScriptingSession {
         let read_fn = lua.create_function(Self::io_file_read)?;
         file.set("read", read_fn)?;
 
+        // lines method
+        let lines_fn = lua.create_function(Self::io_file_lines)?;
+        file.set("lines", lines_fn)?;
+
         // write method
         let write_fn = lua.create_function(Self::io_file_write)?;
         file.set("write", write_fn)?;
@@ -384,8 +391,12 @@ impl ScriptingSession {
                             .update(&mut cx, |buffer, cx| buffer.diff(text, cx))?
                             .await;
 
-                        buffer.update(&mut cx, |buffer, cx| {
+                        let edit_ids = buffer.update(&mut cx, |buffer, cx| {
+                            buffer.finalize_last_transaction();
                             buffer.apply_diff(diff, cx);
+                            let transaction = buffer.finalize_last_transaction();
+                            transaction
+                                .map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
                         })?;
 
                         session
@@ -400,10 +411,36 @@ impl ScriptingSession {
                             })?
                             .await?;
 
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+
                         // If we saved successfully, mark buffer as changed
-                        session.update(&mut cx, |session, _cx| {
-                            session.changed_buffers.insert(buffer);
-                        })
+                        let buffer_without_changes =
+                            buffer.update(&mut cx, |buffer, cx| buffer.branch(cx))?;
+                        session
+                            .update(&mut cx, |session, cx| {
+                                let changed_buffer = session
+                                    .changes_by_buffer
+                                    .entry(buffer)
+                                    .or_insert_with(|| BufferChanges {
+                                        diff: cx.new(|cx| BufferDiff::new(&snapshot, cx)),
+                                        edit_ids: Vec::new(),
+                                    });
+                                changed_buffer.edit_ids.extend(edit_ids);
+                                let operations_to_undo = changed_buffer
+                                    .edit_ids
+                                    .iter()
+                                    .map(|edit_id| (*edit_id, u32::MAX))
+                                    .collect::<HashMap<_, _>>();
+                                buffer_without_changes.update(cx, |buffer, cx| {
+                                    buffer.undo_operations(operations_to_undo, cx);
+                                });
+                                changed_buffer.diff.update(cx, |diff, cx| {
+                                    diff.set_base_text(buffer_without_changes, snapshot.text, cx)
+                                })
+                            })?
+                            .await?;
+
+                        Ok(())
                     })
                 })
             }),
@@ -531,6 +568,17 @@ impl ScriptingSession {
             Some(bytes) => Ok(Some(lua.create_string(bytes)?)),
             None => Ok(None),
         }
+    }
+
+    fn io_file_lines(lua: &Lua, file_userdata: Table) -> mlua::Result<mlua::Function> {
+        let read_perm = file_userdata.get::<bool>("__read_perm")?;
+        if !read_perm {
+            return Err(mlua::Error::runtime("File not open for reading"));
+        }
+
+        lua.create_function::<_, _, mlua::Value>(move |lua, _: ()| {
+            file_userdata.call_method("read", lua.create_string("*l")?)
+        })
     }
 
     fn io_file_read_format(format: Option<mlua::Value>) -> mlua::Result<FileReadFormat> {
@@ -895,6 +943,7 @@ impl Script {
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
@@ -954,9 +1003,35 @@ mod tests {
         let test_session = TestSession::init(cx).await;
         let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Content:\tHello world!\n");
+        assert_eq!(test_session.diff(cx), Vec::new());
+    }
 
-        // Only read, should not be marked as changed
-        assert!(!test_session.was_marked_changed("file1.txt", cx));
+    #[gpui::test]
+    async fn test_lines_iterator(cx: &mut TestAppContext) {
+        let script = r#"
+            -- Create a test file with multiple lines
+            local file = io.open("lines_test.txt", "w")
+            file:write("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+            file:close()
+
+            -- Read it back using the lines iterator
+            local read_file = io.open("lines_test.txt", "r")
+            local count = 0
+            for line in read_file:lines() do
+                count = count + 1
+                print(count .. ": " .. line)
+            end
+            read_file:close()
+
+            print("Total lines:", count)
+        "#;
+
+        let test_session = TestSession::init(cx).await;
+        let output = test_session.test_success(script, cx).await;
+        assert_eq!(
+            output,
+            "1: Line 1\n2: Line 2\n3: Line 3\n4: Line 4\n5: Line 5\nTotal lines:\t5\n"
+        );
     }
 
     #[gpui::test]
@@ -976,7 +1051,16 @@ mod tests {
         let test_session = TestSession::init(cx).await;
         let output = test_session.test_success(script, cx).await;
         assert_eq!(output, "Written content:\tThis is new content\n");
-        assert!(test_session.was_marked_changed("file1.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("file1.txt"),
+                vec![(
+                    "Hello world!\n".to_string(),
+                    "This is new content".to_string()
+                )]
+            )]
+        );
     }
 
     #[gpui::test]
@@ -1004,7 +1088,16 @@ mod tests {
             output,
             "Full content:\tFirst line\nSecond line\nThird line\n"
         );
-        assert!(test_session.was_marked_changed("multiwrite.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("multiwrite.txt"),
+                vec![(
+                    "".to_string(),
+                    "First line\nSecond line\nThird line".to_string()
+                )]
+            )]
+        );
     }
 
     #[gpui::test]
@@ -1033,29 +1126,33 @@ mod tests {
             output,
             "Final content:\tContent written by second handle\n\n"
         );
-        assert!(test_session.was_marked_changed("multi_open.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("multi_open.txt"),
+                vec![(
+                    "".to_string(),
+                    "Content written by second handle\n".to_string()
+                )]
+            )]
+        );
     }
 
     #[gpui::test]
     async fn test_append_mode(cx: &mut TestAppContext) {
         let script = r#"
-            -- Test append mode
-            local file = io.open("append.txt", "w")
-            file:write("Initial content\n")
-            file:close()
-
             -- Append more content
-            file = io.open("append.txt", "a")
+            file = io.open("file1.txt", "a")
             file:write("Appended content\n")
             file:close()
 
             -- Add even more
-            file = io.open("append.txt", "a")
+            file = io.open("file1.txt", "a")
             file:write("More appended content")
             file:close()
 
             -- Read back to verify
-            local read_file = io.open("append.txt", "r")
+            local read_file = io.open("file1.txt", "r")
             local content = read_file:read("*a")
             print("Content after appends:", content)
             read_file:close()
@@ -1065,9 +1162,18 @@ mod tests {
         let output = test_session.test_success(script, cx).await;
         assert_eq!(
             output,
-            "Content after appends:\tInitial content\nAppended content\nMore appended content\n"
+            "Content after appends:\tHello world!\nAppended content\nMore appended content\n"
         );
-        assert!(test_session.was_marked_changed("append.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("file1.txt"),
+                vec![(
+                    "".to_string(),
+                    "Appended content\nMore appended content".to_string()
+                )]
+            )]
+        );
     }
 
     #[gpui::test]
@@ -1117,7 +1223,13 @@ mod tests {
         assert!(output.contains("Line with newline length:\t7"));
         assert!(output.contains("Last char:\t10")); // LF
         assert!(output.contains("5 bytes:\tLine "));
-        assert!(test_session.was_marked_changed("multiline.txt", cx));
+        assert_eq!(
+            test_session.diff(cx),
+            vec![(
+                PathBuf::from("multiline.txt"),
+                vec![("".to_string(), "Line 1\nLine 2\nLine 3".to_string())]
+            )]
+        );
     }
 
     // helpers
@@ -1137,8 +1249,8 @@ mod tests {
             fs.insert_tree(
                 path!("/"),
                 json!({
-                    "file1.txt": "Hello world!",
-                    "file2.txt": "Goodbye moon!"
+                    "file1.txt": "Hello world!\n",
+                    "file2.txt": "Goodbye moon!\n"
                 }),
             )
             .await;
@@ -1164,17 +1276,30 @@ mod tests {
             })
         }
 
-        fn was_marked_changed(&self, path_str: &str, cx: &mut TestAppContext) -> bool {
+        fn diff(&self, cx: &mut TestAppContext) -> Vec<(PathBuf, Vec<(String, String)>)> {
             self.session.read_with(cx, |session, cx| {
-                let count_changed = session
-                    .changed_buffers
+                session
+                    .changes_by_buffer
                     .iter()
-                    .filter(|buffer| buffer.read(cx).file().unwrap().path().ends_with(path_str))
-                    .count();
-
-                assert!(count_changed < 2, "Multiple buffers matched for same path");
-
-                count_changed > 0
+                    .map(|(buffer, changes)| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let diff = changes.diff.read(cx);
+                        let hunks = diff.hunks(&snapshot, cx);
+                        let path = buffer.read(cx).file().unwrap().path().clone();
+                        let diffs = hunks
+                            .map(|hunk| {
+                                let old_text = diff
+                                    .base_text()
+                                    .text_for_range(hunk.diff_base_byte_range)
+                                    .collect::<String>();
+                                let new_text =
+                                    snapshot.text_for_range(hunk.range).collect::<String>();
+                                (old_text, new_text)
+                            })
+                            .collect();
+                        (path.to_path_buf(), diffs)
+                    })
+                    .collect()
             })
         }
 

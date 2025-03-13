@@ -2,10 +2,13 @@ use anyhow::anyhow;
 use assistant2::{Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
-use gpui::{prelude::*, App, Entity, Subscription, Task};
+use collections::HashMap;
+use futures::StreamExt;
+use gpui::{prelude::*, App, AsyncApp, Entity, Subscription, Task};
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModelRequest,
 };
 use node_runtime::NodeRuntime;
 use project::{Project, RealFs};
@@ -14,18 +17,22 @@ use settings::SettingsStore;
 use smol::channel;
 use std::sync::Arc;
 
-/// Subset of `workspace::AppState` needed by `HeadlessAssistant`.
+/// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.
 pub struct HeadlessAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub node_runtime: NodeRuntime,
+
+    // Additional fields not present in `workspace::AppState`.
+    pub prompt_builder: Arc<PromptBuilder>,
 }
 
 pub struct HeadlessAssistant {
     pub project: Entity<Project>,
     pub thread: Entity<Thread>,
+    pub tool_use_counts: HashMap<Arc<str>, u32>,
     pub done_tx: channel::Sender<anyhow::Result<()>>,
     _subscription: Subscription,
 }
@@ -47,7 +54,8 @@ impl HeadlessAssistant {
         );
 
         let tools = Arc::new(ToolWorkingSet::default());
-        let thread_store = ThreadStore::new(project.clone(), tools, cx)?;
+        let thread_store =
+            ThreadStore::new(project.clone(), tools, app_state.prompt_builder.clone(), cx)?;
 
         let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
 
@@ -57,6 +65,7 @@ impl HeadlessAssistant {
             _subscription: cx.subscribe(&thread, Self::handle_thread_event),
             thread,
             project,
+            tool_use_counts: HashMap::default(),
             done_tx,
         });
 
@@ -77,7 +86,7 @@ impl HeadlessAssistant {
             ThreadEvent::DoneStreaming => {
                 let thread = thread.read(cx);
                 if let Some(message) = thread.messages().last() {
-                    log::info!("Message: {}", message.text,);
+                    println!("Message: {}", message.text,);
                 }
                 if thread.all_tools_finished() {
                     self.done_tx.send_blocking(Ok(())).unwrap()
@@ -88,7 +97,23 @@ impl HeadlessAssistant {
                     thread.use_pending_tools(cx);
                 });
             }
-            ThreadEvent::ToolFinished { .. } => {
+            ThreadEvent::ToolFinished {
+                tool_use_id,
+                pending_tool_use,
+            } => {
+                if let Some(pending_tool_use) = pending_tool_use {
+                    println!(
+                        "Used tool {} with input: {}",
+                        pending_tool_use.name, pending_tool_use.input
+                    );
+                    *self
+                        .tool_use_counts
+                        .entry(pending_tool_use.name.clone())
+                        .or_insert(0) += 1;
+                }
+                if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
+                    println!("Tool result: {:?}", tool_result);
+                }
                 if thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
@@ -144,6 +169,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
         user_store,
         fs,
         node_runtime: NodeRuntime::unavailable(),
+        prompt_builder,
     })
 }
 
@@ -175,4 +201,35 @@ pub fn authenticate_model_provider(
     let model_registry = LanguageModelRegistry::read_global(cx);
     let model_provider = model_registry.provider(&provider_id).unwrap();
     model_provider.authenticate(cx)
+}
+
+pub async fn send_language_model_request(
+    model: Arc<dyn LanguageModel>,
+    request: LanguageModelRequest,
+    cx: AsyncApp,
+) -> anyhow::Result<String> {
+    match model.stream_completion_text(request, &cx).await {
+        Ok(mut stream) => {
+            let mut full_response = String::new();
+
+            // Process the response stream
+            while let Some(chunk_result) = stream.stream.next().await {
+                match chunk_result {
+                    Ok(chunk_str) => {
+                        full_response.push_str(&chunk_str);
+                    }
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "Error receiving response from language model: {err}"
+                        ));
+                    }
+                }
+            }
+
+            Ok(full_response)
+        }
+        Err(err) => Err(anyhow!(
+            "Failed to get response from language model. Error was: {err}"
+        )),
+    }
 }

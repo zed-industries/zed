@@ -344,7 +344,9 @@ message Envelope {
         AskPassResponse ask_pass_response = 318;
 
         GitDiff git_diff = 319;
-        GitDiffResponse git_diff_response = 320; // current max
+        GitDiffResponse git_diff_response = 320;
+
+        GitInit git_init = 321; // current max
     }
 
     reserved 87 to 88;
@@ -1000,10 +1002,13 @@ message Completion {
     bool resolved = 6;
     Source source = 7;
     optional bytes lsp_defaults = 8;
+    optional Anchor buffer_word_start = 9;
+    optional Anchor buffer_word_end = 10;
 
     enum Source {
         Lsp = 0;
         Custom = 1;
+        BufferWord = 2;
     }
 }
 
@@ -2936,4 +2941,10 @@ message GitDiff {
 
 message GitDiffResponse {
     string diff = 1;
+}
+
+message GitInit {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string fallback_branch_name = 3;
 }

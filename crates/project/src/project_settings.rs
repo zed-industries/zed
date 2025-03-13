@@ -168,10 +168,6 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
-    /// How hunks are displayed visually in the editor.
-    ///
-    /// Default: transparent
-    pub hunk_style: Option<GitHunkStyleSetting>,
 }
 
 impl GitSettings {

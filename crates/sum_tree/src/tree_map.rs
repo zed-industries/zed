@@ -70,6 +70,14 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         self.0.insert_or_replace(MapEntry { key, value }, &());
     }
 
+    pub fn extend(&mut self, iter: impl IntoIterator<Item = (K, V)>) {
+        let mut edits = Vec::new();
+        for (key, value) in iter {
+            edits.push(Edit::Insert(MapEntry { key, value }));
+        }
+        self.0.edit(edits, &());
+    }
+
     pub fn clear(&mut self) {
         self.0 = SumTree::default();
     }
@@ -109,7 +117,7 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
-    pub fn iter_from<'a>(&'a self, from: &'a K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
+    pub fn iter_from<'a>(&'a self, from: &K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let from_key = MapKeyRef(Some(from));
         cursor.seek(&from_key, Bias::Left, &());
@@ -313,12 +321,20 @@ where
         self.0.insert(key, ());
     }
 
+    pub fn extend(&mut self, iter: impl IntoIterator<Item = K>) {
+        self.0.extend(iter.into_iter().map(|key| (key, ())));
+    }
+
     pub fn contains(&self, key: &K) -> bool {
         self.0.get(key).is_some()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &K> + '_ {
         self.0.iter().map(|(k, _)| k)
+    }
+
+    pub fn iter_from<'a>(&'a self, key: &K) -> impl Iterator<Item = &'a K> + 'a {
+        self.0.iter_from(key).map(move |(k, _)| k)
     }
 }
 
@@ -415,6 +431,20 @@ mod tests {
 
         map.insert_tree(other);
 
+        assert_eq!(map.iter().count(), 4);
+        assert_eq!(map.get(&"a"), Some(&2));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"c"), Some(&3));
+        assert_eq!(map.get(&"d"), Some(&4));
+    }
+
+    #[test]
+    fn test_extend() {
+        let mut map = TreeMap::default();
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("c", 3);
+        map.extend([("a", 2), ("b", 2), ("d", 4)]);
         assert_eq!(map.iter().count(), 4);
         assert_eq!(map.get(&"a"), Some(&2));
         assert_eq!(map.get(&"b"), Some(&2));
