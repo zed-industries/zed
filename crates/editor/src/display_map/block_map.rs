@@ -2985,7 +2985,7 @@ mod tests {
         let mut block_map = BlockMap::new(wrap_snapshot.clone(), 2, 1);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
 
-        assert_eq!(blocks_snapshot.text(), "\n\n\n111\n");
+        assert_eq!(blocks_snapshot.text(), "\n\n111");
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
