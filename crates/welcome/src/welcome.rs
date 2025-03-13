@@ -11,7 +11,7 @@ use gpui::{
 use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel, Elevation, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, Tooltip};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -289,7 +289,7 @@ impl Render for WelcomePage {
                                             }),
                                         )
                                         .fill()
-                                        .elevation(Elevation::ElevatedSurface),
+                                        .elevation(ElevationIndex::ElevatedSurface),
                                     )
                                     .child(
                                         IconButton::new("vim-mode", IconName::Info)
@@ -325,7 +325,7 @@ impl Render for WelcomePage {
                                     }),
                                 )
                                 .fill()
-                                .elevation(Elevation::ElevatedSurface),
+                                .elevation(ElevationIndex::ElevatedSurface),
                             )
                             .child(
                                 CheckboxWithLabel::new(
@@ -351,7 +351,7 @@ impl Render for WelcomePage {
                                     }),
                                 )
                                 .fill()
-                                .elevation(Elevation::ElevatedSurface),
+                                .elevation(ElevationIndex::ElevatedSurface),
                             ),
                     ),
             )
