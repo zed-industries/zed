@@ -3,7 +3,7 @@ use std::sync::Arc;
 use collections::HashMap;
 use gpui::{canvas, AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{prelude::*, Elevation};
+use ui::{prelude::*, ElevationIndex};
 use workspace::Item;
 
 pub struct ConfigurationView {
@@ -98,7 +98,7 @@ impl ConfigurationView {
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Plus)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::ModalSurface)
+                                .layer(ElevationIndex::ModalSurface)
                                 .on_click(open_new_context),
                             ),
                         )
