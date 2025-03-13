@@ -9236,11 +9236,11 @@ async fn test_words_completion(cx: &mut TestAppContext) {
                     Ok(Some(lsp::CompletionResponse::Array(vec![
                         lsp::CompletionItem {
                             label: "first".into(),
-                            ..Default::default()
+                            ..lsp::CompletionItem::default()
                         },
                         lsp::CompletionItem {
                             label: "last".into(),
-                            ..Default::default()
+                            ..lsp::CompletionItem::default()
                         },
                     ])))
                 }
@@ -9287,6 +9287,69 @@ async fn test_words_completion(cx: &mut TestAppContext) {
         } else {
             panic!("expected completion menu to be open");
         }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "first".into(),
+                        ..lsp::CompletionItem::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "last".into(),
+                        ..lsp::CompletionItem::default()
+                    },
+                ])))
+            });
+
+    cx.set_state(indoc! {"ˇ
+        first
+        last
+        second
+    "});
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["first", "last", "second"],
+                "Word completions that has the same edit as the any of the LSP ones, should not be proposed"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+        editor.cancel(&Cancel, window, cx);
     });
 }
 

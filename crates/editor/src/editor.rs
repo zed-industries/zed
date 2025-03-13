@@ -4104,23 +4104,26 @@ impl Editor {
 
                 match completion_settings.words {
                     WordsCompletionMode::Enabled => {
-                        completions.extend(
-                            words
-                                .await
-                                .into_iter()
-                                .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
-                                .map(|(word, word_range)| Completion {
-                                    old_range: old_range.clone(),
-                                    new_text: word.clone(),
-                                    label: CodeLabel::plain(word, None),
-                                    documentation: None,
-                                    source: CompletionSource::BufferWord {
-                                        word_range,
-                                        resolved: false,
-                                    },
-                                    confirm: None,
-                                }),
-                        );
+                        let mut words = words.await;
+                        if let Some(word_to_exclude) = &word_to_exclude {
+                            words.remove(word_to_exclude);
+                        }
+                        for lsp_completion in &completions {
+                            words.remove(&lsp_completion.new_text);
+                        }
+                        completions.extend(words.into_iter().map(|(word, word_range)| {
+                            Completion {
+                                old_range: old_range.clone(),
+                                new_text: word.clone(),
+                                label: CodeLabel::plain(word, None),
+                                documentation: None,
+                                source: CompletionSource::BufferWord {
+                                    word_range,
+                                    resolved: false,
+                                },
+                                confirm: None,
+                            }
+                        }));
                     }
                     WordsCompletionMode::Fallback => {
                         if completions.is_empty() {
