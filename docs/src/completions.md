@@ -42,7 +42,7 @@ But, if you haven't come across the banner, start using Zed's Edit Prediction by
 
 ### Switching modes
 
-Zed's Edit Prediction comes with two different displays mode:
+Zed's Edit Prediction comes with two different display modes:
 
 1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with LSP completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
