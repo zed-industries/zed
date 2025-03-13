@@ -8,7 +8,7 @@ use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
 // mod attach_modal; todo(debugger): enable this again
 mod console;
-// mod debugger_panel; todo(debugger): enable this again
+mod debugger_panel;
 mod module_list;
 mod stack_frame_list;
 mod variable_list;
