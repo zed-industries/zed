@@ -13,6 +13,6 @@ Be concise and direct in your responses.
 
 The user has opened a project that contains the following top-level directories/files:
 
-{{#each worktree_root_names}}
-- {{this}}
+{{#each worktrees}}
+- {{root_name}} (absolute path: {{abs_path}})
 {{/each}}

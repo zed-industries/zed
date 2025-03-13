@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_tool::Tool;
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use util::command::new_smol_command;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
@@ -46,18 +47,21 @@ impl Tool for BashTool {
             let command = format!("{} 2>&1", input.command);
 
             // Spawn a blocking task to execute the command
-            let output = futures::executor::block_on(async {
-                std::process::Command::new("bash")
-                    .arg("-c")
-                    .arg(&command)
-                    .output()
-                    .map_err(|err| anyhow!("Failed to execute bash command: {}", err))
-            })?;
+            let output = new_smol_command("bash")
+                .arg("-c")
+                .arg(&command)
+                .output()
+                .await
+                .context("Failed to execute bash command")?;
 
             let output_string = String::from_utf8_lossy(&output.stdout).to_string();
 
             if output.status.success() {
-                Ok(output_string)
+                if output_string.is_empty() {
+                    Ok("Command executed successfully.".to_string())
+                } else {
+                    Ok(output_string)
+                }
             } else {
                 Ok(format!(
                     "Command failed with exit code {}\n{}",

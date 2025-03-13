@@ -21,9 +21,11 @@ use util::ResultExt;
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFilesToolInput {
     /// High-level edit instructions. These will be interpreted by a smaller
-    /// model, so explain the changes you want that model to make and to which
-    /// files need changing. The description should be concise and clear. We
-    /// will show this description to the user as well.
+    /// model, so explain the changes you want that model to make and which
+    /// file paths need changing.
+    ///
+    /// The description should be concise and clear. We will show this
+    /// description to the user as well.
     ///
     /// IMPORTANT: don't supply code in here, but provide natural language
     /// instructions for the model to follow, and remember that the model can
