@@ -112,6 +112,7 @@ fn main() {
                         println!("{}\n", eval_output.diff);
                         println!("Last message for {eval_name}:\n");
                         println!("{}\n", eval_output.last_message);
+                        println!("Elapsed time: {:?}", eval_output.elapsed_time);
                         println!(
                             "Assistant response count: {}",
                             eval_output.assistant_response_count

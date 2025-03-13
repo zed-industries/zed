@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 pub struct Eval {
@@ -24,6 +25,7 @@ pub struct Eval {
 pub struct EvalOutput {
     pub diff: String,
     pub last_message: String,
+    pub elapsed_time: Duration,
     pub assistant_response_count: usize,
     pub tool_use_counts: HashMap<Arc<str>, u32>,
 }
@@ -105,6 +107,8 @@ impl Eval {
                 })?
                 .await?;
 
+            let start_time = std::time::SystemTime::now();
+
             assistant.update(&mut cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
@@ -122,6 +126,8 @@ impl Eval {
 
             done_rx.recv().await??;
 
+            let elapsed_time = start_time.elapsed()?;
+
             let diff = repo_diff(&repo_path)?;
 
             assistant.update(&mut cx, |assistant, cx| {
@@ -137,6 +143,7 @@ impl Eval {
                 Ok(EvalOutput {
                     diff,
                     last_message: last_message.text.clone(),
+                    elapsed_time,
                     assistant_response_count,
                     tool_use_counts: assistant.tool_use_counts.clone(),
                 })
