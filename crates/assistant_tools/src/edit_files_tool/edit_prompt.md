@@ -106,7 +106,7 @@ Every *SEARCH/REPLACE block* must use this format:
 7. The end of the replace block: >>>>>>> REPLACE
 8. The closing fence: ```
 
-Use the *FULL* file path, as shown to you by the user.
+Use the *FULL* file path, as shown to you by the user. Make sure to include the project's root directory name at the start of the path. *NEVER* specify the absolute path of the file!
 
 Every *SEARCH* section must *EXACTLY MATCH* the existing file content, character for character, including all comments, docstrings, etc.
 If the file contains code or other data wrapped/escaped in json/xml/quotes or other containers, you need to propose edits to the literal contents of the file, including the container markup.
