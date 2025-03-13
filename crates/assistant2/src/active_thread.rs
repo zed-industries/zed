@@ -518,69 +518,105 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(workspace) = window.root::<workspace::Workspace>().flatten() {
-            let message = if is_positive {
-                "Positive feedback recorded. Thank you!"
-            } else {
-                "Negative feedback recorded. Thank you for helping us improve!"
-            };
-
-            workspace.update(cx, |workspace, cx| {
-                struct ThreadFeedback;
-                let id = NotificationId::unique::<ThreadFeedback>();
-                workspace.show_toast(Toast::new(id, message).autohide(), cx)
-            });
-        }
+        // Rating type as string
+        let rating = if is_positive { "positive" } else { "negative" };
 
         // Capture the thread entity for use in the async operation
         let thread = self.thread.clone();
 
+        // Get workspace reference for toast notifications
+        let workspace_handle = window.root::<workspace::Workspace>().flatten();
+
+        // Take project snapshot
         let project_snapshot_task =
             thread.update(cx, |thread, cx| thread.take_project_snapshot(cx));
+
         // Spawn the async operation to collect data and send telemetry
-        cx.spawn(move |_, mut cx| async move {
-            use telemetry;
+        let telemetry_task = cx.spawn(|_, mut cx| {
+            let workspace_handle = workspace_handle.clone();
 
-            // Collect thread data and snapshots asynchronously
-            let (thread_data, initial_snapshot) = thread
-                .update(&mut cx, |thread, _cx| {
-                    // Use the static version since we're in a closure where 'self' is not available
-                    let serializable_thread = Self::create_serializable_thread_static(thread);
-                    let thread_data = serde_json::to_value(serializable_thread)
-                        .unwrap_or_else(|_| serde_json::Value::Null);
+            async move {
+                // Collect thread data and snapshots asynchronously
+                let (thread_data, initial_snapshot) = thread
+                    .update(&mut cx, |thread, _cx| {
+                        // Use the static version since we're in a closure where 'self' is not available
+                        let serializable_thread = Self::create_serializable_thread_static(thread);
+                        let thread_data = serde_json::to_value(serializable_thread)
+                            .unwrap_or_else(|_| serde_json::Value::Null);
 
-                    // Get the initial project snapshot
-                    let initial_snapshot = thread
-                        .initial_project_snapshot()
-                        .cloned()
-                        .map(|snapshot| {
-                            serde_json::to_value(snapshot)
-                                .unwrap_or_else(|_| serde_json::Value::Null)
-                        })
-                        .unwrap_or(serde_json::Value::Null);
+                        // Get the initial project snapshot
+                        let initial_snapshot = thread
+                            .initial_project_snapshot()
+                            .cloned()
+                            .map(|snapshot| {
+                                serde_json::to_value(snapshot)
+                                    .unwrap_or_else(|_| serde_json::Value::Null)
+                            })
+                            .unwrap_or(serde_json::Value::Null);
 
-                    (thread_data, initial_snapshot)
-                })
-                .unwrap_or_default();
+                        (thread_data, initial_snapshot)
+                    })
+                    .unwrap_or_default();
 
-            // Capture the final project snapshot right before sending feedback
-            let final_snapshot = serde_json::to_value(project_snapshot_task.await)
-                .unwrap_or(serde_json::Value::Null);
+                // Get the final project snapshot
+                let project_snapshot_result = project_snapshot_task.await;
 
-            // Define the rating based on which button was clicked
-            let rating = if is_positive { "positive" } else { "negative" };
+                // Convert to JSON, handling possible errors
+                let final_snapshot = match serde_json::to_value(project_snapshot_result) {
+                    Ok(snapshot) => snapshot,
+                    Err(err) => {
+                        log::error!("Failed to serialize project snapshot: {}", err);
+                        serde_json::Value::Null
+                    }
+                };
 
-            // Send the telemetry event with full serialized data
-            telemetry::event!(
-                "Assistant Feedback",
-                rating,
-                thread_id,
-                thread_data,
-                initial_snapshot,
-                final_snapshot
-            );
-        })
-        .detach();
+                // Send the telemetry event with full serialized data
+                use telemetry;
+                telemetry::event!(
+                    "Assistant Feedback",
+                    rating,
+                    thread_id,
+                    thread_data,
+                    initial_snapshot,
+                    final_snapshot
+                );
+
+                // In async context we can't easily flush telemetry
+                // The events will be flushed automatically
+
+                // Display toast notification after successfully sending data
+                if let Some(workspace) = workspace_handle {
+                    let success = match workspace.update(&mut cx, |workspace, cx| {
+                        let message = if rating == "positive" {
+                            "Positive feedback recorded. Thank you!"
+                        } else {
+                            "Negative feedback recorded. Thank you for helping us improve!"
+                        };
+
+                        struct ThreadFeedback;
+                        let id = NotificationId::unique::<ThreadFeedback>();
+                        workspace.show_toast(Toast::new(id, message).autohide(), cx);
+                        true
+                    }) {
+                        Ok(_) => true,
+                        Err(err) => {
+                            log::error!("Failed to show toast: {}", err);
+                            false
+                        }
+                    };
+
+                    // If we failed to show the toast, no need to report an error
+                    // as it probably means the workspace is closed
+                    success
+                } else {
+                    // Workspace not available, but telemetry was sent
+                    true
+                }
+            }
+        });
+
+        // We'll detach the telemetry task and let it handle everything
+        telemetry_task.detach();
     }
 
     // Static version of create_serializable_thread that can be used from async contexts
