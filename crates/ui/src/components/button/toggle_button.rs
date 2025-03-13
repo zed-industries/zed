@@ -1,6 +1,6 @@
 use gpui::{AnyView, ClickEvent};
 
-use crate::{prelude::*, ButtonLike, ButtonLikeRounding, ElevationIndex};
+use crate::{prelude::*, ButtonLike, ButtonLikeRounding, Elevation};
 
 /// The position of a [`ToggleButton`] within a group of buttons.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -110,8 +110,8 @@ impl ButtonCommon for ToggleButton {
         self
     }
 
-    fn layer(mut self, elevation: ElevationIndex) -> Self {
-        self.base = self.base.layer(elevation);
+    fn elevation(mut self, elevation: Elevation) -> Self {
+        self.base = self.base.elevation(elevation);
         self
     }
 }
@@ -154,14 +154,14 @@ impl ComponentPreview for ToggleButton {
                         single_example(
                             "Off",
                             ToggleButton::new("off", "Off")
-                                .layer(ElevationIndex::Background)
+                                .elevation(Elevation::Background)
                                 .style(ButtonStyle::Filled)
                                 .into_any_element(),
                         ),
                         single_example(
                             "On",
                             ToggleButton::new("on", "On")
-                                .layer(ElevationIndex::Background)
+                                .elevation(Elevation::Background)
                                 .toggle_state(true)
                                 .style(ButtonStyle::Filled)
                                 .into_any_element(),
@@ -169,7 +169,7 @@ impl ComponentPreview for ToggleButton {
                         single_example(
                             "Off – Disabled",
                             ToggleButton::new("disabled_off", "Disabled Off")
-                                .layer(ElevationIndex::Background)
+                                .elevation(Elevation::Background)
                                 .disabled(true)
                                 .style(ButtonStyle::Filled)
                                 .into_any_element(),
@@ -177,7 +177,7 @@ impl ComponentPreview for ToggleButton {
                         single_example(
                             "On – Disabled",
                             ToggleButton::new("disabled_on", "Disabled On")
-                                .layer(ElevationIndex::Background)
+                                .elevation(Elevation::Background)
                                 .disabled(true)
                                 .toggle_state(true)
                                 .style(ButtonStyle::Filled)
@@ -193,14 +193,14 @@ impl ComponentPreview for ToggleButton {
                             h_flex()
                                 .child(
                                     ToggleButton::new("three_btn_first", "First")
-                                        .layer(ElevationIndex::Background)
+                                        .elevation(Elevation::Background)
                                         .style(ButtonStyle::Filled)
                                         .first()
                                         .into_any_element(),
                                 )
                                 .child(
                                     ToggleButton::new("three_btn_middle", "Middle")
-                                        .layer(ElevationIndex::Background)
+                                        .elevation(Elevation::Background)
                                         .style(ButtonStyle::Filled)
                                         .middle()
                                         .toggle_state(true)
@@ -208,7 +208,7 @@ impl ComponentPreview for ToggleButton {
                                 )
                                 .child(
                                     ToggleButton::new("three_btn_last", "Last")
-                                        .layer(ElevationIndex::Background)
+                                        .elevation(Elevation::Background)
                                         .style(ButtonStyle::Filled)
                                         .last()
                                         .into_any_element(),
@@ -220,14 +220,14 @@ impl ComponentPreview for ToggleButton {
                             h_flex()
                                 .child(
                                     ToggleButton::new("two_btn_first", "First")
-                                        .layer(ElevationIndex::Background)
+                                        .elevation(Elevation::Background)
                                         .style(ButtonStyle::Filled)
                                         .first()
                                         .into_any_element(),
                                 )
                                 .child(
                                     ToggleButton::new("two_btn_last", "Last")
-                                        .layer(ElevationIndex::Background)
+                                        .elevation(Elevation::Background)
                                         .style(ButtonStyle::Filled)
                                         .last()
                                         .into_any_element(),
@@ -242,7 +242,7 @@ impl ComponentPreview for ToggleButton {
                         single_example(
                             "None",
                             ToggleButton::new("none", "None")
-                                .layer(ElevationIndex::Background)
+                                .elevation(Elevation::Background)
                                 .style(ButtonStyle::Filled)
                                 .size(ButtonSize::None)
                                 .into_any_element(),
@@ -250,7 +250,7 @@ impl ComponentPreview for ToggleButton {
                         single_example(
                             "Compact",
                             ToggleButton::new("compact", "Compact")
-                                .layer(ElevationIndex::Background)
+                                .elevation(Elevation::Background)
                                 .style(ButtonStyle::Filled)
                                 .size(ButtonSize::Compact)
                                 .into_any_element(),
@@ -258,7 +258,7 @@ impl ComponentPreview for ToggleButton {
                         single_example(
                             "Large",
                             ToggleButton::new("large", "Large")
-                                .layer(ElevationIndex::Background)
+                                .elevation(Elevation::Background)
                                 .style(ButtonStyle::Filled)
                                 .size(ButtonSize::Large)
                                 .into_any_element(),

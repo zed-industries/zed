@@ -4,7 +4,7 @@ use gpui::{
     Subscription,
 };
 use project::ProjectItem as _;
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
+use ui::{prelude::*, ButtonLike, Elevation, KeyBinding};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
@@ -231,7 +231,7 @@ impl Render for ReplSessionsPage {
                         ButtonLike::new("install-kernels")
                             .style(ButtonStyle::Filled)
                             .size(ButtonSize::Large)
-                            .layer(ElevationIndex::ModalSurface)
+                            .elevation(Elevation::ModalSurface)
                             .child(Label::new("Install Kernels"))
                             .on_click(move |_, _, cx| {
                                 cx.open_url(

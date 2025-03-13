@@ -50,7 +50,7 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::SelectionGoal;
 use ui::{
-    prelude::*, ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor,
+    prelude::*, ButtonLike, Disclosure, Elevation, KeyBinding, PopoverMenuHandle, TintColor,
     Tooltip,
 };
 use util::{maybe, ResultExt};
@@ -2298,7 +2298,7 @@ impl ContextEditor {
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
             })
-            .layer(ElevationIndex::ModalSurface)
+            .elevation(Elevation::ModalSurface)
             .child(Label::new(
                 if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
                     "Chat"
@@ -2357,7 +2357,7 @@ impl ContextEditor {
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
             })
-            .layer(ElevationIndex::ModalSurface)
+            .elevation(Elevation::ModalSurface)
             .child(Label::new("Suggest Edits"))
             .children(
                 KeyBinding::for_action_in(&Edit, &focus_handle, window, cx)
@@ -2661,7 +2661,7 @@ fn render_fold_icon_button(
         let editor = editor.clone();
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
+            .elevation(Elevation::ElevatedSurface)
             .child(Icon::new(icon))
             .child(Label::new(label.clone()).single_line())
             .on_click(move |_, window, cx| {
@@ -2721,7 +2721,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -
                 let editor = editor.clone();
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
-                    .layer(ElevationIndex::ElevatedSurface)
+                    .elevation(Elevation::ElevatedSurface)
                     .child(Icon::new(IconName::TextSnippet))
                     .child(Label::new(title.clone()).single_line())
                     .on_click(move |_, window, cx| {
