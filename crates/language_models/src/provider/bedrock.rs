@@ -436,7 +436,7 @@ impl BedrockModel {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-            .boxed())
+        .boxed())
     }
 }
 
@@ -682,18 +682,18 @@ pub fn get_bedrock_tokens(
 
 pub async fn extract_tool_args_from_events(
     name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> Result<impl Send + Stream<Item=Result<String>>> {
+) -> Result<impl Send + Stream<Item = Result<String>>> {
     handle
         .spawn(async move {
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                                                                       content_block_index,
-                                                                       start,
-                                                                       ..
-                                                                   }) = event?
+                    content_block_index,
+                    start,
+                    ..
+                }) = event?
                 {
                     match start {
                         None => {
@@ -745,9 +745,9 @@ pub async fn extract_tool_args_from_events(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -755,7 +755,7 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
@@ -857,7 +857,7 @@ pub fn map_to_language_model_completion_events(
             }
         },
     )
-        .filter_map(|event| async move { event })
+    .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -867,7 +867,9 @@ struct ConfigurationView {
     region_editor: Entity<Editor>,
     endpoint_editor: Entity<Editor>,
     profile_name_editor: Entity<Editor>,
+    #[allow(dead_code)]
     start_url_editor: Entity<Editor>,
+    #[allow(dead_code)]
     role_arn_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
@@ -887,7 +889,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-            .detach();
+        .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -903,7 +905,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                    .log_err();
+                .log_err();
             }
         }));
 
@@ -938,11 +940,13 @@ impl ConfigurationView {
                 editor.set_placeholder_text(Self::PLACEHOLDER_PROFILE_NAME_TEXT, cx);
                 editor
             }),
+            #[allow(dead_code)]
             start_url_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_START_URL, cx);
                 editor
             }),
+            #[allow(dead_code)]
             role_arn_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_ROLE_ARN, cx);
@@ -1009,7 +1013,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1028,7 +1032,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
@@ -1249,6 +1253,7 @@ impl ConfigurationView {
         )
     }
 
+    #[allow(dead_code)]
     fn render_start_url_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
@@ -1403,7 +1408,7 @@ impl ConfigurationView {
                 Label::new(
                     "This method uses AWS IAM Identity Center (formerly SSO) to authenticate.",
                 )
-                    .size(LabelSize::Small),
+                .size(LabelSize::Small),
             )
             .child(
                 List::new()
@@ -1451,6 +1456,7 @@ impl ConfigurationView {
     }
 
     // Add a renderer for the role ARN editor
+    #[allow(dead_code)]
     fn render_role_arn_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
