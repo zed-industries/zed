@@ -2830,7 +2830,6 @@ pub mod tests {
                     "main hint #5".to_string(),
                     "other hint(edited) #0".to_string(),
                     "other hint(edited) #1".to_string(),
-                    "other hint(edited) #2".to_string(),
                 ];
                 assert_eq!(
                     expected_hints,

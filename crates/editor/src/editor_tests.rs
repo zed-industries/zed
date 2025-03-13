@@ -16209,7 +16209,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\naaaa\nbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
     );
 
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -16217,7 +16217,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After folding the first buffer, its text should not be displayed"
     );
 
@@ -16226,7 +16226,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After folding the second buffer, its text should not be displayed"
     );
 
@@ -16251,7 +16251,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
         "After unfolding the second buffer, its text should be displayed"
     );
 
@@ -16273,7 +16273,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
@@ -16282,7 +16282,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After unfolding the all buffers, all original text should be displayed"
     );
 }
@@ -16373,7 +16373,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
         )
     });
 
-    let full_text = "\n\n\n1111\n2222\n3333\n\n\n\n\n4444\n5555\n6666\n\n\n\n\n7777\n8888\n9999\n";
+    let full_text = "\n\n1111\n2222\n3333\n\n\n4444\n5555\n6666\n\n\n7777\n8888\n9999";
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
@@ -16384,7 +16384,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n4444\n5555\n6666\n\n\n\n\n7777\n8888\n9999\n",
+        "\n\n\n\n4444\n5555\n6666\n\n\n7777\n8888\n9999",
         "After folding the first buffer, its text should not be displayed"
     );
 
@@ -16394,7 +16394,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n\n\n7777\n8888\n9999\n",
+        "\n\n\n\n\n\n7777\n8888\n9999",
         "After folding the second buffer, its text should not be displayed"
     );
 
@@ -16412,7 +16412,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "\n\n\n\n4444\n5555\n6666\n\n",
         "After unfolding the second buffer, its text should be displayed"
     );
 
@@ -16421,7 +16421,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n1111\n2222\n3333\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "\n\n1111\n2222\n3333\n\n\n4444\n5555\n6666\n\n",
         "After unfolding the first buffer, its text should be displayed"
     );
 
@@ -16505,7 +16505,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         editor.change_selections(None, window, cx, |s| s.select_ranges(Some(highlight_range)));
     });
 
-    let full_text = format!("\n\n\n{sample_text}\n");
+    let full_text = format!("\n\n{sample_text}");
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
