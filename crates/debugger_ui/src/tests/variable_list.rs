@@ -204,18 +204,8 @@ async fn test_basic_fetch_initial_scope_and_variables(
 
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =
-            running_state.stack_frame_list().update(cx, |list, cx| {
-                (
-                    list.entries()
-                        .into_iter()
-                        .map(|frame| match frame {
-                            StackFrameEntry::Normal(frame) => vec![frame.clone()],
-                            StackFrameEntry::Collapsed(frames) => frames.clone(),
-                        })
-                        .flatten()
-                        .collect::<Vec<_>>(),
-                    list.current_stack_frame_id(),
-                )
+            running_state.stack_frame_list().update(cx, |list, _| {
+                (list.flatten_entries(), list.current_stack_frame_id())
             });
 
         assert_eq!(stack_frames, stack_frame_list);
@@ -254,273 +244,279 @@ async fn test_fetch_variables_for_multiple_scopes(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    // init_test(cx);
+    init_test(cx);
 
-    // let fs = FakeFs::new(executor.clone());
+    let fs = FakeFs::new(executor.clone());
 
-    // let test_file_content = r#"
-    //     const variable1 = {
-    //         nested1: "Nested 1",
-    //         nested2: "Nested 2",
-    //     };
-    //     const variable2 = "Value 2";
-    //     const variable3 = "Value 3";
-    // "#
-    // .unindent();
+    let test_file_content = r#"
+        const variable1 = {
+            nested1: "Nested 1",
+            nested2: "Nested 2",
+        };
+        const variable2 = "Value 2";
+        const variable3 = "Value 3";
+    "#
+    .unindent();
 
-    // fs.insert_tree(
-    //     "/project",
-    //     json!({
-    //        "src": {
-    //            "test.js": test_file_content,
-    //        }
-    //     }),
-    // )
-    // .await;
+    fs.insert_tree(
+        "/project",
+        json!({
+           "src": {
+               "test.js": test_file_content,
+           }
+        }),
+    )
+    .await;
 
-    // let project = Project::test(fs, ["/project".as_ref()], cx).await;
-    // let workspace = init_test_workspace(&project, cx).await;
-    // let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.focus_panel::<DebugPanel>(window, cx);
+        })
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    // let task = project.update(cx, |project, cx| {
-    //     project.start_debug_session(dap::test_config(None), cx)
-    // });
+    let task = project.update(cx, |project, cx| {
+        project.start_debug_session(dap::test_config(None), cx)
+    });
 
-    // let (session, client) = task.await.unwrap();
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    // client
-    //     .on_request::<Initialize, _>(move |_, _| {
-    //         Ok(dap::Capabilities {
-    //             supports_step_back: Some(false),
-    //             ..Default::default()
-    //         })
-    //     })
-    //     .await;
+    client
+        .on_request::<dap::requests::Threads, _>(move |_, _| {
+            Ok(dap::ThreadsResponse {
+                threads: vec![dap::Thread {
+                    id: 1,
+                    name: "Thread 1".into(),
+                }],
+            })
+        })
+        .await;
 
-    // client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
 
-    // let stack_frames = vec![StackFrame {
-    //     id: 1,
-    //     name: "Stack Frame 1".into(),
-    //     source: Some(dap::Source {
-    //         name: Some("test.js".into()),
-    //         path: Some("/project/src/test.js".into()),
-    //         source_reference: None,
-    //         presentation_hint: None,
-    //         origin: None,
-    //         sources: None,
-    //         adapter_data: None,
-    //         checksums: None,
-    //     }),
-    //     line: 1,
-    //     column: 1,
-    //     end_line: None,
-    //     end_column: None,
-    //     can_restart: None,
-    //     instruction_pointer_reference: None,
-    //     module_id: None,
-    //     presentation_hint: None,
-    // }];
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
 
-    // client
-    //     .on_request::<StackTrace, _>({
-    //         let stack_frames = Arc::new(stack_frames.clone());
-    //         move |_, args| {
-    //             assert_eq!(1, args.thread_id);
+    let stack_frames = vec![StackFrame {
+        id: 1,
+        name: "Stack Frame 1".into(),
+        source: Some(dap::Source {
+            name: Some("test.js".into()),
+            path: Some("/project/src/test.js".into()),
+            source_reference: None,
+            presentation_hint: None,
+            origin: None,
+            sources: None,
+            adapter_data: None,
+            checksums: None,
+        }),
+        line: 1,
+        column: 1,
+        end_line: None,
+        end_column: None,
+        can_restart: None,
+        instruction_pointer_reference: None,
+        module_id: None,
+        presentation_hint: None,
+    }];
 
-    //             Ok(dap::StackTraceResponse {
-    //                 stack_frames: (*stack_frames).clone(),
-    //                 total_frames: None,
-    //             })
-    //         }
-    //     })
-    //     .await;
+    client
+        .on_request::<StackTrace, _>({
+            let stack_frames = Arc::new(stack_frames.clone());
+            move |_, args| {
+                assert_eq!(1, args.thread_id);
 
-    // let scopes = vec![
-    //     Scope {
-    //         name: "Scope 1".into(),
-    //         presentation_hint: None,
-    //         variables_reference: 2,
-    //         named_variables: None,
-    //         indexed_variables: None,
-    //         expensive: false,
-    //         source: None,
-    //         line: None,
-    //         column: None,
-    //         end_line: None,
-    //         end_column: None,
-    //     },
-    //     Scope {
-    //         name: "Scope 2".into(),
-    //         presentation_hint: None,
-    //         variables_reference: 3,
-    //         named_variables: None,
-    //         indexed_variables: None,
-    //         expensive: false,
-    //         source: None,
-    //         line: None,
-    //         column: None,
-    //         end_line: None,
-    //         end_column: None,
-    //     },
-    // ];
+                Ok(dap::StackTraceResponse {
+                    stack_frames: (*stack_frames).clone(),
+                    total_frames: None,
+                })
+            }
+        })
+        .await;
 
-    // client
-    //     .on_request::<Scopes, _>({
-    //         let scopes = Arc::new(scopes.clone());
-    //         move |_, args| {
-    //             assert_eq!(1, args.frame_id);
+    let scopes = vec![
+        Scope {
+            name: "Scope 1".into(),
+            presentation_hint: Some(dap::ScopePresentationHint::Locals),
+            variables_reference: 2,
+            named_variables: None,
+            indexed_variables: None,
+            expensive: false,
+            source: None,
+            line: None,
+            column: None,
+            end_line: None,
+            end_column: None,
+        },
+        Scope {
+            name: "Scope 2".into(),
+            presentation_hint: None,
+            variables_reference: 3,
+            named_variables: None,
+            indexed_variables: None,
+            expensive: false,
+            source: None,
+            line: None,
+            column: None,
+            end_line: None,
+            end_column: None,
+        },
+    ];
 
-    //             Ok(dap::ScopesResponse {
-    //                 scopes: (*scopes).clone(),
-    //             })
-    //         }
-    //     })
-    //     .await;
+    client
+        .on_request::<Scopes, _>({
+            let scopes = Arc::new(scopes.clone());
+            move |_, args| {
+                assert_eq!(1, args.frame_id);
 
-    // let mut variables = HashMap::default();
-    // variables.insert(
-    //     2,
-    //     vec![
-    //         Variable {
-    //             name: "variable1".into(),
-    //             value: "{nested1: \"Nested 1\", nested2: \"Nested 2\"}".into(),
-    //             type_: None,
-    //             presentation_hint: None,
-    //             evaluate_name: None,
-    //             variables_reference: 0,
-    //             named_variables: None,
-    //             indexed_variables: None,
-    //             memory_reference: None,
-    //             declaration_location_reference: None,
-    //             value_location_reference: None,
-    //         },
-    //         Variable {
-    //             name: "variable2".into(),
-    //             value: "Value 2".into(),
-    //             type_: None,
-    //             presentation_hint: None,
-    //             evaluate_name: None,
-    //             variables_reference: 0,
-    //             named_variables: None,
-    //             indexed_variables: None,
-    //             memory_reference: None,
-    //             declaration_location_reference: None,
-    //             value_location_reference: None,
-    //         },
-    //     ],
-    // );
-    // variables.insert(
-    //     3,
-    //     vec![Variable {
-    //         name: "variable3".into(),
-    //         value: "Value 3".into(),
-    //         type_: None,
-    //         presentation_hint: None,
-    //         evaluate_name: None,
-    //         variables_reference: 0,
-    //         named_variables: None,
-    //         indexed_variables: None,
-    //         memory_reference: None,
-    //         declaration_location_reference: None,
-    //         value_location_reference: None,
-    //     }],
-    // );
+                Ok(dap::ScopesResponse {
+                    scopes: (*scopes).clone(),
+                })
+            }
+        })
+        .await;
 
-    // client
-    //     .on_request::<Variables, _>({
-    //         let variables = Arc::new(variables.clone());
-    //         move |_, args| {
-    //             Ok(dap::VariablesResponse {
-    //                 variables: variables.get(&args.variables_reference).unwrap().clone(),
-    //             })
-    //         }
-    //     })
-    //     .await;
+    let mut variables = HashMap::default();
+    variables.insert(
+        2,
+        vec![
+            Variable {
+                name: "variable1".into(),
+                value: "{nested1: \"Nested 1\", nested2: \"Nested 2\"}".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+                declaration_location_reference: None,
+                value_location_reference: None,
+            },
+            Variable {
+                name: "variable2".into(),
+                value: "Value 2".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+                declaration_location_reference: None,
+                value_location_reference: None,
+            },
+        ],
+    );
+    variables.insert(
+        3,
+        vec![Variable {
+            name: "variable3".into(),
+            value: "Value 3".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        }],
+    );
 
-    // client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    client
+        .on_request::<Variables, _>({
+            let variables = Arc::new(variables.clone());
+            move |_, args| {
+                Ok(dap::VariablesResponse {
+                    variables: variables.get(&args.variables_reference).unwrap().clone(),
+                })
+            }
+        })
+        .await;
 
-    // client
-    //     .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-    //         reason: dap::StoppedEventReason::Pause,
-    //         description: None,
-    //         thread_id: Some(1),
-    //         preserve_focus_hint: None,
-    //         text: None,
-    //         all_threads_stopped: None,
-    //         hit_breakpoint_ids: None,
-    //     }))
-    //     .await;
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-    // cx.run_until_parked();
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
 
-    // active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
-    //     let (stack_frame_list, stack_frame_id) =
-    //         debug_panel_item.stack_frame_list().update(cx, |list, cx| {
-    //             (
-    //                 list.stack_frames(cx)
-    //                     .into_iter()
-    //                     .map(|frame| frame.dap)
-    //                     .collect::<Vec<_>>(),
-    //                 list.current_stack_frame_id(),
-    //             )
-    //         });
+    cx.run_until_parked();
 
-    //     assert_eq!(1, stack_frame_id);
-    //     assert_eq!(stack_frames, stack_frame_list);
+    let running_state =
+        active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
+            cx.focus_self(window);
+            item.mode()
+                .as_running()
+                .expect("Session should be running by this point")
+                .clone()
+        });
 
-    //     debug_panel_item
-    //         .variable_list()
-    //         .update(cx, |variable_list, cx| {
-    //             assert_eq!(1, variable_list.scopes().len());
-    //             assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+    cx.run_until_parked();
 
-    //             // scope 1
-    //             assert_eq!(
-    //                 vec![
-    //                     VariableContainer {
-    //                         container_reference: scopes[0].variables_reference,
-    //                         variable: variables.get(&2).unwrap()[0].clone(),
-    //                         depth: 1,
-    //                     },
-    //                     VariableContainer {
-    //                         container_reference: scopes[0].variables_reference,
-    //                         variable: variables.get(&2).unwrap()[1].clone(),
-    //                         depth: 1,
-    //                     },
-    //                 ],
-    //                 variable_list.variables_by_scope(1, 2).unwrap().variables()
-    //             );
+    running_state.update(cx, |running_state, cx| {
+        let (stack_frame_list, stack_frame_id) =
+            running_state.stack_frame_list().update(cx, |list, _| {
+                (list.flatten_entries(), list.current_stack_frame_id())
+            });
 
-    //             // scope 2
-    //             assert_eq!(
-    //                 vec![VariableContainer {
-    //                     container_reference: scopes[1].variables_reference,
-    //                     variable: variables.get(&3).unwrap()[0].clone(),
-    //                     depth: 1,
-    //                 }],
-    //                 variable_list.variables_by_scope(1, 3).unwrap().variables()
-    //             );
+        assert_eq!(Some(1), stack_frame_id);
+        assert_eq!(stack_frames, stack_frame_list);
 
-    //             variable_list.assert_visual_entries(
-    //                 vec![
-    //                     "v Scope 1",
-    //                     "    > variable1",
-    //                     "    > variable2",
-    //                     "> Scope 2",
-    //                 ],
-    //                 cx,
-    //             );
-    //         });
-    // });
+        running_state
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                assert_eq!(2, variable_list.scopes().len());
+                assert_eq!(scopes, variable_list.scopes());
+                let variables_by_scope = variable_list.variables_per_scope();
 
-    // let shutdown_session = project.update(cx, |project, cx| {
-    //     project.dap_store().update(cx, |dap_store, cx| {
-    //         dap_store.shutdown_session(&session.read(cx).id(), cx)
-    //     })
-    // });
+                // scope 1
+                assert_eq!(
+                    vec![
+                        variables.get(&2).unwrap()[0].clone(),
+                        variables.get(&2).unwrap()[1].clone(),
+                    ],
+                    variables_by_scope[0].1
+                );
 
-    // shutdown_session.await.unwrap();
+                // scope 2
+                let empty_vec: Vec<dap::Variable> = vec![];
+                assert_eq!(empty_vec, variables_by_scope[1].1);
+
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    > variable1",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
 }
 
 // tests that toggling a variable will fetch its children and shows it

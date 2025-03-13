@@ -95,6 +95,18 @@ impl StackFrameList {
         &self.entries
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn flatten_entries(&self) -> Vec<dap::StackFrame> {
+        self.entries
+            .iter()
+            .map(|frame| match frame {
+                StackFrameEntry::Normal(frame) => vec![frame.clone()],
+                StackFrameEntry::Collapsed(frames) => frames.clone(),
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+    }
+
     fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
         self.state
             .read_with(cx, |state, _| state.thread_id)

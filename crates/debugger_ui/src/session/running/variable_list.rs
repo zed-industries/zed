@@ -27,10 +27,10 @@ pub(crate) struct EntryPath {
 }
 
 impl EntryPath {
-    fn for_scope(scope_id: VariableReference) -> Self {
+    fn for_scope(scope_name: impl Into<SharedString>) -> Self {
         Self {
-            leaf_name: None,
-            indices: Arc::new([scope_id]),
+            leaf_name: Some(scope_name.into()),
+            indices: Arc::new([]),
         }
     }
 
@@ -210,10 +210,21 @@ impl VariableList {
             session.scopes(stack_frame_id, cx).iter().cloned().collect()
         });
 
+        let mut contains_local_scope = false;
+
         let mut stack = scopes
             .into_iter()
             .rev()
             .filter(|scope| {
+                if scope
+                    .presentation_hint
+                    .as_ref()
+                    .map(|hint| *hint == ScopePresentationHint::Locals)
+                    .unwrap_or(scope.name.to_lowercase().starts_with("local"))
+                {
+                    contains_local_scope = true;
+                }
+
                 self.session.update(cx, |session, cx| {
                     session.variables(scope.variables_reference, cx).len() > 0
                 })
@@ -221,7 +232,7 @@ impl VariableList {
             .map(|scope| {
                 (
                     scope.variables_reference,
-                    EntryPath::for_scope(scope.variables_reference),
+                    EntryPath::for_scope(&scope.name),
                     EntryKind::Scope(scope),
                 )
             })
@@ -237,12 +248,12 @@ impl VariableList {
             let var_state = self.entry_states.entry(path.clone()).or_insert(EntryState {
                 depth: path.indices.len(),
                 is_expanded: dap_kind.as_scope().is_some_and(|scope| {
-                    scopes_count == 1
+                    (scopes_count == 1 && !contains_local_scope)
                         || scope
                             .presentation_hint
                             .as_ref()
                             .map(|hint| *hint == ScopePresentationHint::Locals)
-                            .unwrap_or(scope.name.to_lowercase() == "locals")
+                            .unwrap_or(scope.name.to_lowercase().starts_with("local"))
                 }),
             });
 
@@ -523,7 +534,7 @@ impl VariableList {
 
             visual_entries.push(format!(
                 "{}{} {}",
-                INDENT.repeat(state.depth - 1),
+                INDENT.repeat(state.depth),
                 if state.is_expanded { "v" } else { ">" },
                 entry.dap_kind.name(),
             ));
@@ -543,6 +554,28 @@ impl VariableList {
             })
             .cloned()
             .collect()
+    }
+
+    #[track_caller]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn variables_per_scope(&self) -> Vec<(dap::Scope, Vec<dap::Variable>)> {
+        let mut scopes: Vec<(dap::Scope, Vec<_>)> = Vec::new();
+        let mut idx = 0;
+
+        for entry in self.entries.iter() {
+            match &entry.dap_kind {
+                EntryKind::Variable(dap) => scopes[idx].1.push(dap.clone()),
+                EntryKind::Scope(scope) => {
+                    if scopes.len() > 0 {
+                        idx += 1;
+                    }
+
+                    scopes.push((scope.clone(), Vec::new()));
+                }
+            }
+        }
+
+        scopes
     }
 
     #[track_caller]
@@ -627,7 +660,7 @@ impl VariableList {
             .child(
                 ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
                     .selectable(false)
-                    .indent_level(1)
+                    .indent_level(state.depth + 1)
                     .indent_step_size(px(20.))
                     .always_show_disclosure_icon(true)
                     .toggle(state.is_expanded)
@@ -711,7 +744,7 @@ impl VariableList {
                 )))
                 .disabled(self.disabled)
                 .selectable(false)
-                .indent_level(state.depth as usize)
+                .indent_level(state.depth + 1 as usize)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
