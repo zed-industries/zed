@@ -139,7 +139,7 @@ impl HeadlessProject {
             observer
         });
 
-        let extension_events = ExtensionEvents::global(cx);
+        let extension_events = extension::ExtensionEvents::global(cx);
 
         let lsp_store = cx.new(|cx| {
             let mut lsp_store = LspStore::new_local(
