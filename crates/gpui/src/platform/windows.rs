@@ -3,6 +3,7 @@ mod direct_write;
 mod dispatcher;
 mod display;
 mod events;
+pub mod key_codes;
 mod platform;
 mod system_settings;
 mod util;

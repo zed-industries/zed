@@ -4,7 +4,7 @@ use crate::{
     BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    KeyBinding, KeyCodes, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
@@ -3192,16 +3192,25 @@ impl Window {
                 && !self.pending_modifier.saw_keystroke
             {
                 let key = match self.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some("shift"),
-                    modifiers if modifiers.control => Some("control"),
-                    modifiers if modifiers.alt => Some("alt"),
-                    modifiers if modifiers.platform => Some("platform"),
-                    modifiers if modifiers.function => Some("function"),
+                    // modifiers if modifiers.shift => Some("shift"),
+                    // modifiers if modifiers.control => Some("control"),
+                    // modifiers if modifiers.alt => Some("alt"),
+                    // modifiers if modifiers.platform => Some("platform"),
+                    // modifiers if modifiers.function => Some("function"),
+                    modifiers if modifiers.shift => Some(KeyCodes::Shift(crate::KeyPosition::Any)),
+                    modifiers if modifiers.control => {
+                        Some(KeyCodes::Control(crate::KeyPosition::Any))
+                    }
+                    modifiers if modifiers.alt => Some(KeyCodes::Alt(crate::KeyPosition::Any)),
+                    modifiers if modifiers.platform => {
+                        Some(KeyCodes::Platform(crate::KeyPosition::Any))
+                    }
+                    modifiers if modifiers.function => Some(KeyCodes::Function),
                     _ => None,
                 };
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
-                        key: key.to_string(),
+                        key,
                         key_char: None,
                         modifiers: Modifiers::default(),
                     });
