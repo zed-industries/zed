@@ -68,7 +68,8 @@ pub struct MultiBuffer {
     /// Contains the state of the buffers being edited
     buffers: RefCell<HashMap<BufferId, BufferState>>,
     // only used by consumers using `set_excerpts_for_buffer`
-    buffers_by_path: BTreeMap<PathKey, Vec<ExcerptId>>,
+    excerpts_by_path: BTreeMap<PathKey, Vec<ExcerptId>>,
+    paths_by_excerpt: HashMap<ExcerptId, PathKey>,
     diffs: HashMap<BufferId, DiffState>,
     // all_diff_hunks_expanded: bool,
     subscriptions: Topic,
@@ -577,7 +578,8 @@ impl MultiBuffer {
             singleton: false,
             capability,
             title: None,
-            buffers_by_path: Default::default(),
+            excerpts_by_path: Default::default(),
+            paths_by_excerpt: Default::default(),
             buffer_changed_since_sync: Default::default(),
             history: History {
                 next_transaction_id: clock::Lamport::default(),
@@ -593,7 +595,8 @@ impl MultiBuffer {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
-            buffers_by_path: Default::default(),
+            excerpts_by_path: Default::default(),
+            paths_by_excerpt: Default::default(),
             diffs: HashMap::default(),
             subscriptions: Default::default(),
             singleton: false,
@@ -638,7 +641,8 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
-            buffers_by_path: Default::default(),
+            excerpts_by_path: Default::default(),
+            paths_by_excerpt: Default::default(),
             diffs: diff_bases,
             subscriptions: Default::default(),
             singleton: self.singleton,
@@ -1478,7 +1482,7 @@ impl MultiBuffer {
     }
 
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
-        let excerpt_id = self.buffers_by_path.get(path)?.first()?;
+        let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
         let snapshot = self.snapshot(cx);
         let excerpt = snapshot.excerpt(*excerpt_id)?;
         Some(Anchor::in_buffer(
@@ -1489,7 +1493,7 @@ impl MultiBuffer {
     }
 
     pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
-        self.buffers_by_path.keys()
+        self.excerpts_by_path.keys()
     }
 
     fn expand_excerpts_with_paths(
@@ -1501,19 +1505,14 @@ impl MultiBuffer {
     ) {
         let grouped = ids
             .into_iter()
-            .chunk_by(|id| {
-                self.buffers_by_path
-                    .iter()
-                    .find(|(_, v)| v.contains(id))
-                    .map(|(k, _)| k.clone())
-            })
+            .chunk_by(|id| self.paths_by_excerpt.get(id).cloned())
             .into_iter()
             .flat_map(|(k, v)| Some((k?, v.into_iter().collect::<Vec<_>>())))
             .collect::<Vec<_>>();
         let snapshot = self.snapshot(cx);
 
         for (path, ids) in grouped.into_iter() {
-            let Some(excerpt_ids) = self.buffers_by_path.get(&path) else {
+            let Some(excerpt_ids) = self.excerpts_by_path.get(&path) else {
                 continue;
             };
 
@@ -1563,7 +1562,7 @@ impl MultiBuffer {
                 merged_ranges.push(range)
             }
             let buffer_snapshot = snapshot
-                .buffer_for_excerpt(*self.buffers_by_path.get(&path).unwrap().first().unwrap())
+                .buffer_for_excerpt(*self.excerpts_by_path.get(&path).unwrap().first().unwrap())
                 .unwrap()
                 .clone();
             let buffer = self
@@ -1601,13 +1600,17 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> bool {
         let mut insert_after = self
-            .buffers_by_path
+            .excerpts_by_path
             .range(..path.clone())
             .next_back()
             .map(|(_, value)| *value.last().unwrap())
             .unwrap_or(ExcerptId::min());
 
-        let existing = self.buffers_by_path.get(&path).cloned().unwrap_or_default();
+        let existing = self
+            .excerpts_by_path
+            .get(&path)
+            .cloned()
+            .unwrap_or_default();
 
         let mut new_iter = new.into_iter().peekable();
         let mut existing_iter = existing.into_iter().peekable();
@@ -1690,20 +1693,23 @@ impl MultiBuffer {
         ));
         self.remove_excerpts(to_remove, cx);
         if new_excerpt_ids.is_empty() {
-            self.buffers_by_path.remove(&path);
+            self.excerpts_by_path.remove(&path);
         } else {
-            self.buffers_by_path.insert(path, new_excerpt_ids);
+            for excerpt_id in &new_excerpt_ids {
+                self.paths_by_excerpt.insert(*excerpt_id, path.clone());
+            }
+            self.excerpts_by_path.insert(path, new_excerpt_ids);
         }
 
         added_a_new_excerpt
     }
 
     pub fn paths(&self) -> impl Iterator<Item = PathKey> + '_ {
-        self.buffers_by_path.keys().cloned()
+        self.excerpts_by_path.keys().cloned()
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
-        if let Some(to_remove) = self.buffers_by_path.remove(&path) {
+        if let Some(to_remove) = self.excerpts_by_path.remove(&path) {
             self.remove_excerpts(to_remove, cx)
         }
     }
@@ -2175,6 +2181,7 @@ impl MultiBuffer {
         let mut removed_buffer_ids = Vec::new();
 
         while let Some(excerpt_id) = excerpt_ids.next() {
+            self.paths_by_excerpt.remove(&excerpt_id);
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
             let locator = snapshot.excerpt_locator_for_id(excerpt_id);
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
@@ -2739,7 +2746,7 @@ impl MultiBuffer {
             return;
         }
         self.sync(cx);
-        if !self.buffers_by_path.is_empty() {
+        if !self.excerpts_by_path.is_empty() {
             self.expand_excerpts_with_paths(ids, line_count, direction, cx);
             return;
         }
