@@ -34,21 +34,25 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
-          fetch-depth: 350
-      # 350 is arbitrary. Full fetch is ~18secs; 350 is ~5s
-      # This will fail if your branch is >350 commits behind main
-      - name: Fetch main branch (or PR target) branch
-        run: git fetch origin ${{ github.event.pull_request.base.ref }} --depth=350
-      - name:
+          # 350 is arbitrary; ~10days of history on main (5secs); full history is ~25secs
+          fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
+      - name: Fetch git history and generate output filters
         id: filter
         run: |
-          MERGE_BASE=$(git merge-base origin/main HEAD)
-          if [[ $(git diff --name-only $MERGE_BASE ${{ github.sha }} | grep -v "^docs/") ]]; then
+          if [ -z "$GITHUB_BASE_REF" ]; then
+            echo "Not in a PR context (i.e., push to main/stable/preview)"
+            COMPARE_REV=$(git rev-parse HEAD~1)
+          else
+            echo "In a PR context comparing to pull_request.base.ref"
+            git fetch origin "$GITHUB_BASE_REF" --depth=350
+            COMPARE_REV=$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)
+          fi
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -v "^docs/") ]]; then
             echo "run_tests=true" >> $GITHUB_OUTPUT
           else
             echo "run_tests=false" >> $GITHUB_OUTPUT
           fi
-          if [[ $(git diff --name-only $MERGE_BASE ${{ github.sha }} | grep '^Cargo.lock') ]]; then
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^Cargo.lock') ]]; then
             echo "run_license=true" >> $GITHUB_OUTPUT
           else
             echo "run_license=false" >> $GITHUB_OUTPUT

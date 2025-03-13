@@ -13,7 +13,7 @@ use language_model::{
     Role, StopReason,
 };
 use project::Project;
-use prompt_store::PromptBuilder;
+use prompt_store::{AssistantSystemPromptWorktree, PromptBuilder};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
 use util::{post_inc, ResultExt, TryFutureExt as _};
@@ -384,8 +384,14 @@ impl Thread {
         let worktree_root_names = self
             .project
             .read(cx)
-            .worktree_root_names(cx)
-            .map(ToString::to_string)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                AssistantSystemPromptWorktree {
+                    root_name: worktree.root_name().into(),
+                    abs_path: worktree.abs_path(),
+                }
+            })
             .collect::<Vec<_>>();
         let system_prompt = self
             .prompt_builder

@@ -12,7 +12,7 @@ use theme::{ActiveTheme, Appearance};
 ///
 /// In the future, a more complete approach to elevation may be added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ElevationIndex {
+pub enum Elevation {
     /// On the layer of the app background. This is under panels, panes, and
     /// other surfaces.
     Background,
@@ -22,32 +22,32 @@ pub enum ElevationIndex {
     EditorSurface,
     /// A surface that is elevated above the primary surface. but below washes, models, and dragged elements.
     ElevatedSurface,
-    /// A surface above the [ElevationIndex::ElevatedSurface] that is used for dialogs, alerts, modals, etc.
+    /// A surface above the [Elevation::ElevatedSurface] that is used for dialogs, alerts, modals, etc.
     ModalSurface,
 }
 
-impl Display for ElevationIndex {
+impl Display for Elevation {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            ElevationIndex::Background => write!(f, "Background"),
-            ElevationIndex::Surface => write!(f, "Surface"),
-            ElevationIndex::EditorSurface => write!(f, "Editor Surface"),
-            ElevationIndex::ElevatedSurface => write!(f, "Elevated Surface"),
-            ElevationIndex::ModalSurface => write!(f, "Modal Surface"),
+            Elevation::Background => write!(f, "Background"),
+            Elevation::Surface => write!(f, "Surface"),
+            Elevation::EditorSurface => write!(f, "Editor Surface"),
+            Elevation::ElevatedSurface => write!(f, "Elevated Surface"),
+            Elevation::ModalSurface => write!(f, "Modal Surface"),
         }
     }
 }
 
-impl ElevationIndex {
+impl Elevation {
     /// Returns an appropriate shadow for the given elevation index.
     pub fn shadow(self, cx: &App) -> SmallVec<[BoxShadow; 2]> {
         let is_light = cx.theme().appearance() == Appearance::Light;
 
         match self {
-            ElevationIndex::Surface => smallvec![],
-            ElevationIndex::EditorSurface => smallvec![],
+            Elevation::Surface => smallvec![],
+            Elevation::EditorSurface => smallvec![],
 
-            ElevationIndex::ElevatedSurface => smallvec![
+            Elevation::ElevatedSurface => smallvec![
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.12),
                     offset: point(px(0.), px(2.)),
@@ -62,7 +62,7 @@ impl ElevationIndex {
                 }
             ],
 
-            ElevationIndex::ModalSurface => smallvec![
+            Elevation::ModalSurface => smallvec![
                 BoxShadow {
                     color: hsla(0., 0., 0., if is_light { 0.06 } else { 0.12 }),
                     offset: point(px(0.), px(2.)),
@@ -96,22 +96,22 @@ impl ElevationIndex {
     /// Returns the background color for the given elevation index.
     pub fn bg(&self, cx: &mut App) -> Hsla {
         match self {
-            ElevationIndex::Background => cx.theme().colors().background,
-            ElevationIndex::Surface => cx.theme().colors().surface_background,
-            ElevationIndex::EditorSurface => cx.theme().colors().editor_background,
-            ElevationIndex::ElevatedSurface => cx.theme().colors().elevated_surface_background,
-            ElevationIndex::ModalSurface => cx.theme().colors().elevated_surface_background,
+            Elevation::Background => cx.theme().colors().background,
+            Elevation::Surface => cx.theme().colors().surface_background,
+            Elevation::EditorSurface => cx.theme().colors().editor_background,
+            Elevation::ElevatedSurface => cx.theme().colors().elevated_surface_background,
+            Elevation::ModalSurface => cx.theme().colors().elevated_surface_background,
         }
     }
 
     /// Returns a color that is appropriate a filled element on this elevation
     pub fn on_elevation_bg(&self, cx: &App) -> Hsla {
         match self {
-            ElevationIndex::Background => cx.theme().colors().surface_background,
-            ElevationIndex::Surface => cx.theme().colors().background,
-            ElevationIndex::EditorSurface => cx.theme().colors().surface_background,
-            ElevationIndex::ElevatedSurface => cx.theme().colors().background,
-            ElevationIndex::ModalSurface => cx.theme().colors().background,
+            Elevation::Background => cx.theme().colors().surface_background,
+            Elevation::Surface => cx.theme().colors().background,
+            Elevation::EditorSurface => cx.theme().colors().surface_background,
+            Elevation::ElevatedSurface => cx.theme().colors().background,
+            Elevation::ModalSurface => cx.theme().colors().background,
         }
     }
 
@@ -120,11 +120,11 @@ impl ElevationIndex {
     /// If the current background color is already dark, it will return a lighter color instead.
     pub fn darker_bg(&self, cx: &App) -> Hsla {
         match self {
-            ElevationIndex::Background => cx.theme().colors().surface_background,
-            ElevationIndex::Surface => cx.theme().colors().editor_background,
-            ElevationIndex::EditorSurface => cx.theme().colors().surface_background,
-            ElevationIndex::ElevatedSurface => cx.theme().colors().editor_background,
-            ElevationIndex::ModalSurface => cx.theme().colors().editor_background,
+            Elevation::Background => cx.theme().colors().surface_background,
+            Elevation::Surface => cx.theme().colors().editor_background,
+            Elevation::EditorSurface => cx.theme().colors().surface_background,
+            Elevation::ElevatedSurface => cx.theme().colors().editor_background,
+            Elevation::ModalSurface => cx.theme().colors().editor_background,
         }
     }
 }

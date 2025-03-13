@@ -59,8 +59,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState,
-    Tooltip,
+    prelude::*, Checkbox, ContextMenu, Elevation, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{AppState, OpenOptions, OpenVisible};
@@ -3190,7 +3189,7 @@ impl GitPanel {
         let checkbox = Checkbox::new("stage-file", entry_staging.as_bool().into())
             .disabled(!self.has_write_access(cx))
             .fill()
-            .elevation(ElevationIndex::Surface)
+            .elevation(Elevation::Surface)
             .on_click({
                 let entry = entry.clone();
                 let git_panel = entity.downgrade();
@@ -3639,7 +3638,7 @@ impl GitPanel {
                                     && !self.has_conflicts()
                                     && !entry.status.is_created(),
                             )
-                            .elevation(ElevationIndex::Surface)
+                            .elevation(Elevation::Surface)
                             .on_click({
                                 let entry = entry.clone();
                                 cx.listener(move |this, _, window, cx| {
@@ -3782,7 +3781,7 @@ impl Render for GitPanel {
             }))
             .size_full()
             .overflow_hidden()
-            .bg(ElevationIndex::Surface.bg(cx))
+            .bg(Elevation::Surface.bg(cx))
             .child(
                 v_flex()
                     .size_full()
