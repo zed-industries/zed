@@ -1,3 +1,5 @@
+#[allow(unused, dead_code)]
+
 //! # Component Preview
 //!
 //! A view for exploring Zed components.
@@ -14,7 +16,7 @@ use gpui::{
 
 use collections::HashMap;
 
-use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
+use gpui::{ListState, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
