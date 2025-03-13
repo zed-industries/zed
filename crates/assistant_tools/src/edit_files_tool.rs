@@ -27,22 +27,34 @@ pub struct EditFilesToolInput {
     /// The description should be concise and clear. We will show this
     /// description to the user as well.
     ///
-    /// IMPORTANT: When specifying which file paths need changing, you MUST start each path with one
-    /// of the project's root directories.
+    /// WARNING: When specifying which file paths need changing, you MUST
+    /// start each path with one of the project's root directories.
     ///
-    /// IMPORTANT: don't supply code in here, but provide natural language
-    /// instructions for the model to follow, and remember that the model can
-    /// see the rest of the conversation as well.
+    /// WARNING: NEVER include code blocks or snippets in edit instructions.
+    /// Only provide natural language descriptions of the changes needed! The tool will
+    /// reject any instructions that contain code blocks or snippets.
+    ///
+    /// The following examples assume we have two root directories in the project:
+    /// - root-1
+    /// - root-2
     ///
     /// <example>
-    /// Assuming we have the following root directories in the project:
-    /// - project-a
-    /// - project-b
+    /// If you want to introduce a new quit function to kill the process, your
+    /// instructions should be: "Add a new `quit` function to
+    /// `root-1/src/main.rs` to kill the process".
     ///
-    /// Your instructions could be: "Add a new `quit` function to
-    /// `project-a/src/main.rs` to kill the process". Notice how the file path
-    /// contains the project's root directory. Without that, the path would be
-    /// ambiguous and the call would fail! </example>
+    /// Notice how the file path starts with root-1. Without that, the path
+    /// would be ambiguous and the call would fail!
+    /// </example>
+    ///
+    /// <example>
+    /// If you want to change documentation to always start with a capital
+    /// letter, your instructions should be: "In `root-2/db.js`,
+    /// `root-2/inMemory.js` and `root-2/sql.js`, change all the documentation
+    /// to start with a capital letter".
+    ///
+    /// Notice how we never specify code snippets in the instructions!
+    /// </example>
     pub edit_instructions: String,
 }
 

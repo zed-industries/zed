@@ -1,4 +1,4 @@
-Edit files in the current project.
+Edit files in the current project by specifying instructions in natural language.
 
 When using this tool, you should suggest one coherent edit that can be made to the codebase.
 
