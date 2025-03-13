@@ -433,31 +433,28 @@ jobs:
       - windows_clippy
       - windows_tests
     if: always()
+    env:
+      JOB_RESULT_STYLE: ${{ needs.style.result == 'success' && 0 || 1}}
+      JOB_RESULT_MACOS_TESTS: ${{ needs.macos_tests.result == 'success' && 0 || 1 }}
+      JOB_RESULT_LINUX_TESTS: ${{ needs.linux_tests.result == 'success' && 0 || 1 }}
+      JOB_RESULT_WINDOWS_TESTS: ${{ needs.windows_tests.result == 'success' && 0 || 1 }}
+      JOB_RESULT_WINDOWS_CLIPPY: ${{ needs.windows_clippy.result == 'success' && 0 || 1 }}
+      JOB_RESULT_MIGRATION_CHECKS: ${{ needs.migration_checks.result == 'success' && 0 || 1 }}
+      JOB_RESULT_BUILD_REMOTE_SERVER: ${{ needs.build_remote_server.result == 'success' && 0 || 1 }}
     steps:
       - name: Check all tests passed
         run: |
           RET_CODE=0
-          if [[ "${{ needs.style.result }}" != "success" ]]; then
-            echo "Style checks failed"
-            RET_CODE=1
-          fi
+          # Always check style
+          [[ "$JOB_RESULT_STYLE" -ne 0 ]] && { echo "Style checks failed"; RET_CODE=1; }
+          # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
-            # Jobs that must be successful when tests run
-            REQUIRED_JOBS=(
-              "macos_tests"
-              "linux_tests"
-              "windows_tests"
-              "windows_clippy"
-              "migration_checks"
-              "build_remote_server"
-            )
-            for job in "${REQUIRED_JOBS[@]}"; do
-              status="${{ needs[job].result }}"
-              if [[ "$status" != "success" ]]; then
-                echo "Job $job failed with status: $status"
-                RET_CODE=1
-              fi
-            done
+            [[ "$JOB_RESULT_MACOS_TESTS" -ne 0 ]] && { echo "macOS tests failed"; RET_CODE=1; }
+            [[ "$JOB_RESULT_LINUX_TESTS" -ne 0 ]] && { echo "Linux tests failed"; RET_CODE=1; }
+            [[ "$JOB_RESULT_WINDOWS_TESTS" -ne 0 ]] && { echo "Windows tests failed"; RET_CODE=1; }
+            [[ "$JOB_RESULT_WINDOWS_CLIPPY" -ne 0 ]] && { echo "Windows clippy failed"; RET_CODE=1; }
+            [[ "$JOB_RESULT_MIGRATION_CHECKS" -ne 0 ]] && { echo "Migration checks failed"; RET_CODE=1; }
+            [[ "$JOB_RESULT_BUILD_REMOTE_SERVER" -ne 0 ]] && { echo "Remote server build failed"; RET_CODE=1; }
           fi
           if [[ "$RET_CODE" -eq 0 ]]; then
             echo "All tests passed successfully!"
