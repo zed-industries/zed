@@ -1,16 +1,15 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, sync::Arc};
-use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
-    /// The glob to match files in the project to delete.
+    /// The path of the file or directory to delete.
     ///
     /// <example>
     /// If the project has the following files:
@@ -19,9 +18,9 @@ pub struct DeletePathToolInput {
     /// - directory2/a/things.txt
     /// - directory3/a/other.txt
     ///
-    /// You can delete the first two files by providing a glob of "*thing*.txt"
+    /// You can delete the first file by providing a path of "directory1/a/something.txt"
     /// </example>
-    pub glob: String,
+    pub path: String,
 }
 
 pub struct DeletePathTool;
@@ -47,122 +46,61 @@ impl Tool for DeletePathTool {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let worktree_entities: Vec<_> = project.read(cx).worktrees(cx).collect();
+        let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
+            Ok(input) => input.path,
+            Err(err) => return Task::ready(Err(anyhow!(err))),
+        };
 
-        cx.spawn(|cx| async move {
-            let glob = match serde_json::from_value::<DeletePathToolInput>(input) {
-                Ok(input) => input.glob,
-                Err(err) => return Err(anyhow!(err)),
-            };
-            let path_matcher = match PathMatcher::new(&[glob.clone()]) {
-                Ok(matcher) => matcher,
-                Err(err) => return Err(anyhow!("Invalid glob: {}", err)),
-            };
+        let mut path = PathBuf::from(&path_str);
 
-            struct Match {
-                display_path: String,
-                path: PathBuf,
-            }
+        // Change a path of "foo/bar.txt" to "/Users/someone/project/foo/bar.txt"
+        if !path.is_absolute() {
+            let mut path_components = path.components();
 
-            let mut matches = Vec::new();
-            let mut deleted_paths = Vec::new();
-            let mut errors = Vec::new();
+            // Find the worktree whose last abs_path component equals this path's first component,
+            // e.g. if this path starts with "foo/", find the worktree whose abs_path ends in "foo"
+            if let Some(target_root_dir) = path_components.next() {
+                for worktree in project.read(cx).worktrees(cx) {
+                    let abs_path = worktree.read(cx).abs_path();
 
-            for worktree_entity in worktree_entities {
-                cx.read_entity(&worktree_entity, |worktree, _cx| {
-                    let worktree_root = worktree.abs_path();
-
-                    // Don't consider ignored entries.
-                    for entry in worktree.entries(false, 0) {
-                        if path_matcher.is_match(&entry.path) {
-                            matches.push(Match {
-                                path: worktree_root.join(&entry.path),
-                                display_path: entry.path.display().to_string(),
-                            });
-                        }
-                    }
-                })?;
-            }
-
-            if matches.is_empty() {
-                return Ok(format!("No paths in the project matched {glob:?}"));
-            }
-
-            let paths_matched = matches.len();
-
-            // Delete the files
-            for Match { path, display_path } in matches {
-                match fs::remove_file(&path) {
-                    Ok(()) => {
-                        deleted_paths.push(display_path);
-                    }
-                    Err(file_err) => {
-                        // Try to remove directory if it's not a file. Retrying as a directory
-                        // on error saves a syscall compared to checking whether it's
-                        // a directory up front for every single file.
-                        if let Err(dir_err) = fs::remove_dir_all(&path) {
-                            let error = if path.is_dir() {
-                                format!("Failed to delete directory {}: {dir_err}", display_path)
-                            } else {
-                                format!("Failed to delete file {}: {file_err}", display_path)
-                            };
-
-                            errors.push(error);
-                        } else {
-                            deleted_paths.push(display_path);
-                        }
+                    if abs_path.components().last() == Some(target_root_dir) {
+                        // Use that abs_path as our path's prefix. Join it with the other components
+                        // so we don't repeat the first component (the one that matched abs_path).
+                        path = abs_path.join(path_components);
+                        break;
                     }
                 }
             }
 
-            if errors.is_empty() {
-                // 0 deleted paths should never happen if there were no errors;
-                // we already returned if matches was empty.
-                let answer = if deleted_paths.len() == 1 {
-                    format!(
-                        "Deleted {}",
-                        deleted_paths.first().unwrap_or(&String::new())
-                    )
-                } else {
-                    // Sort to group entries in the same directory together
-                    deleted_paths.sort();
+            if !path.is_absolute() {
+                return Task::ready(Err(anyhow!(
+                    "Couldn't delete {} because it wasn't in any of this project's worktrees.",
+                    path.display()
+                )));
+            }
+        };
 
-                    let mut buf = format!("Deleted these {} paths:\n", deleted_paths.len());
-
-                    for path in deleted_paths.iter() {
-                        buf.push('\n');
-                        buf.push_str(path);
+        cx.spawn(|_cx| async move {
+            // Try to delete the file first
+            match fs::remove_file(&path) {
+                Ok(()) => Ok(format!("Deleted file {}", path_str)),
+                Err(file_err) => {
+                    // If it's not a file, try to delete it as a directory
+                    match fs::remove_dir_all(&path) {
+                        Ok(()) => Ok(format!("Deleted directory {}", path_str)),
+                        Err(dir_err) => {
+                            // Return an error with appropriate message
+                            if path.is_dir() {
+                                Err(anyhow!(
+                                    "Failed to delete directory {}: {}",
+                                    path_str,
+                                    dir_err
+                                ))
+                            } else {
+                                Err(anyhow!("Failed to delete file {}: {}", path_str, file_err))
+                            }
+                        }
                     }
-
-                    buf
-                };
-
-                Ok(answer)
-            } else {
-                if deleted_paths.is_empty() {
-                    Err(anyhow!(
-                        "{glob:?} matched {} deleted because of {}:\n{}",
-                        if paths_matched == 1 {
-                            "1 path, but it was not".to_string()
-                        } else {
-                            format!("{} paths, but none were", paths_matched)
-                        },
-                        if errors.len() == 1 {
-                            "this error".to_string()
-                        } else {
-                            format!("{} errors", errors.len())
-                        },
-                        errors.join("\n")
-                    ))
-                } else {
-                    // Sort to group entries in the same directory together
-                    deleted_paths.sort();
-                    Ok(format!(
-                        "Deleted {} paths matching glob {glob:?}:\n{}\n\nErrors:\n{}",
-                        deleted_paths.len(),
-                        deleted_paths.join("\n"),
-                        errors.join("\n")
-                    ))
                 }
             }
         })
