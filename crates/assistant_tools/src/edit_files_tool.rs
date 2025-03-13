@@ -6,7 +6,7 @@ use assistant_tool::Tool;
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
-use gpui::{App, Entity, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -94,7 +94,7 @@ impl Tool for EditFilesTool {
                 });
 
                 let task =
-                    EditFilesTool::run(input, messages, project, Some((log.clone(), req_id)), cx);
+                    EditToolRequest::new(input, messages, project, Some((log.clone(), req_id)), cx);
 
                 cx.spawn(|mut cx| async move {
                     let result = task.await;
@@ -113,13 +113,33 @@ impl Tool for EditFilesTool {
                 })
             }
 
-            None => EditFilesTool::run(input, messages, project, None, cx),
+            None => EditToolRequest::new(input, messages, project, None, cx),
         }
     }
 }
 
-impl EditFilesTool {
-    fn run(
+struct EditToolRequest {
+    parser: EditActionParser,
+    changed_buffers: HashSet<Entity<language::Buffer>>,
+    bad_searches: Vec<BadSearch>,
+    project: Entity<Project>,
+    log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
+}
+
+#[derive(Debug)]
+enum DiffResult {
+    BadSearch(BadSearch),
+    Diff(language::Diff),
+}
+
+#[derive(Debug)]
+struct BadSearch {
+    file_path: String,
+    search: String,
+}
+
+impl EditToolRequest {
+    fn new(
         input: EditFilesToolInput,
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
@@ -148,210 +168,216 @@ impl EditFilesTool {
         });
 
         cx.spawn(|mut cx| async move {
-            let request = LanguageModelRequest {
+            let llm_request = LanguageModelRequest {
                 messages,
                 tools: vec![],
                 stop: vec![],
                 temperature: Some(0.0),
             };
 
-            let mut parser = EditActionParser::new();
-
-            let stream = model.stream_completion_text(request, &cx);
+            let stream = model.stream_completion_text(llm_request, &cx);
             let mut chunks = stream.await?;
 
-            let mut changed_buffers = HashSet::default();
-            let mut bad_searches = Vec::new();
-
-            #[derive(Debug)]
-            struct BadSearch {
-                file_path: String,
-                search: String,
-            }
-
-            let log = log.clone();
-
-            while let Some(chunk) = chunks.stream.next().await {
-                let chunk = chunk?;
-
-                let new_actions = parser.parse_chunk(&chunk);
-
-                if let Some((ref log, req_id)) = log {
-                    log.update(&mut cx, |log, cx| {
-                        log.push_editor_response_chunk(req_id, &chunk, &new_actions, cx)
-                    })
-                    .log_err();
-                }
-
-                for action in new_actions {
-                    let project_path = project.read_with(&cx, |project, cx| {
-                        let worktree_root_name = action
-                            .file_path()
-                            .components()
-                            .next()
-                            .context("Invalid path")?;
-                        let worktree = project
-                            .worktree_for_root_name(
-                                &worktree_root_name.as_os_str().to_string_lossy(),
-                                cx,
-                            )
-                            .context("Directory not found in project")?;
-                        anyhow::Ok(ProjectPath {
-                            worktree_id: worktree.read(cx).id(),
-                            path: Arc::from(
-                                action.file_path().strip_prefix(worktree_root_name).unwrap(),
-                            ),
-                        })
-                    })??;
-
-                    let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?
-                        .await?;
-
-                    #[derive(Debug)]
-                    enum DiffResult {
-                        InvalidReplace(BadSearch),
-                        Diff(language::Diff),
-                    }
-
-                    let result = match action {
-                        EditAction::Replace {
-                            old,
-                            new,
-                            file_path,
-                        } => {
-                            let snapshot =
-                                buffer.read_with(&cx, |buffer, _cx| buffer.snapshot())?;
-
-                            cx.background_executor()
-                                .spawn(async move {
-                                    let query = SearchQuery::text(
-                                        old.clone(),
-                                        false,
-                                        true,
-                                        true,
-                                        PathMatcher::new(&[])?,
-                                        PathMatcher::new(&[])?,
-                                        None,
-                                    )?;
-
-                                    let matches = query.search(&snapshot, None).await;
-
-                                    if matches.is_empty() {
-                                        return Ok(DiffResult::InvalidReplace(BadSearch {
-                                            search: new.clone(),
-                                            file_path: file_path.display().to_string(),
-                                        }));
-                                    }
-
-                                    let edit_range = matches[0].clone();
-                                    let diff = language::text_diff(&old, &new);
-
-                                    let edits = diff
-                                        .into_iter()
-                                        .map(|(old_range, text)| {
-                                            let start = edit_range.start + old_range.start;
-                                            let end = edit_range.start + old_range.end;
-                                            (start..end, text)
-                                        })
-                                        .collect::<Vec<_>>();
-
-                                    let diff = language::Diff {
-                                        base_version: snapshot.version().clone(),
-                                        line_ending: snapshot.line_ending(),
-                                        edits,
-                                    };
-
-                                    anyhow::Ok(DiffResult::Diff(diff))
-                                })
-                                .await
-                        }
-                        EditAction::Write { content, .. } => Ok(DiffResult::Diff(
-                            buffer
-                                .read_with(&cx, |buffer, cx| buffer.diff(content, cx))?
-                                .await,
-                        )),
-                    }?;
-
-                    match result {
-                        DiffResult::InvalidReplace(invalid_replace) => {
-                            bad_searches.push(invalid_replace);
-                        }
-                        DiffResult::Diff(diff) => {
-                            let _clock =
-                                buffer.update(&mut cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
-
-                            changed_buffers.insert(buffer);
-                        }
-                    }
-                }
-            }
-
-            let mut answer = match changed_buffers.len() {
-                0 => "No files were edited.".to_string(),
-                1 => "Successfully edited ".to_string(),
-                _ => "Successfully edited these files:\n\n".to_string(),
+            let mut request = Self {
+                parser: EditActionParser::new(),
+                changed_buffers: HashSet::default(),
+                bad_searches: Vec::new(),
+                project,
+                log,
             };
 
-            // Save each buffer once at the end
-            for buffer in changed_buffers {
-                let (path, save_task) = project.update(&mut cx, |project, cx| {
-                    let path = buffer
-                        .read(cx)
-                        .file()
-                        .map(|file| file.path().display().to_string());
-
-                    let task = project.save_buffer(buffer.clone(), cx);
-
-                    (path, task)
-                })?;
-
-                save_task.await?;
-
-                if let Some(path) = path {
-                    writeln!(&mut answer, "{}", path)?;
-                }
+            while let Some(chunk) = chunks.stream.next().await {
+                request.process_response_chunk(&chunk?, &mut cx).await?;
             }
 
-            let errors = parser.errors();
+            request.finalize(&mut cx).await
+        })
+    }
 
-            if errors.is_empty() && bad_searches.is_empty() {
-                Ok(answer.trim_end().to_string())
-            } else {
-                writeln!(&mut answer, "\nThe following errors occurred:")?;
+    async fn process_response_chunk(&mut self, chunk: &str, cx: &mut AsyncApp) -> Result<()> {
+        let new_actions = self.parser.parse_chunk(chunk);
 
-                if !bad_searches.is_empty() {
+        if let Some((ref log, req_id)) = self.log {
+            log.update(cx, |log, cx| {
+                log.push_editor_response_chunk(req_id, chunk, &new_actions, cx)
+            })
+            .log_err();
+        }
+
+        for action in new_actions {
+            self.apply_action(action, cx).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn apply_action(&mut self, action: EditAction, cx: &mut AsyncApp) -> Result<()> {
+        let project_path = self.project.read_with(cx, |project, cx| {
+            let worktree_root_name = action
+                .file_path()
+                .components()
+                .next()
+                .context("Invalid path")?;
+
+            let worktree = project
+                .worktree_for_root_name(&worktree_root_name.as_os_str().to_string_lossy(), cx)
+                .context("Directory not found in project")?;
+
+            anyhow::Ok(ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: Arc::from(action.file_path().strip_prefix(worktree_root_name).unwrap()),
+            })
+        })??;
+
+        let buffer = self
+            .project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            .await?;
+
+        let result = match action {
+            EditAction::Replace {
+                old,
+                new,
+                file_path,
+            } => {
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+                cx.background_executor()
+                    .spawn(Self::replace_diff(old, new, file_path, snapshot))
+                    .await
+            }
+            EditAction::Write { content, .. } => Ok(DiffResult::Diff(
+                buffer
+                    .read_with(cx, |buffer, cx| buffer.diff(content, cx))?
+                    .await,
+            )),
+        }?;
+
+        match result {
+            DiffResult::BadSearch(invalid_replace) => {
+                self.bad_searches.push(invalid_replace);
+            }
+            DiffResult::Diff(diff) => {
+                let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+
+                self.changed_buffers.insert(buffer);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn replace_diff(
+        old: String,
+        new: String,
+        file_path: std::path::PathBuf,
+        snapshot: language::BufferSnapshot,
+    ) -> Result<DiffResult> {
+        let query = SearchQuery::text(
+            old.clone(),
+            false,
+            true,
+            true,
+            PathMatcher::new(&[])?,
+            PathMatcher::new(&[])?,
+            None,
+        )?;
+
+        let matches = query.search(&snapshot, None).await;
+
+        if matches.is_empty() {
+            return Ok(DiffResult::BadSearch(BadSearch {
+                search: new.clone(),
+                file_path: file_path.display().to_string(),
+            }));
+        }
+
+        let edit_range = matches[0].clone();
+        let diff = language::text_diff(&old, &new);
+
+        let edits = diff
+            .into_iter()
+            .map(|(old_range, text)| {
+                let start = edit_range.start + old_range.start;
+                let end = edit_range.start + old_range.end;
+                (start..end, text)
+            })
+            .collect::<Vec<_>>();
+
+        let diff = language::Diff {
+            base_version: snapshot.version().clone(),
+            line_ending: snapshot.line_ending(),
+            edits,
+        };
+
+        anyhow::Ok(DiffResult::Diff(diff))
+    }
+
+    async fn finalize(self, cx: &mut AsyncApp) -> Result<String> {
+        let mut answer = match self.changed_buffers.len() {
+            0 => "No files were edited.".to_string(),
+            1 => "Successfully edited ".to_string(),
+            _ => "Successfully edited these files:\n\n".to_string(),
+        };
+
+        // Save each buffer once at the end
+        for buffer in self.changed_buffers {
+            let (path, save_task) = self.project.update(cx, |project, cx| {
+                let path = buffer
+                    .read(cx)
+                    .file()
+                    .map(|file| file.path().display().to_string());
+
+                let task = project.save_buffer(buffer.clone(), cx);
+
+                (path, task)
+            })?;
+
+            save_task.await?;
+
+            if let Some(path) = path {
+                writeln!(&mut answer, "{}", path)?;
+            }
+        }
+
+        let errors = self.parser.errors();
+
+        if errors.is_empty() && self.bad_searches.is_empty() {
+            Ok(answer.trim_end().to_string())
+        } else {
+            writeln!(&mut answer, "\nThe following errors occurred:")?;
+
+            if !self.bad_searches.is_empty() {
+                writeln!(
+                    &mut answer,
+                    "These searches failed because they didn't match any strings:"
+                )?;
+
+                for replace in self.bad_searches {
                     writeln!(
                         &mut answer,
-                        "These searches failed because they didn't match any strings:"
+                        "- '{}' does not appear in {}",
+                        replace.search.replace("\r", "\\r").replace("\n", "\\n"),
+                        replace.file_path
                     )?;
-
-                    for replace in bad_searches {
-                        writeln!(
-                            &mut answer,
-                            "- '{}' does not appear in {}",
-                            replace.search.replace("\r", "\\r").replace("\n", "\\n"),
-                            replace.file_path
-                        )?;
-                    }
-
-                    writeln!(&mut answer, "Make sure to use exact queries.")?;
                 }
 
-                if !errors.is_empty() {
-                    if !answer.is_empty() {
-                        writeln!(&mut answer, "\n")?;
-                    }
-
-                    writeln!(&mut answer, "These SEARCH/REPLACE blocks failed to parse:")?;
-
-                    for error in errors {
-                        writeln!(&mut answer, "- {}", error)?;
-                    }
-                }
-
-                Err(anyhow!(answer))
+                writeln!(&mut answer, "Make sure to use exact searches.")?;
             }
-        })
+
+            if !errors.is_empty() {
+                if !answer.is_empty() {
+                    writeln!(&mut answer, "\n")?;
+                }
+
+                writeln!(&mut answer, "These SEARCH/REPLACE blocks failed to parse:")?;
+
+                for error in errors {
+                    writeln!(&mut answer, "- {}", error)?;
+                }
+            }
+
+            Err(anyhow!(answer))
+        }
     }
 }
