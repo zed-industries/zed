@@ -5,7 +5,6 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
-use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -17,10 +16,8 @@ use project::Project;
 use prompt_store::{AssistantSystemPromptWorktree, PromptBuilder};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
-use text::BufferId;
 use util::{post_inc, ResultExt, TryFutureExt as _};
 use uuid::Uuid;
-use worktree::WorktreeId;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
 use crate::thread_store::SavedThread;
@@ -74,7 +71,6 @@ pub struct ProjectSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorktreeSnapshot {
-    pub worktree_id: WorktreeId,
     pub worktree_path: String,
     pub git_state: Option<GitState>,
 }
@@ -85,13 +81,6 @@ pub struct GitState {
     pub head_sha: Option<String>,
     pub current_branch: Option<String>,
     pub diff: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnsavedBuffer {
-    pub path: Option<String>,
-    pub buffer_id: BufferId,
-    pub is_dirty: bool,
 }
 
 /// A thread of conversation with the LLM.
@@ -179,7 +168,6 @@ impl Thread {
             };
 
             worktree_snapshots.push(WorktreeSnapshot {
-                worktree_id,
                 worktree_path,
                 git_state,
             });
