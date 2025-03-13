@@ -27,7 +27,6 @@ pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
-    workspace: Option<WeakEntity<workspace::Workspace>>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -138,7 +137,6 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
-        workspace: Option<WeakEntity<workspace::Workspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -151,7 +149,6 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
-            workspace,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
