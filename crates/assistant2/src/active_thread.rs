@@ -96,7 +96,7 @@ impl ActiveThread {
                     name: tool_use.name.to_string(),
                     input: tool_use.input.clone(),
                     status: status_str.to_string(),
-                    result,
+                    result: result.as_ref().map(ToString::to_string),
                 });
             }
 
@@ -120,7 +120,7 @@ impl ActiveThread {
                     name: tool_use.name.to_string(),
                     input: tool_use.input.clone(),
                     status: status_str.to_string(),
-                    result,
+                    result: result.as_ref().map(ToString::to_string),
                 });
             }
         }
@@ -830,7 +830,7 @@ impl ActiveThread {
                                     Button::new("feedback-thumbs-up", "")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ThumbsUp)
-                                        .tooltip(|_| "Helpful")
+                                        .tooltip(|_, _| "Helpful")
                                         .on_click(cx.listener({
                                             let thread_id = thread.id().to_string();
                                             move |this, _, window, cx| {
@@ -847,7 +847,7 @@ impl ActiveThread {
                                     Button::new("feedback-thumbs-down", "")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ThumbsDown)
-                                        .tooltip(|_| "Not Helpful")
+                                        .tooltip(|_, _| "Not Helpful")
                                         .on_click(cx.listener({
                                             let thread_id = thread.id().to_string();
                                             move |this, _, window, cx| {
