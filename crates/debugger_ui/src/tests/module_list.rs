@@ -94,7 +94,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     client
         .on_request::<Modules, _>({
             let called_modules = called_modules.clone();
-            let modules_request_count = AtomicI32::new(1);
+            let modules_request_count = AtomicI32::new(0);
             let modules = modules.clone();
             move |_, _| {
                 modules_request_count.fetch_add(1, Ordering::SeqCst);
