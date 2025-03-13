@@ -366,7 +366,8 @@ jobs:
     if: |
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
-    runs-on: windows-2025-64
+    # Use bigger runners for PRs (speed); smaller for async (cost)
+    runs-on: ${{ github.event_name == 'pull_request' && 'windows-2025-32' || 'windows-2025-16' }}
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
