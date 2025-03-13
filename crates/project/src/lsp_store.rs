@@ -3297,16 +3297,14 @@ impl LspStore {
         else {
             return;
         };
-        if !self.as_local().is_some() {
+        if self.as_local().is_none() {
             return;
         }
         cx.spawn(async move |this, mut cx| {
             let weak_ref = this.clone();
             let servers = this
                 .update(&mut cx, |this, cx| {
-                    let Some(local) = this.as_local() else {
-                        return None;
-                    };
+                    let local = this.as_local()?;
 
                     let mut servers = Vec::new();
                     for ((worktree_id, _), server_ids) in &local.language_server_ids {
