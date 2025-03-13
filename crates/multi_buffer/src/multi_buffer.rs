@@ -2007,22 +2007,17 @@ impl MultiBuffer {
         cx: &App,
     ) -> Option<(Entity<Buffer>, Point, ExcerptId)> {
         let snapshot = self.read(cx);
-        let point = point.to_point(&snapshot);
-        let mut cursor = snapshot.cursor::<Point>();
-        cursor.seek(&point);
-
-        cursor.region().and_then(|region| {
-            if !region.is_main_buffer {
-                return None;
-            }
-
-            let overshoot = point - region.range.start;
-            let buffer_point = region.buffer_range.start + overshoot;
-            let buffer = self.buffers.borrow()[&region.buffer.remote_id()]
+        let (buffer, point, is_main_buffer) =
+            snapshot.point_to_buffer_point(point.to_point(&snapshot))?;
+        Some((
+            self.buffers
+                .borrow()
+                .get(&buffer.remote_id())?
                 .buffer
-                .clone();
-            Some((buffer, buffer_point, region.excerpt.id))
-        })
+                .clone(),
+            point,
+            is_main_buffer,
+        ))
     }
 
     pub fn buffer_point_to_anchor(
@@ -4187,25 +4182,25 @@ impl MultiBufferSnapshot {
         Some((region.buffer, buffer_offset))
     }
 
-    pub fn point_to_buffer_point(&self, point: Point) -> Option<(&BufferSnapshot, Point, bool)> {
+    pub fn point_to_buffer_point(
+        &self,
+        point: Point,
+    ) -> Option<(&BufferSnapshot, Point, ExcerptId)> {
         let mut cursor = self.cursor::<Point>();
         cursor.seek(&point);
         let region = cursor.region()?;
         let overshoot = point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
+        let excerpt = cursor.excerpt()?;
         if buffer_point == region.buffer.max_point() + Point::new(1, 0)
             && region.has_trailing_newline
             && !region.is_main_buffer
         {
-            return Some((
-                &cursor.excerpt()?.buffer,
-                cursor.main_buffer_position()?,
-                true,
-            ));
+            return Some((&excerpt.buffer, cursor.main_buffer_position()?, excerpt.id));
         } else if buffer_point > region.buffer.max_point() {
             return None;
         }
-        Some((region.buffer, buffer_point, region.is_main_buffer))
+        Some((region.buffer, buffer_point, excerpt.id))
     }
 
     pub fn suggested_indents(
