@@ -799,8 +799,7 @@ fn new_utils_func() {}
                 file_path: PathBuf::from("mathweb/flask/app.py"),
                 old: "from flask import Flask".to_string(),
                 new: "import math\nfrom flask import Flask".to_string(),
-            }
-            .fix_lf(),
+            },
         );
 
         assert_eq!(
@@ -810,7 +809,6 @@ fn new_utils_func() {}
                 old: "def factorial(n):\n    \"compute factorial\"\n\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n".to_string(),
                 new: "".to_string(),
             }
-            .fix_lf()
         );
 
         assert_eq!(
@@ -819,8 +817,7 @@ fn new_utils_func() {}
                 file_path: PathBuf::from("mathweb/flask/app.py"),
                 old: "    return str(factorial(n))".to_string(),
                 new: "    return str(math.factorial(n))".to_string(),
-            }
-            .fix_lf(),
+            },
         );
 
         assert_eq!(
@@ -829,8 +826,7 @@ fn new_utils_func() {}
                 file_path: PathBuf::from("hello.py"),
                 content: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")"
                     .to_string(),
-            }
-            .fix_lf(),
+            },
         );
 
         assert_eq!(
@@ -839,8 +835,7 @@ fn new_utils_func() {}
                 file_path: PathBuf::from("main.py"),
                 old: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")".to_string(),
                 new: "from hello import hello".to_string(),
-            }
-            .fix_lf(),
+            },
         );
 
         // The system prompt includes some text that would produce errors
@@ -858,29 +853,6 @@ fn new_utils_func() {}
             errors[1].to_string(),
             "input:108:1: Expected marker \"<<<<<<< SEARCH\", found '\\r'"
         );
-    }
-
-    impl EditAction {
-        fn fix_lf(self: EditAction) -> EditAction {
-            #[cfg(windows)]
-            match self {
-                EditAction::Replace {
-                    file_path,
-                    old,
-                    new,
-                } => EditAction::Replace {
-                    file_path: file_path.clone(),
-                    old: old.replace("\n", "\r\n"),
-                    new: new.replace("\n", "\r\n"),
-                },
-                EditAction::Write { file_path, content } => EditAction::Write {
-                    file_path: file_path.clone(),
-                    content: content.replace("\n", "\r\n"),
-                },
-            }
-            #[cfg(not(windows))]
-            self
-        }
     }
 
     #[test]
