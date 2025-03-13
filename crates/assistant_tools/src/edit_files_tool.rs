@@ -334,18 +334,16 @@ impl EditToolRequest {
         if errors.is_empty() && self.bad_searches.is_empty() {
             Ok(answer.trim_end().to_string())
         } else {
-            writeln!(&mut answer, "\nThe following errors occurred:")?;
-
             if !self.bad_searches.is_empty() {
                 writeln!(
                     &mut answer,
-                    "These searches failed because they didn't match any strings:"
+                    "\nThese searches failed because they didn't match any strings:"
                 )?;
 
                 for replace in self.bad_searches {
                     writeln!(
                         &mut answer,
-                        "- '{}' does not appear in {}",
+                        "- '{}' does not appear in `{}`",
                         replace.search.replace("\r", "\\r").replace("\n", "\\n"),
                         replace.file_path
                     )?;
@@ -355,16 +353,21 @@ impl EditToolRequest {
             }
 
             if !errors.is_empty() {
-                if !answer.is_empty() {
-                    writeln!(&mut answer, "\n")?;
-                }
-
-                writeln!(&mut answer, "These SEARCH/REPLACE blocks failed to parse:")?;
+                writeln!(
+                    &mut answer,
+                    "\nThese SEARCH/REPLACE blocks failed to parse:"
+                )?;
 
                 for error in errors {
                     writeln!(&mut answer, "- {}", error)?;
                 }
             }
+
+            writeln!(
+                &mut answer,
+                "\nYou can fix errors by running the tool again. You can include instructions,\
+                but errors are part of the conversation so you don't need to repeat them."
+            )?;
 
             Err(anyhow!(answer))
         }
