@@ -1116,22 +1116,31 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         content: Option<String>,
         _env: HashMap<String, String>,
-        _cx: AsyncApp,
+        cx: AsyncApp,
     ) -> BoxFuture<anyhow::Result<()>> {
-        let mut state = self.state.lock();
-        if let Some(message) = state.simulated_index_write_error_message.clone() {
-            return async { Err(anyhow::anyhow!(message)) }.boxed();
+        let state = self.state.clone();
+        let executor = cx.background_executor().clone();
+        async move {
+            executor.simulate_random_delay().await;
+
+            let mut state = state.lock();
+            if let Some(message) = state.simulated_index_write_error_message.clone() {
+                return Err(anyhow::anyhow!(message));
+            }
+
+            if let Some(content) = content {
+                state.index_contents.insert(path.clone(), content);
+            } else {
+                state.index_contents.remove(&path);
+            }
+            state
+                .event_emitter
+                .try_send(state.path.clone())
+                .expect("Dropped repo change event");
+
+            Ok(())
         }
-        if let Some(content) = content {
-            state.index_contents.insert(path.clone(), content);
-        } else {
-            state.index_contents.remove(&path);
-        }
-        state
-            .event_emitter
-            .try_send(state.path.clone())
-            .expect("Dropped repo change event");
-        async { Ok(()) }.boxed()
+        .boxed()
     }
 
     fn remote_url(&self, _name: &str) -> Option<String> {

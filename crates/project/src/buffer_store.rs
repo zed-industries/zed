@@ -841,6 +841,7 @@ impl LocalBufferStore {
                     let mut results = Vec::new();
                     for (buffer, path, current_index_text, current_head_text) in diff_state_updates
                     {
+                        log::debug!("reloading git state for buffer {}", path.display());
                         let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
                             continue;
                         };

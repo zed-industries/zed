@@ -400,6 +400,7 @@ impl GitStore {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some((repo, path)) = this.repository_and_path_for_buffer_id(buffer_id, cx) {
                 let recv = repo.update(cx, |repo, cx| {
+                    log::debug!("updating index text for buffer {}", path.display());
                     repo.set_index_text(
                         path,
                         new_index_text.as_ref().map(|rope| rope.to_string()),

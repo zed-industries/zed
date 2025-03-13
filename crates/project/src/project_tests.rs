@@ -6358,6 +6358,207 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = r#"
+        zero
+        one
+        two
+        three
+        four
+        five
+    "#
+    .unindent();
+    let file_contents = r#"
+        one
+        TWO
+        three
+        FOUR
+        five
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents.clone()
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+    fs.set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let mut diff_events = cx.events(&uncommitted_diff);
+
+    // The hunks are initially unstaged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // Pause IO events
+    fs.pause_events();
+
+    dbg!("staging hunk 1");
+    // Stage the first hunk.
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunk = diff.hunks(&snapshot, cx).next().unwrap();
+        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(SecondaryHunkRemovalPending),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    dbg!("staging hunk 2");
+
+    // Stage the second hunk *before* receiving the FS event for the first hunk.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunk = diff.hunks(&snapshot, cx).nth(1).unwrap();
+        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(SecondaryHunkRemovalPending),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // Process the FS event for staging the first hunk (second event is still pending).
+    fs.flush_events(1);
+    cx.run_until_parked();
+
+    dbg!("staging hunk 3");
+
+    // Stage the third hunk before receiving the second FS event.
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunk = diff.hunks(&snapshot, cx).nth(2).unwrap();
+        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    });
+
+    // Wait for all remaining IO.
+    cx.run_until_parked();
+    fs.flush_events(fs.buffered_event_count());
+
+    dbg!("Wait for all remaining IO");
+
+    // Now all hunks are staged.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+            ],
+        );
+    });
+}
+
 #[allow(clippy::format_collect)]
 #[gpui::test]
 async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
@@ -6414,8 +6615,6 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let range = Anchor::MIN..snapshot.anchor_after(snapshot.max_point());
-
     let mut expected_hunks: Vec<(Range<u32>, String, String, DiffHunkStatus)> = (0..500)
         .step_by(5)
         .map(|i| {
@@ -6444,9 +6643,7 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
 
     // Stage every hunk with a different call
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff
-            .hunks_intersecting_range(range.clone(), &snapshot, cx)
-            .collect::<Vec<_>>();
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         for hunk in hunks {
             diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         }
@@ -6480,9 +6677,7 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
 
     // Unstage every hunk with a different call
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
-            .collect::<Vec<_>>();
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         for hunk in hunks {
             diff.stage_or_unstage_hunks(false, &[hunk], &snapshot, true, cx);
         }
