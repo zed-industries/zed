@@ -3121,6 +3121,100 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     assert_eq!(point_2, Point::new(3, 0));
 }
 
+#[gpui::test]
+fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
+    let base_text_1 = "one\ntwo".to_owned();
+    let text_1 = "one\n".to_owned();
+
+    let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
+    let diff_1 = cx.new(|cx| BufferDiff::new_with_base_text(&base_text_1, &buffer_1, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer_1.clone(), cx);
+        multibuffer.add_diff(diff_1.clone(), cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            - two
+            "
+        ),
+    );
+
+    assert_eq!(snapshot.max_point(), Point::new(2, 0));
+    assert_eq!(snapshot.len(), 8);
+
+    assert_eq!(
+        snapshot
+            .dimensions_from_points::<Point>([Point::new(2, 0)])
+            .collect::<Vec<_>>(),
+        vec![Point::new(2, 0)]
+    );
+
+    let (_, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    assert_eq!(translated_offset, "one\n".len());
+    let (_, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
+    assert_eq!(translated_point, Point::new(1, 0));
+
+    // The same, for an excerpt that's not at the end of the multibuffer.
+
+    let text_2 = "foo\n".to_owned();
+    let buffer_2 = cx.new(|cx| Buffer::local(&text_2, cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(1, 0),
+                primary: None,
+            }],
+            cx,
+        );
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            - two
+
+              foo
+            "
+        ),
+    );
+
+    assert_eq!(
+        snapshot
+            .dimensions_from_points::<Point>([Point::new(2, 0)])
+            .collect::<Vec<_>>(),
+        vec![Point::new(2, 0)]
+    );
+
+    let buffer_1_id = buffer_1.read_with(cx, |buffer_1, _| buffer_1.remote_id());
+    let (buffer, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    assert_eq!(buffer.remote_id(), buffer_1_id);
+    assert_eq!(translated_offset, "one\n".len());
+    let (buffer, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
+    assert_eq!(buffer.remote_id(), buffer_1_id);
+    assert_eq!(translated_point, Point::new(1, 0));
+}
+
 fn format_diff(
     text: &str,
     row_infos: &Vec<RowInfo>,
@@ -3379,16 +3473,12 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
         }
     }
 
-    let point = snapshot.max_point();
-    let Some((buffer, offset)) = snapshot.point_to_buffer_offset(point) else {
-        return;
-    };
-    assert!(offset <= buffer.len(),);
-
-    let Some((buffer, point, _)) = snapshot.point_to_buffer_point(point) else {
-        return;
-    };
-    assert!(point <= buffer.max_point(),);
+    if let Some((buffer, offset)) = snapshot.point_to_buffer_offset(snapshot.max_point()) {
+        assert!(offset <= buffer.len());
+    }
+    if let Some((buffer, point, _)) = snapshot.point_to_buffer_point(snapshot.max_point()) {
+        assert!(point <= buffer.max_point());
+    }
 }
 
 fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
