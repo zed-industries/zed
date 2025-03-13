@@ -7149,6 +7149,7 @@ dependencies = [
  "http_client",
  "language_model",
  "lmstudio",
+ "log",
  "menu",
  "mistral",
  "ollama",
