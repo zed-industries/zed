@@ -15,7 +15,6 @@ use std::{
     sync::Arc,
 };
 
-// todo! no hardcoded system prompt
 const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
 
 #[derive(Parser, Debug)]

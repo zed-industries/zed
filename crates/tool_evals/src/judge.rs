@@ -15,7 +15,6 @@ pub struct Judge {
 
 impl Judge {
     pub fn load(eval_path: &Path, model: Arc<dyn LanguageModel>) -> anyhow::Result<Judge> {
-        // TODO: "original" seems confusing - rename?
         let original_diff_path = eval_path.join("original.diff");
         let original_diff = if std::fs::exists(&original_diff_path)? {
             Some(std::fs::read_to_string(&original_diff_path)?)
@@ -38,12 +37,11 @@ impl Judge {
     }
 
     pub fn run(&self, eval_output: &EvalOutput, cx: &mut App) -> Task<anyhow::Result<String>> {
-        // todo! also compare last message, to handle Q/A eval.
         let Some(original_diff) = self.original_diff.as_ref() else {
             return Task::ready(Err(anyhow!("No original.diff found")));
         };
 
-        // todo! check for empty diff?
+        // TODO: check for empty diff?
         let prompt = diff_comparison_prompt(&original_diff, &eval_output.diff);
 
         let request = LanguageModelRequest {
