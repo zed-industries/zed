@@ -124,8 +124,8 @@ impl ThreadStore {
         let (metadata, thread) = thread.update(cx, |thread, _cx| {
             let id = thread.id().clone();
             // Create the final project snapshot if this is the first time we're saving
-            if thread.final_project_snapshot.is_none() {
-                thread.final_project_snapshot = Some(Thread::create_project_snapshot(
+            if thread.final_project_snapshot().is_none() {
+                thread.set_final_project_snapshot(Thread::create_project_snapshot(
                     self.project.clone(),
                     cx,
                 ));
@@ -134,8 +134,8 @@ impl ThreadStore {
             let thread = SavedThread {
                 summary: thread.summary_or_default(),
                 updated_at: thread.updated_at(),
-                initial_project_snapshot: thread.initial_project_snapshot.clone(),
-                final_project_snapshot: thread.final_project_snapshot.clone(),
+                initial_project_snapshot: thread.initial_project_snapshot().cloned(),
+                final_project_snapshot: thread.final_project_snapshot().cloned(),
                 messages: thread
                     .messages()
                     .map(|message| {

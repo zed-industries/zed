@@ -335,6 +335,18 @@ impl Thread {
         &self.tools
     }
 
+    pub fn initial_project_snapshot(&self) -> Option<&ProjectSnapshot> {
+        self.initial_project_snapshot.as_ref()
+    }
+
+    pub fn final_project_snapshot(&self) -> Option<&ProjectSnapshot> {
+        self.final_project_snapshot.as_ref()
+    }
+
+    pub fn set_final_project_snapshot(&mut self, snapshot: ProjectSnapshot) {
+        self.final_project_snapshot = Some(snapshot);
+    }
+
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
         let context = self.context_by_message.get(&id)?;
         Some(

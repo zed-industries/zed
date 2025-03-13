@@ -626,11 +626,11 @@ impl ActiveThread {
             let thread_data = serde_json::to_value(serializable_thread).unwrap_or_else(|_| serde_json::Value::Null);
             
             // Get the project snapshots
-            let initial_snapshot = thread.initial_project_snapshot.clone()
+            let initial_snapshot = thread.initial_project_snapshot().cloned()
                 .map(|snapshot| serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null))
                 .unwrap_or(serde_json::Value::Null);
                 
-            let final_snapshot = thread.final_project_snapshot.clone()
+            let final_snapshot = thread.final_project_snapshot().cloned()
                 .map(|snapshot| serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null))
                 .unwrap_or(serde_json::Value::Null);
                 
