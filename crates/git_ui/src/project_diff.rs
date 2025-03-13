@@ -273,7 +273,7 @@ impl ProjectDiff {
                     has_staged_hunks = true;
                     has_unstaged_hunks = true;
                 }
-                DiffHunkSecondaryStatus::None
+                DiffHunkSecondaryStatus::NoSecondaryHunk
                 | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
                     has_staged_hunks = true;
                 }
@@ -303,7 +303,7 @@ impl ProjectDiff {
 
     fn handle_editor_event(
         &mut self,
-        _: &Entity<Editor>,
+        editor: &Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -324,6 +324,11 @@ impl ProjectDiff {
                     .ok();
             }
             _ => {}
+        }
+        if editor.focus_handle(cx).contains_focused(window, cx) {
+            if self.multibuffer.read(cx).is_empty() {
+                self.focus_handle.focus(window)
+            }
         }
     }
 

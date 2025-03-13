@@ -53,7 +53,8 @@ actions!(
         FocusLeft,
         FocusRight,
         RemoveFocusedContext,
-        AcceptSuggestedContext
+        AcceptSuggestedContext,
+        OpenActiveThreadAsMarkdown
     ]
 );
 

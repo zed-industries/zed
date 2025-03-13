@@ -9,7 +9,6 @@ use std::{ops::Range, sync::Arc};
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::ExtensionEvents;
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use feature_flags::FeatureFlagAppExt as _;
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -213,7 +212,7 @@ pub struct ExtensionsPage {
     query_editor: Entity<Editor>,
     query_contains_error: bool,
     provides_filter: Option<ExtensionProvides>,
-    _subscriptions: Vec<gpui::Subscription>,
+    _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
 }
@@ -227,12 +226,15 @@ impl ExtensionsPage {
         cx.new(|cx| {
             let store = ExtensionStore::global(cx);
             let workspace_handle = workspace.weak_handle();
-            let subscriptions = vec![
+            let subscriptions = [
                 cx.observe(&store, |_: &mut Self, _, cx| cx.notify()),
                 cx.subscribe_in(
                     &store,
                     window,
                     move |this, _, event, window, cx| match event {
+                        extension_host::Event::ExtensionsUpdated => {
+                            this.fetch_extensions_debounced(cx)
+                        }
                         extension_host::Event::ExtensionInstalled(extension_id) => this
                             .on_extension_installed(
                                 workspace_handle.clone(),
@@ -241,15 +243,6 @@ impl ExtensionsPage {
                                 cx,
                             ),
                         _ => {}
-                    },
-                ),
-                cx.subscribe_in(
-                    &ExtensionEvents::global(cx),
-                    window,
-                    move |this, _, event, _window, cx| match event {
-                        extension::Event::ExtensionsUpdated => {
-                            this.fetch_extensions_debounced(cx);
-                        }
                     },
                 ),
             ];
