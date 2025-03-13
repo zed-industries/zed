@@ -64,74 +64,6 @@ struct SerializableToolUse {
 }
 
 impl ActiveThread {
-    fn create_serializable_thread(&self, thread: &Thread) -> SerializableThread {
-        let mut serializable_messages = Vec::new();
-        let mut serializable_tool_uses = Vec::new();
-
-        // Convert messages
-        for message in thread.messages() {
-            serializable_messages.push(SerializableMessage {
-                id: message.id.0,
-                role: format!("{:?}", message.role),
-                text: message.text.clone(),
-            });
-
-            // Process tool uses for this message
-            let tool_uses = thread.tool_uses_for_message(message.id);
-            for tool_use in tool_uses {
-                let status_str = match &tool_use.status {
-                    ToolUseStatus::Pending => "pending",
-                    ToolUseStatus::Running => "running",
-                    ToolUseStatus::Finished(_) => "finished",
-                    ToolUseStatus::Error(_) => "error",
-                };
-
-                let result = match &tool_use.status {
-                    ToolUseStatus::Finished(output) => Some(output.clone()),
-                    ToolUseStatus::Error(err) => Some(err.clone()),
-                    _ => None,
-                };
-
-                serializable_tool_uses.push(SerializableToolUse {
-                    name: tool_use.name.to_string(),
-                    input: tool_use.input.clone(),
-                    status: status_str.to_string(),
-                    result: result.as_ref().map(ToString::to_string),
-                });
-            }
-
-            // Process scripting tool uses for this message
-            let scripting_tool_uses = thread.scripting_tool_uses_for_message(message.id);
-            for tool_use in scripting_tool_uses {
-                let status_str = match &tool_use.status {
-                    ToolUseStatus::Pending => "pending",
-                    ToolUseStatus::Running => "running",
-                    ToolUseStatus::Finished(_) => "finished",
-                    ToolUseStatus::Error(_) => "error",
-                };
-
-                let result = match &tool_use.status {
-                    ToolUseStatus::Finished(output) => Some(output.clone()),
-                    ToolUseStatus::Error(err) => Some(err.clone()),
-                    _ => None,
-                };
-
-                serializable_tool_uses.push(SerializableToolUse {
-                    name: tool_use.name.to_string(),
-                    input: tool_use.input.clone(),
-                    status: status_str.to_string(),
-                    result: result.as_ref().map(ToString::to_string),
-                });
-            }
-        }
-
-        SerializableThread {
-            id: thread.id().to_string(),
-            messages: serializable_messages,
-            tool_uses: serializable_tool_uses,
-        }
-    }
-
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
@@ -596,7 +528,7 @@ impl ActiveThread {
             // Collect thread data and snapshots asynchronously
             let (thread_data, initial_snapshot) = thread
                 .update(&mut cx, |thread, _cx| {
-                    // Create a serializable representation of the Thread
+                    // Use the static version since we're in a closure where 'self' is not available
                     let serializable_thread = Self::create_serializable_thread_static(thread);
                     let thread_data = serde_json::to_value(serializable_thread)
                         .unwrap_or_else(|_| serde_json::Value::Null);
@@ -622,17 +554,14 @@ impl ActiveThread {
             // Define the rating based on which button was clicked
             let rating = if is_positive { "positive" } else { "negative" };
 
-            // Serialize thread data
-            let thread_data_str = serde_json::to_string(&thread_data).unwrap_or_default();
-
-            // Send the telemetry event
+            // Send the telemetry event with full serialized data
             telemetry::event!(
                 "Assistant Feedback",
                 rating,
                 thread_id,
-                has_thread_data = !thread_data_str.is_empty(),
-                has_initial_snapshot = !initial_snapshot.is_null(),
-                has_final_snapshot = !final_snapshot.is_null()
+                thread_data,
+                initial_snapshot,
+                final_snapshot
             );
         })
         .detach();
