@@ -13,7 +13,7 @@ use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 
 use super::edit_action::EditAction;
 
-actions!(debug, [OpenAssistantEditToolLog]);
+actions!(debug, [EditTool]);
 
 pub fn init(cx: &mut App) {
     if cx.is_staff() || ReleaseChannel::global(cx) == ReleaseChannel::Dev {
@@ -22,7 +22,7 @@ pub fn init(cx: &mut App) {
     }
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
-        workspace.register_action(|workspace, _: &OpenAssistantEditToolLog, window, cx| {
+        workspace.register_action(|workspace, _: &EditTool, window, cx| {
             let viewer = cx.new(|cx| EditToolLogViewer::new(cx));
             workspace.add_item_to_active_pane(Box::new(viewer), None, true, window, cx)
         });
