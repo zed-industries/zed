@@ -33,6 +33,7 @@ buffer_diff.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
+extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
 futures.workspace = true
