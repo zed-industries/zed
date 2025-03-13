@@ -8,7 +8,6 @@ members = [
     "crates/assistant",
     "crates/assistant2",
     "crates/assistant_context_editor",
-    "crates/assistant_scripting",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -119,6 +118,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/schema_generator",
+    "crates/scripting_tool",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -174,15 +174,11 @@ members = [
     "extensions/html",
     "extensions/perplexity",
     "extensions/proto",
-    "extensions/purescript",
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
-    "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
-    "extensions/uiua",
-    "extensions/zig",
 
     #
     # Tooling
@@ -318,7 +314,7 @@ reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-assistant_scripting = { path = "crates/assistant_scripting" }
+scripting_tool = { path = "crates/scripting_tool" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
@@ -597,12 +593,12 @@ features = [
 ]
 
 [workspace.dependencies.windows]
-version = "0.58"
+version = "0.60"
 features = [
-    "implement",
     "Foundation_Collections",
     "Foundation_Numerics",
-    "Storage",
+    "Storage_Search",
+    "Storage_Streams",
     "System_Threading",
     "UI_StartScreen",
     "UI_ViewManagement",
@@ -623,9 +619,11 @@ features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
     "Win32_System_DataExchange",
+    "Win32_System_IO",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
@@ -750,6 +748,10 @@ new_ret_no_self = { level = "allow" }
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
+
+# in Rust it can be very tedious to reduce argument count without
+# running afoul of the borrow checker.
+too_many_arguments = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme"]

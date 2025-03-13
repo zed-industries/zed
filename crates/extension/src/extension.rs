@@ -1,4 +1,5 @@
 pub mod extension_builder;
+mod extension_events;
 mod extension_host_proxy;
 mod extension_manifest;
 mod types;
@@ -14,12 +15,14 @@ use gpui::{App, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
 
+pub use crate::extension_events::*;
 pub use crate::extension_host_proxy::*;
 pub use crate::extension_manifest::*;
 pub use crate::types::*;
 
 /// Initializes the `extension` crate.
 pub fn init(cx: &mut App) {
+    extension_events::init(cx);
     ExtensionHostProxy::default_global(cx);
 }
 

@@ -30,7 +30,6 @@ if [ -z "${ALLOW_MISSING_LICENSES-}" ]; then FAIL_FLAG=--fail; else FAIL_FLAG=""
 set -x
 cargo about generate \
     $FAIL_FLAG \
-    --frozen \
     -c script/licenses/zed-licenses.toml \
     "$TEMPLATE_FILE" >>"$OUTPUT_FILE"
 set +x

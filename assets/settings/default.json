@@ -336,14 +336,14 @@
     "active_line_width": 1,
     // Determines how indent guides are colored.
     // This setting can take the following three values:
-    ///
+    //
     // 1. "disabled"
     // 2. "fixed"
     // 3. "indent_aware"
     "coloring": "fixed",
     // Determines how indent guide backgrounds are colored.
     // This setting can take the following two values:
-    ///
+    //
     // 1. "disabled"
     // 2. "indent_aware"
     "background_coloring": "disabled"
@@ -402,8 +402,8 @@
     // Time to wait after scrolling the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "scroll_debounce_ms": 50,
-    /// A set of modifiers which, when pressed, will toggle the visibility of inlay hints.
-    /// If the set if empty or not all the modifiers specified are pressed, inlay hints will not be toggled.
+    // A set of modifiers which, when pressed, will toggle the visibility of inlay hints.
+    // If the set if empty or not all the modifiers specified are pressed, inlay hints will not be toggled.
     "toggle_on_modifiers_press": {
       "control": false,
       "shift": false,
@@ -440,7 +440,7 @@
     "scrollbar": {
       // When to show the scrollbar in the project panel.
       // This setting can take five values:
-      ///
+      //
       // 1. null (default): Inherit editor settings
       // 2. Show the scrollbar if there's important information or
       //    follow the system's configured behavior (default):
@@ -455,7 +455,7 @@
     },
     // Which files containing diagnostic errors/warnings to mark in the project panel.
     // This setting can take the following three values:
-    ///
+    //
     // 1. Do not mark any files:
     //    "off"
     // 2. Only mark files with errors:
@@ -512,7 +512,7 @@
     "scrollbar": {
       // When to show the scrollbar in the project panel.
       // This setting can take five values:
-      ///
+      //
       // 1. null (default): Inherit editor settings
       // 2. Show the scrollbar if there's important information or
       //    follow the system's configured behavior (default):
@@ -547,7 +547,7 @@
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
-    // Where to the git panel. Can be 'left' or 'right'.
+    // Where to show the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
     "default_width": 360,
@@ -555,6 +555,12 @@
     //
     // Default: icon
     "status_style": "icon",
+    // What branch name to use if init.defaultBranch
+    // is not set
+    //
+    // Default: main
+    "fallback_branch_name": "main",
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -590,6 +596,13 @@
     "default_height": 320,
     // The default model to use when creating new chats.
     "default_model": {
+      // The provider to use.
+      "provider": "zed.dev",
+      // The model to use.
+      "model": "claude-3-5-sonnet-latest"
+    },
+    // The model to use when applying edits from the assistant.
+    "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
@@ -673,7 +686,7 @@
     // Which files containing diagnostic errors/warnings to mark in the tabs.
     // Diagnostics are only shown when file icons are also active.
     // This setting only works when can take the following three values:
-    ///
+    //
     // 1. Do not mark any files:
     //    "off"
     // 2. Only mark files with errors:
@@ -837,15 +850,7 @@
       //
       // The minimum column number to show the inline blame information at
       // "min_column": 0
-    },
-    // How git hunks are displayed visually in the editor.
-    // This setting can take two values:
-    //
-    // 1. Show unstaged hunks with a transparent background (default):
-    //    "hunk_style": "transparent"
-    // 2. Show unstaged hunks with a pattern background:
-    //    "hunk_style": "pattern"
-    "hunk_style": "staged_border"
+    }
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
@@ -1009,7 +1014,7 @@
     "scrollbar": {
       // When to show the scrollbar in the terminal.
       // This setting can take five values:
-      ///
+      //
       // 1. null (default): Inherit editor settings
       // 2. Show the scrollbar if there's important information or
       //    follow the system's configured behavior (default):
@@ -1079,6 +1084,31 @@
   // and change the value to `false`.
   "auto_install_extensions": {
     "html": true
+  },
+  // Controls how completions are processed for this language.
+  "completions": {
+    // Controls how words are completed.
+    // For large documents, not all words may be fetched for completion.
+    //
+    // May take 3 values:
+    // 1. "enabled"
+    //   Always fetch document's words for completions.
+    // 2. "fallback"
+    //   Only if LSP response errors/times out/is empty, use document's words to show completions.
+    // 3. "disabled"
+    //   Never fetch or complete document's words for completions.
+    //
+    // Default: fallback
+    "words": "fallback",
+    // Whether to fetch LSP completions or not.
+    //
+    // Default: true
+    "lsp": true,
+    // When fetching LSP completions, determines how long to wait for a response of a particular server.
+    // When set to 0, waits indefinitely.
+    //
+    // Default: 500
+    "lsp_fetch_timeout_ms": 500
   },
   // Different settings for specific languages.
   "languages": {
@@ -1300,8 +1330,7 @@
   },
   // Settings for auto-closing of JSX tags.
   "jsx_tag_auto_close": {
-    // // Whether to auto-close JSX tags.
-    // "enabled": true
+    "enabled": true
   },
   // LSP Specific settings.
   "lsp": {

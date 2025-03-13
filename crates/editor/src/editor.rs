@@ -101,6 +101,7 @@ use itertools::Itertools;
 use language::{
     language_settings::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
+        WordsCompletionMode,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
     Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
@@ -607,12 +608,6 @@ pub trait Addon: 'static {
     fn to_any(&self) -> &dyn std::any::Any;
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum IsVimMode {
-    Yes,
-    No,
-}
-
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -644,6 +639,7 @@ pub struct Editor {
     inline_diagnostics_enabled: bool,
     inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
+    hard_wrap: Option<usize>,
 
     // TODO: make this a access method
     pub project: Option<Entity<Project>>,
@@ -1355,6 +1351,7 @@ impl Editor {
             inline_diagnostics_update: Task::ready(()),
             inline_diagnostics: Vec::new(),
             soft_wrap_mode_override,
+            hard_wrap: None,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             semantics_provider: project.clone().map(|project| Rc::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
@@ -3192,6 +3189,19 @@ impl Editor {
 
             let trigger_in_words =
                 this.show_edit_predictions_in_menu() || !had_active_inline_completion;
+            if this.hard_wrap.is_some() {
+                let latest: Range<Point> = this.selections.newest(cx).range();
+                if latest.is_empty()
+                    && this
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .line_len(MultiBufferRow(latest.start.row))
+                        == latest.start.column
+                {
+                    this.rewrap_impl(true, cx)
+                }
+            }
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
@@ -4012,9 +4022,8 @@ impl Editor {
             } else {
                 return;
             };
-        let show_completion_documentation = buffer
-            .read(cx)
-            .snapshot()
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let show_completion_documentation = buffer_snapshot
             .settings_at(buffer_position, cx)
             .show_completion_documentation;
 
@@ -4038,6 +4047,51 @@ impl Editor {
         };
         let completions =
             provider.completions(&buffer, buffer_position, completion_context, window, cx);
+        let (old_range, word_kind) = buffer_snapshot.surrounding_word(buffer_position);
+        let (old_range, word_to_exclude) = if word_kind == Some(CharKind::Word) {
+            let word_to_exclude = buffer_snapshot
+                .text_for_range(old_range.clone())
+                .collect::<String>();
+            (
+                buffer_snapshot.anchor_before(old_range.start)
+                    ..buffer_snapshot.anchor_after(old_range.end),
+                Some(word_to_exclude),
+            )
+        } else {
+            (buffer_position..buffer_position, None)
+        };
+
+        let completion_settings = language_settings(
+            buffer_snapshot
+                .language_at(buffer_position)
+                .map(|language| language.name()),
+            buffer_snapshot.file(),
+            cx,
+        )
+        .completions;
+
+        // The document can be large, so stay in reasonable bounds when searching for words,
+        // otherwise completion pop-up might be slow to appear.
+        const WORD_LOOKUP_ROWS: u32 = 5_000;
+        let buffer_row = text::ToPoint::to_point(&buffer_position, &buffer_snapshot).row;
+        let min_word_search = buffer_snapshot.clip_point(
+            Point::new(buffer_row.saturating_sub(WORD_LOOKUP_ROWS), 0),
+            Bias::Left,
+        );
+        let max_word_search = buffer_snapshot.clip_point(
+            Point::new(buffer_row + WORD_LOOKUP_ROWS, 0).min(buffer_snapshot.max_point()),
+            Bias::Right,
+        );
+        let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
+            ..buffer_snapshot.point_to_offset(max_word_search);
+        let words = match completion_settings.words {
+            WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
+            WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => {
+                cx.background_spawn(async move {
+                    buffer_snapshot.words_in_range(None, word_search_range)
+                })
+            }
+        };
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
@@ -4046,8 +4100,58 @@ impl Editor {
                 editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
-                let completions = completions.await.log_err();
-                let menu = if let Some(completions) = completions {
+                let mut completions = completions.await.log_err().unwrap_or_default();
+
+                match completion_settings.words {
+                    WordsCompletionMode::Enabled => {
+                        let mut words = words.await;
+                        if let Some(word_to_exclude) = &word_to_exclude {
+                            words.remove(word_to_exclude);
+                        }
+                        for lsp_completion in &completions {
+                            words.remove(&lsp_completion.new_text);
+                        }
+                        completions.extend(words.into_iter().map(|(word, word_range)| {
+                            Completion {
+                                old_range: old_range.clone(),
+                                new_text: word.clone(),
+                                label: CodeLabel::plain(word, None),
+                                documentation: None,
+                                source: CompletionSource::BufferWord {
+                                    word_range,
+                                    resolved: false,
+                                },
+                                confirm: None,
+                            }
+                        }));
+                    }
+                    WordsCompletionMode::Fallback => {
+                        if completions.is_empty() {
+                            completions.extend(
+                                words
+                                    .await
+                                    .into_iter()
+                                    .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
+                                    .map(|(word, word_range)| Completion {
+                                        old_range: old_range.clone(),
+                                        new_text: word.clone(),
+                                        label: CodeLabel::plain(word, None),
+                                        documentation: None,
+                                        source: CompletionSource::BufferWord {
+                                            word_range,
+                                            resolved: false,
+                                        },
+                                        confirm: None,
+                                    }),
+                            );
+                        }
+                    }
+                    WordsCompletionMode::Disabled => {}
+                }
+
+                let menu = if completions.is_empty() {
+                    None
+                } else {
                     let mut menu = CompletionsMenu::new(
                         id,
                         sort_completions,
@@ -4061,8 +4165,6 @@ impl Editor {
                         .await;
 
                     menu.visible().then_some(menu)
-                } else {
-                    None
                 };
 
                 editor.update_in(&mut cx, |editor, window, cx| {
@@ -5931,7 +6033,6 @@ impl Editor {
     const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = Pixels(24.);
     const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = Pixels(2.);
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_popover(
         &mut self,
         text_bounds: &Bounds<Pixels>,
@@ -6043,7 +6144,6 @@ impl Editor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_modifier_jump_popover(
         &mut self,
         text_bounds: &Bounds<Pixels>,
@@ -6139,7 +6239,6 @@ impl Editor {
         Some((element, origin))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_scroll_popover(
         &mut self,
         to_y: impl Fn(Size<Pixels>) -> Pixels,
@@ -6170,7 +6269,6 @@ impl Editor {
         Some((element, origin))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_eager_jump_popover(
         &mut self,
         text_bounds: &Bounds<Pixels>,
@@ -6240,7 +6338,6 @@ impl Editor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_end_of_line_popover(
         self: &mut Editor,
         label: &'static str,
@@ -6299,7 +6396,6 @@ impl Editor {
         Some((element, origin))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_diff_popover(
         self: &Editor,
         text_bounds: &Bounds<Pixels>,
@@ -6607,7 +6703,6 @@ impl Editor {
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_cursor_popover(
         &self,
         min_width: Pixels,
@@ -8514,10 +8609,10 @@ impl Editor {
     }
 
     pub fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
-        self.rewrap_impl(IsVimMode::No, cx)
+        self.rewrap_impl(false, cx)
     }
 
-    pub fn rewrap_impl(&mut self, is_vim_mode: IsVimMode, cx: &mut Context<Self>) {
+    pub fn rewrap_impl(&mut self, override_language_settings: bool, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
@@ -8591,7 +8686,9 @@ impl Editor {
                 RewrapBehavior::Anywhere => true,
             };
 
-            let should_rewrap = is_vim_mode == IsVimMode::Yes || allow_rewrap_based_on_language;
+            let should_rewrap = override_language_settings
+                || allow_rewrap_based_on_language
+                || self.hard_wrap.is_some();
             if !should_rewrap {
                 continue;
             }
@@ -8639,9 +8736,11 @@ impl Editor {
                 continue;
             };
 
-            let wrap_column = buffer
-                .language_settings_at(Point::new(start_row, 0), cx)
-                .preferred_line_length as usize;
+            let wrap_column = self.hard_wrap.unwrap_or_else(|| {
+                buffer
+                    .language_settings_at(Point::new(start_row, 0), cx)
+                    .preferred_line_length as usize
+            });
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
                 lines_without_prefixes.join(" "),
@@ -8652,7 +8751,7 @@ impl Editor {
             // TODO: should always use char-based diff while still supporting cursor behavior that
             // matches vim.
             let mut diff_options = DiffOptions::default();
-            if is_vim_mode == IsVimMode::Yes {
+            if override_language_settings {
                 diff_options.max_word_diff_len = 0;
                 diff_options.max_word_diff_line_count = 0;
             } else {
@@ -13862,7 +13961,37 @@ impl Editor {
         }
 
         self.stage_or_unstage_diff_hunks(stage, ranges, cx);
-        self.go_to_next_hunk(&GoToHunk, window, cx);
+        let snapshot = self.snapshot(window, cx);
+        let position = self.selections.newest::<Point>(cx).head();
+        let mut row = snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
+            .find(|hunk| hunk.row_range.start.0 > position.row)
+            .map(|hunk| hunk.row_range.start);
+
+        let all_diff_hunks_expanded = self.buffer().read(cx).all_diff_hunks_expanded();
+        // Outside of the project diff editor, wrap around to the beginning.
+        if !all_diff_hunks_expanded {
+            row = row.or_else(|| {
+                snapshot
+                    .buffer_snapshot
+                    .diff_hunks_in_range(Point::zero()..position)
+                    .find(|hunk| hunk.row_range.end.0 < position.row)
+                    .map(|hunk| hunk.row_range.start)
+            });
+        }
+
+        if let Some(row) = row {
+            let destination = Point::new(row.0, 0);
+            let autoscroll = Autoscroll::center();
+
+            self.unfold_ranges(&[destination..destination], false, false, cx);
+            self.change_selections(Some(autoscroll), window, cx, |s| {
+                s.select_ranges([destination..destination]);
+            });
+        } else if all_diff_hunks_expanded {
+            window.dispatch_action(::git::ExpandCommitEditor.boxed_clone(), cx);
+        }
     }
 
     fn do_stage_or_unstage(
@@ -14192,6 +14321,11 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_hard_wrap(&mut self, hard_wrap: Option<usize>, cx: &mut Context<Self>) {
+        self.hard_wrap = hard_wrap;
+        cx.notify();
+    }
+
     pub fn set_text_style_refinement(&mut self, style: TextStyleRefinement) {
         self.text_style_refinement = Some(style);
     }
@@ -14474,7 +14608,7 @@ impl Editor {
 
     pub fn toggle_git_blame(
         &mut self,
-        _: &ToggleGitBlame,
+        _: &::git::Blame,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

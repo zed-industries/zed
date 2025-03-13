@@ -14,7 +14,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use toast_layer::{ToastLayer, ToastView};
+pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
 
 use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
@@ -35,7 +35,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    action_as, actions, canvas, deferred, impl_action_as, impl_actions, point, relative, size,
+    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
     Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
@@ -384,6 +384,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
     theme_preview::init(cx);
+    toast_layer::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -1019,10 +1020,12 @@ impl Workspace {
         });
 
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
+        let modal_layer = cx.new(|_| ModalLayer::new());
+        let toast_layer = cx.new(|_| ToastLayer::new());
 
-        let left_dock = Dock::new(DockPosition::Left, window, cx);
-        let bottom_dock = Dock::new(DockPosition::Bottom, window, cx);
-        let right_dock = Dock::new(DockPosition::Right, window, cx);
+        let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
+        let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
+        let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
@@ -1033,9 +1036,6 @@ impl Workspace {
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
             status_bar
         });
-
-        let modal_layer = cx.new(|_| ModalLayer::new());
-        let toast_layer = cx.new(|_| ToastLayer::new());
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
@@ -2732,7 +2732,6 @@ impl Workspace {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn add_item(
         &mut self,
         pane: Entity<Pane>,
@@ -2830,7 +2829,6 @@ impl Workspace {
         self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn open_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -5019,15 +5017,9 @@ impl Workspace {
         })
     }
 
-    pub fn toggle_status_toast<V: ToastView>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-        entity: Entity<V>,
-    ) {
-        self.toast_layer.update(cx, |toast_layer, cx| {
-            toast_layer.toggle_toast(window, cx, entity)
-        })
+    pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
+        self.toast_layer
+            .update(cx, |toast_layer, cx| toast_layer.toggle_toast(cx, entity))
     }
 
     pub fn toggle_centered_layout(
@@ -5544,7 +5536,7 @@ impl Render for Workspace {
                                 .children(self.render_notifications(window, cx)),
                         )
                         .child(self.status_bar.clone())
-                        .child(deferred(self.modal_layer.clone()))
+                        .child(self.modal_layer.clone())
                         .child(self.toast_layer.clone()),
                 ),
             window,

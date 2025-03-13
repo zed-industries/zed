@@ -130,14 +130,9 @@ impl WindowsPlatform {
     fn redraw_all(&self) {
         for handle in self.raw_window_handles.read().iter() {
             unsafe {
-                RedrawWindow(
-                    *handle,
-                    None,
-                    HRGN::default(),
-                    RDW_INVALIDATE | RDW_UPDATENOW,
-                )
-                .ok()
-                .log_err();
+                RedrawWindow(Some(*handle), None, None, RDW_INVALIDATE | RDW_UPDATENOW)
+                    .ok()
+                    .log_err();
             }
         }
     }
@@ -156,7 +151,7 @@ impl WindowsPlatform {
             .read()
             .iter()
             .for_each(|handle| unsafe {
-                PostMessageW(*handle, message, wparam, lparam).log_err();
+                PostMessageW(Some(*handle), message, wparam, lparam).log_err();
             });
     }
 
@@ -620,7 +615,7 @@ impl Platform for WindowsPlatform {
                 CredReadW(
                     PCWSTR::from_raw(target_name.as_ptr()),
                     CRED_TYPE_GENERIC,
-                    0,
+                    None,
                     &mut credentials,
                 )?
             };
@@ -648,7 +643,13 @@ impl Platform for WindowsPlatform {
             .chain(Some(0))
             .collect_vec();
         self.foreground_executor().spawn(async move {
-            unsafe { CredDeleteW(PCWSTR::from_raw(target_name.as_ptr()), CRED_TYPE_GENERIC, 0)? };
+            unsafe {
+                CredDeleteW(
+                    PCWSTR::from_raw(target_name.as_ptr()),
+                    CRED_TYPE_GENERIC,
+                    None,
+                )?
+            };
             Ok(())
         })
     }
@@ -805,7 +806,7 @@ fn load_icon() -> Result<HICON> {
     let module = unsafe { GetModuleHandleW(None).context("unable to get module handle")? };
     let handle = unsafe {
         LoadImageW(
-            module,
+            Some(module.into()),
             windows::core::PCWSTR(1 as _),
             IMAGE_ICON,
             0,
