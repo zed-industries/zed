@@ -171,6 +171,7 @@ impl AssistantPanel {
                 thread.clone(),
                 thread_store.clone(),
                 language_registry.clone(),
+                Some(workspace.clone()),
                 window,
                 cx,
             )
@@ -244,6 +245,7 @@ impl AssistantPanel {
                 thread.clone(),
                 self.thread_store.clone(),
                 self.language_registry.clone(),
+                Some(self.workspace.clone()),
                 window,
                 cx,
             )
@@ -377,6 +379,7 @@ impl AssistantPanel {
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),
+                        Some(this.workspace.clone()),
                         window,
                         cx,
                     )

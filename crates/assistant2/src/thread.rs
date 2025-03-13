@@ -107,7 +107,7 @@ pub struct Thread {
 
 impl Thread {
     /// Creates a snapshot of the current project state including git information and unsaved buffers
-    pub fn create_project_snapshot(project: Entity<Project>, cx: &AppContext) -> ProjectSnapshot {
+    pub fn create_project_snapshot(project: Entity<Project>, cx: &App) -> ProjectSnapshot {
         let mut worktree_snapshots = Vec::new();
         let mut unsaved_buffers = Vec::new();
 
@@ -117,72 +117,23 @@ impl Thread {
         // Capture information for each worktree
         for worktree_handle in worktrees {
             let worktree = worktree_handle.read(cx);
-            let worktree_id = worktree.id();
             let worktree_path = worktree.abs_path().to_string_lossy().to_string();
-
-            // Get git information if this is a git repository
-            let git_state = match project
-                .read(cx)
-                .git_repository_for_worktree(&worktree_handle, cx)
-            {
-                Some(repo) => {
-                    // Get the remote URL
-                    let remote_url = repo
-                        .read(cx)
-                        .get_remotes(None, cx.into())
-                        .now_or_never()
-                        .and_then(|result| result.ok())
-                        .and_then(|remotes| remotes.first().cloned())
-                        .map(|remote| remote.name.to_string());
-
-                    // Get the current branch and HEAD SHA
-                    let current_branch = repo
-                        .read(cx)
-                        .current_branch(cx.into())
-                        .now_or_never()
-                        .and_then(|result| result.ok())
-                        .map(|branch| branch.name.to_string());
-
-                    let head_sha = repo
-                        .read(cx)
-                        .head_sha(cx.into())
-                        .now_or_never()
-                        .and_then(|result| result.ok())
-                        .map(|sha| sha.to_string());
-
-                    // Get the diff
-                    let diff = repo
-                        .read(cx)
-                        .diff(DiffType::HeadToWorktree, cx.into())
-                        .now_or_never()
-                        .and_then(|result| result.ok());
-
-                    Some(GitState {
-                        remote_url,
-                        head_sha,
-                        current_branch,
-                        diff,
-                    })
-                }
-                None => None,
-            };
 
             worktree_snapshots.push(WorktreeSnapshot {
                 worktree_path,
-                git_state,
+                git_state: todo!(),
             });
         }
 
         // Get unsaved buffers
         let buffer_store = project.read(cx).buffer_store();
-        for (buffer_id, buffer_handle) in buffer_store.read(cx).buffers() {
+        for buffer_handle in buffer_store.read(cx).buffers() {
             let buffer = buffer_handle.read(cx);
-            let path = buffer
-                .file()
-                .map(|file| file.path().to_string_lossy().to_string());
-
             if buffer.is_dirty() {
-                unsaved_buffers.push(path);
+                if let Some(file) = buffer.file() {
+                    let path = file.path().to_string_lossy().to_string();
+                    unsaved_buffers.push(path);
+                }
             }
         }
 

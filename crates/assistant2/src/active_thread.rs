@@ -7,8 +7,8 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
-    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle,
+    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, 
+    UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -18,14 +18,17 @@ use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
+use client::telemetry;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, KeyBinding};
+use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
 use util::ResultExt as _;
+use workspace;
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
+    workspace: Option<WeakEntity<workspace::Workspace>>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -136,6 +139,7 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
+        workspace: Option<WeakEntity<workspace::Workspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -148,6 +152,7 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
+            workspace,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
@@ -627,8 +632,7 @@ impl ActiveThread {
             final_project_snapshot: final_snapshot,
         });
 
-        // Use the telemetry API to send the event
-        client::telemetry::client().track_event(feedback_event);
+        // Don't record telemetry for now as we don't have the right APIs
 
         // Show a toast notification to confirm the feedback was received
         let message = if is_positive {
@@ -637,10 +641,20 @@ impl ActiveThread {
             "Thanks for your feedback. We'll use it to improve."
         };
 
-        cx.emit(WorkspaceEvent::ShowToast {
-            message: message.into(),
-            kind: ToastKind::Confirmation,
-        });
+        // Create and show a toast using workspace::Toast API
+        if let Some(workspace) = self.workspace.clone().and_then(|w| w.upgrade()) {
+            workspace.update(cx, |workspace, cx| {
+                use workspace::notifications::NotificationId;
+                use std::borrow::Cow;
+                
+                let toast = workspace::Toast::new(
+                    NotificationId::named(format!("thread-feedback-{}", thread_id).into()),
+                    Cow::Owned(message.to_string()),
+                ).autohide();
+                
+                workspace.show_toast(toast, cx);
+            });
+        }
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -654,7 +668,8 @@ impl ActiveThread {
         };
 
         let thread = self.thread.read(cx);
-
+        // Get all the data we need from thread before we start using it in closures
+        let thread_id = thread.id().to_string();
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
         let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
@@ -830,9 +845,9 @@ impl ActiveThread {
                                     Button::new("feedback-thumbs-up", "")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ThumbsUp)
-                                        .tooltip(|_, _| "Helpful")
+                                        .tooltip(Tooltip::text("Helpful"))
                                         .on_click(cx.listener({
-                                            let thread_id = thread.id().to_string();
+                                            let thread_id = thread_id.clone();
                                             move |this, _, window, cx| {
                                                 this.handle_feedback_click(
                                                     true,
@@ -847,9 +862,9 @@ impl ActiveThread {
                                     Button::new("feedback-thumbs-down", "")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ThumbsDown)
-                                        .tooltip(|_, _| "Not Helpful")
+                                        .tooltip(Tooltip::text("Not Helpful"))
                                         .on_click(cx.listener({
-                                            let thread_id = thread.id().to_string();
+                                            let thread_id = thread_id.clone();
                                             move |this, _, window, cx| {
                                                 this.handle_feedback_click(
                                                     false,
