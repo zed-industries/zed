@@ -355,6 +355,7 @@ impl std::fmt::Display for ParseError {
 mod tests {
     use super::*;
     use rand::prelude::*;
+    use util::line_endings;
 
     #[test]
     fn test_simple_edit_action() {
@@ -798,7 +799,7 @@ fn new_utils_func() {}
             EditAction::Replace {
                 file_path: PathBuf::from("mathweb/flask/app.py"),
                 old: "from flask import Flask".to_string(),
-                new: "import math\nfrom flask import Flask".to_string(),
+                new: line_endings!("import math\nfrom flask import Flask").to_string(),
             },
         );
 
@@ -806,7 +807,7 @@ fn new_utils_func() {}
             actions[1],
             EditAction::Replace {
                 file_path: PathBuf::from("mathweb/flask/app.py"),
-                old: "def factorial(n):\n    \"compute factorial\"\n\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n".to_string(),
+                old: line_endings!("def factorial(n):\n    \"compute factorial\"\n\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n").to_string(),
                 new: "".to_string(),
             }
         );
@@ -824,8 +825,10 @@ fn new_utils_func() {}
             actions[3],
             EditAction::Write {
                 file_path: PathBuf::from("hello.py"),
-                content: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")"
-                    .to_string(),
+                content: line_endings!(
+                    "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")"
+                )
+                .to_string(),
             },
         );
 
@@ -833,7 +836,10 @@ fn new_utils_func() {}
             actions[4],
             EditAction::Replace {
                 file_path: PathBuf::from("main.py"),
-                old: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")".to_string(),
+                old: line_endings!(
+                    "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")"
+                )
+                .to_string(),
                 new: "from hello import hello".to_string(),
             },
         );
