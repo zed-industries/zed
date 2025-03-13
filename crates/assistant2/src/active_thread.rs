@@ -8,7 +8,7 @@ use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
     ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity,
+    UnderlineStyle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -21,7 +21,6 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
 use util::ResultExt as _;
-use workspace;
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,

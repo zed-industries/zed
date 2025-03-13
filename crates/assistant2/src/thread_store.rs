@@ -127,7 +127,7 @@ impl ThreadStore {
         let (metadata, thread) = thread.update(cx, |thread, _cx| {
             let id = thread.id().clone();
             // We'll rely on the snapshot being created elsewhere if needed
-               
+
             let thread = SavedThread {
                 summary: thread.summary_or_default(),
                 updated_at: thread.updated_at(),

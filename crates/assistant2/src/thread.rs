@@ -5,6 +5,7 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
+use git;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -119,9 +120,41 @@ impl Thread {
             let worktree = worktree_handle.read(cx);
             let worktree_path = worktree.abs_path().to_string_lossy().to_string();
 
+            // Get the git repository for the worktree if available
+            let git_state = worktree.git_repository().map(|repository| {
+                // Get remote URL (typically from 'origin')
+                let remote_url = repository.remote_url("origin");
+
+                // Get the current HEAD commit SHA
+                let head_sha = repository.head_sha();
+
+                // Get current branch name
+                let current_branch = worktree.branch().map(|branch| branch.name.to_string());
+
+                // Get git diff (changes between HEAD and worktree)
+                let diff = match repository.diff(git::repository::DiffType::HeadToWorktree, cx) {
+                    Ok(diff_task) => {
+                        // Execute the future synchronously to get the diff result
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        rt.block_on(diff_task).ok()
+                    }
+                    Err(_) => None,
+                };
+
+                GitState {
+                    remote_url,
+                    head_sha,
+                    current_branch,
+                    diff,
+                }
+            });
+
             worktree_snapshots.push(WorktreeSnapshot {
                 worktree_path,
-                git_state: todo!(),
+                git_state,
             });
         }
 
