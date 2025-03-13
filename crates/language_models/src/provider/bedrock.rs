@@ -408,7 +408,10 @@ impl BedrockModel {
                         config_builder = config_builder.credentials_provider(aws_creds);
                     }
                 }
-                BedrockAuthMethod::NamedProfile => {
+                BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn => {
+                    // Currently NamedProfile and SSO behave the same way but only the instructions change
+                    // Until we support BearerAuth through SSO, this will not change.
+
                     // Use profile from settings or environment
                     let profile_name = settings
                         .and_then(|s| s.profile_name)
@@ -417,11 +420,6 @@ impl BedrockModel {
                     if !profile_name.is_empty() {
                         config_builder = config_builder.profile_name(profile_name);
                     }
-                }
-                BedrockAuthMethod::SingleSignOn => {
-                    // For SSO, we rely on the default credential chain which includes SSO
-                    // The user should have configured SSO via AWS CLI (`aws sso login`)
-                    // TODO: Decide if we want to integrate web based SSO right here, or we extract it
                 }
                 BedrockAuthMethod::Automatic => {
                     // Use default credential provider chain
@@ -438,7 +436,7 @@ impl BedrockModel {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-        .boxed())
+            .boxed())
     }
 }
 
@@ -684,18 +682,18 @@ pub fn get_bedrock_tokens(
 
 pub async fn extract_tool_args_from_events(
     name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
+) -> Result<impl Send + Stream<Item=Result<String>>> {
     handle
         .spawn(async move {
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                    content_block_index,
-                    start,
-                    ..
-                }) = event?
+                                                                       content_block_index,
+                                                                       start,
+                                                                       ..
+                                                                   }) = event?
                 {
                     match start {
                         None => {
@@ -747,9 +745,9 @@ pub async fn extract_tool_args_from_events(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -757,7 +755,7 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
@@ -859,7 +857,7 @@ pub fn map_to_language_model_completion_events(
             }
         },
     )
-    .filter_map(|event| async move { event })
+        .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -889,7 +887,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-        .detach();
+            .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -905,7 +903,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                .log_err();
+                    .log_err();
             }
         }));
 
@@ -1011,7 +1009,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1030,7 +1028,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
@@ -1343,7 +1341,7 @@ impl ConfigurationView {
                 Label::new(
                     "This method uses your AWS access key ID and secret access key directly.",
                 )
-                .size(LabelSize::Small),
+                    .size(LabelSize::Small),
             )
             .child(
                 List::new()
@@ -1405,7 +1403,7 @@ impl ConfigurationView {
                 Label::new(
                     "This method uses AWS IAM Identity Center (formerly SSO) to authenticate.",
                 )
-                .size(LabelSize::Small),
+                    .size(LabelSize::Small),
             )
             .child(
                 List::new()
@@ -1419,27 +1417,36 @@ impl ConfigurationView {
                         "Then run 'aws sso login' to authenticate",
                     ))
                     .child(InstructionListItem::text_only(
-                        "Enter your SSO start URL and role ARN below",
+                        "Enter the named profile from the setup process here",
                     )),
             )
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(Label::new("Start URL").size(LabelSize::Small))
+                    .child(Label::new("SSO Profile").size(LabelSize::Small))
                     .child(
                         self.make_input_styles(cx)
-                            .child(self.render_start_url_editor(cx)),
+                            .child(self.render_profile_name_editor(cx)),
                     ),
             )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Role ARN").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_role_arn_editor(cx)),
-                    ),
-            )
+            // .child(
+            //     v_flex()
+            //         .gap_0p5()
+            //         .child(Label::new("Start URL").size(LabelSize::Small))
+            //         .child(
+            //             self.make_input_styles(cx)
+            //                 .child(self.render_start_url_editor(cx)),
+            //         ),
+            // )
+            // .child(
+            //     v_flex()
+            //         .gap_0p5()
+            //         .child(Label::new("Role ARN").size(LabelSize::Small))
+            //         .child(
+            //             self.make_input_styles(cx)
+            //                 .child(self.render_role_arn_editor(cx)),
+            //         ),
+            // )
             .into_any_element()
     }
 
