@@ -108,8 +108,8 @@
       "cmd-right": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }],
       "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
-      "cmd-up": "editor::MoveToStartOfExcerpt",
-      "cmd-down": "editor::MoveToEndOfExcerpt",
+      "cmd-up": "editor::MoveToBeginning",
+      "cmd-down": "editor::MoveToEnd",
       "cmd-home": "editor::MoveToBeginning", // Typed via `cmd-fn-left`
       "cmd-end": "editor::MoveToEnd", // Typed via `cmd-fn-right`
       "shift-up": "editor::SelectUp",
@@ -124,8 +124,8 @@
       "alt-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       "ctrl-shift-down": "editor::SelectToEndOfParagraph",
-      "cmd-shift-up": "editor::SelectToStartOfExcerpt",
-      "cmd-shift-down": "editor::SelectToEndOfExcerpt",
+      "cmd-shift-up": "editor::SelectToBeginning",
+      "cmd-shift-down": "editor::SelectToEnd",
       "cmd-a": "editor::SelectAll",
       "cmd-l": "editor::SelectLine",
       "cmd-shift-i": "editor::Format",
@@ -170,6 +170,16 @@
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
+    }
+  },
+  {
+    "context": "Editor && multibuffer",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-up": "editor::MoveToStartOfExcerpt",
+      "cmd-down": "editor::MoveToStartOfNextExcerpt",
+      "cmd-shift-up": "editor::SelectToStartOfExcerpt",
+      "cmd-shift-down": "editor::SelectToStartOfNextExcerpt"
     }
   },
   {
