@@ -27,17 +27,22 @@ pub struct EditFilesToolInput {
     /// The description should be concise and clear. We will show this
     /// description to the user as well.
     ///
+    /// IMPORTANT: When specifying which file paths need changing, you MUST start each path with one
+    /// of the project's root directories.
+    ///
     /// IMPORTANT: don't supply code in here, but provide natural language
     /// instructions for the model to follow, and remember that the model can
     /// see the rest of the conversation as well.
     ///
     /// <example>
-    /// If you want to rename a function you can say "Rename the function 'foo' to 'bar'".
-    /// </example>
+    /// Assuming we have the following root directories in the project:
+    /// - project-a
+    /// - project-b
     ///
-    /// <example>
-    /// If you want to add a new function you can say "Add a new method to the `User` struct that prints the age".
-    /// </example>
+    /// Your instructions could be: "Add a new `quit` function to
+    /// `project-a/src/main.rs` to kill the process". Notice how the file path
+    /// contains the project's root directory. Without that, the path would be
+    /// ambiguous and the call would fail! </example>
     pub edit_instructions: String,
 }
 

@@ -12,10 +12,10 @@ pub struct ListDirectoryToolInput {
     /// The relative path of the directory to list.
     ///
     /// This path should never be absolute, and the first component
-    /// of the path should always be a top-level directory in a project.
+    /// of the path should always be a root directory in a project.
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - directory1
     /// - directory2
@@ -24,7 +24,7 @@ pub struct ListDirectoryToolInput {
     /// </example>
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - foo
     /// - bar

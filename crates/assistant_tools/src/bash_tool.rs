@@ -12,6 +12,8 @@ use util::command::new_smol_command;
 pub struct BashToolInput {
     /// The bash command to execute as a one-liner.
     command: String,
+    /// Working directory for the command. This must be one of the root directories of the project.
+    working_directory: String,
 }
 
 pub struct BashTool;
@@ -34,7 +36,7 @@ impl Tool for BashTool {
         self: Arc<Self>,
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
-        _project: Entity<Project>,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input: BashToolInput = match serde_json::from_value(input) {
@@ -42,14 +44,22 @@ impl Tool for BashTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
+        let Some(worktree) = project
+            .read(cx)
+            .worktree_for_root_name(&input.working_directory, cx)
+        else {
+            return Task::ready(Err(anyhow!("Working directory not found in the project")));
+        };
+        let working_directory = worktree.read(cx).abs_path();
+
         cx.spawn(|_| async move {
-            // Add 2>&1 to merge stderr into stdout for proper interleaving
+            // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("{} 2>&1", input.command);
 
-            // Spawn a blocking task to execute the command
             let output = new_smol_command("bash")
                 .arg("-c")
                 .arg(&command)
+                .current_dir(working_directory)
                 .output()
                 .await
                 .context("Failed to execute bash command")?;
