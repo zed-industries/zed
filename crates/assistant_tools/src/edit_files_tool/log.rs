@@ -132,7 +132,7 @@ impl EditToolLogViewer {
             log: log.clone(),
             list_state: ListState::new(
                 log.read(cx).requests.len(),
-                ListAlignment::Top,
+                ListAlignment::Bottom,
                 px(1024.),
                 {
                     let this = cx.entity().downgrade();
@@ -156,7 +156,6 @@ impl EditToolLogViewer {
             EditToolLogEvent::Inserted => {
                 let count = self.list_state.item_count();
                 self.list_state.splice(count..count, 1);
-                self.list_state.scroll_to_reveal_item(count + 1);
             }
             EditToolLogEvent::Updated => {}
         }
