@@ -101,8 +101,6 @@ pub use worktree::{
 };
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
-use extension::ExtensionEvents;
-
 pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
@@ -832,8 +830,6 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let extension_events = Some(ExtensionEvents::global(cx));
-
             let lsp_store = cx.new(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
@@ -841,7 +837,6 @@ impl Project {
                     prettier_store.clone(),
                     toolchain_store.clone(),
                     environment.clone(),
-                    extension_events,
                     languages.clone(),
                     client.http_client(),
                     fs.clone(),

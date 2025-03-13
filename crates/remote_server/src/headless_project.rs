@@ -139,8 +139,6 @@ impl HeadlessProject {
             observer
         });
 
-        let extension_events = None;
-
         let lsp_store = cx.new(|cx| {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
@@ -148,7 +146,6 @@ impl HeadlessProject {
                 prettier_store.clone(),
                 toolchain_store.clone(),
                 environment,
-                extension_events,
                 languages.clone(),
                 http_client.clone(),
                 fs.clone(),

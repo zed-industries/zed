@@ -3003,7 +3003,6 @@ impl LspStore {
         prettier_store: Entity<PrettierStore>,
         toolchain_store: Entity<ToolchainStore>,
         environment: Entity<ProjectEnvironment>,
-        extension_events: Option<Entity<extension::ExtensionEvents>>,
         languages: Arc<LanguageRegistry>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
@@ -3018,12 +3017,14 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
-        if let Some(extension_events) = extension_events.as_ref() {
+        if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
             cx.subscribe(
                 extension_events,
                 Self::reload_zed_json_schemas_on_extensions_changed,
             )
             .detach();
+        } else {
+            log::info!("No extension events global found. Skipping JSON schema auto-reload setup");
         }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
