@@ -3588,11 +3588,6 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn max_excerpt_buffer_row(&self, excerpt_id: ExcerptId) -> Option<u32> {
-        self.excerpt(excerpt_id)
-            .map(|excerpt| excerpt.max_buffer_row)
-    }
-
     pub fn excerpt_ids_for_range<T: ToOffset>(
         &self,
         range: Range<T>,

@@ -2130,7 +2130,7 @@ impl EditorElement {
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
         let icon_size = editor_font_size.round();
-        let button_h_padding = ((icon_size - px(1.0)) / 2.0).round();
+        let button_h_padding = ((icon_size - px(1.0)) / 2.0).round() - px(2.0);
 
         let scroll_top = scroll_position.y * line_height;
 
@@ -2156,8 +2156,11 @@ impl EditorElement {
                     .buffer()
                     .read(cx)
                     .snapshot(cx)
-                    .max_excerpt_buffer_row(excerpt_id)?;
-                let is_wide = max_row > 9999;
+                    .widest_line_number();
+                let is_wide = max_row > 999
+                    && row_info
+                        .buffer_row
+                        .is_some_and(|row| row.ilog10() == max_row.ilog10());
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
@@ -2179,7 +2182,7 @@ impl EditorElement {
                     .into_any_element();
 
                 let position = point(
-                    px(0.),
+                    px(1.),
                     ix as f32 * line_height - (scroll_top % line_height) + px(1.),
                 );
                 let origin = gutter_hitbox.origin + position;
