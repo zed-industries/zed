@@ -7,7 +7,7 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
-    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, 
+    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
     UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
-use client::telemetry;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
 use util::ResultExt as _;
@@ -632,29 +631,7 @@ impl ActiveThread {
             final_project_snapshot: final_snapshot,
         });
 
-        // Don't record telemetry for now as we don't have the right APIs
-
-        // Show a toast notification to confirm the feedback was received
-        let message = if is_positive {
-            "Thanks for your feedback! We're glad this was helpful."
-        } else {
-            "Thanks for your feedback. We'll use it to improve."
-        };
-
-        // Create and show a toast using workspace::Toast API
-        if let Some(workspace) = self.workspace.clone().and_then(|w| w.upgrade()) {
-            workspace.update(cx, |workspace, cx| {
-                use workspace::notifications::NotificationId;
-                use std::borrow::Cow;
-                
-                let toast = workspace::Toast::new(
-                    NotificationId::named(format!("thread-feedback-{}", thread_id).into()),
-                    Cow::Owned(message.to_string()),
-                ).autohide();
-                
-                workspace.show_toast(toast, cx);
-            });
-        }
+        todo!("Record the event in telemetry");
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
