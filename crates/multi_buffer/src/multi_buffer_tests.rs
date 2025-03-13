@@ -2352,18 +2352,58 @@ impl ReferenceMultibuffer {
             .map(|line| {
                 let row_info = regions
                     .iter()
-                    .find(|region| region.range.contains(&ix))
-                    .map_or(RowInfo::default(), |region| {
+                    .position(|region| region.range.contains(&ix))
+                    .map_or(RowInfo::default(), |region_ix| {
+                        let region = &regions[region_ix];
                         let buffer_row = region.buffer_start.map(|start_point| {
                             start_point.row
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
+                        let is_excerpt_start = region_ix == 0
+                            || &regions[region_ix - 1].excerpt_id != &region.excerpt_id
+                            || regions[region_ix - 1].range.is_empty();
+                        let mut is_excerpt_end = region_ix == regions.len() - 1
+                            || &regions[region_ix + 1].excerpt_id != &region.excerpt_id;
                         let is_start = !text[region.range.start..ix].contains('\n');
-                        let is_end = if region.range.end > text.len() {
-                            true
+                        let mut is_end = if region.range.end > text.len() {
+                            !text[ix..].contains('\n')
                         } else {
-                            text[ix..region.range.end].matches('\n').count() == 1
+                            text[ix..region.range.end.min(text.len())]
+                                .matches('\n')
+                                .count()
+                                == 1
                         };
+                        if region_ix < regions.len() - 1
+                            && !text[ix..].contains("\n")
+                            && region.status == Some(DiffHunkStatus::added_none())
+                            && regions[region_ix + 1].excerpt_id == region.excerpt_id
+                            && regions[region_ix + 1].range.start == text.len()
+                        {
+                            is_end = true;
+                            is_excerpt_end = true;
+                        }
+                        let mut expand_direction = None;
+                        if let Some(buffer) = &self
+                            .excerpts
+                            .iter()
+                            .find(|e| e.id == region.excerpt_id.unwrap())
+                            .map(|e| e.buffer.clone())
+                        {
+                            let needs_expand_up =
+                                is_excerpt_start && is_start && buffer_row.unwrap() > 0;
+                            let needs_expand_down = is_excerpt_end
+                                && is_end
+                                && buffer.read(cx).max_point().row > buffer_row.unwrap();
+                            expand_direction = if needs_expand_up && needs_expand_down {
+                                Some(ExpandExcerptDirection::UpAndDown)
+                            } else if needs_expand_up {
+                                Some(ExpandExcerptDirection::Up)
+                            } else if needs_expand_down {
+                                Some(ExpandExcerptDirection::Down)
+                            } else {
+                                None
+                            };
+                        }
                         RowInfo {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
@@ -2371,41 +2411,12 @@ impl ReferenceMultibuffer {
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
-                            expand_info: if is_start
-                                && buffer_row.is_some_and(|b| b > 0)
-                                && region.excerpt_id.is_some()
-                            {
-                                Some(ExpandInfo {
-                                    direction: ExpandExcerptDirection::Up,
-                                    excerpt_id: region.excerpt_id.unwrap(),
-                                })
-                            } else if is_end && region.excerpt_id.is_some() {
-                                let buffer = &self
-                                    .excerpts
-                                    .iter()
-                                    .find(|e| e.id == region.excerpt_id.unwrap())
-                                    .unwrap()
-                                    .buffer;
-                                let last_buffer_row = region.buffer_start.map(|start_point| {
-                                    start_point.row
-                                        + text[region.range.start..region.range.end.min(text.len())]
-                                            .matches('\n')
-                                            .count()
-                                            as u32
-                                });
-                                if dbg!(buffer.read(cx).max_point().row)
-                                    == dbg!(last_buffer_row.unwrap())
-                                {
-                                    None
-                                } else {
-                                    Some(ExpandInfo {
-                                        direction: ExpandExcerptDirection::Down,
-                                        excerpt_id: region.excerpt_id.unwrap(),
-                                    })
-                                }
-                            } else {
-                                None
-                            },
+                            expand_info: expand_direction.zip(region.excerpt_id).map(
+                                |(direction, excerpt_id)| ExpandInfo {
+                                    direction,
+                                    excerpt_id,
+                                },
+                            ),
                         }
                     });
                 ix += line.len() + 1;
