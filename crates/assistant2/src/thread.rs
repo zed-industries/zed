@@ -506,6 +506,14 @@ impl Thread {
         }));
     }
 
+    /// Takes a project snapshot and returns the task that will complete with the snapshot.
+    /// This doesn't store the snapshot in the thread itself, allowing the caller to decide
+    /// what to do with it when the task completes.
+    pub fn take_project_snapshot(&self, cx: &mut Context<Self>) -> Task<ProjectSnapshot> {
+        let project = self.project.clone();
+        Self::start_project_snapshot(project, cx)
+    }
+
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
         let context = self.context_by_message.get(&id)?;
         Some(

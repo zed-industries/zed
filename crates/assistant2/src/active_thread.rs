@@ -584,54 +584,135 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use telemetry;
+        // Capture the thread entity for use in the async operation
+        let thread = self.thread.clone();
 
-        // Collect thread data and snapshots for the full telemetry event
-        let (thread_data, initial_snapshot, final_snapshot) =
-            self.thread.update(cx, |thread, _cx| {
-                // Create a serializable representation of the Thread
-                let serializable_thread = self.create_serializable_thread(thread);
-                let thread_data = serde_json::to_value(serializable_thread)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
+        // Spawn the async operation to collect data and send telemetry
+        cx.spawn(move |_, mut cx| async move {
+            use telemetry;
 
-                // Get the project snapshots
-                let initial_snapshot = thread
-                    .initial_project_snapshot()
-                    .cloned()
-                    .map(|snapshot| {
-                        serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
-                    })
-                    .unwrap_or(serde_json::Value::Null);
+            // Collect thread data and snapshots asynchronously
+            let (thread_data, initial_snapshot) = thread
+                .update(&mut cx, |thread, cx| {
+                    // Create a serializable representation of the Thread
+                    let serializable_thread = Self::create_serializable_thread_static(thread);
+                    let thread_data = serde_json::to_value(serializable_thread)
+                        .unwrap_or_else(|_| serde_json::Value::Null);
 
-                let final_snapshot = thread
-                    .final_project_snapshot()
-                    .cloned()
-                    .map(|snapshot| {
-                        serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
-                    })
-                    .unwrap_or(serde_json::Value::Null);
+                    // Get the initial project snapshot
+                    let initial_snapshot = thread
+                        .initial_project_snapshot()
+                        .cloned()
+                        .map(|snapshot| {
+                            serde_json::to_value(snapshot)
+                                .unwrap_or_else(|_| serde_json::Value::Null)
+                        })
+                        .unwrap_or(serde_json::Value::Null);
 
-                (thread_data, initial_snapshot, final_snapshot)
+                    (thread_data, initial_snapshot)
+                })
+                .unwrap_or_default();
+
+            // Capture the final project snapshot right before sending feedback
+            let final_snapshot = thread
+                .update(&mut cx, |thread, cx| {
+                    // Take a snapshot of the project now, right before sending feedback
+                    thread
+                        .take_project_snapshot(cx)
+                        .map(|snapshot| {
+                            serde_json::to_value(snapshot)
+                                .unwrap_or_else(|_| serde_json::Value::Null)
+                        })
+                        .unwrap_or(serde_json::Value::Null)
+                })
+                .unwrap_or_default();
+
+            // Define the rating based on which button was clicked
+            let rating = if is_positive { "positive" } else { "negative" };
+
+            // Serialize thread data
+            let thread_data_str = serde_json::to_string(&thread_data).unwrap_or_default();
+
+            // Send the telemetry event
+            telemetry::event!(
+                "Assistant Feedback",
+                rating,
+                thread_id,
+                has_thread_data = !thread_data_str.is_empty(),
+                has_initial_snapshot = !initial_snapshot.is_null(),
+                has_final_snapshot = !final_snapshot.is_null()
+            );
+        })
+        .detach();
+    }
+
+    // Static version of create_serializable_thread that can be used from async contexts
+    fn create_serializable_thread_static(thread: &Thread) -> SerializableThread {
+        let mut serializable_messages = Vec::new();
+        let mut serializable_tool_uses = Vec::new();
+
+        // Convert messages
+        for message in thread.messages() {
+            serializable_messages.push(SerializableMessage {
+                id: message.id.0,
+                role: format!("{:?}", message.role),
+                text: message.text.clone(),
             });
 
-        // Send the feedback data as properties in a telemetry event
-        // Instead of creating an Event::AssistantThreadFeedback directly, we use the flexible event system
-        let rating = if is_positive { "positive" } else { "negative" };
+            // Process tool uses for this message
+            let tool_uses = thread.tool_uses_for_message(message.id);
+            for tool_use in tool_uses {
+                let status_str = match &tool_use.status {
+                    ToolUseStatus::Pending => "pending",
+                    ToolUseStatus::Running => "running",
+                    ToolUseStatus::Finished(_) => "finished",
+                    ToolUseStatus::Error(_) => "error",
+                };
 
-        // Use thread_data serialized to a string to allow tracking in a standardized way
-        let thread_data_str = serde_json::to_string(&thread_data).unwrap_or_default();
+                let result = match &tool_use.status {
+                    ToolUseStatus::Finished(output) => Some(output.clone()),
+                    ToolUseStatus::Error(err) => Some(err.clone()),
+                    _ => None,
+                };
 
-        // For events that collect larger data structures, the server may collect them from a dedicated
-        // endpoint or process them differently. The telemetry::event! macro is used for standard metrics
-        // collection rather than detailed data analysis.
-        telemetry::event!(
-            "Assistant Feedback",
-            rating,
-            thread_id,
-            has_thread_data = !thread_data_str.is_empty(),
-            has_initial_snapshot = !initial_snapshot.is_null(),
-            has_final_snapshot = !final_snapshot.is_null()
-        );
+                serializable_tool_uses.push(SerializableToolUse {
+                    name: tool_use.name.to_string(),
+                    input: tool_use.input.clone(),
+                    status: status_str.to_string(),
+                    result: result.as_ref().map(ToString::to_string),
+                });
+            }
+
+            // Process scripting tool uses for this message
+            let scripting_tool_uses = thread.scripting_tool_uses_for_message(message.id);
+            for tool_use in scripting_tool_uses {
+                let status_str = match &tool_use.status {
+                    ToolUseStatus::Pending => "pending",
+                    ToolUseStatus::Running => "running",
+                    ToolUseStatus::Finished(_) => "finished",
+                    ToolUseStatus::Error(_) => "error",
+                };
+
+                let result = match &tool_use.status {
+                    ToolUseStatus::Finished(output) => Some(output.clone()),
+                    ToolUseStatus::Error(err) => Some(err.clone()),
+                    _ => None,
+                };
+
+                serializable_tool_uses.push(SerializableToolUse {
+                    name: tool_use.name.to_string(),
+                    input: tool_use.input.clone(),
+                    status: status_str.to_string(),
+                    result: result.as_ref().map(ToString::to_string),
+                });
+            }
+        }
+
+        SerializableThread {
+            id: thread.id().to_string(),
+            messages: serializable_messages,
+            tool_uses: serializable_tool_uses,
+        }
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
