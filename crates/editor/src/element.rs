@@ -2712,7 +2712,7 @@ impl EditorElement {
         for_excerpt: &ExcerptInfo,
         is_folded: bool,
         is_selected: bool,
-        is_sticky: bool,
+        _is_sticky: bool,
         jump_data: JumpData,
         window: &mut Window,
         cx: &mut App,
@@ -2759,7 +2759,7 @@ impl EditorElement {
                     .pl_0p5()
                     .pr_5()
                     .rounded_sm()
-                    .when(is_sticky, |el| el.shadow_md())
+                    // .when(is_sticky, |el| el.shadow_md())
                     .border_1()
                     .map(|div| {
                         let border_color = if is_selected
