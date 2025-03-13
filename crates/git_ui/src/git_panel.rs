@@ -3048,21 +3048,24 @@ impl GitPanel {
                             "No Git repositories"
                         },
                     ))
-                    .children(self.active_repository.is_none().then(|| {
-                        h_flex().w_full().justify_around().child(
-                            panel_filled_button("Initialize Repository")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "git init",
-                                    &git::Init,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(move |_, _, cx| {
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(&git::Init);
-                                    })
-                                }),
-                        )
-                    }))
+                    .children({
+                        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+                        (worktree_count > 0 && self.active_repository.is_none()).then(|| {
+                            h_flex().w_full().justify_around().child(
+                                panel_filled_button("Initialize Repository")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "git init",
+                                        &git::Init,
+                                        &self.focus_handle,
+                                    ))
+                                    .on_click(move |_, _, cx| {
+                                        cx.defer(move |cx| {
+                                            cx.dispatch_action(&git::Init);
+                                        })
+                                    }),
+                            )
+                        })
+                    })
                     .text_ui_sm(cx)
                     .mx_auto()
                     .text_color(Color::Placeholder.color(cx)),
