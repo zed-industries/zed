@@ -1,9 +1,9 @@
 use gpui::{hsla, App, Styled};
 
 use crate::prelude::*;
-use crate::ElevationIndex;
+use crate::Elevation;
 
-fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
+fn elevated<E: Styled>(this: E, cx: &App, index: Elevation) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .border_1()
@@ -11,7 +11,7 @@ fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
         .shadow(index.shadow(cx))
 }
 
-fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) -> E {
+fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: Elevation) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .shadow(index.shadow(cx))
@@ -39,14 +39,14 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Example Elements: Title Bar, Panel, Tab Bar, Editor
     fn elevation_1(self, cx: &mut App) -> Self {
-        elevated(self, cx, ElevationIndex::Surface)
+        elevated(self, cx, Elevation::Surface)
     }
 
     /// See [`elevation_1`](Self::elevation_1).
     ///
     /// Renders a borderless version [`elevation_1`](Self::elevation_1).
     fn elevation_1_borderless(self, cx: &mut App) -> Self {
-        elevated_borderless(self, cx, ElevationIndex::Surface)
+        elevated_borderless(self, cx, Elevation::Surface)
     }
 
     /// Non-Modal Elevated Surfaces appear above the [`Surface`](ElevationIndex::Surface) layer and is used for things that should appear above most UI elements like an editor or panel, but not elements like popovers, context menus, modals, etc.
@@ -55,14 +55,14 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
     fn elevation_2(self, cx: &App) -> Self {
-        elevated(self, cx, ElevationIndex::ElevatedSurface)
+        elevated(self, cx, Elevation::ElevatedSurface)
     }
 
     /// See [`elevation_2`](Self::elevation_2).
     ///
     /// Renders a borderless version [`elevation_2`](Self::elevation_2).
     fn elevation_2_borderless(self, cx: &mut App) -> Self {
-        elevated_borderless(self, cx, ElevationIndex::ElevatedSurface)
+        elevated_borderless(self, cx, Elevation::ElevatedSurface)
     }
 
     /// Modal Surfaces are used for elements that should appear above all other UI elements and are located above the wash layer. This is the maximum elevation at which UI elements can be rendered in their default state.
@@ -75,14 +75,14 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
     fn elevation_3(self, cx: &mut App) -> Self {
-        elevated(self, cx, ElevationIndex::ModalSurface)
+        elevated(self, cx, Elevation::ModalSurface)
     }
 
     /// See [`elevation_3`](Self::elevation_3).
     ///
     /// Renders a borderless version [`elevation_3`](Self::elevation_3).
     fn elevation_3_borderless(self, cx: &mut App) -> Self {
-        elevated_borderless(self, cx, ElevationIndex::ModalSurface)
+        elevated_borderless(self, cx, Elevation::ModalSurface)
     }
 
     /// The theme's primary border color.

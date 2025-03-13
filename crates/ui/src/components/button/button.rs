@@ -3,7 +3,7 @@ use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::IntoComponent;
 
 use crate::{
-    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding,
+    prelude::*, Color, DynamicSpacing, Elevation, IconPosition, KeyBinding,
     KeybindingPosition, TintColor,
 };
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label};
@@ -394,7 +394,7 @@ impl ButtonCommon for Button {
         self
     }
 
-    fn layer(mut self, elevation: ElevationIndex) -> Self {
+    fn layer(mut self, elevation: Elevation) -> Self {
         self.base = self.base.layer(elevation);
         self
     }
