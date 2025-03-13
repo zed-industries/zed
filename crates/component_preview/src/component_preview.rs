@@ -1,8 +1,8 @@
-#[allow(unused, dead_code)]
-
 //! # Component Preview
 //!
 //! A view for exploring Zed components.
+
+#![allow(unused, dead_code)]
 
 use std::iter::Iterator;
 use std::sync::Arc;
