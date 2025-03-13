@@ -432,22 +432,28 @@ jobs:
       - macos_tests
       - windows_clippy
       - windows_tests
-    if: |
-      always() && (
-        needs.style.result == 'success'
-        && (
-          needs.job_spec.outputs.run_tests == 'false'
-          || (needs.macos_tests.result == 'success'
-              && needs.linux_tests.result == 'success'
-              && needs.windows_tests.result == 'success'
-              && needs.windows_clippy.result == 'success'
-              && needs.build_remote_server.result == 'success'
-              && needs.migration_checks.result == 'success')
-        )
-      )
+    if: always()
     steps:
-      - name: All tests passed
-        run: echo "All tests passed successfully!"
+      - name: Check all tests passed
+        run: |
+          # Check dependent jobs...
+          RET_CODE=0
+          # Always check style
+          [[ "${{ needs.style.result }}" != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
+
+          # Only check test jobs if they were supposed to run
+          if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
+            [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed"; }
+            [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed"; }
+            [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
+            [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed"; }
+            [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration checks failed"; }
+            [[ "${{ needs.build_remote_server.result }}"  != 'success' ]] && { RET_CODE=1; echo "Remote server build failed"; }
+          fi
+          if [[ "$RET_CODE" -eq 0 ]]; then
+            echo "All tests passed successfully!"
+          fi
+          exit $RET_CODE
 
   bundle-mac:
     timeout-minutes: 120
