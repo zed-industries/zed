@@ -123,19 +123,9 @@ impl ThreadStore {
     pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let (metadata, thread) = thread.update(cx, |thread, _cx| {
             let id = thread.id().clone();
-            // Create the final project snapshot if this is the first time we're saving
-            if thread.final_project_snapshot.is_none() {
-                thread.final_project_snapshot = Some(Thread::create_project_snapshot(
-                    self.project.clone(),
-                    cx,
-                ));
-            }
-                
             let thread = SavedThread {
                 summary: thread.summary_or_default(),
                 updated_at: thread.updated_at(),
-                initial_project_snapshot: thread.initial_project_snapshot.clone(),
-                final_project_snapshot: thread.final_project_snapshot.clone(),
                 messages: thread
                     .messages()
                     .map(|message| {
@@ -291,8 +281,6 @@ pub struct SavedThread {
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<SavedMessage>,
-    pub initial_project_snapshot: Option<crate::thread::ProjectSnapshot>,
-    pub final_project_snapshot: Option<crate::thread::ProjectSnapshot>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
