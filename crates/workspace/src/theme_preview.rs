@@ -5,8 +5,8 @@ use theme::all_theme_colors;
 use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus, Avatar,
     AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, Checkbox,
-    CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon, Elevation, Facepile,
-    IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor, Tooltip,
+    CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon, ElevationIndex,
+    Facepile, IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -111,7 +111,7 @@ impl ThemePreview {
 
     fn render_text(
         &self,
-        layer: Elevation,
+        layer: ElevationIndex,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -277,7 +277,7 @@ impl ThemePreview {
 
     fn render_colors(
         &self,
-        layer: Elevation,
+        layer: ElevationIndex,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -327,7 +327,7 @@ impl ThemePreview {
 
     fn render_theme_layer(
         &self,
-        layer: Elevation,
+        layer: ElevationIndex,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -355,10 +355,10 @@ impl ThemePreview {
                     .child(Headline::new("Theme Preview").size(HeadlineSize::Large))
                     .child(div().w_full().text_color(cx.theme().colors().text_muted).child("This view lets you preview a range of UI elements across a theme. Use it for testing out changes to the theme."))
                     )
-            .child(self.render_theme_layer(Elevation::Background, window, cx))
-            .child(self.render_theme_layer(Elevation::Surface, window, cx))
-            .child(self.render_theme_layer(Elevation::EditorSurface, window, cx))
-            .child(self.render_theme_layer(Elevation::ElevatedSurface, window, cx))
+            .child(self.render_theme_layer(ElevationIndex::Background, window, cx))
+            .child(self.render_theme_layer(ElevationIndex::Surface, window, cx))
+            .child(self.render_theme_layer(ElevationIndex::EditorSurface, window, cx))
+            .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, window, cx))
     }
 
     fn render_typography_page(

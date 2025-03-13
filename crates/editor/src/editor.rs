@@ -6667,14 +6667,16 @@ impl Editor {
             .child(
                 Label::new(label)
                     .size(LabelSize::Small)
-                    .when(!has_keybind, |el| el.color(Color::Error).strikethrough()),
+                    .when(!has_keybind, |el| {
+                        el.color(cx.theme().status().error.into()).strikethrough()
+                    }),
             )
             .when(!has_keybind, |el| {
                 el.child(
                     h_flex().ml_1().child(
                         Icon::new(IconName::Info)
                             .size(IconSize::Small)
-                            .color(Color::Error),
+                            .color(cx.theme().status().error.into()),
                     ),
                 )
             })

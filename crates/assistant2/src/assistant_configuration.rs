@@ -3,7 +3,7 @@ use std::sync::Arc;
 use collections::HashMap;
 use gpui::{Action, AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{prelude::*, Divider, DividerColor, Elevation};
+use ui::{prelude::*, Divider, DividerColor, ElevationIndex};
 use zed_actions::assistant::DeployPromptLibrary;
 
 pub struct AssistantConfiguration {
@@ -115,7 +115,7 @@ impl AssistantConfiguration {
                             .icon(IconName::Plus)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Filled)
-                            .elevation(Elevation::ModalSurface)
+                            .layer(ElevationIndex::ModalSurface)
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener({
                                 let provider = provider.clone();
@@ -171,7 +171,7 @@ impl Render for AssistantConfiguration {
                     .child(
                         Button::new("open-prompt-library", "Open Prompt Library")
                             .style(ButtonStyle::Filled)
-                            .elevation(Elevation::ModalSurface)
+                            .layer(ElevationIndex::ModalSurface)
                             .full_width()
                             .icon(IconName::Book)
                             .icon_size(IconSize::Small)

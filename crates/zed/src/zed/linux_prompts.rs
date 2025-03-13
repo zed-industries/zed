@@ -6,7 +6,10 @@ use gpui::{
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{
+    h_flex, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
+    FluentBuilder, LabelSize, TintColor,
+};
 use workspace::ui::StyledExt;
 
 pub fn init(cx: &mut App) {
@@ -150,7 +153,7 @@ impl Render for FallbackPromptRenderer {
                         .when(ix == self.active_action_id, |el| {
                             el.style(ButtonStyle::Tinted(TintColor::Accent))
                         })
-                        .elevation(Elevation::ModalSurface)
+                        .layer(ElevationIndex::ModalSurface)
                         .on_click(cx.listener(move |_, _, _window, cx| {
                             cx.emit(PromptResponse(ix));
                         }))

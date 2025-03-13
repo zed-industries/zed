@@ -49,7 +49,7 @@ pub fn panel_button(label: impl Into<SharedString>) -> ui::Button {
         .label_size(ui::LabelSize::Small)
         .icon_size(ui::IconSize::Small)
         // TODO: Change this once we use on_surface_bg in button_like
-        .elevation(ui::Elevation::ModalSurface)
+        .layer(ui::ElevationIndex::ModalSurface)
         .size(ui::ButtonSize::Compact)
 }
 
@@ -61,7 +61,7 @@ pub fn panel_icon_button(id: impl Into<SharedString>, icon: IconName) -> ui::Ico
     let id = ElementId::Name(id.into());
     ui::IconButton::new(id, icon)
         // TODO: Change this once we use on_surface_bg in button_like
-        .elevation(ui::Elevation::ModalSurface)
+        .layer(ui::ElevationIndex::ModalSurface)
         .size(ui::ButtonSize::Compact)
 }
 
