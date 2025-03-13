@@ -3100,7 +3100,7 @@ impl LspCommand for GetCodeLens {
             .unwrap_or_default()
             .into_iter()
             .map(|code_lens| {
-                let code_lens_range = range_from_lsp(code_lens.range.clone());
+                let code_lens_range = range_from_lsp(code_lens.range);
                 let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
                 let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
                 let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);

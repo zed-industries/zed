@@ -4427,7 +4427,6 @@ impl LspStore {
         }
     }
 
-    // TODO kb use this?
     pub fn code_lens(
         &mut self,
         buffer_handle: &Entity<Buffer>,

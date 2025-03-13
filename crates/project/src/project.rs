@@ -534,8 +534,8 @@ impl LspAction {
             Self::CodeLens(lens) => lens
                 .command
                 .as_ref()
-                .map(|command| &command.title)
-                .expect("TODO kb"),
+                .map(|command| command.title.as_str())
+                .unwrap_or("Unknown command"),
         }
     }
 
