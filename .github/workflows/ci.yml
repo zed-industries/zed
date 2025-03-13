@@ -433,25 +433,17 @@ jobs:
       - windows_clippy
       - windows_tests
     if: always()
-    env:
-      JOB_RESULT_STYLE: ${{ needs.style.result == 'success' && 0 || 1}}
-      JOB_RESULT_MACOS_TESTS: ${{ needs.macos_tests.result == 'success' && 0 || 1 }}
-      JOB_RESULT_LINUX_TESTS: ${{ needs.linux_tests.result == 'success' && 0 || 1 }}
-      JOB_RESULT_WINDOWS_TESTS: ${{ needs.windows_tests.result == 'success' && 0 || 1 }}
-      JOB_RESULT_WINDOWS_CLIPPY: ${{ needs.windows_clippy.result == 'success' && 0 || 1 }}
-      JOB_RESULT_MIGRATION_CHECKS: ${{ needs.migration_checks.result == 'success' && 0 || 1 }}
-      JOB_RESULT_BUILD_REMOTE_SERVER: ${{ needs.build_remote_server.result == 'success' && 0 || 1 }}
     steps:
       - name: Check all tests passed
         run: |
-          # Check dependend jobs...
+          # Check dependent jobs...
           RET_CODE=0
           # Always check style
           [[ "${{ needs.style.result }}" != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
 
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
-            [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed"; }
+            [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed" }
             [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed" }
             [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed" }
             [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed" }
