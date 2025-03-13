@@ -65,7 +65,10 @@ impl Tool for ListDirectoryTool {
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path not found in project")));
         };
-        let Some(worktree) = project.read(cx).worktree_for_id(project_path.worktree_id, cx) else {
+        let Some(worktree) = project
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+        else {
             return Task::ready(Err(anyhow!("Worktree not found")));
         };
         let worktree = worktree.read(cx);
@@ -83,9 +86,7 @@ impl Tool for ListDirectoryTool {
             writeln!(
                 output,
                 "{}",
-                Path::new(worktree.root_name())
-                    .join(&entry.path)
-                    .display(),
+                Path::new(worktree.root_name()).join(&entry.path).display(),
             )
             .unwrap();
         }
