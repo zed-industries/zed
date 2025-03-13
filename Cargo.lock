@@ -257,9 +257,9 @@ checksum = "34cd60c5e3152cef0a592f1b296f1cc93715d89d2551d85315828c3a09575ff4"
 
 [[package]]
 name = "anyhow"
-version = "1.0.96"
+version = "1.0.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b964d184e89d9b6b67dd2715bc8e74cf3107fb2b529990c90cf517326150bf4"
+checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
 
 [[package]]
 name = "approx"
@@ -673,16 +673,22 @@ dependencies = [
  "assistant_tool",
  "chrono",
  "collections",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "language",
  "language_model",
  "project",
  "rand 0.8.5",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
+ "settings",
+ "theme",
+ "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -4639,7 +4645,6 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "extension",
  "extension_host",
  "feature_flags",
  "fs",
@@ -10302,6 +10307,7 @@ dependencies = [
  "clock",
  "collections",
  "env_logger 0.11.6",
+ "extension",
  "fancy-regex 0.14.0",
  "fs",
  "futures 0.3.31",
@@ -17229,13 +17235,6 @@ dependencies = [
 [[package]]
 name = "zed_toml"
 version = "0.1.3"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_uiua"
-version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

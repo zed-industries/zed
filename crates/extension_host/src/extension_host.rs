@@ -127,6 +127,7 @@ pub enum ExtensionOperation {
 
 #[derive(Clone)]
 pub enum Event {
+    ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
     ExtensionFailedToLoad(Arc<str>),
@@ -1213,9 +1214,7 @@ impl ExtensionStore {
 
         self.extension_index = new_index;
         cx.notify();
-        ExtensionEvents::global(cx).update(cx, |this, cx| {
-            this.emit(extension::Event::ExtensionsUpdated, cx)
-        });
+        cx.emit(Event::ExtensionsUpdated);
 
         cx.spawn(|this, mut cx| async move {
             cx.background_spawn({
@@ -1317,6 +1316,12 @@ impl ExtensionStore {
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
+
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionsInstalledChanged, cx)
+                    });
+                }
             })
             .ok();
         })

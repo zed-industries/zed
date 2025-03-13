@@ -13,6 +13,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
+use std::collections::BTreeSet;
 use std::{
     env,
     ops::Range,
@@ -3138,6 +3139,93 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         "wrong ranges for text lines:\n{:?}",
         text.split('\n').collect::<Vec<_>>()
     );
+}
+
+#[gpui::test]
+fn test_words_in_range(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+
+    let contents = r#"let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word"#;
+
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(contents, cx).with_language(Arc::new(rust_lang()), cx);
+        assert_eq!(buffer.text(), contents);
+        buffer.check_invariants();
+        buffer
+    });
+
+    buffer.update(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        assert_eq!(
+            BTreeSet::from_iter(["Pizza".to_string()]),
+            snapshot
+                .words_in_range(Some("piz"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "öäpple".to_string(),
+                "Öäpple".to_string(),
+                "öÄpPlE".to_string(),
+                "ÖÄPPLE".to_string(),
+            ]),
+            snapshot
+                .words_in_range(Some("öp"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+            ]),
+            snapshot
+                .words_in_range(Some("öÄ"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(Some("öÄ好"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter(["bar你".to_string(),]),
+            snapshot
+                .words_in_range(Some("你"), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(Some(""), 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "bar你".to_string(),
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+                "let".to_string(),
+                "Pizza".to_string(),
+                "word".to_string(),
+                "word2".to_string(),
+            ]),
+            snapshot
+                .words_in_range(None, 0..snapshot.len())
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+    });
 }
 
 fn ruby_lang() -> Language {

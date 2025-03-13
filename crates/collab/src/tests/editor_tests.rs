@@ -2038,7 +2038,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     // client_b now requests git blame for the open buffer
     editor_b.update_in(cx_b, |editor_b, window, cx| {
         assert!(editor_b.blame().is_none());
-        editor_b.toggle_git_blame(&editor::actions::ToggleGitBlame {}, window, cx);
+        editor_b.toggle_git_blame(&git::Blame {}, window, cx);
     });
 
     cx_a.executor().run_until_parked();
