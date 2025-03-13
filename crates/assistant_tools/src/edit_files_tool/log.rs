@@ -174,11 +174,7 @@ impl EditToolLogViewer {
 
         v_flex()
             .gap_3()
-            .child(
-                Label::new("Tool input")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
+            .child(Self::render_section(IconName::ArrowRight, "Tool Input"))
             .child(request.instructions.clone())
             .map(|parent| match &request.editor_response {
                 None => {
@@ -189,26 +185,29 @@ impl EditToolLogViewer {
                     }
                 }
                 Some(response) => parent
-                    .child(
-                        Label::new("Editor response")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
+                    .child(Self::render_section(
+                        IconName::SparkleAlt,
+                        "Editor Response",
+                    ))
                     .child(response.clone()),
             })
             .when_some(request.tool_output.as_ref(), |parent, output| {
                 parent
-                    .child(
-                        Label::new("Tool output")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
+                    .child(Self::render_section(IconName::ArrowLeft, "Tool output"))
                     .child(match output {
                         Ok(output) => Label::new(output.clone()).color(Color::Success),
                         Err(error) => Label::new(error.clone()).color(Color::Error),
                     })
             })
             .child(ui::Divider::horizontal())
+            .into_any()
+    }
+
+    fn render_section(icon: IconName, title: &'static str) -> AnyElement {
+        h_flex()
+            .gap_1()
+            .child(Icon::new(icon).color(Color::Muted))
+            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
             .into_any()
     }
 }
