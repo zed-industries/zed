@@ -6415,7 +6415,6 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         })
         .await
         .unwrap();
-    let mut diff_events = cx.events(&uncommitted_diff);
 
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
