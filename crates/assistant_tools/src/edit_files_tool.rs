@@ -151,7 +151,7 @@ impl EditFilesTool {
                 messages,
                 tools: vec![],
                 stop: vec![],
-                temperature: None,
+                temperature: Some(0.0),
             };
 
             let mut parser = EditActionParser::new();

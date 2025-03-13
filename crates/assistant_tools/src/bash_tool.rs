@@ -11,6 +11,9 @@ use util::command::new_smol_command;
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
     /// The bash command to execute as a one-liner.
+    ///
+    /// WARNING: you must not `cd` into the working directory, as that's already
+    /// taken care of automatically. Doing so will cause the command to fail!
     command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     working_directory: String,
