@@ -2119,6 +2119,7 @@ struct ReferenceRegion {
     range: Range<usize>,
     buffer_start: Option<Point>,
     status: Option<DiffHunkStatus>,
+    excerpt_id: Option<ExcerptId>,
 }
 
 impl ReferenceMultibuffer {
@@ -2275,6 +2276,7 @@ impl ReferenceMultibuffer {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: None,
+                        excerpt_id: Some(excerpt.id),
                     });
 
                     // Add the deleted text for the hunk.
@@ -2294,6 +2296,7 @@ impl ReferenceMultibuffer {
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
                             status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
+                            excerpt_id: Some(excerpt.id),
                         });
                     }
 
@@ -2309,6 +2312,7 @@ impl ReferenceMultibuffer {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: Some(DiffHunkStatus::added(hunk.secondary_status)),
+                        excerpt_id: Some(excerpt.id),
                     });
                     offset = hunk_range.end;
                 }
@@ -2323,6 +2327,7 @@ impl ReferenceMultibuffer {
                 range: len..text.len(),
                 buffer_start: Some(buffer.offset_to_point(offset)),
                 status: None,
+                excerpt_id: Some(excerpt.id),
             });
         }
 
@@ -2333,6 +2338,7 @@ impl ReferenceMultibuffer {
                 range: 0..1,
                 buffer_start: Some(Point::new(0, 0)),
                 status: None,
+                excerpt_id: None,
             });
         } else {
             text.pop();
@@ -2352,6 +2358,12 @@ impl ReferenceMultibuffer {
                             start_point.row
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
+                        let is_start = !text[region.range.start..ix].contains('\n');
+                        let is_end = if region.range.end > text.len() {
+                            true
+                        } else {
+                            text[ix..region.range.end].matches('\n').count() == 1
+                        };
                         RowInfo {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
@@ -2359,7 +2371,41 @@ impl ReferenceMultibuffer {
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
-                            expand_info: None,
+                            expand_info: if is_start
+                                && buffer_row.is_some_and(|b| b > 0)
+                                && region.excerpt_id.is_some()
+                            {
+                                Some(ExpandInfo {
+                                    direction: ExpandExcerptDirection::Up,
+                                    excerpt_id: region.excerpt_id.unwrap(),
+                                })
+                            } else if is_end && region.excerpt_id.is_some() {
+                                let buffer = &self
+                                    .excerpts
+                                    .iter()
+                                    .find(|e| e.id == region.excerpt_id.unwrap())
+                                    .unwrap()
+                                    .buffer;
+                                let last_buffer_row = region.buffer_start.map(|start_point| {
+                                    start_point.row
+                                        + text[region.range.start..region.range.end.min(text.len())]
+                                            .matches('\n')
+                                            .count()
+                                            as u32
+                                });
+                                if dbg!(buffer.read(cx).max_point().row)
+                                    == dbg!(last_buffer_row.unwrap())
+                                {
+                                    None
+                                } else {
+                                    Some(ExpandInfo {
+                                        direction: ExpandExcerptDirection::Down,
+                                        excerpt_id: region.excerpt_id.unwrap(),
+                                    })
+                                }
+                            } else {
+                                None
+                            },
                         }
                     });
                 ix += line.len() + 1;

@@ -2141,7 +2141,6 @@ impl EditorElement {
                 let ExpandInfo {
                     excerpt_id,
                     direction,
-                    enabled,
                 } = row_info.expand_info?;
 
                 let icon_name = match direction {
@@ -2165,10 +2164,6 @@ impl EditorElement {
                     ExpandExcerptDirection::Down => "Expand excerpt down",
                     ExpandExcerptDirection::UpAndDown => "Expand excerpt up and down",
                 };
-
-                if !enabled {
-                    return None;
-                }
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))

@@ -364,7 +364,6 @@ impl ExcerptBoundary {
 pub struct ExpandInfo {
     pub direction: ExpandExcerptDirection,
     pub excerpt_id: ExcerptId,
-    pub enabled: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -7152,19 +7151,21 @@ impl Iterator for MultiBufferRows<'_> {
         let buffer_point = region.buffer_range.start + overshoot;
         let expand_info = if self.is_singleton {
             None
-        } else if self.point.row == region.range.start.row && self.cursor.is_at_start_of_excerpt() {
+        } else if self.point.row == region.range.start.row
+            && self.cursor.is_at_start_of_excerpt()
+            && buffer_point.row > 0
+        {
             Some(ExpandInfo {
                 direction: ExpandExcerptDirection::Up,
-                enabled: buffer_point.row > 0,
                 excerpt_id: region.excerpt.id,
             })
         } else if (region.range.end.column == 0 && self.point.row + 1 == region.range.end.row
             || region.range.end.column > 0 && self.point.row == region.range.end.row)
             && self.cursor.is_at_end_of_excerpt()
+            && buffer_point.row + 1 < region.buffer.max_point().row
         {
             Some(ExpandInfo {
                 direction: ExpandExcerptDirection::Down,
-                enabled: buffer_point.row + 1 < region.buffer.max_point().row,
                 excerpt_id: region.excerpt.id,
             })
         } else {
