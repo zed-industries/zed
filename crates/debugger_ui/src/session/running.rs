@@ -499,6 +499,10 @@ impl RunningState {
     }
 
     fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        if self.thread_id.is_some_and(|id| id == thread_id) {
+            return;
+        }
+
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
