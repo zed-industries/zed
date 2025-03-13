@@ -98,7 +98,7 @@ impl ConfigurationView {
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Plus)
                                 .style(ButtonStyle::Filled)
-                                .layer(Elevation::ModalSurface)
+                                .elevation(Elevation::ModalSurface)
                                 .on_click(open_new_context),
                             ),
                         )

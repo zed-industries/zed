@@ -153,7 +153,7 @@ impl Render for FallbackPromptRenderer {
                         .when(ix == self.active_action_id, |el| {
                             el.style(ButtonStyle::Tinted(TintColor::Accent))
                         })
-                        .layer(ElevationIndex::ModalSurface)
+                        .elevation(ElevationIndex::ModalSurface)
                         .on_click(cx.listener(move |_, _, _window, cx| {
                             cx.emit(PromptResponse(ix));
                         }))

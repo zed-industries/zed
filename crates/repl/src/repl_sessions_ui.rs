@@ -231,7 +231,7 @@ impl Render for ReplSessionsPage {
                         ButtonLike::new("install-kernels")
                             .style(ButtonStyle::Filled)
                             .size(ButtonSize::Large)
-                            .layer(Elevation::ModalSurface)
+                            .elevation(Elevation::ModalSurface)
                             .child(Label::new("Install Kernels"))
                             .on_click(move |_, _, cx| {
                                 cx.open_url(

@@ -187,7 +187,7 @@ impl Render for DisconnectedOverlay {
                                 .child(
                                     Button::new("close-window", "Close Window")
                                         .style(ButtonStyle::Filled)
-                                        .layer(Elevation::ModalSurface)
+                                        .elevation(Elevation::ModalSurface)
                                         .on_click(cx.listener(move |_, _, window, _| {
                                             window.remove_window();
                                         })),
@@ -196,7 +196,7 @@ impl Render for DisconnectedOverlay {
                                     el.child(
                                         Button::new("reconnect", "Reconnect")
                                             .style(ButtonStyle::Filled)
-                                            .layer(Elevation::ModalSurface)
+                                            .elevation(Elevation::ModalSurface)
                                             .icon(IconName::ArrowCircle)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(Self::handle_reconnect)),

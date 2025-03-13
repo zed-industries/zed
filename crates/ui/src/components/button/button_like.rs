@@ -34,7 +34,7 @@ pub trait ButtonCommon: Clickable + Disableable {
     /// exceptions might a scroll bar, or a slider.
     fn tooltip(self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self;
 
-    fn layer(self, elevation: Elevation) -> Self;
+    fn elevation(self, elevation: Elevation) -> Self;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
@@ -163,12 +163,7 @@ fn element_bg_from_elevation(elevation: Option<Elevation>, cx: &mut App) -> Hsla
 }
 
 impl ButtonStyle {
-    pub(crate) fn enabled(
-        self,
-        elevation: Option<Elevation>,
-
-        cx: &mut App,
-    ) -> ButtonLikeStyles {
+    pub(crate) fn enabled(self, elevation: Option<Elevation>, cx: &mut App) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: element_bg_from_elevation(elevation, cx),
@@ -192,12 +187,7 @@ impl ButtonStyle {
         }
     }
 
-    pub(crate) fn hovered(
-        self,
-        elevation: Option<Elevation>,
-
-        cx: &mut App,
-    ) -> ButtonLikeStyles {
+    pub(crate) fn hovered(self, elevation: Option<Elevation>, cx: &mut App) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => {
                 let mut filled_background = element_bg_from_elevation(elevation, cx);
@@ -472,7 +462,7 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn layer(mut self, elevation: Elevation) -> Self {
+    fn elevation(mut self, elevation: Elevation) -> Self {
         self.layer = Some(elevation);
         self
     }

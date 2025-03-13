@@ -168,9 +168,9 @@ mod remote_button {
     use gpui::{hsla, point, Action, AnyView, BoxShadow, ClickEvent, Corner, FocusHandle};
     use ui::{
         div, h_flex, px, rems, ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, Clickable,
-        ContextMenu, ElementId, Elevation, FluentBuilder, Icon, IconName, IconSize,
-        IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement, PopoverMenu,
-        RenderOnce, SharedString, Styled, Tooltip, Window,
+        ContextMenu, ElementId, Elevation, FluentBuilder, Icon, IconName, IconSize, IntoElement,
+        Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement, PopoverMenu, RenderOnce,
+        SharedString, Styled, Tooltip, Window,
     };
 
     pub fn render_fetch_button(
@@ -343,7 +343,7 @@ mod remote_button {
         PopoverMenu::new(id.into())
             .trigger(
                 ui::ButtonLike::new_rounded_right("split-button-right")
-                    .layer(ui::Elevation::ModalSurface)
+                    .elevation(ui::Elevation::ModalSurface)
                     .size(ui::ButtonSize::None)
                     .child(
                         div()
@@ -406,7 +406,7 @@ mod remote_button {
             let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
                 format!("split-button-left-{}", id).into(),
             ))
-            .layer(ui::Elevation::ModalSurface)
+            .elevation(ui::Elevation::ModalSurface)
             .size(ui::ButtonSize::Compact)
             .when(should_render_counts, |this| {
                 this.child(
