@@ -142,6 +142,20 @@ impl JsonLspAdapter {
             }
         })
     }
+
+    async fn get_or_init_workspace_config(&self, cx: &mut AsyncApp) -> Result<Value> {
+        {
+            let reader = self.workspace_config.read().await;
+            if let Some(config) = reader.as_ref() {
+                return Ok(config.clone());
+            }
+        }
+        let mut writer = self.workspace_config.write().await;
+        let config =
+            cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
+        writer.replace(config.clone());
+        return Ok(config);
+    }
 }
 
 #[async_trait(?Send)]
@@ -252,15 +266,7 @@ impl LspAdapter for JsonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut config = if let Some(config) = self.workspace_config.read().await.clone() {
-            config
-        } else {
-            let mut workspace_config = self.workspace_config.write().await;
-            let config_new =
-                cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
-            workspace_config.replace(config_new.clone());
-            config_new
-        };
+        let mut config = self.get_or_init_workspace_config(cx).await?;
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
