@@ -2146,7 +2146,7 @@ impl EditorElement {
                 let icon_name = match direction {
                     ExpandExcerptDirection::Up => IconName::ExpandUp,
                     ExpandExcerptDirection::Down => IconName::ExpandDown,
-                    ExpandExcerptDirection::UpAndDown => IconName::Split,
+                    ExpandExcerptDirection::UpAndDown => IconName::ExpandVertical,
                 };
 
                 let editor = self.editor.clone();
@@ -2158,12 +2158,6 @@ impl EditorElement {
                     .snapshot(cx)
                     .max_excerpt_buffer_row(excerpt_id)?;
                 let is_wide = max_row > 9999;
-
-                let tooltip_label = match direction {
-                    ExpandExcerptDirection::Up => "Expand excerpt up",
-                    ExpandExcerptDirection::Down => "Expand excerpt down",
-                    ExpandExcerptDirection::UpAndDown => "Expand excerpt up and down",
-                };
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
@@ -2179,7 +2173,7 @@ impl EditorElement {
                         });
                     })
                     .tooltip(Tooltip::for_action_title(
-                        tooltip_label,
+                        "Expand excerpt",
                         &crate::actions::ExpandExcerpts::default(),
                     ))
                     .into_any_element();
