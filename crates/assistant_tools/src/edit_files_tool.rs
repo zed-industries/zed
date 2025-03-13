@@ -167,7 +167,6 @@ impl EditFilesTool {
             struct BadSearch {
                 file_path: String,
                 search: String,
-                matches: usize,
             }
 
             let log = log.clone();
@@ -238,11 +237,10 @@ impl EditFilesTool {
 
                                     let matches = query.search(&snapshot, None).await;
 
-                                    if matches.len() != 1 {
+                                    if matches.is_empty() {
                                         return Ok(DiffResult::InvalidReplace(BadSearch {
                                             search: new.clone(),
                                             file_path: file_path.display().to_string(),
-                                            matches: matches.len(),
                                         }));
                                     }
 
@@ -317,7 +315,7 @@ impl EditFilesTool {
 
             let errors = parser.errors();
 
-            if errors.is_empty() {
+            if errors.is_empty() && bad_searches.is_empty() {
                 Ok(answer.trim_end().to_string())
             } else {
                 writeln!(&mut answer, "\nThe following errors occurred:")?;
@@ -325,15 +323,14 @@ impl EditFilesTool {
                 if !bad_searches.is_empty() {
                     writeln!(
                         &mut answer,
-                        "These searches failed because they didn't match exactly one string:"
+                        "These searches failed because they didn't match any strings:"
                     )?;
 
                     for replace in bad_searches {
                         writeln!(
                             &mut answer,
-                            "- '{}' appears {} times in {}",
+                            "- '{}' does not appear in {}",
                             replace.search.replace("\r", "\\r").replace("\n", "\\n"),
-                            replace.matches,
                             replace.file_path
                         )?;
                     }
