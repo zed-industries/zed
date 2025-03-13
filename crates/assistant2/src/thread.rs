@@ -799,6 +799,10 @@ impl Thread {
     pub fn to_markdown(&self) -> Result<String> {
         let mut markdown = Vec::new();
 
+        if let Some(summary) = self.summary() {
+            writeln!(markdown, "# {summary}\n")?;
+        };
+
         for message in self.messages() {
             writeln!(
                 markdown,
