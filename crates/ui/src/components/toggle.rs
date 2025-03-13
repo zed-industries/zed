@@ -4,7 +4,7 @@ use gpui::{
 use std::sync::Arc;
 
 use crate::utils::is_light;
-use crate::{prelude::*, Elevation, KeyBinding};
+use crate::{prelude::*, ElevationIndex, KeyBinding};
 use crate::{Color, Icon, IconName, ToggleState};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
@@ -28,7 +28,7 @@ pub enum ToggleStyle {
     Ghost,
     /// Toggle has a filled background based on the
     /// elevation index of the parent container
-    ElevationBased(Elevation),
+    ElevationBased(ElevationIndex),
     /// A custom style using a color to tint the toggle
     Custom(Hsla),
 }
@@ -102,7 +102,7 @@ impl Checkbox {
     }
 
     /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
-    pub fn elevation(mut self, elevation: Elevation) -> Self {
+    pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
         self.style = ToggleStyle::ElevationBased(elevation);
         self
     }
@@ -281,7 +281,7 @@ impl CheckboxWithLabel {
     }
 
     /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
-    pub fn elevation(mut self, elevation: Elevation) -> Self {
+    pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
         self.style = ToggleStyle::ElevationBased(elevation);
         self
     }
@@ -562,7 +562,7 @@ impl ComponentPreview for Checkbox {
                         single_example(
                             "ElevationBased",
                             Checkbox::new("checkbox_elevation", ToggleState::Selected)
-                                .style(ToggleStyle::ElevationBased(Elevation::EditorSurface))
+                                .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface))
                                 .into_any_element(),
                         ),
                         single_example(

@@ -11,12 +11,9 @@ use util::command::new_smol_command;
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
     /// The bash command to execute as a one-liner.
-    ///
-    /// WARNING: you must not `cd` into the working directory, as that's already
-    /// taken care of automatically. Doing so will cause the command to fail!
     command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
-    working_directory: String,
+    cd: String,
 }
 
 pub struct BashTool;
@@ -47,17 +44,14 @@ impl Tool for BashTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree) = project
-            .read(cx)
-            .worktree_for_root_name(&input.working_directory, cx)
-        else {
+        let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
             return Task::ready(Err(anyhow!("Working directory not found in the project")));
         };
         let working_directory = worktree.read(cx).abs_path();
 
         cx.spawn(|_| async move {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
-            let command = format!("{} 2>&1", input.command);
+            let command = format!("({}) 2>&1", input.command);
 
             let output = new_smol_command("bash")
                 .arg("-c")

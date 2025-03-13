@@ -2,7 +2,7 @@ use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, DynamicSpacing, Elevation};
+use crate::{prelude::*, DynamicSpacing, ElevationIndex};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Toggleable {
@@ -34,7 +34,7 @@ pub trait ButtonCommon: Clickable + Disableable {
     /// exceptions might a scroll bar, or a slider.
     fn tooltip(self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self;
 
-    fn elevation(self, elevation: Elevation) -> Self;
+    fn layer(self, elevation: ElevationIndex) -> Self;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
@@ -152,18 +152,23 @@ pub(crate) struct ButtonLikeStyles {
     pub icon_color: Hsla,
 }
 
-fn element_bg_from_elevation(elevation: Option<Elevation>, cx: &mut App) -> Hsla {
+fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut App) -> Hsla {
     match elevation {
-        Some(Elevation::Background) => cx.theme().colors().element_background,
-        Some(Elevation::ElevatedSurface) => cx.theme().colors().elevated_surface_background,
-        Some(Elevation::Surface) => cx.theme().colors().surface_background,
-        Some(Elevation::ModalSurface) => cx.theme().colors().background,
+        Some(ElevationIndex::Background) => cx.theme().colors().element_background,
+        Some(ElevationIndex::ElevatedSurface) => cx.theme().colors().elevated_surface_background,
+        Some(ElevationIndex::Surface) => cx.theme().colors().surface_background,
+        Some(ElevationIndex::ModalSurface) => cx.theme().colors().background,
         _ => cx.theme().colors().element_background,
     }
 }
 
 impl ButtonStyle {
-    pub(crate) fn enabled(self, elevation: Option<Elevation>, cx: &mut App) -> ButtonLikeStyles {
+    pub(crate) fn enabled(
+        self,
+        elevation: Option<ElevationIndex>,
+
+        cx: &mut App,
+    ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: element_bg_from_elevation(elevation, cx),
@@ -187,7 +192,12 @@ impl ButtonStyle {
         }
     }
 
-    pub(crate) fn hovered(self, elevation: Option<Elevation>, cx: &mut App) -> ButtonLikeStyles {
+    pub(crate) fn hovered(
+        self,
+        elevation: Option<ElevationIndex>,
+
+        cx: &mut App,
+    ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => {
                 let mut filled_background = element_bg_from_elevation(elevation, cx);
@@ -277,7 +287,7 @@ impl ButtonStyle {
     #[allow(unused)]
     pub(crate) fn disabled(
         self,
-        elevation: Option<Elevation>,
+        elevation: Option<ElevationIndex>,
         window: &mut Window,
         cx: &mut App,
     ) -> ButtonLikeStyles {
@@ -343,7 +353,7 @@ pub struct ButtonLike {
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
-    pub(super) layer: Option<Elevation>,
+    pub(super) layer: Option<ElevationIndex>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -462,7 +472,7 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn elevation(mut self, elevation: Elevation) -> Self {
+    fn layer(mut self, elevation: ElevationIndex) -> Self {
         self.layer = Some(elevation);
         self
     }

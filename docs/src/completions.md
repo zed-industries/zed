@@ -40,6 +40,21 @@ But, if you haven't come across the banner, start using Zed's Edit Prediction by
 },
 ```
 
+### Switching modes
+
+Zed's Edit Prediction comes with two different display modes:
+
+1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
+2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
+
+Toggle between them via the `mode` key:
+
+```json
+"edit_predictions": {
+  "mode": "eager" | "subtle"
+},
+```
+
 ### Conflict With Other `tab` Actions {#edit-predictions-conflict}
 
 By default, when `tab` would normally perform a different action, Zed requires a modifier key to accept predictions:

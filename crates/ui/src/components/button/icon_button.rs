@@ -1,7 +1,7 @@
 use gpui::{AnyView, DefiniteLength, Hsla};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
-use crate::{prelude::*, Elevation, Indicator, SelectableButton, TintColor};
+use crate::{prelude::*, ElevationIndex, Indicator, SelectableButton, TintColor};
 use crate::{IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -156,8 +156,8 @@ impl ButtonCommon for IconButton {
         self
     }
 
-    fn elevation(mut self, elevation: Elevation) -> Self {
-        self.base = self.base.elevation(elevation);
+    fn layer(mut self, elevation: ElevationIndex) -> Self {
+        self.base = self.base.layer(elevation);
         self
     }
 }
@@ -212,34 +212,34 @@ impl ComponentPreview for IconButton {
                         single_example(
                             "Default",
                             IconButton::new("default", IconName::Check)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
                             "Filled",
                             IconButton::new("filled", IconName::Check)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .style(ButtonStyle::Filled)
                                 .into_any_element(),
                         ),
                         single_example(
                             "Subtle",
                             IconButton::new("subtle", IconName::Check)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .style(ButtonStyle::Subtle)
                                 .into_any_element(),
                         ),
                         single_example(
                             "Tinted",
                             IconButton::new("tinted", IconName::Check)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .into_any_element(),
                         ),
                         single_example(
                             "Transparent",
                             IconButton::new("transparent", IconName::Check)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .style(ButtonStyle::Transparent)
                                 .into_any_element(),
                         ),
@@ -253,7 +253,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("square", IconName::Check)
                                 .shape(IconButtonShape::Square)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
@@ -261,7 +261,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("wide", IconName::Check)
                                 .shape(IconButtonShape::Wide)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                     ],
@@ -274,7 +274,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("small", IconName::Check)
                                 .icon_size(IconSize::XSmall)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
@@ -282,7 +282,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("small", IconName::Check)
                                 .icon_size(IconSize::Small)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
@@ -290,7 +290,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("medium", IconName::Check)
                                 .icon_size(IconSize::Medium)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
@@ -298,7 +298,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("xlarge", IconName::Check)
                                 .icon_size(IconSize::XLarge)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                     ],
@@ -311,7 +311,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("disabled", IconName::Check)
                                 .disabled(true)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
@@ -319,7 +319,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("selected", IconName::Check)
                                 .toggle_state(true)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
@@ -327,7 +327,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("indicator", IconName::Check)
                                 .indicator(Indicator::dot().color(Color::Success))
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                     ],
@@ -340,7 +340,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("custom_color", IconName::Check)
                                 .icon_color(Color::Accent)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                         single_example(
@@ -348,7 +348,7 @@ impl ComponentPreview for IconButton {
                             IconButton::new("alpha", IconName::Check)
                                 .alpha(0.5)
                                 .style(ButtonStyle::Filled)
-                                .elevation(Elevation::Background)
+                                .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
                     ],

@@ -5,7 +5,7 @@ use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
 use ui::{
-    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, Context, Elevation,
+    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex,
     FluentBuilder, Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement,
     Label, Modal, ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window,
 };
@@ -187,7 +187,7 @@ impl Render for DisconnectedOverlay {
                                 .child(
                                     Button::new("close-window", "Close Window")
                                         .style(ButtonStyle::Filled)
-                                        .elevation(Elevation::ModalSurface)
+                                        .layer(ElevationIndex::ModalSurface)
                                         .on_click(cx.listener(move |_, _, window, _| {
                                             window.remove_window();
                                         })),
@@ -196,7 +196,7 @@ impl Render for DisconnectedOverlay {
                                     el.child(
                                         Button::new("reconnect", "Reconnect")
                                             .style(ButtonStyle::Filled)
-                                            .elevation(Elevation::ModalSurface)
+                                            .layer(ElevationIndex::ModalSurface)
                                             .icon(IconName::ArrowCircle)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(Self::handle_reconnect)),
