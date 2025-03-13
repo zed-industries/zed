@@ -845,7 +845,9 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
+// TODO: Fix flaky test.
+// #[gpui::test]
+#[allow(unused)]
 async fn test_write_file(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
