@@ -48,7 +48,7 @@ fn main() {
 
     let crate_dir = PathBuf::from("../zed-agent-bench");
     let evaluation_data_dir = crate_dir.join("evaluation_data");
-    let repos_dir = crate_dir.join("repos");
+    let repos_dir = crate_dir.join("repos").canonicalize().unwrap();
 
     let all_evals = std::fs::read_dir(&evaluation_data_dir)
         .unwrap()
@@ -171,8 +171,7 @@ async fn run_eval(
     cx: AsyncApp,
 ) -> anyhow::Result<(EvalOutput, String)> {
     let eval_path = evaluation_data_dir.join(eval_name).canonicalize()?;
-    let repo_path = repos_dir.canonicalize()?.join(eval_name);
-    let eval = Eval::load(&eval_path, &repo_path, Some(SYSTEM_PROMPT.to_string()))?;
+    let eval = Eval::load(&eval_path, &repos_dir, Some(SYSTEM_PROMPT.to_string()))?;
     let judge = Judge::load(&eval_path, judge_model)?;
     let eval_output = cx.update(|cx| eval.run(app_state, model, cx))?.await?;
     let output_dir = Path::new(evaluation_data_dir);

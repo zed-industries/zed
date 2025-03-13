@@ -39,17 +39,18 @@ impl Eval {
     /// if necessary.
     pub fn load(
         eval_path: &Path,
-        repo_path: &Path,
+        repos_dir: &Path,
         system_prompt: Option<String>,
     ) -> anyhow::Result<Self> {
         let user_query = std::fs::read_to_string(eval_path.join("prompt.txt"))?;
         let setup_contents = std::fs::read_to_string(eval_path.join("setup.json"))?;
         let setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
 
-        checkout_repo(&setup, repo_path)?;
+        let repo_path = repos_dir.join(repo_dir_name(&setup.url));
+        checkout_repo(&setup, &repo_path)?;
 
         Ok(Eval {
-            repo_path: repo_path.to_path_buf(),
+            repo_path,
             system_prompt,
             user_query,
         })
@@ -182,6 +183,10 @@ impl EvalOutput {
 
         Ok(eval_output_dir)
     }
+
+fn repo_dir_name(url: &str) -> String {
+    url.trim_start_matches("https://")
+        .replace(|c: char| !c.is_alphanumeric(), "_")
 }
 
 fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Result<()> {
