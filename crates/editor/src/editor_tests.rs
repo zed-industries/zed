@@ -16410,8 +16410,15 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| {
+        #[cfg(not(target_os = "windows"))]
         let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
             "keymaps/default-linux.json",
+            cx,
+        )
+        .unwrap();
+        #[cfg(target_os = "windows")]
+        let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+            "keymaps/default-windows.json",
             cx,
         )
         .unwrap();

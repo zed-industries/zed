@@ -115,7 +115,12 @@ impl Keystroke {
                             break;
                         } else if next.len() > 1 && next.starts_with('>') {
                             // key = Some(String::from(component));
-                            key = KeyCodes::parse(component).log_err();
+                            if let Some((result_key, result_shift)) =
+                                KeyCodes::parse(component).log_err()
+                            {
+                                key = Some(result_key);
+                                shift = result_shift;
+                            }
                             key_char = Some(String::from(&next[1..]));
                             components.next();
                         } else {
@@ -125,7 +130,12 @@ impl Keystroke {
                         }
                     } else {
                         // key = Some(String::from(component));
-                        key = KeyCodes::parse(component).log_err();
+                        if let Some((result_key, result_shift)) =
+                            KeyCodes::parse(component).log_err()
+                        {
+                            key = Some(result_key);
+                            shift = result_shift;
+                        }
                     }
                 }
             }

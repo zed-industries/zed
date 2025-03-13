@@ -380,7 +380,7 @@ impl Eq for KeyPosition {}
 
 impl KeyCodes {
     /// input is standard US English layout key
-    pub fn parse(input: &str) -> anyhow::Result<Self> {
+    pub fn parse(input: &str) -> anyhow::Result<(Self, bool)> {
         let map_result = match input {
             "UnImplemented" | "Unknown" => Self::Unknown,
             "fn" => Self::Function,
@@ -458,7 +458,7 @@ impl KeyCodes {
             "y" => KeyCodes::Y,
             "z" => KeyCodes::Z,
             "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
-            // VirtualKeyCode::App => "UnImplemented", // TODO: Chrome use this as Fn key
+            "menu" => KeyCodes::App, // TODO: Chrome use this as Fn key
             // VirtualKeyCode::Sleep => "UnImplemented",
             // VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: Handle numpad keys
             // VirtualKeyCode::Numpad1 => "UnImplemented",
@@ -508,8 +508,8 @@ impl KeyCodes {
             // VirtualKeyCode::RightControl => "control", // TODO:
             // VirtualKeyCode::LeftAlt => "alt", // TODO:
             // VirtualKeyCode::RightAlt => "alt", // TODO:
-            // VirtualKeyCode::BrowserBack => "UnImplemented",
-            // VirtualKeyCode::BrowserForward => "UnImplemented",
+            "back" => KeyCodes::BrowserBack,
+            "forward" => KeyCodes::BrowserForward,
             // VirtualKeyCode::BrowserRefresh => "UnImplemented",
             // VirtualKeyCode::BrowserStop => "UnImplemented",
             // VirtualKeyCode::BrowserSearch => "UnImplemented",
@@ -549,6 +549,27 @@ impl KeyCodes {
             // VirtualKeyCode::Zoom => "UnImplemented",
             // VirtualKeyCode::PA1 => "UnImplemented",
             // VirtualKeyCode::OEMClear => "UnImplemented",
+            "~" => return Ok((KeyCodes::Tilde, true)),
+            "!" => return Ok((KeyCodes::Digital1, true)),
+            "@" => return Ok((KeyCodes::Digital2, true)),
+            "#" => return Ok((KeyCodes::Digital3, true)),
+            "$" => return Ok((KeyCodes::Digital4, true)),
+            "%" => return Ok((KeyCodes::Digital5, true)),
+            "^" => return Ok((KeyCodes::Digital6, true)),
+            "&" => return Ok((KeyCodes::Digital7, true)),
+            "*" => return Ok((KeyCodes::Digital8, true)),
+            "(" => return Ok((KeyCodes::Digital9, true)),
+            ")" => return Ok((KeyCodes::Digital0, true)),
+            "_" => return Ok((KeyCodes::Minus, true)),
+            "+" => return Ok((KeyCodes::Plus, true)),
+            "{" => return Ok((KeyCodes::LeftBracket, true)),
+            "}" => return Ok((KeyCodes::RightBracket, true)),
+            "|" => return Ok((KeyCodes::Backslash, true)),
+            ":" => return Ok((KeyCodes::Semicolon, true)),
+            "\"" => return Ok((KeyCodes::Quote, true)),
+            "<" => return Ok((KeyCodes::Comma, true)),
+            ">" => return Ok((KeyCodes::Period, true)),
+            "?" => return Ok((KeyCodes::Slash, true)),
             _ => KeyCodes::Unknown,
         };
         if map_result == KeyCodes::Unknown {
@@ -556,7 +577,7 @@ impl KeyCodes {
                 "Error parsing keystroke to virtual keycode: {input}"
             ))
         } else {
-            Ok(map_result)
+            Ok((map_result, false))
         }
     }
 
@@ -641,7 +662,7 @@ impl KeyCodes {
             KeyCodes::Z => "z",
             // TODO: handle position
             KeyCodes::Platform(_) => "win",
-            KeyCodes::App => "UnImplemented", // TODO: Chrome use this as Fn key
+            KeyCodes::App => "menu", // TODO: Chrome use this as Fn key
             KeyCodes::Sleep => "UnImplemented",
             KeyCodes::Numpad0 => "UnImplemented", // TODO: handle numpad key
             KeyCodes::Numpad1 => "UnImplemented",
@@ -685,8 +706,8 @@ impl KeyCodes {
             KeyCodes::F24 => "f24",
             KeyCodes::NumLock => "UnImplemented",
             KeyCodes::ScrollLock => "UnImplemented",
-            KeyCodes::BrowserBack => "UnImplemented",
-            KeyCodes::BrowserForward => "UnImplemented",
+            KeyCodes::BrowserBack => "back",
+            KeyCodes::BrowserForward => "forward",
             KeyCodes::BrowserRefresh => "UnImplemented",
             KeyCodes::BrowserStop => "UnImplemented",
             KeyCodes::BrowserSearch => "UnImplemented",

@@ -433,27 +433,28 @@ fn handle_char_msg(
         return Some(1);
     };
     println!("parse_char_msg_keystroke {:#?}", keystroke);
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
-    let key_char = keystroke.key_char.clone();
-    let event = KeyDownEvent {
-        keystroke,
-        is_held: lparam.0 & (0x1 << 30) > 0,
-    };
-    let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+    // let mut lock = state_ptr.state.borrow_mut();
+    // let Some(mut func) = lock.callbacks.input.take() else {
+    //     return Some(1);
+    // };
+    // drop(lock);
+    // let key_char = keystroke.key_char.clone();
+    // let event = KeyDownEvent {
+    //     keystroke,
+    //     is_held: lparam.0 & (0x1 << 30) > 0,
+    // };
+    // let dispatch_event_result = func(PlatformInput::KeyDown(event));
+    // state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
-        return Some(0);
-    }
-    let Some(ime_char) = key_char else {
-        return Some(1);
-    };
+    // if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
+    //     return Some(0);
+    // }
+    // let Some(ime_char) = key_char else {
+    //     return Some(1);
+    // };
+
     with_input_handler(&state_ptr, |input_handler| {
-        input_handler.replace_text_in_range(None, &ime_char);
+        input_handler.replace_text_in_range(None, &keystroke);
     });
 
     Some(0)
@@ -1260,9 +1261,13 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
     }
 }
 
-fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
-    None
-    // let first_char = char::from_u32((wparam.0 as u16).into())?;
+fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<String> {
+    let first_char = char::from_u32((wparam.0 as u16).into())?;
+    if first_char.is_control() {
+        None
+    } else {
+        Some(first_char.to_string())
+    }
     // if first_char.is_control() {
     //     None
     // } else {
