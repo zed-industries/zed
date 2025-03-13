@@ -360,12 +360,19 @@ impl ExcerptBoundary {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ExpandInfo {
+    pub direction: ExpandExcerptDirection,
+    pub excerpt_id: ExcerptId,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
+    pub expand_info: Option<ExpandInfo>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -438,6 +445,7 @@ pub struct DiffTransformSummary {
 pub struct MultiBufferRows<'a> {
     point: Point,
     is_empty: bool,
+    is_singleton: bool,
     cursor: MultiBufferCursor<'a, Point>,
 }
 
@@ -4034,6 +4042,7 @@ impl MultiBufferSnapshot {
         let mut result = MultiBufferRows {
             point: Point::new(0, 0),
             is_empty: self.excerpts.is_empty(),
+            is_singleton: self.is_singleton(),
             cursor,
         };
         result.seek(start_row);
@@ -6216,6 +6225,22 @@ where
         self.cached_region.clone()
     }
 
+    fn is_at_start_of_excerpt(&mut self) -> bool {
+        if self.diff_transforms.start().1 > *self.excerpts.start() {
+            return false;
+        } else if self.diff_transforms.start().1 < *self.excerpts.start() {
+            return true;
+        }
+
+        self.diff_transforms.prev(&());
+        let prev_transform = self.diff_transforms.item();
+        self.diff_transforms.next(&());
+
+        prev_transform.map_or(true, |next_transform| {
+            matches!(next_transform, DiffTransform::BufferContent { .. })
+        })
+    }
+
     fn is_at_end_of_excerpt(&mut self) -> bool {
         if self.diff_transforms.end(&()).1 < self.excerpts.end(&()) {
             return false;
@@ -7092,6 +7117,7 @@ impl Iterator for MultiBufferRows<'_> {
                 buffer_row: Some(0),
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
+                expand_info: None,
             });
         }
 
@@ -7103,7 +7129,6 @@ impl Iterator for MultiBufferRows<'_> {
             } else {
                 if self.point == self.cursor.diff_transforms.end(&()).0 .0 {
                     let multibuffer_row = MultiBufferRow(self.point.row);
-                    self.point += Point::new(1, 0);
                     let last_excerpt = self
                         .cursor
                         .excerpts
@@ -7115,11 +7140,43 @@ impl Iterator for MultiBufferRows<'_> {
                         .end
                         .to_point(&last_excerpt.buffer)
                         .row;
+
+                    let first_row = last_excerpt
+                        .range
+                        .context
+                        .start
+                        .to_point(&last_excerpt.buffer)
+                        .row;
+
+                    let expand_info = if self.is_singleton {
+                        None
+                    } else {
+                        let needs_expand_up = first_row == last_row
+                            && last_row > 0
+                            && !region.diff_hunk_status.is_some_and(|d| d.is_deleted());
+                        let needs_expand_down = last_row < last_excerpt.buffer.max_point().row;
+
+                        if needs_expand_up && needs_expand_down {
+                            Some(ExpandExcerptDirection::UpAndDown)
+                        } else if needs_expand_up {
+                            Some(ExpandExcerptDirection::Up)
+                        } else if needs_expand_down {
+                            Some(ExpandExcerptDirection::Down)
+                        } else {
+                            None
+                        }
+                        .map(|direction| ExpandInfo {
+                            direction,
+                            excerpt_id: last_excerpt.id,
+                        })
+                    };
+                    self.point += Point::new(1, 0);
                     return Some(RowInfo {
                         buffer_id: Some(last_excerpt.buffer_id),
                         buffer_row: Some(last_row),
                         multibuffer_row: Some(multibuffer_row),
                         diff_status: None,
+                        expand_info,
                     });
                 } else {
                     return None;
@@ -7129,6 +7186,41 @@ impl Iterator for MultiBufferRows<'_> {
 
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
+        // dbg!(
+        //     buffer_point.row,
+        //     region.range.end.column,
+        //     self.point.row,
+        //     region.range.end.row,
+        //     self.cursor.is_at_end_of_excerpt(),
+        //     region.buffer.max_point().row
+        // );
+        let expand_info = if self.is_singleton {
+            None
+        } else {
+            let needs_expand_up = self.point.row == region.range.start.row
+                && self.cursor.is_at_start_of_excerpt()
+                && buffer_point.row > 0;
+            let needs_expand_down = (region.excerpt.has_trailing_newline
+                && self.point.row + 1 == region.range.end.row
+                || !region.excerpt.has_trailing_newline && self.point.row == region.range.end.row)
+                && self.cursor.is_at_end_of_excerpt()
+                && buffer_point.row < region.buffer.max_point().row;
+
+            if needs_expand_up && needs_expand_down {
+                Some(ExpandExcerptDirection::UpAndDown)
+            } else if needs_expand_up {
+                Some(ExpandExcerptDirection::Up)
+            } else if needs_expand_down {
+                Some(ExpandExcerptDirection::Down)
+            } else {
+                None
+            }
+            .map(|direction| ExpandInfo {
+                direction,
+                excerpt_id: region.excerpt.id,
+            })
+        };
+
         let result = Some(RowInfo {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
@@ -7136,6 +7228,7 @@ impl Iterator for MultiBufferRows<'_> {
             diff_status: region
                 .diff_hunk_status
                 .filter(|_| self.point < region.range.end),
+            expand_info,
         });
         self.point += Point::new(1, 0);
         result

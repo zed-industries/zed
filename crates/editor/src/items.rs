@@ -129,13 +129,8 @@ impl FollowableItem for Editor {
                 });
 
                 cx.new(|cx| {
-                    let mut editor = Editor::for_multibuffer(
-                        multibuffer,
-                        Some(project.clone()),
-                        true,
-                        window,
-                        cx,
-                    );
+                    let mut editor =
+                        Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
                     editor.remote_id = Some(remote_id);
                     editor
                 })
