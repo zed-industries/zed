@@ -23,7 +23,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &EditTool, window, cx| {
-            let viewer = cx.new(|cx| EditToolLogViewer::new(cx));
+            let viewer = cx.new(EditToolLogViewer::new);
             workspace.add_item_to_active_pane(Box::new(viewer), None, true, window, cx)
         });
     })
@@ -156,7 +156,7 @@ impl EditToolLogViewer {
                     }
                 },
             ),
-            expanded_edits: HashSet::new(),
+            expanded_edits: HashSet::default(),
             _subscription: subscription,
         }
     }
@@ -327,7 +327,7 @@ impl EditToolLogViewer {
                     .border_t_0()
                     .border_color(cx.theme().colors().border)
                     .rounded_b_md()
-                    .children(content.into_iter())
+                    .children(content)
                     .into_any()
             } else {
                 Empty.into_any()
@@ -384,7 +384,7 @@ impl Item for EditToolLogViewer {
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self::new(cx)))
+        Some(cx.new(Self::new))
     }
 }
 

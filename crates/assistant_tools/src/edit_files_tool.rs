@@ -75,10 +75,10 @@ impl Tool for EditFilesTool {
                 cx.spawn(|mut cx| async move {
                     let result = task.await;
 
-                    let str_result = result
-                        .as_ref()
-                        .map(|out| out.clone())
-                        .map_err(|err| err.to_string());
+                    let str_result = match &result {
+                        Ok(out) => Ok(out.clone()),
+                        Err(err) => Err(err.to_string()),
+                    };
 
                     log.update(&mut cx, |log, cx| {
                         log.set_tool_output(req_id, str_result, cx)
