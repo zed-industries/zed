@@ -7,8 +7,9 @@ use gpui::{App, AsyncApp, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use regex::Regex;
+use serde_json::json;
 use smol::fs::{self};
 use std::fmt::Display;
 use std::{
@@ -18,6 +19,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::merge_json_value_into;
 use util::{fs::remove_matching, maybe, ResultExt};
 
 use crate::language_settings::language_settings;
@@ -453,6 +455,29 @@ impl LspAdapter for RustLspAdapter {
             text: text[display_range].to_string(),
             filter_range,
         })
+    }
+
+    fn prepare_initialize_params(
+        &self,
+        mut original: InitializeParams,
+    ) -> Result<InitializeParams> {
+        let experimental = json!({
+            "commands": {
+                "commands": [
+                    "rust-analyzer.runSingle",
+                    "rust-analyzer.showReferences",
+                    "rust-analyzer.gotoLocation",
+                    "rust-analyzer.triggerParameterHints",
+                    "rust-analyzer.rename",
+                ],
+            },
+        });
+        if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
+        }
+        Ok(original)
     }
 }
 

@@ -3184,7 +3184,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
-        let range = snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end);
+        let range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
         let code_lens_actions = self
             .lsp_store
             .update(cx, |lsp_store, cx| lsp_store.code_lens(buffer_handle, cx));
@@ -3195,11 +3195,11 @@ impl Project {
                 range
                     .start
                     .cmp(&code_lens_action.range.start, &snapshot)
-                    .is_le()
+                    .is_ge()
                     && range
                         .end
                         .cmp(&code_lens_action.range.end, &snapshot)
-                        .is_ge()
+                        .is_le()
             });
             Ok(code_lens_actions)
         })
