@@ -1557,6 +1557,13 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
+    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
+        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
+            return None;
+        };
+        Some(&self.diagnostics[idx].1)
+    }
+
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
