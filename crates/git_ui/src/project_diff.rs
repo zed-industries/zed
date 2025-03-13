@@ -278,7 +278,7 @@ impl ProjectDiff {
                     has_staged_hunks = true;
                     has_unstaged_hunks = true;
                 }
-                DiffHunkSecondaryStatus::None
+                DiffHunkSecondaryStatus::NoSecondaryHunk
                 | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
                     has_staged_hunks = true;
                 }
