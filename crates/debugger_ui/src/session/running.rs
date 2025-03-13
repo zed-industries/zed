@@ -62,7 +62,6 @@ impl Render for RunningState {
         });
 
         let is_terminated = self.session.read(cx).is_terminated();
-        let is_stopped = matches!(thread_status, ThreadStatus::Stopped);
         let active_thread_item = &self.active_thread_item;
 
         let has_no_threads = threads.is_empty();
@@ -386,12 +385,16 @@ impl RunningState {
             cx.observe(&module_list, |_, _, cx| cx.notify()),
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {
-                    SessionEvent::Stopped(_) => {
+                    SessionEvent::Stopped(thread_id) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
                                 workspace.open_panel::<crate::DebugPanel>(window, cx);
                             })
                             .log_err();
+
+                        if let Some(thread_id) = thread_id {
+                            this.select_thread(*thread_id, cx);
+                        }
                     }
                     SessionEvent::Threads => {
                         let threads = this.session.update(cx, |this, cx| this.threads(cx));

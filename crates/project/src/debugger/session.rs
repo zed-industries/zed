@@ -814,13 +814,15 @@ impl Session {
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
-        // todo(debugger): We should query for all threads here if we don't get a thread id
-        // maybe in both cases too?
-        if event.all_threads_stopped.unwrap_or_default() {
+        if event.all_threads_stopped.unwrap_or_default() || event.thread_id.is_none() {
             self.thread_states.stop_all_threads();
 
             self.invalidate_command_type::<StackTraceCommand>();
-        } else if let Some(thread_id) = event.thread_id {
+        }
+
+        // Event if we stopped all threads we still need to insert the thread_id
+        // to our own data
+        if let Some(thread_id) = event.thread_id {
             self.thread_states.stop_thread(ThreadId(thread_id));
 
             self.invalidate_state(
@@ -833,13 +835,15 @@ impl Session {
             );
         }
 
-        // todo(debugger): We should see if we could only invalidate the thread that stopped
-        // instead of everything right now.
-
         self.invalidate_generic();
         self.threads.clear();
         self.variables.clear();
-        cx.emit(SessionEvent::Stopped(event.thread_id.map(Into::into)));
+        cx.emit(SessionEvent::Stopped(
+            event
+                .thread_id
+                .map(Into::into)
+                .filter(|_| !event.preserve_focus_hint.unwrap_or(false)),
+        ));
         cx.notify();
     }
 
@@ -859,6 +863,7 @@ impl Session {
                     self.thread_states
                         .continue_thread(ThreadId(event.thread_id));
                 }
+                // todo(debugger): We should be able to get away with only invalidating generic if all threads were continued
                 self.invalidate_generic();
             }
             Events::Exited(_event) => {
