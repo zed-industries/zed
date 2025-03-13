@@ -19,8 +19,10 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
+use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
 use util::ResultExt as _;
+use workspace::{notifications::NotificationId, Toast};
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
@@ -513,9 +515,37 @@ impl ActiveThread {
         &mut self,
         is_positive: bool,
         thread_id: String,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Show a toast notification to confirm feedback was received
+        let message = if is_positive {
+            "Positive feedback recorded. Thank you!"
+        } else {
+            "Negative feedback recorded. Thank you for helping us improve!"
+        };
+
+        // Create a notification ID specific to feedback type
+        struct PositiveFeedback;
+        struct NegativeFeedback;
+
+        // Show the toast notification with appropriate ID
+        if let Some(workspace) = window.root::<workspace::Workspace>().flatten() {
+            workspace.update(cx, |workspace, cx| {
+                let id = if is_positive {
+                    NotificationId::unique::<PositiveFeedback>()
+                } else {
+                    NotificationId::unique::<NegativeFeedback>()
+                };
+
+                // Create toast with message and autohide
+                let toast = Toast::new(id, message).autohide();
+
+                // Show the toast
+                workspace.show_toast(toast, cx);
+            });
+        }
+
         // Capture the thread entity for use in the async operation
         let thread = self.thread.clone();
 
