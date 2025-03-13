@@ -121,42 +121,87 @@ impl Thread {
             .into_iter()
             .map(|worktree_handle| {
                 let worktree_clone = worktree_handle.clone();
-                cx.spawn(move |_, mut cx| {
+                cx.spawn(move |_, cx| {
                     async move {
-                        let worktree = worktree_clone.read(&cx);
-                        let worktree_path = worktree.abs_path().to_string_lossy().to_string();
+                        // We need to use cx.update to get App context for Entity.read
+                        // Use a safe pattern with if let to handle possible errors
+                        let mut worktree_path = String::new();
+                        let mut git_state = None;
 
-                        // Get git information
-                        let git_state = if let Some(repository) = worktree.git_repository() {
-                            // Get remote URL (typically from 'origin')
-                            let remote_url = repository.remote_url("origin");
+                        if let Ok((path, snapshot)) = cx.update(|app_cx| {
+                            let worktree = worktree_clone.read(app_cx);
+                            let path = worktree.abs_path().to_string_lossy().to_string();
+                            let snapshot = worktree.snapshot();
+                            (path, snapshot)
+                        }) {
+                            worktree_path = path;
 
-                            // Get the current HEAD commit SHA
-                            let head_sha = repository.head_sha();
+                            // Get git information
+                            git_state = {
+                                // Get the first repository entry (if any exists)
+                                if let Some(repo_entry) = snapshot.repositories().first() {
+                                    // Get the branch information if available
+                                    let current_branch =
+                                        repo_entry.branch().map(|branch| branch.name.to_string());
 
-                            // Get current branch name
-                            let current_branch =
-                                worktree.branch().map(|branch| branch.name.to_string());
+                                    // Now we need to get to a LocalWorktree to access the repo
+                                    if let Ok(repo_info) = cx.update(|app_cx| {
+                                        let worktree = worktree_clone.read(app_cx);
 
-                            // Fetch diff asynchronously
-                            let diff = match repository
-                                .diff(git::repository::DiffType::HeadToWorktree, &cx)
-                            {
-                                Ok(diff_future) => {
-                                    // Await the diff future
-                                    diff_future.await.ok()
+                                        // Only works for local worktrees
+                                        let local_worktree = match &worktree {
+                                            project::Worktree::Local(local) => Some(local),
+                                            _ => None,
+                                        };
+
+                                        // Try to get a local repo entry and the repository
+                                        if let Some(local_worktree) = local_worktree {
+                                            if let Some(local_repo) =
+                                                local_worktree.get_local_repo(repo_entry)
+                                            {
+                                                let repo = local_repo.repo();
+
+                                                // Get remote URL (typically from 'origin')
+                                                let remote_url = repo.remote_url("origin");
+
+                                                // Get the current HEAD commit SHA
+                                                let head_sha = repo.head_sha();
+
+                                                // Return info for use outside this scope
+                                                Some((remote_url, head_sha, repo.clone()))
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }) {
+                                        if let Some((remote_url, head_sha, repository)) = repo_info
+                                        {
+                                            // Fetch diff asynchronously - this returns a boxed future
+                                            let diff_future = repository.diff(
+                                                git::repository::DiffType::HeadToWorktree,
+                                                cx,
+                                            );
+                                            // Await the future to get the diff text
+                                            let diff = diff_future.await.ok();
+
+                                            Some(GitState {
+                                                remote_url,
+                                                head_sha,
+                                                current_branch,
+                                                diff,
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
                                 }
-                                Err(_) => None,
-                            };
-
-                            Some(GitState {
-                                remote_url,
-                                head_sha,
-                                current_branch,
-                                diff,
-                            })
-                        } else {
-                            None
+                            }
                         };
 
                         WorktreeSnapshot {
@@ -175,18 +220,21 @@ impl Thread {
                 let worktree_snapshots_futures = futures::future::join_all(worktree_tasks);
                 let worktree_snapshots = worktree_snapshots_futures.await;
 
-                // Get unsaved buffers
+                // Get unsaved buffers synchronously by updating into App context
                 let mut unsaved_buffers = Vec::new();
-                let buffer_store = project.read(&cx).buffer_store();
-                for buffer_handle in buffer_store.read(&cx).buffers() {
-                    let buffer = buffer_handle.read(&cx);
-                    if buffer.is_dirty() {
-                        if let Some(file) = buffer.file() {
-                            let path = file.path().to_string_lossy().to_string();
-                            unsaved_buffers.push(path);
+                cx.update(|app_cx| {
+                    let buffer_store = project.read(app_cx).buffer_store();
+                    for buffer_handle in buffer_store.read(app_cx).buffers() {
+                        let buffer = buffer_handle.read(app_cx);
+                        if buffer.is_dirty() {
+                            if let Some(file) = buffer.file() {
+                                let path = file.path().to_string_lossy().to_string();
+                                unsaved_buffers.push(path);
+                            }
                         }
                     }
-                }
+                })
+                .ok();
 
                 ProjectSnapshot {
                     worktree_snapshots,
@@ -212,26 +260,51 @@ impl Thread {
             let worktree_path = worktree.abs_path().to_string_lossy().to_string();
 
             // Get the git repository for the worktree if available
-            let git_state = worktree.git_repository().map(|repository| {
-                // Get remote URL (typically from 'origin')
-                let remote_url = repository.remote_url("origin");
+            let git_state = {
+                // Get the worktree snapshot to access repositories
+                let snapshot = worktree.snapshot();
 
-                // Get the current HEAD commit SHA
-                let head_sha = repository.head_sha();
+                // Get the first repository (if any exists)
+                if let Some(repo_entry) = snapshot.repositories().first() {
+                    // Get the branch information if available
+                    let current_branch = repo_entry.branch().map(|branch| branch.name.to_string());
 
-                // Get current branch name
-                let current_branch = worktree.branch().map(|branch| branch.name.to_string());
+                    // Only works for local worktrees
+                    let local_worktree = match &worktree {
+                        project::Worktree::Local(local) => Some(local),
+                        _ => None,
+                    };
 
-                // Diff is set to None here since we're not doing async work in this synchronous version
-                let diff = None;
+                    // Try to get a local repo entry and the repository
+                    if let Some(local_worktree) = local_worktree {
+                        if let Some(local_repo) = local_worktree.get_local_repo(repo_entry) {
+                            let repository = local_repo.repo();
 
-                GitState {
-                    remote_url,
-                    head_sha,
-                    current_branch,
-                    diff,
+                            // Get remote URL (typically from 'origin')
+                            let remote_url = repository.remote_url("origin");
+
+                            // Get the current HEAD commit SHA
+                            let head_sha = repository.head_sha();
+
+                            // Diff is set to None here since we're not doing async work in this synchronous version
+                            let diff = None;
+
+                            Some(GitState {
+                                remote_url,
+                                head_sha,
+                                current_branch,
+                                diff,
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
-            });
+            };
 
             worktree_snapshots.push(WorktreeSnapshot {
                 worktree_path,
@@ -270,7 +343,7 @@ impl Thread {
         let snapshot_task = Self::start_project_snapshot(project.clone(), cx);
 
         // Create a thread instance with initial_project_snapshot set to None
-        let mut thread = Self {
+        let thread = Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
             summary: None,
