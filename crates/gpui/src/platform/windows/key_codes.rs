@@ -379,9 +379,8 @@ impl PartialEq for KeyPosition {
 impl Eq for KeyPosition {}
 
 impl KeyCodes {
-    /// input is standard US English layout key
-    pub fn parse(input: &str) -> anyhow::Result<(Self, bool)> {
-        let map_result = match input {
+    fn basic_parse(input: &str) -> Option<Self> {
+        Some(match input {
             "UnImplemented" | "Unknown" => Self::Unknown,
             "fn" => Self::Function,
             "cancel" => Self::Cancel,
@@ -421,16 +420,9 @@ impl KeyCodes {
             "insert" => KeyCodes::Insert,
             "delete" => KeyCodes::Delete,
             // VirtualKeyCode::Help => "UnImplemented",
-            "0" => KeyCodes::Digital0,
-            "1" => KeyCodes::Digital1,
-            "2" => KeyCodes::Digital2,
-            "3" => KeyCodes::Digital3,
-            "4" => KeyCodes::Digital4,
-            "5" => KeyCodes::Digital5,
-            "6" => KeyCodes::Digital6,
-            "7" => KeyCodes::Digital7,
-            "8" => KeyCodes::Digital8,
-            "9" => KeyCodes::Digital9,
+            "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
+            "menu" => KeyCodes::App, // TODO: Chrome use this as Fn key
+            // VirtualKeyCode::Sleep => "UnImplemented",
             "a" => KeyCodes::A,
             "b" => KeyCodes::B,
             "c" => KeyCodes::C,
@@ -457,9 +449,6 @@ impl KeyCodes {
             "x" => KeyCodes::X,
             "y" => KeyCodes::Y,
             "z" => KeyCodes::Z,
-            "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
-            "menu" => KeyCodes::App, // TODO: Chrome use this as Fn key
-            // VirtualKeyCode::Sleep => "UnImplemented",
             // VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: Handle numpad keys
             // VirtualKeyCode::Numpad1 => "UnImplemented",
             // VirtualKeyCode::Numpad2 => "UnImplemented",
@@ -526,17 +515,6 @@ impl KeyCodes {
             // VirtualKeyCode::LaunchMediaSelect => "UnImplemented",
             // VirtualKeyCode::LaunchApp1 => "UnImplemented",
             // VirtualKeyCode::LaunchApp2 => "UnImplemented",
-            ";" => KeyCodes::Semicolon,
-            "=" => KeyCodes::Plus,
-            "," => KeyCodes::Comma,
-            "-" => KeyCodes::Minus,
-            "." => KeyCodes::Period,
-            "/" => KeyCodes::Slash,
-            "`" => KeyCodes::Tilde,
-            "[" => KeyCodes::LeftBracket,
-            "\\" => KeyCodes::Backslash,
-            "]" => KeyCodes::RightBracket,
-            "'" => KeyCodes::Quote,
             // VirtualKeyCode::OEM8 => "UnImplemented",
             // VirtualKeyCode::OEM102 => "UnImplemented",
             // VirtualKeyCode::ProcessKey => "UnImplemented",
@@ -549,36 +527,88 @@ impl KeyCodes {
             // VirtualKeyCode::Zoom => "UnImplemented",
             // VirtualKeyCode::PA1 => "UnImplemented",
             // VirtualKeyCode::OEMClear => "UnImplemented",
-            "~" => return Ok((KeyCodes::Tilde, true)),
-            "!" => return Ok((KeyCodes::Digital1, true)),
-            "@" => return Ok((KeyCodes::Digital2, true)),
-            "#" => return Ok((KeyCodes::Digital3, true)),
-            "$" => return Ok((KeyCodes::Digital4, true)),
-            "%" => return Ok((KeyCodes::Digital5, true)),
-            "^" => return Ok((KeyCodes::Digital6, true)),
-            "&" => return Ok((KeyCodes::Digital7, true)),
-            "*" => return Ok((KeyCodes::Digital8, true)),
-            "(" => return Ok((KeyCodes::Digital9, true)),
-            ")" => return Ok((KeyCodes::Digital0, true)),
-            "_" => return Ok((KeyCodes::Minus, true)),
-            "+" => return Ok((KeyCodes::Plus, true)),
-            "{" => return Ok((KeyCodes::LeftBracket, true)),
-            "}" => return Ok((KeyCodes::RightBracket, true)),
-            "|" => return Ok((KeyCodes::Backslash, true)),
-            ":" => return Ok((KeyCodes::Semicolon, true)),
-            "\"" => return Ok((KeyCodes::Quote, true)),
-            "<" => return Ok((KeyCodes::Comma, true)),
-            ">" => return Ok((KeyCodes::Period, true)),
-            "?" => return Ok((KeyCodes::Slash, true)),
-            _ => KeyCodes::Unknown,
-        };
-        if map_result == KeyCodes::Unknown {
-            Err(anyhow::anyhow!(
-                "Error parsing keystroke to virtual keycode: {input}"
-            ))
-        } else {
-            Ok((map_result, false))
+            _ => return None,
+        })
+    }
+    /// input is standard US English layout key
+    pub fn parse(input: &str) -> anyhow::Result<(Self, bool)> {
+        if let Some(key) = Self::basic_parse(input) {
+            return Ok((key, false));
         }
+        match input {
+            "0" => Ok((KeyCodes::Digital0, false)),
+            "1" => Ok((KeyCodes::Digital1, false)),
+            "2" => Ok((KeyCodes::Digital2, false)),
+            "3" => Ok((KeyCodes::Digital3, false)),
+            "4" => Ok((KeyCodes::Digital4, false)),
+            "5" => Ok((KeyCodes::Digital5, false)),
+            "6" => Ok((KeyCodes::Digital6, false)),
+            "7" => Ok((KeyCodes::Digital7, false)),
+            "8" => Ok((KeyCodes::Digital8, false)),
+            "9" => Ok((KeyCodes::Digital9, false)),
+            ";" => Ok((KeyCodes::Semicolon, false)),
+            "=" => Ok((KeyCodes::Plus, false)),
+            "," => Ok((KeyCodes::Comma, false)),
+            "-" => Ok((KeyCodes::Minus, false)),
+            "." => Ok((KeyCodes::Period, false)),
+            "/" => Ok((KeyCodes::Slash, false)),
+            "`" => Ok((KeyCodes::Tilde, false)),
+            "[" => Ok((KeyCodes::LeftBracket, false)),
+            "\\" => Ok((KeyCodes::Backslash, false)),
+            "]" => Ok((KeyCodes::RightBracket, false)),
+            "'" => Ok((KeyCodes::Quote, false)),
+            "~" => Ok((KeyCodes::Tilde, true)),
+            "!" => Ok((KeyCodes::Digital1, true)),
+            "@" => Ok((KeyCodes::Digital2, true)),
+            "#" => Ok((KeyCodes::Digital3, true)),
+            "$" => Ok((KeyCodes::Digital4, true)),
+            "%" => Ok((KeyCodes::Digital5, true)),
+            "^" => Ok((KeyCodes::Digital6, true)),
+            "&" => Ok((KeyCodes::Digital7, true)),
+            "*" => Ok((KeyCodes::Digital8, true)),
+            "(" => Ok((KeyCodes::Digital9, true)),
+            ")" => Ok((KeyCodes::Digital0, true)),
+            "_" => Ok((KeyCodes::Minus, true)),
+            "+" => Ok((KeyCodes::Plus, true)),
+            "{" => Ok((KeyCodes::LeftBracket, true)),
+            "}" => Ok((KeyCodes::RightBracket, true)),
+            "|" => Ok((KeyCodes::Backslash, true)),
+            ":" => Ok((KeyCodes::Semicolon, true)),
+            "\"" => Ok((KeyCodes::Quote, true)),
+            "<" => Ok((KeyCodes::Comma, true)),
+            ">" => Ok((KeyCodes::Period, true)),
+            "?" => Ok((KeyCodes::Slash, true)),
+            _ => Err(anyhow::anyhow!(
+                "Error parsing keystroke to virtual keycode: {input}"
+            )),
+        }
+    }
+
+    /// TODO:
+    pub fn parse_char(input: &str) -> anyhow::Result<(Self, bool, bool, bool)> {
+        if let Some(key) = Self::basic_parse(input) {
+            return Ok((key, false, false, false));
+        }
+        if input.chars().count() != 1 {
+            return Err(anyhow::anyhow!(
+                "Error parsing keystroke to virtual keycode (char based): {input}"
+            ));
+        }
+        let ch = input.chars().next().unwrap();
+        let result = unsafe { VkKeyScanW(ch as u16) };
+        if result == -1 {
+            return Err(anyhow::anyhow!(
+                "Error parsing keystroke to virtual keycode (char based): {input}"
+            ));
+        }
+        let high = (result >> 8) as u8;
+        let low = result as u8;
+        let shift = high & 1;
+        let ctrl = high & 2;
+        let alt = high & 8;
+        let this = VIRTUAL_KEY(low as u16).into();
+        println!("==> parse_char: {input} -> {this:?}, shift: {shift}, ctrl: {ctrl}, alt: {alt}");
+        Ok((this, shift != 0, ctrl != 0, alt != 0))
     }
 
     /// TODO:

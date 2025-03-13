@@ -83,7 +83,10 @@ impl Keystroke {
     /// key_char syntax is only used for generating test events,
     /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
-    pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
+    pub fn parse(
+        source: &str,
+        char_based_matching: bool,
+    ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
         let mut alt = false;
         let mut shift = false;
@@ -115,11 +118,22 @@ impl Keystroke {
                             break;
                         } else if next.len() > 1 && next.starts_with('>') {
                             // key = Some(String::from(component));
-                            if let Some((result_key, result_shift)) =
-                                KeyCodes::parse(component).log_err()
-                            {
-                                key = Some(result_key);
-                                shift = result_shift;
+                            if char_based_matching {
+                                if let Some((result_key, result_shift, result_ctrl, result_alt)) =
+                                    KeyCodes::parse_char(component).log_err()
+                                {
+                                    key = Some(result_key);
+                                    shift |= result_shift;
+                                    control |= result_ctrl;
+                                    alt |= result_alt;
+                                }
+                            } else {
+                                if let Some((result_key, result_shift)) =
+                                    KeyCodes::parse(component).log_err()
+                                {
+                                    key = Some(result_key);
+                                    shift |= result_shift;
+                                }
                             }
                             key_char = Some(String::from(&next[1..]));
                             components.next();
@@ -130,11 +144,22 @@ impl Keystroke {
                         }
                     } else {
                         // key = Some(String::from(component));
-                        if let Some((result_key, result_shift)) =
-                            KeyCodes::parse(component).log_err()
-                        {
-                            key = Some(result_key);
-                            shift = result_shift;
+                        if char_based_matching {
+                            if let Some((result_key, result_shift, result_ctrl, result_alt)) =
+                                KeyCodes::parse_char(component).log_err()
+                            {
+                                key = Some(result_key);
+                                shift |= result_shift;
+                                control |= result_ctrl;
+                                alt |= result_alt;
+                            }
+                        } else {
+                            if let Some((result_key, result_shift)) =
+                                KeyCodes::parse(component).log_err()
+                            {
+                                key = Some(result_key);
+                                shift |= result_shift;
+                            }
                         }
                     }
                 }
@@ -560,5 +585,17 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Keystroke;
+
+    #[test]
+    fn test_basic_keystroke_parse() {
+        let input = "shift-pageup";
+        let keystroke = Keystroke::parse(input, false).unwrap();
+        println!("Keystroke: {:?}", keystroke);
     }
 }

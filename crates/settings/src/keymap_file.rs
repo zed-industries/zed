@@ -262,6 +262,7 @@ impl KeymapFile {
                         action,
                         context_predicate.clone(),
                         key_equivalents,
+                        *use_key_equivalents,
                         cx,
                     );
                     match result {
@@ -321,6 +322,7 @@ impl KeymapFile {
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
+        use_key_equivalents: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
@@ -384,7 +386,13 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(keystrokes, action, context, key_equivalents) {
+        let key_binding = match KeyBinding::load(
+            keystrokes,
+            action,
+            context,
+            key_equivalents,
+            use_key_equivalents,
+        ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
                 return Err(format!(

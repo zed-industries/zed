@@ -30,7 +30,7 @@ impl KeyBinding {
         } else {
             None
         };
-        Self::load(keystrokes, Box::new(action), context_predicate, None).unwrap()
+        Self::load(keystrokes, Box::new(action), context_predicate, None, false).unwrap()
     }
 
     /// Load a keybinding from the given raw data.
@@ -39,10 +39,11 @@ impl KeyBinding {
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
+        use_key_equivalents: bool,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
+            .map(|input| Keystroke::parse(input, !use_key_equivalents))
             .collect::<std::result::Result<_, _>>()?;
 
         // if let Some(equivalents) = key_equivalents {
@@ -54,6 +55,17 @@ impl KeyBinding {
         //         }
         //     }
         // }
+        if use_key_equivalents {
+            // if let Some(equivalents) = key_equivalents {
+            //     for keystroke in keystrokes.iter_mut() {
+            //         if keystroke.key.chars().count() == 1 {
+            //             if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
+            //                 keystroke.key = key.to_string();
+            //             }
+            //         }
+            //     }
+            // }
+        }
 
         Ok(Self {
             keystrokes,
