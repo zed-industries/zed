@@ -245,18 +245,8 @@ impl Settings for WorkspaceSettings {
 
     type FileContent = WorkspaceSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self> {
-        let settings = sources.json_merge::<WorkspaceSettings>();
-
-        if let Ok(settings) = &settings {
-            if settings.use_system_prompts {
-                ui_prompt::deactivate(cx);
-            } else {
-                ui_prompt::activate(cx);
-            }
-        }
-
-        settings
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        sources.json_merge()
     }
 }
 

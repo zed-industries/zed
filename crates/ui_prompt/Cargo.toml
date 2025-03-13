@@ -21,3 +21,4 @@ menu.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+workspace.workspace = true

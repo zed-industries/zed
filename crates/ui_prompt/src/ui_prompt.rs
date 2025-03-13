@@ -4,28 +4,29 @@ use gpui::{
     Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window,
 };
 use markdown::{Markdown, MarkdownStyle};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use theme::ThemeSettings;
 use ui::{
     h_flex, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
     FluentBuilder, LabelSize, StyledExt, TintColor,
 };
+use workspace::WorkspaceSettings;
 
-/// Use Zed's built-in prompt system instead of the default/system provided one.
-pub fn activate(cx: &mut App) {
-    cx.set_prompt_builder(zed_prompt_renderer);
+pub fn init(cx: &mut App) {
+    process_settings(cx);
+
+    cx.observe_global::<SettingsStore>(process_settings)
+        .detach();
 }
 
-/// Deactivate Zed's built-in prompt system, reverting to the default/system provided one.
-/// Note that on Linux and FreeBSD, Zed's prompt system is built-in and cannot be deactivated,
-/// as there isn't a system provided prompt.
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-pub fn deactivate(cx: &mut App) {
-    cx.reset_prompt_builder();
+fn process_settings(cx: &mut App) {
+    let settings = WorkspaceSettings::get_global(cx);
+    if settings.use_system_prompts && cfg!(not(any(target_os = "linux", target_os = "freebsd"))) {
+        cx.reset_prompt_builder();
+    } else {
+        cx.set_prompt_builder(zed_prompt_renderer);
+    }
 }
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub fn deactivate(_cx: &mut App) {}
 
 /// Use this function in conjunction with [App::set_prompt_builder] to force
 /// GPUI to use the internal prompt system.
