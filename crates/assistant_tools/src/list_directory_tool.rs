@@ -12,10 +12,10 @@ pub struct ListDirectoryToolInput {
     /// The relative path of the directory to list.
     ///
     /// This path should never be absolute, and the first component
-    /// of the path should always be a top-level directory in a project.
+    /// of the path should always be a root directory in a project.
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - directory1
     /// - directory2
@@ -24,7 +24,7 @@ pub struct ListDirectoryToolInput {
     /// </example>
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - foo
     /// - bar
@@ -72,8 +72,18 @@ impl Tool for ListDirectoryTool {
             return Task::ready(Err(anyhow!("Directory not found in the project")));
         };
         let path = input.path.strip_prefix(worktree_root_name).unwrap();
+        let worktree = worktree.read(cx);
+
+        let Some(entry) = worktree.entry_for_path(path) else {
+            return Task::ready(Err(anyhow!("Path not found: {}", input.path.display())));
+        };
+
+        if !entry.is_dir() {
+            return Task::ready(Err(anyhow!("{} is a file.", input.path.display())));
+        }
+
         let mut output = String::new();
-        for entry in worktree.read(cx).child_entries(path) {
+        for entry in worktree.child_entries(path) {
             writeln!(
                 output,
                 "{}",
@@ -82,6 +92,9 @@ impl Tool for ListDirectoryTool {
                     .display(),
             )
             .unwrap();
+        }
+        if output.is_empty() {
+            return Task::ready(Ok(format!("{} is empty.", input.path.display())));
         }
         Task::ready(Ok(output))
     }

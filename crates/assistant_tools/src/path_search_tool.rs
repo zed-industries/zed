@@ -13,7 +13,7 @@ pub struct PathSearchToolInput {
     /// The glob to search all project paths for.
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - directory1/a/something.txt
     /// - directory2/a/things.txt

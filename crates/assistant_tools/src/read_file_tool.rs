@@ -14,10 +14,10 @@ pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
     /// This path should never be absolute, and the first component
-    /// of the path should always be a top-level directory in a project.
+    /// of the path should always be a root directory in a project.
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - directory1
     /// - directory2
