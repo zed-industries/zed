@@ -8,7 +8,7 @@ use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, Task};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
 use project::{search::SearchQuery, Project};
@@ -152,12 +152,24 @@ impl EditToolRequest {
         };
 
         let mut messages = messages.to_vec();
-        if let Some(last_message) = messages.last_mut() {
-            // Strip out tool use from the last message because we're in the middle of executing a tool call.
-            last_message
-                .content
-                .retain(|content| !matches!(content, language_model::MessageContent::ToolUse(_)))
+
+        // Remove the last tool use (this run) to prevent an invalid request
+        'outer: for message in messages.iter_mut().rev() {
+            for (index, content) in message.content.iter().enumerate().rev() {
+                match content {
+                    MessageContent::ToolUse(_) => {
+                        message.content.remove(index);
+                        break 'outer;
+                    }
+                    MessageContent::ToolResult(_) => {
+                        // If we find any tool results before a tool use, the request is already valid
+                        break 'outer;
+                    }
+                    MessageContent::Text(_) | MessageContent::Image(_) => {}
+                }
+            }
         }
+
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
