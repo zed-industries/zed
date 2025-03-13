@@ -36,11 +36,11 @@ use language_model::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsStore};
+use settings::{EditableSettingControl, Settings, SettingsStore};
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use ui::{prelude::*, ContextMenu, DropdownMenu, Icon, IconName, List, Tooltip};
+use ui::{prelude::*, ContextMenu, ContextMenuEntry, DropdownMenu, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
 use crate::AllLanguageModelSettings;
@@ -64,8 +64,8 @@ pub struct AmazonBedrockSettings {
     pub authentication_method: Option<BedrockAuthMethod>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr)]
-enum BedrockAuthMethod {
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
+pub enum BedrockAuthMethod {
     #[serde(rename = "named_profile")]
     NamedProfile,
     #[serde(rename = "static_credentials")]
@@ -150,10 +150,13 @@ impl State {
         &mut self,
         auth_method: BedrockAuthMethod,
         cx: &mut Context<Self>,
-    ) {
-        self.settings.as_mut().map(|settings| {
-            settings.authentication_method = Some(auth_method);
-        });
+    ) -> Task<()> {
+        cx.spawn(|this, mut cx| {
+            this.update(&mut cx, |this, cx| {
+                this.settings.as_mut().unwrap().authentication_method = Some(auth_method); // safe unwrap
+                cx.notify();
+            })
+        })
     }
 
     fn is_authenticated(&self) -> bool {
@@ -804,6 +807,23 @@ struct ConfigurationView {
     load_credentials_task: Option<Task<()>>,
 }
 
+// impl EditableSettingControl for ConfigurationView {
+//     type Value = BedrockAuthMethod;
+//     type Settings = AmazonBedrockSettings;
+// 
+//     fn name(&self) -> SharedString {
+//         "Bedrock".into()
+//     }
+// 
+//     fn read(cx: &App) -> Self::Value {
+//         let settings = AmazonBedrockSettings::get_global(cx);
+//     }
+// 
+//     fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value, cx: &App) {
+//         todo!()
+//     }
+// }
+
 impl ConfigurationView {
     const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "XXXXXXXXXXXXXXXX";
     const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str =
@@ -951,7 +971,6 @@ impl ConfigurationView {
     }
 
     fn make_input_styles(&self, cx: &Context<Self>) -> Div {
-        let env_var_set = self.state.read(cx).credentials_from_env;
         let bg_color = cx.theme().colors().editor_background;
         let border_color = cx.theme().colors().border_variant;
 
@@ -1040,11 +1059,9 @@ impl ConfigurationView {
     }
 }
 
-impl Render for ConfigurationView {
+impl RenderOnce for ConfigurationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).credentials_from_env;
-        let bg_color = cx.theme().colors().editor_background;
-        let border_color = cx.theme().colors().border_variant;
 
         // Handle loading state
         if self.load_credentials_task.is_some() {
@@ -1092,9 +1109,7 @@ impl Render for ConfigurationView {
         // Map of auth method render functions
         let auth_method_ui = match authentication_method {
             BedrockAuthMethod::NamedProfile => self.render_named_profile_ui(cx),
-            BedrockAuthMethod::StaticCredentials => {
-                self.render_static_credentials_ui(cx)
-            }
+            BedrockAuthMethod::StaticCredentials => self.render_static_credentials_ui(cx),
             BedrockAuthMethod::SingleSignOn => self.render_sso_ui(),
             BedrockAuthMethod::Automatic => self.render_automatic_ui(),
         };
@@ -1151,31 +1166,31 @@ impl ConfigurationView {
         cx: &mut Context<Self>,
         current_method: BedrockAuthMethod,
     ) -> impl IntoElement {
+        let context_menu = ContextMenu::build(window, cx, |mut menu, _, _| {
+            for method in BedrockAuthMethod::iter() {
+                let bedrock_string: &'static str = method.clone().into();
+                let state = self.state.clone();
+                menu = menu.custom_entry(
+                    move |_, _| Label::new(bedrock_string).into_any_element(),
+                    move |_, cx| state.update(cx, |state, cx| {
+                        let owned_method = method.clone();
+                        state.set_authentication_method(owned_method, cx);
+                        cx.notify();
+                    }),
+                );
+            }
+            menu
+        });
+
         DropdownMenu::new(
-            "aws-auth-provider",
+            "aws-auth-selector",
             <BedrockAuthMethod as Into<&'static str>>::into(current_method),
-            ContextMenu::build(window, cx, |mut menu, _, _| {
-                for value in BedrockAuthMethod::iter() {
-                    let bedrock_string: &'static str = value.clone().into();
-                    let held_value = value.clone();
-                    menu = menu.custom_entry(
-                        { move |_window, _| Label::new(bedrock_string).into_any_element() },
-                        {
-                            move |_, cx| {
-                                self.state.update(cx, |state, cx| {
-                                    state.set_authentication_method(held_value.clone(), cx)
-                                })
-                            }
-                        },
-                    )
-                }
-                menu
-            }),
+            context_menu,
         )
     }
 
     // Render UI for Named Profile auth method
-    fn render_named_profile_ui(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_named_profile_ui(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex().my_2().gap_1p5().child(
             v_flex()
                 .gap_0p5()
@@ -1184,14 +1199,14 @@ impl ConfigurationView {
                     self.make_input_styles(cx)
                         .child(self.render_profile_name_editor(cx)),
                 ),
-        )
+        ).into_any_element()
     }
 
     // Render UI for Static Credentials auth method
     fn render_static_credentials_ui(
         &self,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         v_flex()
             .my_2()
             .gap_1p5()
@@ -1212,26 +1227,26 @@ impl ConfigurationView {
                         self.make_input_styles(cx)
                             .child(self.render_sk_editor(cx)),
                     ),
-            )
+            ).into_any_element()
     }
 
     // Render UI for SSO auth method
-    fn render_sso_ui(&self) -> impl IntoElement {
+    fn render_sso_ui(&self) -> AnyElement {
         InstructionListItem::text_only(
             "Single Sign-On configuration will use credentials from your AWS SSO session",
-        )
+        ).into_any_element()
     }
 
     // Render UI for Automatic auth method
-    fn render_automatic_ui(&self) -> impl IntoElement {
-        InstructionListItem::text_only("AWS will automatically discover credentials from environment variables, IAM roles, or EC2 instance profiles")
+    fn render_automatic_ui(&self) -> AnyElement {
+        InstructionListItem::text_only("AWS will automatically discover credentials from environment variables, IAM roles, or EC2 instance profiles").into_any_element()
     }
 
     // Render common fields for all auth methods
     fn render_common_fields(
         &self,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         v_flex()
             .my_2()
             .gap_1p5()
@@ -1246,6 +1261,6 @@ impl ConfigurationView {
                     .gap_0p5()
                     .child(Label::new("Endpoint (Optional)").size(LabelSize::Small))
                     .child(self.make_input_styles(cx).child(self.render_endpoint_editor(cx))),
-            )
+            ).into_any_element()
     }
 }

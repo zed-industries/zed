@@ -72,6 +72,7 @@ pub struct AllLanguageModelSettings {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
@@ -156,6 +157,15 @@ pub enum VersionedAnthropicSettingsContent {
 pub struct AnthropicSettingsContentV1 {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::anthropic::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct AmazonBedrockSettingsContent {
+    available_models: Option<Vec<provider::bedrock::AvailableModel>>,
+    api_url: Option<String>,
+    region: Option<String>,
+    profile: Option<String>,
+    authentication_method: Option<provider::bedrock::BedrockAuthMethod>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -293,6 +303,19 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.anthropic.available_models,
                 anthropic.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // Bedrock
+            let bedrock = value.bedrock.clone();
+            merge(
+
+                &mut settings.bedrock.profile_name,
+                bedrock.as_ref().and_then(|s| Some(s.profile.clone())),
+            );
+            merge(
+
+                &mut settings.bedrock.authentication_method,
+                bedrock.as_ref().and_then(|s| Some(s.authentication_method.clone())),
             );
 
             // Ollama
