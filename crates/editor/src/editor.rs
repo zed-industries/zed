@@ -1358,7 +1358,10 @@ impl Editor {
             project,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
-            show_scrollbars: true,
+            show_scrollbars: match mode {
+                EditorMode::AutoHeight { .. } | EditorMode::SingleLine { .. } => false,
+                EditorMode::Full => true,
+            },
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
@@ -16776,7 +16779,8 @@ fn wrap_with_prefix(
         is_whitespace,
     } in tokenizer
     {
-        if current_line_len + grapheme_len > wrap_column && current_line_len != line_prefix_len {
+        if (current_line_len + grapheme_len) > wrap_column && (current_line_len != line_prefix_len)
+        {
             wrapped_text.push_str(current_line.trim_end());
             wrapped_text.push('\n');
             current_line.truncate(line_prefix.len());

@@ -35,6 +35,7 @@ use gpui::{
     Transformation, UniformListScrollHandle, WeakEntity,
 };
 use itertools::Itertools;
+use language::language_settings::SoftWrap;
 use language::{Buffer, File};
 use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
@@ -368,6 +369,8 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
     commit_editor.set_hard_wrap(Some(72), cx);
+    commit_editor.set_soft_wrap_mode(SoftWrap::None, cx);
+    commit_editor.set_show_scrollbars(true, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message");
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor

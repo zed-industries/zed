@@ -45,7 +45,7 @@ use inline_completion::Direction;
 use itertools::Itertools;
 use language::{
     language_settings::{
-        IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
+        self, IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
     ChunkRendererContext,
@@ -1308,7 +1308,8 @@ impl EditorElement {
         );
 
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-        let show_scrollbars = self.editor.read(cx).show_scrollbars
+        let editor_show_scrollbars = self.editor.read(cx).show_scrollbars;
+        let show_scrollbars = editor_show_scrollbars
             && match scrollbar_settings.show {
                 ShowScrollbar::Auto => {
                     let editor = self.editor.read(cx);
@@ -1338,10 +1339,11 @@ impl EditorElement {
                 ShowScrollbar::Always => true,
                 ShowScrollbar::Never => false,
             };
-
         let axes: AxisPair<bool> = scrollbar_settings.axes.into();
 
-        if snapshot.mode != EditorMode::Full {
+        if snapshot.mode == EditorMode::Full
+            || matches!(snapshot.mode, EditorMode::AutoHeight { .. }) && editor_show_scrollbars
+        {
             return axis_pair(None, None);
         }
 
@@ -7701,7 +7703,7 @@ struct ColoredRange<T> {
     color: Hsla,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_range: Range<f32>,
@@ -8276,8 +8278,15 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if editor.set_wrap_width(Some(editor_width), cx) {
-        snapshot = editor.snapshot(window, cx);
+
+    let soft_wrap_disabled = editor
+        .soft_wrap_mode_override
+        .is_some_and(|soft_wrap| matches!(soft_wrap, language_settings::SoftWrap::None));
+
+    if !soft_wrap_disabled {
+        if editor.set_wrap_width(Some(editor_width), cx) {
+            snapshot = editor.snapshot(window, cx);
+        }
     }
 
     let scroll_height = Pixels::from(snapshot.max_point().row().next_row().0) * line_height;
