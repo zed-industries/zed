@@ -456,13 +456,8 @@ impl AssistantPanel {
 
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
-                        let mut editor = Editor::for_multibuffer(
-                            buffer,
-                            Some(project.clone()),
-                            true,
-                            window,
-                            cx,
-                        );
+                        let mut editor =
+                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                         editor.set_breadcrumb_header(thread_summary);
                         editor
                     })),
