@@ -767,54 +767,60 @@ impl Element for MarkdownElement {
                                     ElementId::NamedInteger("copy-markdown-code".into(), range.end);
                                 let was_copied =
                                     self.markdown.read(cx).copied_code_blocks.contains(&id);
-                                let copy_button = div().absolute().top_1().right_1().w_5().child(
-                                    IconButton::new(
-                                        id.clone(),
-                                        if was_copied {
-                                            IconName::Check
-                                        } else {
-                                            IconName::Copy
-                                        },
-                                    )
+                                
+                                // Create a container for both buttons
+                                let buttons_container = div().absolute().top_1().right_1().h_flex().gap_1();
+                                
+                                // Copy button
+                                let copy_button = IconButton::new(
+                                    id.clone(),
+                                    if was_copied { IconName::Check } else { IconName::Copy },
+                                )
+                                .icon_color(Color::Muted)
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Copy Code"))
+                                .on_click({
+                                    let id = id.clone();
+                                    let markdown = self.markdown.clone();
+                                    let code = without_fences(
+                                        parsed_markdown.source()[range.clone()].trim(),
+                                    ).to_string();
+                                    move |_event, _window, cx| {
+                                        let id = id.clone();
+                                        markdown.update(cx, |this, cx| {
+                                            this.copied_code_blocks.insert(id.clone());
+
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                code.clone(),
+                                            ));
+
+                                            cx.spawn(|this, cx| async move {
+                                                cx.background_executor()
+                                                    .timer(Duration::from_secs(2))
+                                                    .await;
+
+                                                cx.update(|cx| {
+                                                    this.update(cx, |this, cx| {
+                                                        this.copied_code_blocks.remove(&id);
+                                                        cx.notify();
+                                                    })
+                                                })
+                                                .ok();
+                                            })
+                                            .detach();
+                                        });
+                                    }
+                                });
+                                
+                                // Run button
+                                let run_id = ElementId::NamedInteger("run-markdown-code".into(), range.end);
+                                let run_button = IconButton::new(run_id, IconName::Play)
                                     .icon_color(Color::Muted)
                                     .shape(ui::IconButtonShape::Square)
-                                    .tooltip(Tooltip::text("Copy Code"))
-                                    .on_click({
-                                        let id = id.clone();
-                                        let markdown = self.markdown.clone();
-                                        let code = without_fences(
-                                            parsed_markdown.source()[range.clone()].trim(),
-                                        )
-                                        .to_string();
-                                        move |_event, _window, cx| {
-                                            let id = id.clone();
-                                            markdown.update(cx, |this, cx| {
-                                                this.copied_code_blocks.insert(id.clone());
-
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    code.clone(),
-                                                ));
-
-                                                cx.spawn(|this, cx| async move {
-                                                    cx.background_executor()
-                                                        .timer(Duration::from_secs(2))
-                                                        .await;
-
-                                                    cx.update(|cx| {
-                                                        this.update(cx, |this, cx| {
-                                                            this.copied_code_blocks.remove(&id);
-                                                            cx.notify();
-                                                        })
-                                                    })
-                                                    .ok();
-                                                })
-                                                .detach();
-                                            });
-                                        }
-                                    }),
-                                );
-
-                                el.child(copy_button)
+                                    .tooltip(Tooltip::text("Run Code"));
+                                    
+                                // Add both buttons to the container and return it
+                                el.child(buttons_container.child(copy_button).child(run_button))
                             });
                         }
 

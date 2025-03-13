@@ -439,8 +439,11 @@ fn initialize_panels(
         let is_assistant2_enabled = if cfg!(test) {
             false
         } else {
-            assistant2_feature_flag.await
+            // Force enable assistant2 feature flag
+            true // assistant2_feature_flag.await
         };
+
+        println!("ASSISTANT DEBUG: Using assistant2 = {}", is_assistant2_enabled);
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
             log::info!("[assistant2-debug] initializing Assistant2");
