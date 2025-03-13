@@ -200,7 +200,7 @@ impl Thread {
     }
 
     pub fn is_streaming(&self) -> bool {
-        !self.pending_completions.is_empty()
+        !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
