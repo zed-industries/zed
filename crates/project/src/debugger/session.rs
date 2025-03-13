@@ -818,22 +818,26 @@ impl Session {
         // maybe in both cases too?
         if event.all_threads_stopped.unwrap_or_default() {
             self.thread_states.stop_all_threads();
-        }
 
-        if let Some(thread_id) = event.thread_id {
+            self.invalidate_command_type::<StackTraceCommand>();
+        } else if let Some(thread_id) = event.thread_id {
             self.thread_states.stop_thread(ThreadId(thread_id));
-        } else if event.all_threads_stopped.is_none() {
-            // TODO(debugger): all threads should be stopped
+
+            self.invalidate_state(
+                &StackTraceCommand {
+                    thread_id,
+                    start_frame: None,
+                    levels: None,
+                }
+                .into(),
+            );
         }
 
         // todo(debugger): We should see if we could only invalidate the thread that stopped
         // instead of everything right now.
 
-        self.threads
-            .values_mut()
-            .for_each(|thread| thread.stack_frame_ids.clear());
-
         self.invalidate_generic();
+        self.threads.clear();
         self.variables.clear();
         cx.emit(SessionEvent::Stopped(event.thread_id.map(Into::into)));
         cx.notify();
@@ -1058,6 +1062,7 @@ impl Session {
 
                 this.invalidate_command_type::<StackTraceCommand>();
                 cx.emit(SessionEvent::Threads);
+                cx.notify();
             },
             cx,
         );

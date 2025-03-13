@@ -167,11 +167,10 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
             .as_running()
             .unwrap()
             .update(cx, |running_state, cx| {
-                running_state.select_first_thread(
+                running_state.select_current_thread(
                     &running_state
                         .session()
                         .update(cx, |session, cx| session.threads(cx)),
-                    window,
                     cx,
                 );
             });
@@ -355,11 +354,10 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             .as_running()
             .unwrap()
             .update(cx, |running_state, cx| {
-                running_state.select_first_thread(
+                running_state.select_current_thread(
                     &running_state
                         .session()
                         .update(cx, |session, cx| session.threads(cx)),
-                    window,
                     cx,
                 );
             });
@@ -728,11 +726,10 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             .as_running()
             .unwrap()
             .update(cx, |running_state, cx| {
-                running_state.select_first_thread(
+                running_state.select_current_thread(
                     &running_state
                         .session()
                         .update(cx, |session, cx| session.threads(cx)),
-                    window,
                     cx,
                 );
             });

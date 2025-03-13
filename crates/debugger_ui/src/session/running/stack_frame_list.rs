@@ -66,13 +66,9 @@ impl StackFrameList {
         );
 
         let _subscription =
-            cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
-                SessionEvent::Stopped(_) => {
-                    this.invalidate = true;
-                }
-                SessionEvent::StackTrace => {
-                    this.invalidate = true;
-                    cx.notify();
+            cx.subscribe_in(&session, window, |this, _, event, _, cx| match event {
+                SessionEvent::Stopped(_) | SessionEvent::StackTrace | SessionEvent::Threads => {
+                    this.refresh(cx);
                 }
                 _ => {}
             });
@@ -500,6 +496,7 @@ impl Render for StackFrameList {
         if self.invalidate {
             self.build_entries(self.entries.is_empty(), window, cx);
             self.invalidate = false;
+            cx.notify();
         }
 
         div()

@@ -44,7 +44,7 @@ pub struct RunningState {
 impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
-        self.select_first_thread(&threads, window, cx);
+        self.select_current_thread(&threads, cx);
 
         let thread_status = self
             .thread_id
@@ -263,19 +263,15 @@ impl Render for RunningState {
                                             for (thread, _) in threads {
                                                 let state = state.clone();
                                                 let thread_id = thread.id;
-                                                this = this.entry(
-                                                    thread.name,
-                                                    None,
-                                                    move |window, cx| {
+                                                this =
+                                                    this.entry(thread.name, None, move |_, cx| {
                                                         state.update(cx, |state, cx| {
                                                             state.select_thread(
                                                                 ThreadId(thread_id),
-                                                                window,
                                                                 cx,
                                                             );
                                                         });
-                                                    },
-                                                );
+                                                    });
                                             }
                                             this
                                         }),
@@ -387,33 +383,19 @@ impl RunningState {
         });
 
         let _subscriptions = vec![
-            cx.subscribe(
-                &stack_frame_list,
-                move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
-                    StackFrameListEvent::SelectedStackFrameChanged(_) => this.clear_highlights(cx),
-                },
-            ),
             cx.observe(&module_list, |_, _, cx| cx.notify()),
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {
-                    SessionEvent::Stopped(thread_id) => {
+                    SessionEvent::Stopped(_) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
                                 workspace.open_panel::<crate::DebugPanel>(window, cx);
                             })
                             .log_err();
-
-                        if let Some(thread_id) = thread_id {
-                            this.select_thread(*thread_id, window, cx);
-                        }
                     }
                     SessionEvent::Threads => {
-                        if let Some(thread_id) = this.thread_id {
-                            this.select_thread(thread_id, window, cx);
-                        } else {
-                            let threads = this.session.update(cx, |this, cx| this.threads(cx));
-                            this.select_first_thread(&threads, window, cx);
-                        }
+                        let threads = this.session.update(cx, |this, cx| this.threads(cx));
+                        this.select_current_thread(&threads, cx);
                     }
                     _ => {}
                 }
@@ -489,48 +471,36 @@ impl RunningState {
         self.session().read(cx).capabilities().clone()
     }
 
-    pub fn select_first_thread(
+    pub fn select_current_thread(
         &mut self,
         threads: &Vec<(Thread, ThreadStatus)>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.thread_id.is_some() {
-            return;
-        }
+        let selected_thread = self
+            .thread_id
+            .and_then(|thread_id| threads.iter().find(|(thread, _)| thread.id == thread_id.0))
+            .or_else(|| threads.first());
 
-        if let Some((thread, _)) = threads.first() {
-            self.select_thread(ThreadId(thread.id), window, cx);
+        let Some((selected_thread, _)) = selected_thread else {
+            return;
+        };
+
+        if Some(ThreadId(selected_thread.id)) != self.thread_id {
+            self.select_thread(ThreadId(selected_thread.id), cx);
         }
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_thread_id(&self) -> Option<ThreadId> {
+        self.thread_id
+    }
+
+    fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
             .update(cx, |list, cx| list.refresh(cx));
         cx.notify();
-    }
-
-    fn clear_highlights(&self, _cx: &mut Context<Self>) {
-        // TODO(debugger): make this work again
-        // if let Some((_, project_path, _)) = self.dap_store.read(cx).active_debug_line() {
-        //     self.workspace
-        //         .update(cx, |workspace, cx| {
-        //             let editor = workspace
-        //                 .items_of_type::<Editor>(cx)
-        //                 .find(|editor| Some(project_path.clone()) == editor.project_path(cx));
-
-        //             if let Some(editor) = editor {
-        //                 editor.update(cx, |editor, cx| {
-        //                     editor.clear_row_highlights::<editor::DebugCurrentRowHighlight>();
-
-        //                     cx.notify();
-        //                 });
-        //             }
-        //         })
-        //         .ok();
-        // }
     }
 
     fn render_entry_button(
