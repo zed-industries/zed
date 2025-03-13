@@ -3,8 +3,8 @@
 pub use gpui::prelude::*;
 pub use gpui::{
     div, px, relative, rems, AbsoluteLength, AnyElement, App, Context, DefiniteLength, Div,
-    Element, ElementId, InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString,
-    Styled, Window,
+    Element, ElementId, Hsla, InteractiveElement, ParentElement, Pixels, Rems, RenderOnce,
+    SharedString, Styled, Window,
 };
 
 pub use component::{
@@ -25,9 +25,9 @@ pub use crate::{h_container, h_flex, v_container, v_flex};
 pub use crate::{
     h_group, h_group_lg, h_group_sm, h_group_xl, v_group, v_group_lg, v_group_sm, v_group_xl,
 };
-pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
-pub use crate::{ButtonCommon, Color};
+pub use crate::{Button, ButtonCommon, ButtonSize, ButtonStyle, IconButton, SelectableButton};
+pub use crate::{Color, Elevation};
 pub use crate::{Headline, HeadlineSize};
 pub use crate::{Icon, IconName, IconPosition, IconSize};
 pub use crate::{Label, LabelCommon, LabelSize, LineHeightStyle};
-pub use theme::ActiveTheme;
+pub use theme::{ActiveTheme, Appearance};
