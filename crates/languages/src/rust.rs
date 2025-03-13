@@ -8,6 +8,7 @@ use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use project::lsp_store::rust_analyzer_ext::EXTRA_SUPPORTED_COMMANDS;
 use regex::Regex;
 use serde_json::json;
 use smol::fs::{self};
@@ -463,13 +464,7 @@ impl LspAdapter for RustLspAdapter {
     ) -> Result<InitializeParams> {
         let experimental = json!({
             "commands": {
-                "commands": [
-                    "rust-analyzer.runSingle",
-                    "rust-analyzer.showReferences",
-                    "rust-analyzer.gotoLocation",
-                    "rust-analyzer.triggerParameterHints",
-                    "rust-analyzer.rename",
-                ],
+                "commands": EXTRA_SUPPORTED_COMMANDS,
             },
         });
         if let Some(ref mut original_experimental) = original.capabilities.experimental {
