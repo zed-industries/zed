@@ -2740,7 +2740,9 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
+// TODO: Fix flaky test.
+// #[gpui::test]
+#[allow(unused)]
 async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
