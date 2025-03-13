@@ -518,31 +518,17 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Show a toast notification to confirm feedback was received
-        let message = if is_positive {
-            "Positive feedback recorded. Thank you!"
-        } else {
-            "Negative feedback recorded. Thank you for helping us improve!"
-        };
-
-        // Create a notification ID specific to feedback type
-        struct PositiveFeedback;
-        struct NegativeFeedback;
-
-        // Show the toast notification with appropriate ID
         if let Some(workspace) = window.root::<workspace::Workspace>().flatten() {
+            let message = if is_positive {
+                "Positive feedback recorded. Thank you!"
+            } else {
+                "Negative feedback recorded. Thank you for helping us improve!"
+            };
+
             workspace.update(cx, |workspace, cx| {
-                let id = if is_positive {
-                    NotificationId::unique::<PositiveFeedback>()
-                } else {
-                    NotificationId::unique::<NegativeFeedback>()
-                };
-
-                // Create toast with message and autohide
-                let toast = Toast::new(id, message).autohide();
-
-                // Show the toast
-                workspace.show_toast(toast, cx);
+                struct ThreadFeedback;
+                let id = NotificationId::unique::<ThreadFeedback>();
+                workspace.show_toast(Toast::new(id, message).autohide(), cx)
             });
         }
 
