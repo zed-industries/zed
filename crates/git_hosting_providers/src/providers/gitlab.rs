@@ -31,15 +31,25 @@ impl Gitlab {
         }
 
         // TODO: detecting self hosted instances by checking whether "gitlab" is in the url or not
-        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
-        // information.
+        // is not very reliable. This is why we've added git.providers to configure custom domains.
+        // See https://github.com/zed-industries/zed/issues/26393 for more information.
         if !host.contains("gitlab") {
             bail!("not a GitLab URL");
         }
 
+        // Call our create_with_domain method for consistency
+        Self::create_with_domain(&host)
+    }
+    
+    /// Create a self-hosted instance with the given domain name
+    pub fn create_with_domain(domain: &str) -> Result<Self> {
+        if domain == "gitlab.com" {
+            bail!("the GitLab instance is not self-hosted");
+        }
+        
         Ok(Self {
             name: "GitLab Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", host))?,
+            base_url: Url::parse(&format!("https://{}", domain))?,
         })
     }
 }
@@ -55,6 +65,20 @@ impl GitHostingProvider for Gitlab {
 
     fn supports_avatars(&self) -> bool {
         false
+    }
+    
+    fn provider_type(&self) -> &'static str {
+        "gitlab"
+    }
+    
+    fn create_self_hosted_instance(&self, domain: &str) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
+        match Gitlab::create_with_domain(domain) {
+            Ok(provider) => Ok(Some(Box::new(provider))),
+            Err(e) => {
+                log::warn!("Failed to create self-hosted GitLab instance: {}", e);
+                Ok(None)
+            }
+        }
     }
 
     fn format_line_number(&self, line: u32) -> String {

@@ -7,19 +7,52 @@ use git::{
     RemoteUrl,
 };
 
-pub struct Bitbucket;
+pub struct Bitbucket {
+    name: String,
+    base_url: Url,
+}
+
+impl Bitbucket {
+    pub fn new() -> Self {
+        Self {
+            name: "Bitbucket".to_string(),
+            base_url: Url::parse("https://bitbucket.org").unwrap(),
+        }
+    }
+    
+    pub fn create_with_domain(domain: &str) -> Result<Self> {
+        Ok(Self {
+            name: "Bitbucket Self-Hosted".to_string(),
+            base_url: Url::parse(&format!("https://{}", domain))?,
+        })
+    }
+}
 
 impl GitHostingProvider for Bitbucket {
     fn name(&self) -> String {
-        "Bitbucket".to_string()
+        self.name.clone()
     }
 
     fn base_url(&self) -> Url {
-        Url::parse("https://bitbucket.org").unwrap()
+        self.base_url.clone()
     }
 
     fn supports_avatars(&self) -> bool {
         false
+    }
+    
+    fn provider_type(&self) -> &'static str {
+        "bitbucket"
+    }
+    
+    fn create_self_hosted_instance(&self, domain: &str) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
+        match Bitbucket::create_with_domain(domain) {
+            Ok(provider) => Ok(Some(Box::new(provider))),
+            Err(e) => {
+                log::warn!("Failed to create self-hosted Bitbucket instance: {}", e);
+                Ok(None)
+            }
+        }
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -34,7 +67,7 @@ impl GitHostingProvider for Bitbucket {
         let url = RemoteUrl::from_str(url).ok()?;
 
         let host = url.host_str()?;
-        if host != "bitbucket.org" {
+        if host != self.base_url.host_str()? {
             return None;
         }
 

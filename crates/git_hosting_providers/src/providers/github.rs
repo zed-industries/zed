@@ -65,60 +65,70 @@ impl Github {
         }
 
         // TODO: detecting self hosted instances by checking whether "github" is in the url or not
-        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
-        // information.
+        // is not very reliable. This is why we've added git.providers to configure custom domains.
+        // See https://github.com/zed-industries/zed/issues/26393 for more information.
         if !host.contains("github") {
             bail!("not a GitHub URL");
         }
 
+        // Call our create_with_domain method for consistency
+        Self::create_with_domain(&host)
+    }
+
+    /// Create a self-hosted instance with the given domain name
+    pub fn create_with_domain(domain: &str) -> Result<Self> {
+        if domain == "github.com" {
+            bail!("the GitHub instance is not self-hosted");
+        }
+
         Ok(Self {
             name: "GitHub Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", host))?,
+            base_url: Url::parse(&format!("https://{}", domain))?,
         })
     }
+}
 
-    async fn fetch_github_commit_author(
-        &self,
-        repo_owner: &str,
-        repo: &str,
-        commit: &str,
-        client: &Arc<dyn HttpClient>,
-    ) -> Result<Option<User>> {
-        let Some(host) = self.base_url.host_str() else {
-            bail!("failed to get host from github base url");
-        };
-        let url = format!("https://api.{host}/repos/{repo_owner}/{repo}/commits/{commit}");
+async fn fetch_github_commit_author(
+    &self,
+    repo_owner: &str,
+    repo: &str,
+    commit: &str,
+    client: &Arc<dyn HttpClient>,
+) -> Result<Option<User>> {
+    let Some(host) = self.base_url.host_str() else {
+        bail!("failed to get host from github base url");
+    };
+    let url = format!("https://api.{host}/repos/{repo_owner}/{repo}/commits/{commit}");
 
-        let mut request = Request::get(&url)
-            .header("Content-Type", "application/json")
-            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+    let mut request = Request::get(&url)
+        .header("Content-Type", "application/json")
+        .follow_redirects(http_client::RedirectPolicy::FollowAll);
 
-        if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
-            request = request.header("Authorization", format!("Bearer {}", github_token));
-        }
-
-        let mut response = client
-            .send(request.body(AsyncBody::default())?)
-            .await
-            .with_context(|| format!("error fetching GitHub commit details at {:?}", url))?;
-
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        if response.status().is_client_error() {
-            let text = String::from_utf8_lossy(body.as_slice());
-            bail!(
-                "status error {}, response: {text:?}",
-                response.status().as_u16()
-            );
-        }
-
-        let body_str = std::str::from_utf8(&body)?;
-
-        serde_json::from_str::<CommitDetails>(body_str)
-            .map(|commit| commit.author)
-            .context("failed to deserialize GitHub commit details")
+    if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+        request = request.header("Authorization", format!("Bearer {}", github_token));
     }
+
+    let mut response = client
+        .send(request.body(AsyncBody::default())?)
+        .await
+        .with_context(|| format!("error fetching GitHub commit details at {:?}", url))?;
+
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
+
+    if response.status().is_client_error() {
+        let text = String::from_utf8_lossy(body.as_slice());
+        bail!(
+            "status error {}, response: {text:?}",
+            response.status().as_u16()
+        );
+    }
+
+    let body_str = std::str::from_utf8(&body)?;
+
+    serde_json::from_str::<CommitDetails>(body_str)
+        .map(|commit| commit.author)
+        .context("failed to deserialize GitHub commit details")
 }
 
 #[async_trait]
@@ -135,6 +145,23 @@ impl GitHostingProvider for Github {
         // Avatars are not supported for self-hosted GitHub instances
         // See tracking issue: https://github.com/zed-industries/zed/issues/11043
         &self.name == "GitHub"
+    }
+
+    fn provider_type(&self) -> &'static str {
+        "github"
+    }
+
+    fn create_self_hosted_instance(
+        &self,
+        domain: &str,
+    ) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
+        match Github::create_with_domain(domain) {
+            Ok(provider) => Ok(Some(Box::new(provider))),
+            Err(e) => {
+                log::warn!("Failed to create self-hosted GitHub instance: {}", e);
+                Ok(None)
+            }
+        }
     }
 
     fn format_line_number(&self, line: u32) -> String {
