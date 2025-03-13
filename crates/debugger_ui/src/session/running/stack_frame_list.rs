@@ -136,6 +136,7 @@ impl StackFrameList {
 
     pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
         self.invalidate = true;
+        self.entries.clear();
         cx.notify();
     }
 
