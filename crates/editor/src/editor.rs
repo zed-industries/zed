@@ -6511,12 +6511,12 @@ impl Editor {
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.key.clone())
+                parent.child(accept_keystroke.key.unparse().to_string())
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
                     Key::new(
-                        util::capitalize(&accept_keystroke.key),
+                        util::capitalize(accept_keystroke.key.unparse()),
                         Some(Color::Default),
                     )
                     .size(Some(IconSize::XSmall.rems().into())),

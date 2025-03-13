@@ -91,7 +91,7 @@ impl KeyBinding {
         match key_icon {
             Some(icon) => KeyIcon::new(icon, color).size(self.size).into_any_element(),
             None => {
-                let key = util::capitalize(&keystroke.key);
+                let key = util::capitalize(keystroke.key.unparse());
                 Key::new(&key, color).size(self.size).into_any_element()
             }
         }
@@ -112,7 +112,7 @@ impl RenderOnce for KeyBinding {
                     self.key_binding
                         .keystrokes()
                         .iter()
-                        .map(|k| k.key.to_string())
+                        .map(|k| k.key.unparse().to_string())
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
@@ -149,25 +149,50 @@ impl RenderOnce for KeyBinding {
 }
 
 fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<IconName> {
-    match keystroke.key.as_str() {
-        "left" => Some(IconName::ArrowLeft),
-        "right" => Some(IconName::ArrowRight),
-        "up" => Some(IconName::ArrowUp),
-        "down" => Some(IconName::ArrowDown),
-        "backspace" => Some(IconName::Backspace),
-        "delete" => Some(IconName::Delete),
-        "return" => Some(IconName::Return),
-        "enter" => Some(IconName::Return),
-        "tab" => Some(IconName::Tab),
-        "space" => Some(IconName::Space),
-        "escape" => Some(IconName::Escape),
-        "pagedown" => Some(IconName::PageDown),
-        "pageup" => Some(IconName::PageUp),
-        "shift" if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
-        "control" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
-        "platform" if platform_style == PlatformStyle::Mac => Some(IconName::Command),
-        "function" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
-        "alt" if platform_style == PlatformStyle::Mac => Some(IconName::Option),
+    // match keystroke.key.as_str() {
+    //     "left" => Some(IconName::ArrowLeft),
+    //     "right" => Some(IconName::ArrowRight),
+    //     "up" => Some(IconName::ArrowUp),
+    //     "down" => Some(IconName::ArrowDown),
+    //     "backspace" => Some(IconName::Backspace),
+    //     "delete" => Some(IconName::Delete),
+    //     "return" => Some(IconName::Return),
+    //     "enter" => Some(IconName::Return),
+    //     "tab" => Some(IconName::Tab),
+    //     "space" => Some(IconName::Space),
+    //     "escape" => Some(IconName::Escape),
+    //     "pagedown" => Some(IconName::PageDown),
+    //     "pageup" => Some(IconName::PageUp),
+    //     "shift" if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+    //     "control" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+    //     "platform" if platform_style == PlatformStyle::Mac => Some(IconName::Command),
+    //     "function" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+    //     "alt" if platform_style == PlatformStyle::Mac => Some(IconName::Option),
+    //     _ => None,
+    // }
+    match keystroke.key {
+        gpui::KeyCodes::Left => Some(IconName::ArrowLeft),
+        gpui::KeyCodes::Right => Some(IconName::ArrowRight),
+        gpui::KeyCodes::Up => Some(IconName::ArrowUp),
+        gpui::KeyCodes::Down => Some(IconName::ArrowDown),
+        gpui::KeyCodes::Backspace => Some(IconName::Backspace),
+        gpui::KeyCodes::Delete => Some(IconName::Delete),
+        // gpui::KeyCodes::Enter => Some(IconName::Return),
+        gpui::KeyCodes::Enter => Some(IconName::Return),
+        gpui::KeyCodes::Tab => Some(IconName::Tab),
+        gpui::KeyCodes::Space => Some(IconName::Space),
+        gpui::KeyCodes::Escape => Some(IconName::Escape),
+        gpui::KeyCodes::PageDown => Some(IconName::PageDown),
+        gpui::KeyCodes::PageUp => Some(IconName::PageUp),
+        gpui::KeyCodes::Shift(_) if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+        gpui::KeyCodes::Control(_) if platform_style == PlatformStyle::Mac => {
+            Some(IconName::Control)
+        }
+        gpui::KeyCodes::Platform(_) if platform_style == PlatformStyle::Mac => {
+            Some(IconName::Command)
+        }
+        gpui::KeyCodes::Function if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        gpui::KeyCodes::Alt(_) if platform_style == PlatformStyle::Mac => Some(IconName::Option),
         _ => None,
     }
 }
@@ -426,12 +451,12 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
     }
 
     if vim_mode {
-        text.push_str(&keystroke.key)
+        text.push_str(keystroke.key.unparse())
     } else {
-        let key = match keystroke.key.as_str() {
-            "pageup" => "PageUp",
-            "pagedown" => "PageDown",
-            key => &util::capitalize(key),
+        let key = match keystroke.key {
+            gpui::KeyCodes::PageUp => "PageUp",
+            gpui::KeyCodes::PageDown => "PageDown",
+            key => &util::capitalize(key.unparse()),
         };
         text.push_str(key);
     }

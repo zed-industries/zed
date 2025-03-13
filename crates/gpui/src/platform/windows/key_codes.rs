@@ -1,7 +1,7 @@
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 /// TODO:
-#[derive(Clone, Debug, Eq, PartialEq, Default, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Hash)]
 pub enum KeyCodes {
     /// Un-recognized key
     #[default]
