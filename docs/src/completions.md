@@ -28,13 +28,11 @@ Edit predictions appear as you type, and most of the time, you can accept them b
 ### Configuring Zeta
 
 Zed's Edit Prediction was initially introduced via a banner on the title bar.
-Clicking on it would take you to a modal with a button to set `zed` as your `edit_prediction_provider`.
+Clicking on it would take you to a modal with a button ("Enable Edit Prediction") that sets `zed` as your `edit_prediction_provider`.
 
-<!-- I'll still swap the image -->
+![Onboarding banner and modal](https://zed.dev/img/edit-prediction/docs.webp)
 
-![Asking a question](https://zed.dev/img/assistant/ask-a-question.png)
-
-If you haven't come across the banner, start using Zed's Edit Prediction by adding this to your settings:
+But, if you haven't come across the banner, start using Zed's Edit Prediction by adding this to your settings:
 
 ```json
 "features": {
