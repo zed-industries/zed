@@ -800,15 +800,23 @@ impl Thread {
         let mut markdown = Vec::new();
 
         for message in self.messages() {
-            match message.role {
-                Role::User => writeln!(markdown, "## User")?,
-                Role::Assistant => writeln!(markdown, "## Assistant")?,
-                Role::System => writeln!(markdown, "## System")?,
-            }
-
-            write!(markdown, "{}", message.text)?;
+            writeln!(
+                markdown,
+                "## {role}\n",
+                role = match message.role {
+                    Role::User => "User",
+                    Role::Assistant => "Assistant",
+                    Role::System => "System",
+                }
+            )?;
+            writeln!(markdown, "{}\n", message.text)?;
 
             for tool_use in self.tool_uses_for_message(message.id) {
+                writeln!(
+                    markdown,
+                    "**Use Tool: {} ({})**",
+                    tool_use.name, tool_use.id
+                )?;
                 writeln!(markdown, "```json")?;
                 writeln!(
                     markdown,
@@ -819,7 +827,13 @@ impl Thread {
             }
 
             for tool_result in self.tool_results_for_message(message.id) {
-                write!(markdown, "{}", tool_result.content)?;
+                write!(markdown, "**Tool Results: {}", tool_result.tool_use_id)?;
+                if tool_result.is_error {
+                    write!(markdown, " (Error)")?;
+                }
+
+                writeln!(markdown, "**\n")?;
+                writeln!(markdown, "{}", tool_result.content)?;
             }
         }
 
