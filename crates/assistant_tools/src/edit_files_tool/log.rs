@@ -185,15 +185,12 @@ impl EditToolLogViewer {
                     }
                 }
                 Some(response) => parent
-                    .child(Self::render_section(
-                        IconName::SparkleAlt,
-                        "Editor Response",
-                    ))
-                    .child(response.clone()),
+                    .child(Self::render_section(IconName::ZedAssistant, "Edit Stream"))
+                    .child(Label::new(response.clone()).buffer_font(cx)),
             })
             .when_some(request.tool_output.as_ref(), |parent, output| {
                 parent
-                    .child(Self::render_section(IconName::ArrowLeft, "Tool output"))
+                    .child(Self::render_section(IconName::ArrowLeft, "Tool Output"))
                     .child(match output {
                         Ok(output) => Label::new(output.clone()).color(Color::Success),
                         Err(error) => Label::new(error.clone()).color(Color::Error),
