@@ -488,7 +488,7 @@ async fn parse_commit_messages(
                 },
             ))
         } else {
-            continue;
+            None
         };
 
         let remote = parsed_remote_url
