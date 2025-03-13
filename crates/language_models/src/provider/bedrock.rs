@@ -379,7 +379,7 @@ impl BedrockModel {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-            .boxed())
+        .boxed())
     }
 }
 
@@ -625,18 +625,18 @@ pub fn get_bedrock_tokens(
 
 pub async fn extract_tool_args_from_events(
     name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> Result<impl Send + Stream<Item=Result<String>>> {
+) -> Result<impl Send + Stream<Item = Result<String>>> {
     handle
         .spawn(async move {
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                                                                       content_block_index,
-                                                                       start,
-                                                                       ..
-                                                                   }) = event?
+                    content_block_index,
+                    start,
+                    ..
+                }) = event?
                 {
                     match start {
                         None => {
@@ -688,9 +688,9 @@ pub async fn extract_tool_args_from_events(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -698,7 +698,7 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
@@ -800,7 +800,7 @@ pub fn map_to_language_model_completion_events(
             }
         },
     )
-        .filter_map(|event| async move { event })
+    .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -814,23 +814,6 @@ struct ConfigurationView {
     load_credentials_task: Option<Task<()>>,
 }
 
-// impl EditableSettingControl for ConfigurationView {
-//     type Value = BedrockAuthMethod;
-//     type Settings = AmazonBedrockSettings;
-//
-//     fn name(&self) -> SharedString {
-//         "Bedrock".into()
-//     }
-//
-//     fn read(cx: &App) -> Self::Value {
-//         let settings = AmazonBedrockSettings::get_global(cx);
-//     }
-//
-//     fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value, cx: &App) {
-//         todo!()
-//     }
-// }
-
 impl ConfigurationView {
     const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "XXXXXXXXXXXXXXXX";
     const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str =
@@ -843,7 +826,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-            .detach();
+        .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -859,7 +842,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                    .log_err();
+                .log_err();
             }
         }));
 
@@ -942,7 +925,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -959,7 +942,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
@@ -1199,11 +1182,13 @@ impl ConfigurationView {
                 let state = self.state.clone();
                 menu = menu.custom_entry(
                     move |_, _| Label::new(bedrock_string).into_any_element(),
-                    move |_, cx| state.update(cx, |state, cx| {
-                        let owned_method = method.clone();
-                        state.set_authentication_method(owned_method, cx);
-                        cx.notify();
-                    }),
+                    move |_, cx| {
+                        state.update(cx, |state, cx| {
+                            let owned_method = method.clone();
+                            state.set_authentication_method(owned_method, cx);
+                            cx.notify();
+                        })
+                    },
                 );
             }
             menu
