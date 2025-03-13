@@ -3352,9 +3352,7 @@ impl LspStore {
             };
 
             let Ok(Some((fs, toolchain_store))) = this.read_with(&cx, |this, cx| {
-                let Some(local) = this.as_local() else {
-                    return None;
-                };
+                let local = this.as_local()?;
                 let toolchain_store = this.toolchain_store(cx);
                 return Some((local.fs.clone(), toolchain_store));
             }) else {
