@@ -935,12 +935,19 @@ impl Terminal {
 
                         if is_path_surrounded_by_common_symbols(&file_path) {
                             word_match = Match::new(
-                                word_match.start().add(term, Boundary::Cursor, 1),
-                                word_match.end().sub(term, Boundary::Cursor, 1),
+                                word_match.start().add(term, Boundary::Grid, 1),
+                                word_match.end().sub(term, Boundary::Grid, 1),
                             );
                             file_path = file_path[1..file_path.len() - 1].to_owned();
                         }
 
+                        while file_path.ends_with(':') {
+                            file_path.pop();
+                            word_match = Match::new(
+                                *word_match.start(),
+                                word_match.end().sub(term, Boundary::Grid, 1),
+                            );
+                        }
                         let mut colon_count = 0;
                         for c in file_path.chars() {
                             if c == ':' {
@@ -966,7 +973,7 @@ impl Terminal {
                                 let stripped_len = file_path.len() - last_index;
                                 word_match = Match::new(
                                     *word_match.start(),
-                                    word_match.end().sub(term, Boundary::Cursor, stripped_len),
+                                    word_match.end().sub(term, Boundary::Grid, stripped_len),
                                 );
                                 file_path = file_path[0..last_index].to_owned();
                             }
