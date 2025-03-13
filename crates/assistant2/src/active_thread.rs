@@ -10,18 +10,44 @@ use gpui::{
     UnderlineStyle,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
+use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role, LanguageModelToolResult};
 use markdown::{Markdown, MarkdownStyle};
 use scripting_tool::{ScriptingTool, ScriptingToolInput};
+use serde::{Serialize, Deserialize};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
+use workspace::{WorkspaceEvent, ToastKind};
 
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
+
+#[derive(Serialize, Deserialize)]
+struct SerializableThread {
+    id: String,
+    messages: Vec<SerializableMessage>,
+    tool_uses: Vec<SerializableToolUse>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializableMessage {
+    id: usize,
+    role: String,
+    text: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializableToolUse {
+    id: String,
+    message_id: usize,
+    name: String,
+    input: serde_json::Value,
+    status: String,
+    result: Option<String>,
+}
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
@@ -43,6 +69,78 @@ struct EditMessageState {
 }
 
 impl ActiveThread {
+    fn create_serializable_thread(&self, thread: &Thread) -> SerializableThread {
+        let mut serializable_messages = Vec::new();
+        let mut serializable_tool_uses = Vec::new();
+        
+        // Convert messages
+        for message in thread.messages() {
+            serializable_messages.push(SerializableMessage {
+                id: message.id.0,
+                role: format!("{:?}", message.role),
+                text: message.text.clone(),
+            });
+            
+            // Process tool uses for this message
+            let tool_uses = thread.tool_uses_for_message(message.id);
+            for tool_use in tool_uses {
+                let status_str = match &tool_use.status {
+                    ToolUseStatus::Pending => "pending",
+                    ToolUseStatus::Running => "running",
+                    ToolUseStatus::Finished(_) => "finished",
+                    ToolUseStatus::Error(_) => "error",
+                };
+                
+                let result = match &tool_use.status {
+                    ToolUseStatus::Finished(output) => Some(output.clone()),
+                    ToolUseStatus::Error(err) => Some(err.clone()),
+                    _ => None,
+                };
+                
+                serializable_tool_uses.push(SerializableToolUse {
+                    id: tool_use.id.0.to_string(),
+                    message_id: message.id.0,
+                    name: tool_use.name.to_string(),
+                    input: tool_use.input.clone(),
+                    status: status_str.to_string(),
+                    result,
+                });
+            }
+            
+            // Process scripting tool uses for this message
+            let scripting_tool_uses = thread.scripting_tool_uses_for_message(message.id);
+            for tool_use in scripting_tool_uses {
+                let status_str = match &tool_use.status {
+                    ToolUseStatus::Pending => "pending",
+                    ToolUseStatus::Running => "running",
+                    ToolUseStatus::Finished(_) => "finished",
+                    ToolUseStatus::Error(_) => "error",
+                };
+                
+                let result = match &tool_use.status {
+                    ToolUseStatus::Finished(output) => Some(output.clone()),
+                    ToolUseStatus::Error(err) => Some(err.clone()),
+                    _ => None,
+                };
+                
+                serializable_tool_uses.push(SerializableToolUse {
+                    id: tool_use.id.0.to_string(),
+                    message_id: message.id.0,
+                    name: tool_use.name.to_string(),
+                    input: tool_use.input.clone(),
+                    status: status_str.to_string(),
+                    result,
+                });
+            }
+        }
+        
+        SerializableThread {
+            id: thread.id().to_string(),
+            messages: serializable_messages,
+            tool_uses: serializable_tool_uses,
+        }
+    }
+
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
@@ -488,6 +586,49 @@ impl ActiveThread {
         self.confirm_editing_message(&menu::Confirm, window, cx);
     }
 
+    fn handle_feedback_click(
+        &mut self,
+        is_positive: bool,
+        thread_id: String,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use telemetry_events::{Event, AssistantThreadFeedbackEvent, ThreadFeedbackRating};
+        
+        // Serialize the thread data to JSON
+        let thread_data = self.thread.update(cx, |thread, _cx| {
+            // Create a serializable representation of the Thread
+            let serializable_thread = self.create_serializable_thread(thread);
+            serde_json::to_value(serializable_thread).unwrap_or_else(|_| serde_json::Value::Null)
+        });
+        
+        // Create the feedback event
+        let feedback_event = Event::AssistantThreadFeedback(AssistantThreadFeedbackEvent {
+            thread_id,
+            rating: if is_positive { 
+                ThreadFeedbackRating::Positive 
+            } else { 
+                ThreadFeedbackRating::Negative 
+            },
+            thread_data,
+        });
+
+        // Use the telemetry API to send the event
+        client::telemetry::client().track_event(feedback_event);
+        
+        // Show a toast notification to confirm the feedback was received
+        let message = if is_positive {
+            "Thanks for your feedback! We're glad this was helpful."
+        } else {
+            "Thanks for your feedback. We'll use it to improve."
+        };
+        
+        cx.emit(WorkspaceEvent::ShowToast {
+            message: message.into(),
+            kind: ToastKind::Confirmation,
+        });
+    }
+
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -522,6 +663,11 @@ impl ActiveThread {
             .map(|(_, state)| state.editor.clone());
 
         let colors = cx.theme().colors();
+        
+        // Determine if this is the last assistant message in the thread
+        // which is where we want to add the feedback buttons
+        let is_last_assistant_message = message.role == Role::Assistant && 
+            ix == self.messages.len() - 1;
 
         let message_content = v_flex()
             .child(
@@ -658,6 +804,43 @@ impl ActiveThread {
                 .id(("message-container", ix))
                 .child(message_content)
                 .map(|parent| {
+                    let parent = if is_last_assistant_message {
+                        // Add feedback buttons for the last assistant message
+                        parent.child(
+                            h_flex()
+                                .px_2p5()
+                                .py_1()
+                                .gap_2()
+                                .justify_end()
+                                .child(
+                                    Button::new("feedback-thumbs-up", "")
+                                        .style(ButtonStyle::Subtle)
+                                        .icon(IconName::ThumbsUp)
+                                        .tooltip(|_| "Helpful")
+                                        .on_click(cx.listener({
+                                            let thread_id = thread.id().to_string();
+                                            move |this, _, window, cx| {
+                                                this.handle_feedback_click(true, thread_id.clone(), window, cx);
+                                            }
+                                        }))
+                                )
+                                .child(
+                                    Button::new("feedback-thumbs-down", "")
+                                        .style(ButtonStyle::Subtle)
+                                        .icon(IconName::ThumbsDown)
+                                        .tooltip(|_| "Not Helpful")
+                                        .on_click(cx.listener({
+                                            let thread_id = thread.id().to_string();
+                                            move |this, _, window, cx| {
+                                                this.handle_feedback_click(false, thread_id.clone(), window, cx);
+                                            }
+                                        }))
+                                )
+                        )
+                    } else {
+                        parent
+                    };
+
                     if tool_uses.is_empty() && scripting_tool_uses.is_empty() {
                         return parent;
                     }
