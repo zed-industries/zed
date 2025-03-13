@@ -204,15 +204,27 @@ impl EditFilesTool {
                     let diff = buffer
                         .read_with(&cx, |buffer, cx| {
                             let new_text = match action {
-                                EditAction::Replace { old, new, .. } => {
+                                EditAction::Replace {
+                                    file_path,
+                                    old,
+                                    new,
+                                } => {
                                     // TODO: Replace in background?
-                                    buffer.text().replace(&old, &new)
+                                    let text = buffer.text();
+                                    if text.contains(&old) {
+                                        text.replace(&old, &new)
+                                    } else {
+                                        return Err(anyhow!(
+                                            "Could not find search text in {}",
+                                            file_path.display()
+                                        ));
+                                    }
                                 }
                                 EditAction::Write { content, .. } => content,
                             };
 
-                            buffer.diff(new_text, cx)
-                        })?
+                            anyhow::Ok(buffer.diff(new_text, cx))
+                        })??
                         .await;
 
                     let _clock =
