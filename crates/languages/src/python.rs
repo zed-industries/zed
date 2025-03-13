@@ -629,14 +629,26 @@ impl ToolchainLister for PythonToolchainProvider {
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
             .filter_map(|toolchain| {
-                let name = if let Some(version) = &toolchain.version {
-                    format!("Python {version} ({:?})", toolchain.kind?)
-                } else {
-                    format!("{:?}", toolchain.kind?)
+                let mut name = String::from("Python");
+                if let Some(ref version) = toolchain.version {
+                    name.push(' ');
+                    name.push_str(&version);
                 }
-                .into();
+
+                let name_and_kind = match (&toolchain.name, &toolchain.kind) {
+                    (Some(name), Some(kind)) => Some(format!("({name}; {:?})", kind)),
+                    (Some(name), None) => Some(format!("({name})")),
+                    (None, Some(kind)) => Some(format!("({:?})", kind)),
+                    (None, None) => None,
+                };
+
+                if let Some(nk) = name_and_kind {
+                    name.push(' ');
+                    name.push_str(&nk);
+                }
+
                 Some(Toolchain {
-                    name,
+                    name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
                     as_json: serde_json::to_value(toolchain).ok()?,
