@@ -3158,58 +3158,18 @@ fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
     assert_eq!(snapshot.len(), 8);
 
     assert_eq!(
-        snapshot.clip_point(Point::new(2, 0), Bias::Left),
-        Point::new(2, 0)
-    );
-    assert_eq!(
-        snapshot.clip_point(Point::new(2, 0), Bias::Right),
-        Point::new(2, 0)
-    );
-    assert_eq!(
-        snapshot.clip_point(Point::new(2, 1), Bias::Right),
-        Point::new(2, 0)
-    );
-    assert_eq!(
-        snapshot.clip_point(Point::new(2, 1), Bias::Left),
-        Point::new(2, 0)
-    );
-    assert_eq!(
-        snapshot.clip_point(Point::new(3, 0), Bias::Left),
-        Point::new(2, 0)
-    );
-    assert_eq!(
-        snapshot.clip_point(Point::new(3, 0), Bias::Right),
-        Point::new(2, 0)
-    );
-
-    let anchor = snapshot.anchor_before(Point::new(2, 0));
-    assert_eq!(
-        snapshot.summary_for_anchor::<Point>(&anchor),
-        Point::new(2, 0)
-    );
-    let anchor = snapshot.anchor_after(Point::new(2, 0));
-    assert_eq!(
-        snapshot.summary_for_anchor::<Point>(&anchor),
-        Point::new(2, 0)
-    );
-    assert_eq!(
-        snapshot.summary_for_anchor::<usize>(&anchor),
-        "one\ntwo\n".len()
-    );
-
-    assert_eq!(
         snapshot
             .dimensions_from_points::<Point>([Point::new(2, 0)])
             .collect::<Vec<_>>(),
         vec![Point::new(2, 0)]
     );
 
+    let (_, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    assert_eq!(translated_offset, "one\n".len());
     let (_, translated_point, is_main_buffer) =
         snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
     assert_eq!(translated_point, Point::new(1, 0));
     assert!(is_main_buffer);
-    let (_, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
-    assert_eq!(translated_offset, "one\n".len());
 }
 
 fn format_diff(

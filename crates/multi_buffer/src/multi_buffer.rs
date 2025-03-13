@@ -4176,7 +4176,12 @@ impl MultiBufferSnapshot {
         let region = cursor.region()?;
         let overshoot = offset - region.range.start;
         let buffer_offset = region.buffer_range.start + overshoot;
-        if buffer_offset > region.buffer.len() {
+        if buffer_offset == region.buffer.len() + 1
+            && region.has_trailing_newline
+            && !region.is_main_buffer
+        {
+            return Some((&cursor.excerpt()?.buffer, cursor.main_buffer_position()?));
+        } else if buffer_offset > region.buffer.len() {
             return None;
         }
         Some((region.buffer, buffer_offset))
@@ -4188,7 +4193,16 @@ impl MultiBufferSnapshot {
         let region = cursor.region()?;
         let overshoot = point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
-        if buffer_point > region.buffer.max_point() {
+        if buffer_point == region.buffer.max_point() + Point::new(1, 0)
+            && region.has_trailing_newline
+            && !region.is_main_buffer
+        {
+            return Some((
+                &cursor.excerpt()?.buffer,
+                cursor.main_buffer_position()?,
+                true,
+            ));
+        } else if buffer_point > region.buffer.max_point() {
             return None;
         }
         Some((region.buffer, buffer_point, region.is_main_buffer))
