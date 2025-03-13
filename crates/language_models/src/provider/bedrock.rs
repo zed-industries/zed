@@ -150,13 +150,19 @@ impl State {
         &mut self,
         auth_method: BedrockAuthMethod,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
-        cx.spawn(|this, mut cx| {
-            this.update(&mut cx, |this, cx| {
-                this.settings.as_mut().unwrap().authentication_method = Some(auth_method); // safe unwrap
-                cx.notify();
-            })
-        })
+    ) {
+        match self.settings.as_mut() {
+            None => {
+                self.settings = Some(AmazonBedrockSettings {
+                    authentication_method: Some(auth_method),
+                    ..Default::default()
+                });
+            }
+            Some(auth) => {
+                auth.authentication_method = Some(auth_method);
+            }
+        }
+        cx.notify();
     }
 
     fn is_authenticated(&self) -> bool {
@@ -803,6 +809,7 @@ struct ConfigurationView {
     region_editor: Entity<Editor>,
     endpoint_editor: Entity<Editor>,
     profile_name_editor: Entity<Editor>,
+    start_url_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -810,15 +817,15 @@ struct ConfigurationView {
 // impl EditableSettingControl for ConfigurationView {
 //     type Value = BedrockAuthMethod;
 //     type Settings = AmazonBedrockSettings;
-// 
+//
 //     fn name(&self) -> SharedString {
 //         "Bedrock".into()
 //     }
-// 
+//
 //     fn read(cx: &App) -> Self::Value {
 //         let settings = AmazonBedrockSettings::get_global(cx);
 //     }
-// 
+//
 //     fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value, cx: &App) {
 //         todo!()
 //     }
@@ -830,6 +837,7 @@ impl ConfigurationView {
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_PROFILE_NAME_TEXT: &'static str = "default";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
+    const PLACEHOLDER_START_URL: &'static str = "https://XXXXXXXXXXX.awsapps.com/start";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
@@ -879,6 +887,11 @@ impl ConfigurationView {
             profile_name_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_PROFILE_NAME_TEXT, cx);
+                editor
+            }),
+            start_url_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_START_URL, cx);
                 editor
             }),
             state,
@@ -984,6 +997,111 @@ impl ConfigurationView {
             .rounded_sm()
     }
 
+    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
+        !self.state.read(cx).is_authenticated()
+    }
+}
+
+impl Render for ConfigurationView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let env_var_set = self.state.read(cx).credentials_from_env;
+
+        // Handle loading state
+        if self.load_credentials_task.is_some() {
+            return div().child(Label::new("Loading credentials...")).into_any();
+        }
+
+        // Handle already authenticated state
+        if !self.should_render_editor(cx) {
+            return h_flex()
+                .size_full()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new(if env_var_set {
+                            format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
+                        } else {
+                            "Credentials configured.".to_string()
+                        })),
+                )
+                .child(
+                    Button::new("reset-key", "Reset key")
+                        .icon(Some(IconName::Trash))
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .disabled(env_var_set)
+                        .when(env_var_set, |this| {
+                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
+                )
+                .into_any();
+        }
+
+        // Get the current authentication method
+        let authentication_method = match self.state.read(cx).settings {
+            Some(ref settings) => settings
+                .authentication_method
+                .clone()
+                .unwrap_or(BedrockAuthMethod::Automatic),
+            None => BedrockAuthMethod::StaticCredentials,
+        };
+
+        // Map of auth method render functions
+        let auth_method_ui = match authentication_method {
+            BedrockAuthMethod::NamedProfile => self.render_named_profile_ui(cx),
+            BedrockAuthMethod::StaticCredentials => self.render_static_credentials_ui(cx),
+            BedrockAuthMethod::SingleSignOn => self.render_sso_ui(cx),
+            BedrockAuthMethod::Automatic => self.render_automatic_ui(),
+        };
+
+        // Main configuration view
+        v_flex()
+            .size_full()
+            .on_action(cx.listener(ConfigurationView::save_credentials))
+            .child(Label::new("To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:"))
+            .child(Label::new("Select an authentication provider based on the list below:"))
+            .child(self.render_auth_method_selector(window, cx, authentication_method))
+            .child(
+                List::new()
+                    .child(
+                        InstructionListItem::new(
+                            "Start by",
+                            Some("creating a user and security credentials"),
+                            Some("https://us-east-1.console.aws.amazon.com/iam/home"),
+                        )
+                    )
+                    .child(
+                        InstructionListItem::new(
+                            "Grant that user permissions according to this documentation:",
+                            Some("Prerequisites"),
+                            Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
+                        )
+                    )
+                    .child(
+                        InstructionListItem::new(
+                            "Select the models you would like access to:",
+                            Some("Bedrock Model Catalog"),
+                            Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
+                        )
+                    )
+            )
+            .child(auth_method_ui)
+            .child(self.render_common_fields(cx))
+            .child(
+                Label::new(
+                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, {ZED_BEDROCK_REGION_VAR}, AND {ZED_AWS_PROFILE} environment variables and restart Zed."),
+                )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .into_any()
+    }
+}
+
+impl ConfigurationView {
     fn render_aa_id_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
@@ -1054,111 +1172,20 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).is_authenticated()
+    fn render_start_url_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.start_url_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
-}
 
-impl RenderOnce for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).credentials_from_env;
-
-        // Handle loading state
-        if self.load_credentials_task.is_some() {
-            return div().child(Label::new("Loading credentials...")).into_any();
-        }
-
-        // Handle already authenticated state
-        if !self.should_render_editor(cx) {
-            return h_flex()
-                .size_full()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
-                        } else {
-                            "Credentials configured.".to_string()
-                        })),
-                )
-                .child(
-                    Button::new("reset-key", "Reset key")
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
-                )
-                .into_any();
-        }
-
-        // Get the current authentication method
-        let authentication_method = match self.state.read(cx).settings {
-            Some(ref settings) => settings
-                .authentication_method
-                .clone()
-                .unwrap_or(BedrockAuthMethod::Automatic),
-            None => BedrockAuthMethod::Automatic,
-        };
-
-        // Map of auth method render functions
-        let auth_method_ui = match authentication_method {
-            BedrockAuthMethod::NamedProfile => self.render_named_profile_ui(cx),
-            BedrockAuthMethod::StaticCredentials => self.render_static_credentials_ui(cx),
-            BedrockAuthMethod::SingleSignOn => self.render_sso_ui(),
-            BedrockAuthMethod::Automatic => self.render_automatic_ui(),
-        };
-
-        // Main configuration view
-        v_flex()
-            .size_full()
-            .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:"))
-            .child(Label::new("Select an authentication provider based on the list below:"))
-            .child(self.render_auth_method_selector(window, cx, authentication_method))
-            .child(
-                List::new()
-                    .child(
-                        InstructionListItem::new(
-                            "Start by",
-                            Some("creating a user and security credentials"),
-                            Some("https://us-east-1.console.aws.amazon.com/iam/home"),
-                        )
-                    )
-                    .child(
-                        InstructionListItem::new(
-                            "Grant that user permissions according to this documentation:",
-                            Some("Prerequisites"),
-                            Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
-                        )
-                    )
-                    .child(
-                        InstructionListItem::new(
-                            "Select the models you would like access to:",
-                            Some("Bedrock Model Catalog"),
-                            Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
-                        )
-                    )
-            )
-            .child(auth_method_ui)
-            .child(self.render_common_fields(cx))
-            .child(
-                Label::new(
-                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, {ZED_BEDROCK_REGION_VAR}, AND {ZED_AWS_PROFILE} environment variables and restart Zed."),
-                )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .into_any()
-    }
-}
-
-impl ConfigurationView {
     // Helper method to render the authentication method selector
     fn render_auth_method_selector(
         &self,
@@ -1191,22 +1218,23 @@ impl ConfigurationView {
 
     // Render UI for Named Profile auth method
     fn render_named_profile_ui(&self, cx: &mut Context<Self>) -> AnyElement {
-        v_flex().my_2().gap_1p5().child(
-            v_flex()
-                .gap_0p5()
-                .child(Label::new("Profile").size(LabelSize::Small))
-                .child(
-                    self.make_input_styles(cx)
-                        .child(self.render_profile_name_editor(cx)),
-                ),
-        ).into_any_element()
+        v_flex()
+            .my_2()
+            .gap_1p5()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Profile").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_profile_name_editor(cx)),
+                    ),
+            )
+            .into_any_element()
     }
 
     // Render UI for Static Credentials auth method
-    fn render_static_credentials_ui(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_static_credentials_ui(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
             .my_2()
             .gap_1p5()
@@ -1223,18 +1251,26 @@ impl ConfigurationView {
                 v_flex()
                     .gap_0p5()
                     .child(Label::new("Secret Access Key").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_sk_editor(cx)),
-                    ),
-            ).into_any_element()
+                    .child(self.make_input_styles(cx).child(self.render_sk_editor(cx))),
+            )
+            .into_any_element()
     }
 
     // Render UI for SSO auth method
-    fn render_sso_ui(&self) -> AnyElement {
-        InstructionListItem::text_only(
-            "Single Sign-On configuration will use credentials from your AWS SSO session",
-        ).into_any_element()
+    fn render_sso_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .my_2()
+            .gap_1p5()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Start URL").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_start_url_editor(cx)),
+                    ),
+            )
+            .into_any_element()
     }
 
     // Render UI for Automatic auth method
@@ -1243,10 +1279,7 @@ impl ConfigurationView {
     }
 
     // Render common fields for all auth methods
-    fn render_common_fields(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_common_fields(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
             .my_2()
             .gap_1p5()
@@ -1254,13 +1287,20 @@ impl ConfigurationView {
                 v_flex()
                     .gap_0p5()
                     .child(Label::new("Region").size(LabelSize::Small))
-                    .child(self.make_input_styles(cx).child(self.render_region_editor(cx))),
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_region_editor(cx)),
+                    ),
             )
             .child(
                 v_flex()
                     .gap_0p5()
                     .child(Label::new("Endpoint (Optional)").size(LabelSize::Small))
-                    .child(self.make_input_styles(cx).child(self.render_endpoint_editor(cx))),
-            ).into_any_element()
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_endpoint_editor(cx)),
+                    ),
+            )
+            .into_any_element()
     }
 }
