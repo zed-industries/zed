@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use assistant2::{Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
+use collections::HashMap;
 use futures::StreamExt;
 use gpui::{prelude::*, App, AsyncApp, Entity, Subscription, Task};
 use language::LanguageRegistry;
@@ -31,6 +32,7 @@ pub struct HeadlessAppState {
 pub struct HeadlessAssistant {
     pub project: Entity<Project>,
     pub thread: Entity<Thread>,
+    pub tool_use_counts: HashMap<Arc<str>, u32>,
     pub done_tx: channel::Sender<anyhow::Result<()>>,
     _subscription: Subscription,
 }
@@ -63,6 +65,7 @@ impl HeadlessAssistant {
             _subscription: cx.subscribe(&thread, Self::handle_thread_event),
             thread,
             project,
+            tool_use_counts: HashMap::default(),
             done_tx,
         });
 
@@ -98,13 +101,17 @@ impl HeadlessAssistant {
                 tool_use_id,
                 pending_tool_use,
             } => {
+                if let Some(pending_tool_use) = pending_tool_use {
+                    println!(
+                        "Used tool {} with input: {}",
+                        pending_tool_use.name, pending_tool_use.input
+                    );
+                    *self
+                        .tool_use_counts
+                        .entry(pending_tool_use.name.clone())
+                        .or_insert(0) += 1;
+                }
                 if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
-                    if let Some(pending_tool_use) = pending_tool_use {
-                        println!(
-                            "Used tool {} with input: {}",
-                            pending_tool_use.name, pending_tool_use.input
-                        );
-                    }
                     println!("Tool result: {:?}", tool_result);
                 }
                 if thread.read(cx).all_tools_finished() {

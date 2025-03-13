@@ -112,6 +112,11 @@ fn main() {
                         println!("{}\n", eval_output.diff);
                         println!("Last message for {eval_name}:\n");
                         println!("{}\n", eval_output.last_message);
+                        println!(
+                            "Assistant response count: {}",
+                            eval_output.assistant_response_count
+                        );
+                        println!("Tool use counts: {:?}", eval_output.tool_use_counts);
                         println!("Judge output for {eval_name}: {judge_output}");
                     }
                     Err(err) => {

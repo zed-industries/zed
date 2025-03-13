@@ -3,6 +3,7 @@ use crate::headless_assistant::{
 };
 use anyhow::anyhow;
 use assistant2::RequestKind;
+use collections::HashMap;
 use gpui::{App, Task};
 use language_model::LanguageModelRegistry;
 use serde::Deserialize;
@@ -23,6 +24,8 @@ pub struct Eval {
 pub struct EvalOutput {
     pub diff: String,
     pub last_message: String,
+    pub assistant_response_count: usize,
+    pub tool_use_counts: HashMap<Arc<str>, u32>,
 }
 
 #[derive(Deserialize)]
@@ -119,19 +122,25 @@ impl Eval {
 
             done_rx.recv().await??;
 
-            let last_message = assistant
-                .update(&mut cx, |assistant, cx| {
-                    assistant.thread.read(cx).messages().last().cloned()
-                })?
-                .unwrap();
-            if last_message.role != language_model::Role::Assistant {
-                return Err(anyhow!("Last message is not from assistant"));
-            }
+            let diff = repo_diff(&repo_path)?;
 
-            Ok(EvalOutput {
-                diff: repo_diff(&repo_path)?,
-                last_message: last_message.text,
-            })
+            assistant.update(&mut cx, |assistant, cx| {
+                let thread = assistant.thread.read(cx);
+                let last_message = thread.messages().last().unwrap();
+                if last_message.role != language_model::Role::Assistant {
+                    return Err(anyhow!("Last message is not from assistant"));
+                }
+                let assistant_response_count = thread
+                    .messages()
+                    .filter(|message| message.role == language_model::Role::Assistant)
+                    .count();
+                Ok(EvalOutput {
+                    diff,
+                    last_message: last_message.text.clone(),
+                    assistant_response_count,
+                    tool_use_counts: assistant.tool_use_counts.clone(),
+                })
+            })?
         })
     }
 }
