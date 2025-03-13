@@ -22,9 +22,23 @@ For more information, see:
 
 ## Edit Predictions {#edit-predictions}
 
-Zed has built-in support for predicting multiple edits at a time via its [Zeta model](https://huggingface.co/zed-industries/zeta). Clicking "Introducing: Edit Prediction" on the top right will open a brief prompt setting up this feature.
-
+Zed has built-in support for predicting multiple edits at a time [via Zeta](https://huggingface.co/zed-industries/zeta), Zed's open-source and open-data model.
 Edit predictions appear as you type, and most of the time, you can accept them by pressing `tab`.
+
+### Configuring Zeta
+
+Zed's Edit Prediction was initially introduced via a banner on the title bar.
+Clicking on it would take you to a modal with a button ("Enable Edit Prediction") that sets `zed` as your `edit_prediction_provider`.
+
+![Onboarding banner and modal](https://zed.dev/img/edit-prediction/docs.webp)
+
+But, if you haven't come across the banner, start using Zed's Edit Prediction by adding this to your settings:
+
+```json
+"features": {
+  "edit_prediction_provider": "zed"
+},
+```
 
 ### Conflict With Other `tab` Actions {#edit-predictions-conflict}
 

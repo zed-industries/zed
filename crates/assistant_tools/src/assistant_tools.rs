@@ -21,6 +21,7 @@ use crate::regex_search::RegexSearchTool;
 
 pub fn init(cx: &mut App) {
     assistant_tool::init(cx);
+    crate::edit_files_tool::log::init(cx);
 
     let registry = ToolRegistry::global(cx);
     registry.register_tool(NowTool);
@@ -29,6 +30,7 @@ pub fn init(cx: &mut App) {
     registry.register_tool(EditFilesTool);
     registry.register_tool(PathSearchTool);
     registry.register_tool(RegexSearchTool);
+
     registry.register_tool(DeletePathTool);
     registry.register_tool(BashTool);
 }
