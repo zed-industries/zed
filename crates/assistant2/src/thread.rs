@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -793,6 +794,50 @@ impl Thread {
         } else {
             false
         }
+    }
+
+    pub fn to_markdown(&self) -> Result<String> {
+        let mut markdown = Vec::new();
+
+        for message in self.messages() {
+            writeln!(
+                markdown,
+                "## {role}\n",
+                role = match message.role {
+                    Role::User => "User",
+                    Role::Assistant => "Assistant",
+                    Role::System => "System",
+                }
+            )?;
+            writeln!(markdown, "{}\n", message.text)?;
+
+            for tool_use in self.tool_uses_for_message(message.id) {
+                writeln!(
+                    markdown,
+                    "**Use Tool: {} ({})**",
+                    tool_use.name, tool_use.id
+                )?;
+                writeln!(markdown, "```json")?;
+                writeln!(
+                    markdown,
+                    "{}",
+                    serde_json::to_string_pretty(&tool_use.input)?
+                )?;
+                writeln!(markdown, "```")?;
+            }
+
+            for tool_result in self.tool_results_for_message(message.id) {
+                write!(markdown, "**Tool Results: {}", tool_result.tool_use_id)?;
+                if tool_result.is_error {
+                    write!(markdown, " (Error)")?;
+                }
+
+                writeln!(markdown, "**\n")?;
+                writeln!(markdown, "{}", tool_result.content)?;
+            }
+        }
+
+        Ok(String::from_utf8_lossy(&markdown).to_string())
     }
 }
 
