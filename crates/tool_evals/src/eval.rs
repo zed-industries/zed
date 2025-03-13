@@ -183,6 +183,7 @@ impl EvalOutput {
 
         Ok(eval_output_dir)
     }
+}
 
 fn repo_dir_name(url: &str) -> String {
     url.trim_start_matches("https://")
