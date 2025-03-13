@@ -587,13 +587,15 @@ impl ActiveThread {
         // Capture the thread entity for use in the async operation
         let thread = self.thread.clone();
 
+        let project_snapshot_task =
+            thread.update(cx, |thread, cx| thread.take_project_snapshot(cx));
         // Spawn the async operation to collect data and send telemetry
         cx.spawn(move |_, mut cx| async move {
             use telemetry;
 
             // Collect thread data and snapshots asynchronously
             let (thread_data, initial_snapshot) = thread
-                .update(&mut cx, |thread, cx| {
+                .update(&mut cx, |thread, _cx| {
                     // Create a serializable representation of the Thread
                     let serializable_thread = Self::create_serializable_thread_static(thread);
                     let thread_data = serde_json::to_value(serializable_thread)
@@ -614,18 +616,8 @@ impl ActiveThread {
                 .unwrap_or_default();
 
             // Capture the final project snapshot right before sending feedback
-            let final_snapshot = thread
-                .update(&mut cx, |thread, cx| {
-                    // Take a snapshot of the project now, right before sending feedback
-                    thread
-                        .take_project_snapshot(cx)
-                        .map(|snapshot| {
-                            serde_json::to_value(snapshot)
-                                .unwrap_or_else(|_| serde_json::Value::Null)
-                        })
-                        .unwrap_or(serde_json::Value::Null)
-                })
-                .unwrap_or_default();
+            let final_snapshot = serde_json::to_value(project_snapshot_task.await)
+                .unwrap_or(serde_json::Value::Null);
 
             // Define the rating based on which button was clicked
             let rating = if is_positive { "positive" } else { "negative" };

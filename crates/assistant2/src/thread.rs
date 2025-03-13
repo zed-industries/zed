@@ -104,17 +104,11 @@ pub struct Thread {
     scripting_tool_use: ToolUseState,
     initial_project_snapshot: Option<ProjectSnapshot>,
     initial_project_snapshot_task: Option<Task<()>>,
-    final_project_snapshot: Option<ProjectSnapshot>,
-    final_project_snapshot_task: Option<Task<()>>,
 }
 
 impl Thread {
-    /// Starts creating a snapshot of the current project state including git information and unsaved buffers.
-    /// Returns a task that will complete when all the async operations have finished.
-    pub fn start_project_snapshot(
-        project: Entity<Project>,
-        cx: &mut Context<Self>,
-    ) -> Task<ProjectSnapshot> {
+    /// Create a snapshot of the current project state including git information and unsaved buffers.
+    fn snapshot_project(project: Entity<Project>, cx: &mut Context<Self>) -> Task<ProjectSnapshot> {
         // Get all worktrees in the project
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
 
@@ -342,7 +336,7 @@ impl Thread {
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
 
         // Start an asynchronous task to get the full project snapshot including git diffs
-        let snapshot_task = Self::start_project_snapshot(project.clone(), cx);
+        let snapshot_task = Self::snapshot_project(project.clone(), cx);
 
         // Create a thread instance with initial_project_snapshot set to None
         let mut thread = Self {
@@ -364,8 +358,6 @@ impl Thread {
             scripting_tool_use: ToolUseState::new(),
             initial_project_snapshot: None,
             initial_project_snapshot_task: None,
-            final_project_snapshot: None,
-            final_project_snapshot_task: None,
         };
 
         // Spawn a task to update the initial_project_snapshot when the async work completes
@@ -426,10 +418,8 @@ impl Thread {
             tool_use,
             scripting_session,
             scripting_tool_use,
-            initial_project_snapshot: saved.initial_project_snapshot,
+            initial_project_snapshot: None,
             initial_project_snapshot_task: None,
-            final_project_snapshot: saved.final_project_snapshot,
-            final_project_snapshot_task: None,
         }
     }
 
@@ -483,35 +473,8 @@ impl Thread {
         self.initial_project_snapshot.as_ref()
     }
 
-    pub fn final_project_snapshot(&self) -> Option<&ProjectSnapshot> {
-        self.final_project_snapshot.as_ref()
-    }
-
-    pub fn set_final_project_snapshot(&mut self, snapshot: ProjectSnapshot) {
-        self.final_project_snapshot = Some(snapshot);
-    }
-
-    /// Starts creating a final snapshot of the project state with all git information
-    /// including diffs, and sets it when the async work completes.
-    pub fn start_final_project_snapshot(&mut self, cx: &mut Context<Self>) {
-        let project = self.project.clone();
-        let snapshot_task = Self::start_project_snapshot(project, cx);
-
-        self.final_project_snapshot_task = Some(cx.spawn(move |this, mut cx| async move {
-            let snapshot = snapshot_task.await;
-            this.update(&mut cx, |this, _| {
-                this.final_project_snapshot = Some(snapshot);
-            })
-            .ok();
-        }));
-    }
-
-    /// Takes a project snapshot and returns the task that will complete with the snapshot.
-    /// This doesn't store the snapshot in the thread itself, allowing the caller to decide
-    /// what to do with it when the task completes.
     pub fn take_project_snapshot(&self, cx: &mut Context<Self>) -> Task<ProjectSnapshot> {
-        let project = self.project.clone();
-        Self::start_project_snapshot(project, cx)
+        Self::snapshot_project(self.project.clone(), cx)
     }
 
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {

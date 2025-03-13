@@ -131,8 +131,6 @@ impl ThreadStore {
             let thread = SavedThread {
                 summary: thread.summary_or_default(),
                 updated_at: thread.updated_at(),
-                initial_project_snapshot: thread.initial_project_snapshot().cloned(),
-                final_project_snapshot: thread.final_project_snapshot().cloned(),
                 messages: thread
                     .messages()
                     .map(|message| {
@@ -288,8 +286,6 @@ pub struct SavedThread {
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<SavedMessage>,
-    pub initial_project_snapshot: Option<crate::thread::ProjectSnapshot>,
-    pub final_project_snapshot: Option<crate::thread::ProjectSnapshot>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
