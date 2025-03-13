@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -47,42 +47,44 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let glob = match serde_json::from_value::<PathSearchToolInput>(input) {
-            Ok(input) => input.glob,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
-        };
-        let path_matcher = match PathMatcher::new(&[glob.clone()]) {
-            Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {}", err))),
-        };
+        let worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
 
-        let mut matches = Vec::new();
+        cx.spawn(|cx| async move {
+            let glob = match serde_json::from_value::<PathSearchToolInput>(input) {
+                Ok(input) => input.glob,
+                Err(err) => return Err(anyhow!(err)),
+            };
+            let path_matcher = match PathMatcher::new(&[glob.clone()]) {
+                Ok(matcher) => matcher,
+                Err(err) => return Err(anyhow!("Invalid glob: {}", err)),
+            };
+            let mut matches = Vec::new();
 
-        for worktree_handle in project.read(cx).worktrees(cx) {
-            let worktree = worktree_handle.read(cx);
-            let root_name = worktree.root_name();
+            for worktree in worktrees {
+                cx.read_entity(&worktree, |worktree, _cx| {
+                    let root_name = worktree.root_name();
 
-            // Don't consider ignored entries.
-            for entry in worktree.entries(false, 0) {
-                if path_matcher.is_match(&entry.path) {
-                    matches.push(
-                        PathBuf::from(root_name)
-                            .join(&entry.path)
-                            .to_string_lossy()
-                            .to_string(),
-                    );
-                }
+                    // Don't consider ignored entries.
+                    for entry in worktree.entries(false, 0) {
+                        if path_matcher.is_match(&entry.path) {
+                            matches.push(
+                                PathBuf::from(root_name)
+                                    .join(&entry.path)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            );
+                        }
+                    }
+                })?
             }
-        }
 
-        if matches.is_empty() {
-            Task::ready(Ok(format!(
-                "No paths in the project matched the glob {glob:?}"
-            )))
-        } else {
-            // Sort to group entries in the same directory together.
-            matches.sort();
-            Task::ready(Ok(matches.join("\n")))
-        }
+            if matches.is_empty() {
+                Ok(format!("No paths in the project matched the glob {glob:?}"))
+            } else {
+                // Sort to group entries in the same directory together.
+                matches.sort();
+                Ok(matches.join("\n"))
+            }
+        })
     }
 }
