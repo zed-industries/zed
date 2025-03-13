@@ -1691,8 +1691,15 @@ impl LocalLspStore {
             for (server_id, diagnostics) in
                 diagnostics.get(file.path()).cloned().unwrap_or_default()
             {
-                self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
-                    .log_err();
+                self.update_buffer_diagnostics(
+                    buffer_handle,
+                    server_id,
+                    None,
+                    diagnostics,
+                    |_| false,
+                    cx,
+                )
+                .log_err();
             }
         }
         let Some(language) = language else {
@@ -1757,12 +1764,13 @@ impl LocalLspStore {
         });
     }
 
-    fn update_buffer_diagnostics(
+    fn update_buffer_diagnostics<F: Fn(&Diagnostic) -> bool>(
         &mut self,
         buffer: &Entity<Buffer>,
         server_id: LanguageServerId,
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        filter: F,
         cx: &mut Context<LspStore>,
     ) -> Result<()> {
         fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
@@ -1773,6 +1781,25 @@ impl LocalLspStore {
                 .then_with(|| a.message.cmp(&b.message))
         }
 
+        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
+
+        if let Some(existing_diagnostics) = buffer.read(cx).get_diagnostics(server_id).map(|diag| {
+            diag.iter()
+                .filter(|v| filter(&v.diagnostic))
+                .map(|v| {
+                    let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
+                    let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
+                    let range = start..end;
+                    DiagnosticEntry {
+                        range,
+                        diagnostic: v.diagnostic.clone(),
+                    }
+                })
+                .collect::<Vec<_>>()
+        }) {
+            diagnostics.extend(existing_diagnostics);
+        }
+
         diagnostics.sort_unstable_by(|a, b| {
             Ordering::Equal
                 .then_with(|| a.range.start.cmp(&b.range.start))
@@ -1780,14 +1807,12 @@ impl LocalLspStore {
                 .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
         });
 
-        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
-
         let edits_since_save = std::cell::LazyCell::new(|| {
             let saved_version = buffer.read(cx).saved_version();
             Patch::new(snapshot.edits_since::<PointUtf16>(saved_version).collect())
         });
 
-        let mut sanitized_diagnostics = Vec::new();
+        let mut sanitized_diagnostics = Vec::with_capacity(diagnostics.len());
 
         for entry in diagnostics {
             let start;
@@ -5887,6 +5912,18 @@ impl LspStore {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
     ) -> Result<(), anyhow::Error> {
+        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_| false, cx)
+    }
+
+    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic) -> bool>(
+        &mut self,
+        server_id: LanguageServerId,
+        abs_path: PathBuf,
+        version: Option<i32>,
+        diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        filter: F,
+        cx: &mut Context<Self>,
+    ) -> Result<(), anyhow::Error> {
         let Some((worktree, relative_path)) =
             self.worktree_store.read(cx).find_worktree(&abs_path, cx)
         else {
@@ -5905,6 +5942,7 @@ impl LspStore {
                 server_id,
                 version,
                 diagnostics.clone(),
+                filter,
                 cx,
             )?;
         }
@@ -7906,8 +7944,25 @@ impl LspStore {
     pub fn update_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,
+        params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &[String],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.merge_diagnostics(
+            language_server_id,
+            params,
+            disk_based_sources,
+            |_| false,
+            cx,
+        )
+    }
+
+    pub fn merge_diagnostics<F: Fn(&Diagnostic) -> bool>(
+        &mut self,
+        language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
+        filter: F,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         if !self.mode.is_local() {
@@ -8014,11 +8069,12 @@ impl LspStore {
             }
         }
 
-        self.update_diagnostic_entries(
+        self.merge_diagnostic_entries(
             language_server_id,
             abs_path,
             params.version,
             diagnostics,
+            filter,
             cx,
         )?;
         Ok(())

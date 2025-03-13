@@ -35,10 +35,6 @@ pub fn register_notifications(
     }
     let server_id = language_server.server_id();
 
-    // TODO: inactiveRegions support needs do add diagnostics, not replace them as `this.update_diagnostics` call below does
-    if true {
-        return;
-    }
     language_server
         .on_notification::<InactiveRegions, _>({
             let adapter = adapter.clone();
@@ -64,10 +60,20 @@ pub fn register_notifications(
                         version: params.text_document.version,
                         diagnostics,
                     };
-                    this.update_diagnostics(
+                    this.merge_diagnostics(
                         server_id,
                         mapped_diagnostics,
                         &adapter.disk_based_diagnostic_sources,
+                        |diag| {
+                            // we want to retain anything that isn't `inactiveRegions`.
+                            !(diag.severity == lsp::DiagnosticSeverity::INFORMATION
+                                && diag
+                                    .source
+                                    .as_ref()
+                                    .is_some_and(|v| v == CLANGD_SERVER_NAME)
+                                && diag.is_unnecessary
+                                && diag.message == "inactive region")
+                        },
                         cx,
                     )
                     .log_err();

@@ -279,10 +279,9 @@ impl super::LspAdapter for CLspAdapter {
                     // enable clangd's dot-to-arrow feature.
                     "editsNearCursor": true
                 },
-                // TODO: inactiveRegions support needs an implementation in clangd_ext.rs
-                // "inactiveRegionsCapabilities": {
-                //     "inactiveRegions": true,
-                // }
+                "inactiveRegionsCapabilities": {
+                    "inactiveRegions": true,
+                }
             }
         });
         if let Some(ref mut original_experimental) = original.capabilities.experimental {
