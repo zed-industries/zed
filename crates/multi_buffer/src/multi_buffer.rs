@@ -1492,6 +1492,91 @@ impl MultiBuffer {
         self.buffers_by_path.keys()
     }
 
+    fn expand_excerpts_with_paths(
+        &mut self,
+        ids: impl IntoIterator<Item = ExcerptId>,
+        line_count: u32,
+        direction: ExpandExcerptDirection,
+        cx: &mut Context<Self>,
+    ) {
+        let grouped = ids
+            .into_iter()
+            .chunk_by(|id| {
+                self.buffers_by_path
+                    .iter()
+                    .find(|(_, v)| v.contains(id))
+                    .map(|(k, _)| k.clone())
+            })
+            .into_iter()
+            .flat_map(|(k, v)| Some((k?, v.into_iter().collect::<Vec<_>>())))
+            .collect::<Vec<_>>();
+        let snapshot = self.snapshot(cx);
+
+        for (path, ids) in grouped.into_iter() {
+            let Some(excerpt_ids) = self.buffers_by_path.get(&path) else {
+                continue;
+            };
+
+            let ids_to_expand = HashSet::from_iter(ids);
+            let expanded_ranges = excerpt_ids.iter().filter_map(|excerpt_id| {
+                let excerpt = snapshot.excerpt(*excerpt_id)?;
+
+                let mut context = excerpt.range.context.to_point(&excerpt.buffer);
+                if ids_to_expand.contains(excerpt_id) {
+                    match direction {
+                        ExpandExcerptDirection::Up => {
+                            context.start.row = context.start.row.saturating_sub(line_count);
+                            context.start.column = 0;
+                        }
+                        ExpandExcerptDirection::Down => {
+                            context.end.row =
+                                (context.end.row + line_count).min(excerpt.buffer.max_point().row);
+                            context.end.column = excerpt.buffer.line_len(context.end.row);
+                        }
+                        ExpandExcerptDirection::UpAndDown => {
+                            context.start.row = context.start.row.saturating_sub(line_count);
+                            context.start.column = 0;
+                            context.end.row =
+                                (context.end.row + line_count).min(excerpt.buffer.max_point().row);
+                            context.end.column = excerpt.buffer.line_len(context.end.row);
+                        }
+                    }
+                }
+
+                Some(ExcerptRange {
+                    context,
+                    primary: excerpt
+                        .range
+                        .primary
+                        .as_ref()
+                        .map(|range| range.to_point(&excerpt.buffer)),
+                })
+            });
+            let mut merged_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            for range in expanded_ranges {
+                if let Some(last_range) = merged_ranges.last_mut() {
+                    if last_range.context.end >= range.context.start {
+                        last_range.context.end = range.context.end;
+                        continue;
+                    }
+                }
+                merged_ranges.push(range)
+            }
+            let buffer_snapshot = snapshot
+                .buffer_for_excerpt(*self.buffers_by_path.get(&path).unwrap().first().unwrap())
+                .unwrap()
+                .clone();
+            let buffer = self
+                .buffers
+                .borrow()
+                .get(&buffer_snapshot.remote_id())
+                .unwrap()
+                .buffer
+                .clone();
+            self.update_path_excerpts(path.clone(), buffer, &buffer_snapshot, merged_ranges, cx);
+        }
+    }
+
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
         &mut self,
@@ -1503,15 +1588,26 @@ impl MultiBuffer {
     ) -> bool {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
+        let (new, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+        self.update_path_excerpts(path, buffer, &buffer_snapshot, new, cx)
+    }
+
+    fn update_path_excerpts(
+        &mut self,
+        path: PathKey,
+        buffer: Entity<Buffer>,
+        buffer_snapshot: &BufferSnapshot,
+        new: Vec<ExcerptRange<Point>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let mut insert_after = self
             .buffers_by_path
             .range(..path.clone())
             .next_back()
             .map(|(_, value)| *value.last().unwrap())
             .unwrap_or(ExcerptId::min());
-        let existing = self.buffers_by_path.get(&path).cloned().unwrap_or_default();
 
-        let (new, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+        let existing = self.buffers_by_path.get(&path).cloned().unwrap_or_default();
 
         let mut new_iter = new.into_iter().peekable();
         let mut existing_iter = existing.into_iter().peekable();
@@ -2643,6 +2739,10 @@ impl MultiBuffer {
             return;
         }
         self.sync(cx);
+        if !self.buffers_by_path.is_empty() {
+            self.expand_excerpts_with_paths(ids, line_count, direction, cx);
+            return;
+        }
         let mut snapshot = self.snapshot.borrow_mut();
 
         let ids = ids.into_iter().collect::<Vec<_>>();
