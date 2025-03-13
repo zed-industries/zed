@@ -1,4 +1,4 @@
-Get diagnostics (errors and warnings) for the project or a specific file.
+Get errors and warnings for the project or a specific file.
 
 This tool can be invoked after a series of edits to determine if further edits are necessary, or if the user asks to fix errors or warnings in their codebase.
 
