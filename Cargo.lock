@@ -14733,6 +14733,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -16688,7 +16689,6 @@ dependencies = [
  "tempfile",
  "theme",
  "ui",
- "ui_prompt",
  "util",
  "uuid",
  "zed_actions",
