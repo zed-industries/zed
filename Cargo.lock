@@ -504,7 +504,6 @@ dependencies = [
  "theme",
  "time",
  "time_format",
- "tokio",
  "ui",
  "util",
  "uuid",

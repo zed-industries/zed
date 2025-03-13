@@ -73,7 +73,6 @@ text.workspace = true
 theme.workspace = true
 time.workspace = true
 time_format.workspace = true
-tokio = { version = "1", features = ["rt"] }
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true

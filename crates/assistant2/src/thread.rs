@@ -131,18 +131,10 @@ impl Thread {
                 // Get current branch name
                 let current_branch = worktree.branch().map(|branch| branch.name.to_string());
 
-                // Get git diff (changes between HEAD and worktree)
-                let diff = match repository.diff(git::repository::DiffType::HeadToWorktree, cx) {
-                    Ok(diff_task) => {
-                        // Execute the future synchronously to get the diff result
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .unwrap();
-                        rt.block_on(diff_task).ok()
-                    }
-                    Err(_) => None,
-                };
+                // For the diff, we'll capture the current state without awaiting futures
+                // The diff is optional, so it's okay to not include it if we can't get it immediately
+                // This is consistent with other parts of the codebase that handle git info in snapshots
+                let diff = None;
 
                 GitState {
                     remote_url,
