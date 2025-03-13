@@ -511,7 +511,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory)
                     .envs(env)
                     .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
-                    .arg(path.as_ref())
+                    .arg(path.normalize())
                     .output()
                     .await?;
 
@@ -526,7 +526,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory)
                     .envs(env)
                     .args(["update-index", "--force-remove"])
-                    .arg(path.as_ref())
+                    .arg(path.normalize())
                     .output()
                     .await?;
 
@@ -740,7 +740,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory?)
                     .envs(env)
                     .args(["update-index", "--add", "--remove", "--"])
-                    .args(paths.iter().map(|p| p.as_ref()))
+                    .args(paths.iter().map(|p| p.normalize()))
                     .output()
                     .await?;
 
@@ -1372,6 +1372,17 @@ impl RepoPath {
         debug_assert!(path.is_relative(), "Repo paths must be relative");
 
         RepoPath(path.into())
+    }
+
+    pub fn normalize(&self) -> String {
+        #[cfg(windows)]
+        {
+            self.0.to_string_lossy().replace('\\', "/")
+        }
+        #[cfg(not(windows))]
+        {
+            self.0.to_string_lossy().to_string()
+        }
     }
 }
 
