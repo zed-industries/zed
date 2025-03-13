@@ -3003,7 +3003,7 @@ impl LspStore {
         prettier_store: Entity<PrettierStore>,
         toolchain_store: Entity<ToolchainStore>,
         environment: Entity<ProjectEnvironment>,
-        extension_events: Entity<extension::ExtensionEvents>,
+        extension_events: Option<Entity<extension::ExtensionEvents>>,
         languages: Arc<LanguageRegistry>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
@@ -3018,11 +3018,13 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
-        cx.subscribe(
-            &extension_events,
-            Self::reload_zed_json_schemas_on_extensions_changed,
-        )
-        .detach();
+        if let Some(extension_events) = extension_events.as_ref() {
+            cx.subscribe(
+                extension_events,
+                Self::reload_zed_json_schemas_on_extensions_changed,
+            )
+            .detach();
+        }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
 
@@ -3293,7 +3295,7 @@ impl LspStore {
             irrefutable_let_patterns,
             reason = "Make sure to handle new event types in extension properly"
         )]
-        let extension::Event::ExtensionsUpdated = evt
+        let extension::Event::ExtensionsInstalledChanged = evt
         else {
             return;
         };

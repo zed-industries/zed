@@ -832,7 +832,7 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let extension_events = ExtensionEvents::global(cx);
+            let extension_events = Some(ExtensionEvents::global(cx));
 
             let lsp_store = cx.new(|cx| {
                 LspStore::new_local(
