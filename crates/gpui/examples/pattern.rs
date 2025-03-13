@@ -72,7 +72,7 @@ impl Render for PatternExample {
                     .child(div().w(px(256.0)).h(px(26.0)).bg(pattern_slash(
                         gpui::yellow(),
                         56.0 / 6.0,
-                        56.0 / 3.0,
+                        56.0 / 6.0,
                     ))),
             )
             .child(
