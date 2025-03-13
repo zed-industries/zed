@@ -5,8 +5,9 @@ mod judge;
 use clap::Parser;
 use eval::{Eval, EvalOutput};
 use gpui::{Application, AsyncApp};
-use headless_assistant::HeadlessAppState;
+use headless_assistant::{authenticate_model_provider, find_model, HeadlessAppState};
 use judge::Judge;
+use language_model::{LanguageModel, LanguageModelRegistry};
 use regex::Regex;
 use reqwest_client::ReqwestClient;
 use std::{
@@ -92,15 +93,42 @@ fn main() {
     app.run(move |cx| {
         let app_state = headless_assistant::init(cx);
 
+        let model = find_model(&args.model_name, cx).unwrap();
+        let editor_model = find_model(&editor_model_name, cx).unwrap();
+        let judge_model = find_model(&judge_model_name, cx).unwrap();
+
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.set_active_model(Some(model.clone()), cx);
+            registry.set_editor_model(Some(editor_model.clone()), cx);
+        });
+
+        let model_provider_id = model.provider_id();
+        let editor_model_provider_id = editor_model.provider_id();
+        let judge_model_provider_id = judge_model.provider_id();
+
         cx.spawn(move |cx| async move {
+            cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))
+                .unwrap()
+                .await
+                .unwrap();
+
+            cx.update(|cx| authenticate_model_provider(editor_model_provider_id.clone(), cx))
+                .unwrap()
+                .await
+                .unwrap();
+
+            cx.update(|cx| authenticate_model_provider(judge_model_provider_id.clone(), cx))
+                .unwrap()
+                .await
+                .unwrap();
+
             for eval_name in evals_to_run {
                 println!("Running eval named {eval_name}");
                 let result = run_eval(
                     &eval_name,
                     &evaluation_data_dir,
                     &repos_dir,
-                    args.model_name.clone(),
-                    editor_model_name.clone(),
+                    model.clone(),
                     judge_model_name.clone(),
                     app_state.clone(),
                     cx.clone(),
@@ -138,25 +166,18 @@ async fn run_eval(
     eval_name: &str,
     evaluation_data_dir: &Path,
     repos_dir: &Path,
-    model_name: String,
-    editor_model_name: String,
+    model: Arc<dyn LanguageModel>,
     judge_model_name: String,
     app_state: Arc<HeadlessAppState>,
     cx: AsyncApp,
 ) -> anyhow::Result<(EvalOutput, String)> {
     let eval_path = evaluation_data_dir.join(eval_name).canonicalize()?;
     let repo_path = repos_dir.canonicalize()?.join(eval_name);
-    let eval = Eval::load(
-        &eval_path,
-        &repo_path,
-        Some(SYSTEM_PROMPT.to_string()),
-        model_name.clone(),
-        editor_model_name.clone(),
-    )?;
+    let eval = Eval::load(&eval_path, &repo_path, Some(SYSTEM_PROMPT.to_string()))?;
 
     let judge = Judge::load(&eval_path, judge_model_name.clone())?;
 
-    let eval_output = cx.update(|cx| eval.run(app_state, cx))?.await?;
+    let eval_output = cx.update(|cx| eval.run(app_state, model, cx))?.await?;
     let judge_output = cx.update(|cx| judge.run(&eval_output, cx))?.await?;
     Ok((eval_output, judge_output))
 }

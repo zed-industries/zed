@@ -1,11 +1,9 @@
-use crate::headless_assistant::{
-    authenticate_model_provider, find_model, HeadlessAppState, HeadlessAssistant,
-};
+use crate::headless_assistant::{HeadlessAppState, HeadlessAssistant};
 use anyhow::anyhow;
 use assistant2::RequestKind;
 use collections::HashMap;
 use gpui::{App, Task};
-use language_model::LanguageModelRegistry;
+use language_model::LanguageModel;
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
@@ -17,8 +15,6 @@ pub struct Eval {
     pub repo_path: PathBuf,
     pub system_prompt: Option<String>,
     pub user_query: String,
-    pub model_name: String,
-    pub editor_model_name: String,
 }
 
 #[derive(Debug)]
@@ -43,8 +39,6 @@ impl Eval {
         eval_path: &Path,
         repo_path: &Path,
         system_prompt: Option<String>,
-        model_name: String,
-        editor_model_name: String,
     ) -> anyhow::Result<Self> {
         let user_query = std::fs::read_to_string(eval_path.join("prompt.txt"))?;
         let setup_contents = std::fs::read_to_string(eval_path.join("setup.json"))?;
@@ -56,46 +50,20 @@ impl Eval {
             repo_path: repo_path.to_path_buf(),
             system_prompt,
             user_query,
-            model_name,
-            editor_model_name,
         })
     }
 
-    /// Runs the eval. Note that this cannot be run concurrently because
-    /// LanguageModelRegistry.active_model is global state.
     pub fn run(
         &self,
         app_state: Arc<HeadlessAppState>,
+        model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Task<anyhow::Result<EvalOutput>> {
-        let model = match find_model(&self.model_name, cx) {
-            Ok(model) => model,
-            Err(err) => return Task::ready(Err(err)),
-        };
-
-        let editor_model = match find_model(&self.editor_model_name, cx) {
-            Ok(editor_model) => editor_model,
-            Err(err) => return Task::ready(Err(err)),
-        };
-
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_active_model(Some(model.clone()), cx);
-            registry.set_editor_model(Some(editor_model.clone()), cx);
-        });
-
-        let model_provider_id = model.provider_id();
-        let editor_model_provider_id = editor_model.provider_id();
         let repo_path = self.repo_path.clone();
         let system_prompt = self.system_prompt.clone();
         let user_query = self.user_query.clone();
 
         cx.spawn(move |mut cx| async move {
-            cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))?
-                .await?;
-
-            cx.update(|cx| authenticate_model_provider(editor_model_provider_id.clone(), cx))?
-                .await?;
-
             let (assistant, done_rx) =
                 cx.update(|cx| HeadlessAssistant::new(app_state.clone(), cx))??;
 
