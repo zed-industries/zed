@@ -1,11 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, UnderlineStyle,
+    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
+    DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
+    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
+    UnderlineStyle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -701,13 +703,13 @@ impl ActiveThread {
                 .child(
                     h_flex()
                         .justify_between()
-                        .py_0p5()
+                        .py_1()
                         .pl_1()
                         .pr_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.02))
+                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                         .map(|element| {
                             if is_open {
-                                element.border_b_1().rounded_t(px(6.))
+                                element.border_b_1().rounded_t_md()
                             } else {
                                 element.rounded_md()
                             }
@@ -731,16 +733,35 @@ impl ActiveThread {
                                 ))
                                 .child(Label::new(tool_use.name)),
                         )
-                        .child(
-                            Label::new(match tool_use.status {
-                                ToolUseStatus::Pending => "Pending",
-                                ToolUseStatus::Running => "Running",
-                                ToolUseStatus::Finished(_) => "Finished",
-                                ToolUseStatus::Error(_) => "Error",
-                            })
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
-                        ),
+                        .child({
+                            let (icon_name, color, animated) = match &tool_use.status {
+                                ToolUseStatus::Pending => {
+                                    (IconName::Warning, Color::Warning, false)
+                                }
+                                ToolUseStatus::Running => {
+                                    (IconName::ArrowCircle, Color::Accent, true)
+                                }
+                                ToolUseStatus::Finished(_) => {
+                                    (IconName::Check, Color::Success, false)
+                                }
+                                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
+                            };
+
+                            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
+
+                            if animated {
+                                icon.with_animation(
+                                    "arrow-circle",
+                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                )
+                                .into_any_element()
+                            } else {
+                                icon.into_any_element()
+                            }
+                        }),
                 )
                 .map(|parent| {
                     if !is_open {
@@ -812,7 +833,7 @@ impl ActiveThread {
                         .bg(cx.theme().colors().editor_foreground.opacity(0.02))
                         .map(|element| {
                             if is_open {
-                                element.border_b_1().rounded_t(px(6.))
+                                element.border_b_1().rounded_t_md()
                             } else {
                                 element.rounded_md()
                             }

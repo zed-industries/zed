@@ -1,5 +1,6 @@
 mod bash_tool;
 mod delete_path_tool;
+mod diagnostics_tool;
 mod edit_files_tool;
 mod list_directory_tool;
 mod now_tool;
@@ -12,6 +13,7 @@ use gpui::App;
 
 use crate::bash_tool::BashTool;
 use crate::delete_path_tool::DeletePathTool;
+use crate::diagnostics_tool::DiagnosticsTool;
 use crate::edit_files_tool::EditFilesTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
@@ -24,13 +26,13 @@ pub fn init(cx: &mut App) {
     crate::edit_files_tool::log::init(cx);
 
     let registry = ToolRegistry::global(cx);
-    registry.register_tool(NowTool);
-    registry.register_tool(ReadFileTool);
-    registry.register_tool(ListDirectoryTool);
-    registry.register_tool(EditFilesTool);
-    registry.register_tool(PathSearchTool);
-    registry.register_tool(RegexSearchTool);
-
-    registry.register_tool(DeletePathTool);
     registry.register_tool(BashTool);
+    registry.register_tool(DeletePathTool);
+    registry.register_tool(DiagnosticsTool);
+    registry.register_tool(EditFilesTool);
+    registry.register_tool(ListDirectoryTool);
+    registry.register_tool(NowTool);
+    registry.register_tool(PathSearchTool);
+    registry.register_tool(ReadFileTool);
+    registry.register_tool(RegexSearchTool);
 }
