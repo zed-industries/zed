@@ -10302,6 +10302,7 @@ dependencies = [
  "clock",
  "collections",
  "env_logger 0.11.6",
+ "extension",
  "fancy-regex 0.14.0",
  "fs",
  "futures 0.3.31",

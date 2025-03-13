@@ -15,6 +15,7 @@ use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
     fs::{self},
     io::BufReader,
+    lock::RwLock,
 };
 use std::{
     any::Any,
@@ -22,7 +23,7 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
@@ -60,7 +61,7 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 pub struct JsonLspAdapter {
     node: NodeRuntime,
     languages: Arc<LanguageRegistry>,
-    workspace_config: OnceLock<Value>,
+    workspace_config: RwLock<Option<Value>>,
 }
 
 impl JsonLspAdapter {
@@ -251,11 +252,15 @@ impl LspAdapter for JsonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut config = cx.update(|cx| {
-            self.workspace_config
-                .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
-                .clone()
-        })?;
+        let mut config = if let Some(config) = self.workspace_config.read().await.clone() {
+            config
+        } else {
+            let mut workspace_config = self.workspace_config.write().await;
+            let config_new =
+                cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
+            workspace_config.replace(config_new.clone());
+            config_new
+        };
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
@@ -276,6 +281,14 @@ impl LspAdapter for JsonLspAdapter {
         ]
         .into_iter()
         .collect()
+    }
+
+    fn zed_json_schema_is_primary_schema_adapter(&self) -> bool {
+        true
+    }
+
+    async fn zed_json_schema_clear_schema_cache(self: Arc<Self>) {
+        self.workspace_config.write().await.take();
     }
 }
 

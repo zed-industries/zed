@@ -555,6 +555,14 @@ pub trait LspAdapter: 'static + Send + Sync {
         // By default all language servers are rooted at the root of the worktree.
         Some(Arc::from("".as_ref()))
     }
+
+    fn zed_json_schema_is_primary_schema_adapter(&self) -> bool {
+        false
+    }
+
+    async fn zed_json_schema_clear_schema_cache(self: Arc<Self>) {
+        panic!("Not implemented for this adapter. This method should only be called on the default JSON language server adapter")
+    }
 }
 
 async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
