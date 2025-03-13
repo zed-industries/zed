@@ -33,7 +33,7 @@ pub trait StyledExt: Styled + Sized {
         self.flex().flex_col()
     }
 
-    /// The [`Surface`](ElevationIndex::Surface) elevation level, located above the app background, is the standard level for all elements
+    /// The [`Surface`](Elevation::Surface) elevation level, located above the app background, is the standard level for all elements
     ///
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
@@ -49,7 +49,7 @@ pub trait StyledExt: Styled + Sized {
         elevated_borderless(self, cx, Elevation::Surface)
     }
 
-    /// Non-Modal Elevated Surfaces appear above the [`Surface`](ElevationIndex::Surface) layer and is used for things that should appear above most UI elements like an editor or panel, but not elements like popovers, context menus, modals, etc.
+    /// Non-Modal Elevated Surfaces appear above the [`Surface`](Elevation::Surface) layer and is used for things that should appear above most UI elements like an editor or panel, but not elements like popovers, context menus, modals, etc.
     ///
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
@@ -69,7 +69,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Elements rendered at this layer should have an enforced behavior: Any interaction outside of the modal will either dismiss the modal or prompt an action (Save your progress, etc) then dismiss the modal.
     ///
-    /// If the element does not have this behavior, it should be rendered at the [`Elevated Surface`](ElevationIndex::ElevatedSurface) layer.
+    /// If the element does not have this behavior, it should be rendered at the [`Elevated Surface`](Elevation::ElevatedSurface) layer.
     ///
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
