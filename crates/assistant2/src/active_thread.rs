@@ -586,47 +586,51 @@ impl ActiveThread {
     ) {
         use telemetry;
 
-        // We're no longer using these values since we're only sending
-        // basic telemetry info rather than the full thread data
-        self.thread.update(cx, |_thread, _cx| {
-            // In the future, if we need to collect detailed thread data
-            // for the telemetry, we could use this:
-            //
-            // let serializable_thread = self.create_serializable_thread(thread);
-            // let thread_data = serde_json::to_value(serializable_thread)
-            //     .unwrap_or_else(|_| serde_json::Value::Null);
-            //
-            // let initial_snapshot = thread
-            //     .initial_project_snapshot()
-            //     .cloned()
-            //     .map(|snapshot| {
-            //         serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
-            //     })
-            //     .unwrap_or(serde_json::Value::Null);
-            //
-            // let final_snapshot = thread
-            //     .final_project_snapshot()
-            //     .cloned()
-            //     .map(|snapshot| {
-            //         serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
-            //     })
-            //     .unwrap_or(serde_json::Value::Null);
+        // Collect thread data and snapshots for the full telemetry event
+        let (thread_data, initial_snapshot, final_snapshot) =
+            self.thread.update(cx, |thread, _cx| {
+                // Create a serializable representation of the Thread
+                let serializable_thread = self.create_serializable_thread(thread);
+                let thread_data = serde_json::to_value(serializable_thread)
+                    .unwrap_or_else(|_| serde_json::Value::Null);
 
-            // Just indicate that we've viewed the thread for now
-            ()
-        });
+                // Get the project snapshots
+                let initial_snapshot = thread
+                    .initial_project_snapshot()
+                    .cloned()
+                    .map(|snapshot| {
+                        serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
+                    })
+                    .unwrap_or(serde_json::Value::Null);
 
-        // Create the telemetry event
-        // We only need to send basic information in the event
-        // The detailed thread data will be collected by the server-side telemetry
-        let thread_id_for_event = thread_id.clone();
+                let final_snapshot = thread
+                    .final_project_snapshot()
+                    .cloned()
+                    .map(|snapshot| {
+                        serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null)
+                    })
+                    .unwrap_or(serde_json::Value::Null);
+
+                (thread_data, initial_snapshot, final_snapshot)
+            });
+
+        // Send the feedback data as properties in a telemetry event
+        // Instead of creating an Event::AssistantThreadFeedback directly, we use the flexible event system
         let rating = if is_positive { "positive" } else { "negative" };
 
-        // Log the event using the telemetry::event! macro
+        // Use thread_data serialized to a string to allow tracking in a standardized way
+        let thread_data_str = serde_json::to_string(&thread_data).unwrap_or_default();
+
+        // For events that collect larger data structures, the server may collect them from a dedicated
+        // endpoint or process them differently. The telemetry::event! macro is used for standard metrics
+        // collection rather than detailed data analysis.
         telemetry::event!(
             "Assistant Feedback",
             rating,
-            thread_id = thread_id_for_event
+            thread_id,
+            has_thread_data = !thread_data_str.is_empty(),
+            has_initial_snapshot = !initial_snapshot.is_null(),
+            has_final_snapshot = !final_snapshot.is_null()
         );
     }
 
