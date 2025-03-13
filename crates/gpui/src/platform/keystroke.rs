@@ -205,7 +205,7 @@ impl Keystroke {
                 function,
             },
             key,
-            key_char: key_char,
+            key_char,
         })
     }
 
