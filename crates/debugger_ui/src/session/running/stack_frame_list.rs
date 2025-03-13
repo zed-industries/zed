@@ -176,6 +176,32 @@ impl StackFrameList {
         cx.notify();
     }
 
+    pub fn go_to_selected_stack_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if let Some(current_stack_frame_id) = self.current_stack_frame_id {
+            let frame = self
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    StackFrameEntry::Normal(dap) => {
+                        if dap.id == current_stack_frame_id {
+                            Some(dap)
+                        } else {
+                            None
+                        }
+                    }
+                    StackFrameEntry::Collapsed(daps) => {
+                        daps.iter().find(|dap| dap.id == current_stack_frame_id)
+                    }
+                })
+                .cloned();
+
+            if let Some(frame) = frame.as_ref() {
+                self.select_stack_frame(frame, true, window, cx)
+                    .detach_and_log_err(cx);
+            }
+        }
+    }
+
     pub fn select_stack_frame(
         &mut self,
         stack_frame: &dap::StackFrame,

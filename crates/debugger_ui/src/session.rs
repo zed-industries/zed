@@ -32,7 +32,6 @@ pub(crate) enum DebugSessionState {
 }
 
 impl DebugSessionState {
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn as_running(&self) -> Option<&Entity<running::RunningState>> {
         match &self {
             DebugSessionState::Running(entity) => Some(entity),
@@ -135,7 +134,6 @@ impl DebugSession {
         }
     }
 
-    #[cfg(any(test, feature = "test-feature"))]
     pub(crate) fn mode(&self) -> &DebugSessionState {
         &self.mode
     }

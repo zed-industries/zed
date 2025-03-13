@@ -439,6 +439,13 @@ impl RunningState {
         }
     }
 
+    pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
+        if self.thread_id.is_some() {
+            self.stack_frame_list
+                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
+        }
+    }
+
     pub fn session(&self) -> &Entity<Session> {
         &self.session
     }

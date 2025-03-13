@@ -293,6 +293,27 @@ impl DebugPanel {
                     })
                 }
             }
+            pane::Event::ActivateItem {
+                local: _,
+                focus_changed,
+            } => {
+                if *focus_changed {
+                    if let Some(debug_session) = self
+                        .pane
+                        .read(cx)
+                        .active_item()
+                        .and_then(|item| item.downcast::<DebugSession>())
+                    {
+                        if let Some(running) = debug_session
+                            .read_with(cx, |session, _| session.mode().as_running().cloned())
+                        {
+                            running.update(cx, |running, cx| {
+                                running.go_to_selected_stack_frame(window, cx);
+                            });
+                        }
+                    }
+                }
+            }
 
             _ => {}
         }
