@@ -61,6 +61,7 @@ pub struct AmazonBedrockSettings {
     pub available_models: Vec<AvailableModel>,
     pub endpoint: Option<String>,
     pub profile_name: Option<String>,
+    pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
 }
 
@@ -345,41 +346,103 @@ impl BedrockModel {
     ) -> Result<
         BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
-        let Ok(Ok((access_key_id, secret_access_key, region))) =
+        // Read state to get authentication method and other settings
+        let Ok(Ok((auth_method, credentials, endpoint, region, settings))) =
             cx.read_entity(&self.state, |state, _cx| {
-                if let Some(credentials) = &state.credentials {
-                    Ok((
-                        credentials.access_key_id.clone(),
-                        credentials.secret_access_key.clone(),
-                        credentials.region.clone(),
-                    ))
+                // Get the authentication method and credentials
+                let auth_method = state
+                    .settings
+                    .as_ref()
+                    .and_then(|s| s.authentication_method.clone())
+                    .unwrap_or(BedrockAuthMethod::Automatic);
+
+                // Get endpoint if configured
+                let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
+
+                // Get region - from credentials or directly from settings
+                let region = if let Some(creds) = &state.credentials {
+                    creds.region.clone()
                 } else {
-                    return Err(anyhow!("Failed to read credentials"));
-                }
+                    std::env::var(ZED_BEDROCK_REGION_VAR)
+                        .ok()
+                        .unwrap_or_else(|| ConfigurationView::PLACEHOLDER_REGION.to_string())
+                };
+
+                Ok::<(BedrockAuthMethod, Option<BedrockCredentials>, Option<String>, String, Option<AmazonBedrockSettings>), BedrockError>((
+                    auth_method,
+                    state.credentials.clone(),
+                    endpoint,
+                    region,
+                    state.settings.clone(),
+                ))
             })
         else {
             return Err(anyhow!("App state dropped"));
         };
 
         let owned_handle = self.handler.clone();
+        let http_client = self.http_client.clone();
 
-        let config = owned_handle.block_on(
-            aws_config::defaults(BehaviorVersion::latest())
-                .http_client(self.http_client.clone())
-                .region(Region::new(region))
-                .timeout_config(TimeoutConfig::disabled())
-                .load(),
-        );
-
-        let runtime_client = bedrock_client::Client::new(&config);
-
+        // Configure AWS based on the authentication method
         Ok(async move {
+            let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+                .http_client(http_client)
+                .region(Region::new(region))
+                .timeout_config(TimeoutConfig::disabled());
+
+            // Apply endpoint configuration if specified
+            if let Some(endpoint_url) = endpoint {
+                if !endpoint_url.is_empty() {
+                    config_builder = config_builder.endpoint_url(endpoint_url);
+                }
+            }
+
+            // Configure authentication based on method
+            match auth_method {
+                BedrockAuthMethod::StaticCredentials => {
+                    if let Some(creds) = credentials {
+                        let aws_creds = Credentials::new(
+                            creds.access_key_id,
+                            creds.secret_access_key,
+                            creds.session_token,
+                            None,
+                            "zed-bedrock-provider",
+                        );
+                        config_builder = config_builder.credentials_provider(aws_creds);
+                    }
+                }
+                BedrockAuthMethod::NamedProfile => {
+                    // Use profile from settings or environment
+                    let profile_name = settings
+                        .and_then(|s| s.profile_name)
+                        .or_else(|| std::env::var(ZED_AWS_PROFILE).ok())
+                        .unwrap_or_else(|| "default".to_string());
+
+                    if !profile_name.is_empty() {
+                        config_builder = config_builder.profile_name(profile_name);
+                    }
+                }
+                BedrockAuthMethod::SingleSignOn => {
+                    // For SSO, we rely on the default credential chain which includes SSO
+                    // The user should have configured SSO via AWS CLI (`aws sso login`)
+                    // TODO: Decide if we want to integrate web based SSO right here, or we extract it
+                }
+                BedrockAuthMethod::Automatic => {
+                    // Use default credential provider chain
+                }
+            }
+
+            // Load the AWS configuration
+            let config = owned_handle.block_on(config_builder.load());
+            let runtime_client = bedrock_client::Client::new(&config);
+
+            // Stream completion with the configured client
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
             request.await.unwrap_or_else(|e| {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-        .boxed())
+            .boxed())
     }
 }
 
@@ -625,18 +688,18 @@ pub fn get_bedrock_tokens(
 
 pub async fn extract_tool_args_from_events(
     name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
+) -> Result<impl Send + Stream<Item=Result<String>>> {
     handle
         .spawn(async move {
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                    content_block_index,
-                    start,
-                    ..
-                }) = event?
+                                                                       content_block_index,
+                                                                       start,
+                                                                       ..
+                                                                   }) = event?
                 {
                     match start {
                         None => {
@@ -688,9 +751,9 @@ pub async fn extract_tool_args_from_events(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -698,7 +761,7 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
@@ -800,7 +863,7 @@ pub fn map_to_language_model_completion_events(
             }
         },
     )
-    .filter_map(|event| async move { event })
+        .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -810,6 +873,7 @@ struct ConfigurationView {
     endpoint_editor: Entity<Editor>,
     profile_name_editor: Entity<Editor>,
     start_url_editor: Entity<Editor>,
+    role_arn_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -821,12 +885,13 @@ impl ConfigurationView {
     const PLACEHOLDER_PROFILE_NAME_TEXT: &'static str = "default";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
     const PLACEHOLDER_START_URL: &'static str = "https://XXXXXXXXXXX.awsapps.com/start";
+    const PLACEHOLDER_ROLE_ARN: &'static str = "arn:aws:iam::XXXXXXXXXXX:role/MyRoleName";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-        .detach();
+            .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -842,7 +907,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                .log_err();
+                    .log_err();
             }
         }));
 
@@ -875,6 +940,11 @@ impl ConfigurationView {
             start_url_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_START_URL, cx);
+                editor
+            }),
+            role_arn_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ROLE_ARN, cx);
                 editor
             }),
             state,
@@ -925,7 +995,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -942,7 +1012,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
@@ -1255,7 +1325,31 @@ impl ConfigurationView {
                             .child(self.render_start_url_editor(cx)),
                     ),
             )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Role ARN").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_role_arn_editor(cx)),
+                    ),
+            )
             .into_any_element()
+    }
+
+    // Add a renderer for the role ARN editor
+    fn render_role_arn_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.role_arn_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
 
     // Render UI for Automatic auth method
