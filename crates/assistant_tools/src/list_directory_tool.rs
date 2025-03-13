@@ -62,19 +62,18 @@ impl Tool for ListDirectoryTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree_root_name) = input.path.components().next() else {
-            return Task::ready(Err(anyhow!("Invalid path")));
+        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+            return Task::ready(Err(anyhow!("Path not found in project")));
         };
         let Some(worktree) = project
             .read(cx)
-            .worktree_for_root_name(&worktree_root_name.as_os_str().to_string_lossy(), cx)
+            .worktree_for_id(project_path.worktree_id, cx)
         else {
-            return Task::ready(Err(anyhow!("Directory not found in the project")));
+            return Task::ready(Err(anyhow!("Worktree not found")));
         };
-        let path = input.path.strip_prefix(worktree_root_name).unwrap();
         let worktree = worktree.read(cx);
 
-        let Some(entry) = worktree.entry_for_path(path) else {
+        let Some(entry) = worktree.entry_for_path(&project_path.path) else {
             return Task::ready(Err(anyhow!("Path not found: {}", input.path.display())));
         };
 
@@ -83,13 +82,11 @@ impl Tool for ListDirectoryTool {
         }
 
         let mut output = String::new();
-        for entry in worktree.child_entries(path) {
+        for entry in worktree.child_entries(&project_path.path) {
             writeln!(
                 output,
                 "{}",
-                Path::new(worktree_root_name.as_os_str())
-                    .join(&entry.path)
-                    .display(),
+                Path::new(worktree.root_name()).join(&entry.path).display(),
             )
             .unwrap();
         }
