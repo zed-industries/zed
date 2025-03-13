@@ -345,8 +345,8 @@ impl Copilot {
             buffers: Default::default(),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
-        this.enable_or_disable_copilot(cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.enable_or_disable_copilot(cx))
+        this.start_copilot(true, cx);
+        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, cx))
             .detach();
         this
     }
@@ -364,26 +364,27 @@ impl Copilot {
         }
     }
 
-    fn enable_or_disable_copilot(&mut self, cx: &mut Context<Self>) {
+    fn start_copilot(&mut self, check_prediction_provider: bool, cx: &mut Context<Self>) {
+        if !matches!(self.server, CopilotServer::Disabled) {
+            return;
+        }
+        let language_settings = all_language_settings(None, cx);
+        if check_prediction_provider
+            && language_settings.edit_predictions.provider != EditPredictionProvider::Copilot
+        {
+            return;
+        }
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        let language_settings = all_language_settings(None, cx);
-        if language_settings.edit_predictions.provider == EditPredictionProvider::Copilot {
-            if matches!(self.server, CopilotServer::Disabled) {
-                let env = self.build_env(&language_settings.edit_predictions.copilot);
-                let start_task = cx
-                    .spawn(move |this, cx| {
-                        Self::start_language_server(server_id, http, node_runtime, env, this, cx)
-                    })
-                    .shared();
-                self.server = CopilotServer::Starting { task: start_task };
-                cx.notify();
-            }
-        } else {
-            self.server = CopilotServer::Disabled;
-            cx.notify();
-        }
+        let env = self.build_env(&language_settings.edit_predictions.copilot);
+        let start_task = cx
+            .spawn(move |this, cx| {
+                Self::start_language_server(server_id, http, node_runtime, env, this, cx)
+            })
+            .shared();
+        self.server = CopilotServer::Starting { task: start_task };
+        cx.notify();
     }
 
     fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
@@ -633,10 +634,6 @@ impl Copilot {
                     anyhow::Ok(())
                 })
             }
-            CopilotServer::Disabled => cx.background_spawn(async move {
-                clear_copilot_config_dir().await;
-                anyhow::Ok(())
-            }),
             _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
@@ -1019,10 +1016,6 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
-}
-
-async fn clear_copilot_config_dir() {
-    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {

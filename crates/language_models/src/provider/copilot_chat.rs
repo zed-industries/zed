@@ -366,7 +366,6 @@ impl Render for ConfigurationView {
 
             match &self.copilot_status {
                 Some(status) => match status {
-                    Status::Disabled => v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL)),
                     Status::Starting { task: _ } => {
                         const LABEL: &str = "Starting Copilot...";
                         v_flex()
