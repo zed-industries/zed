@@ -54,7 +54,7 @@ actions!(
         FocusRight,
         RemoveFocusedContext,
         AcceptSuggestedContext,
-        OpenAsMarkdown
+        OpenActiveThreadAsMarkdown
     ]
 );
 
