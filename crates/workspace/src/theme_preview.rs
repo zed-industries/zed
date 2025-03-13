@@ -5,8 +5,8 @@ use theme::all_theme_colors;
 use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus, Avatar,
     AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, Checkbox,
-    CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon, Elevation,
-    Facepile, IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor, Tooltip,
+    CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon, Elevation, Facepile,
+    IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};

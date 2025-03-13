@@ -59,8 +59,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, Checkbox, ContextMenu, Elevation, PopoverMenu, Scrollbar, ScrollbarState,
-    Tooltip,
+    prelude::*, Checkbox, ContextMenu, Elevation, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{AppState, OpenOptions, OpenVisible};
