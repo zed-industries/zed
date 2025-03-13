@@ -6,7 +6,7 @@ use gpui::{
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, TintColor};
 use workspace::ui::StyledExt;
 
 pub fn init(cx: &mut App) {
