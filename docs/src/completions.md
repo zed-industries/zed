@@ -47,11 +47,7 @@ Zed's Edit Prediction comes with two different display modes:
 1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
 
-You toggle between them via the Zeta status bar menu:
-
-<!-- image here -->
-
-Or via the settings, with the `mode` key:
+You toggle between them via the `mode` key:
 
 ```json
 "edit_predictions": {
