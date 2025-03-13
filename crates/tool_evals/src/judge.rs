@@ -1,18 +1,20 @@
 use crate::eval::EvalOutput;
-use crate::headless_assistant::{find_model, send_language_model_request};
+use crate::headless_assistant::send_language_model_request;
 use anyhow::anyhow;
 use gpui::{App, Task};
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role};
-use std::path::Path;
+use language_model::{
+    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
+};
+use std::{path::Path, sync::Arc};
 
 pub struct Judge {
     pub original_diff: Option<String>,
     pub original_message: Option<String>,
-    pub model_name: String,
+    pub model: Arc<dyn LanguageModel>,
 }
 
 impl Judge {
-    pub fn load(eval_path: &Path, model_name: String) -> anyhow::Result<Judge> {
+    pub fn load(eval_path: &Path, model: Arc<dyn LanguageModel>) -> anyhow::Result<Judge> {
         // TODO: "original" seems confusing - rename?
         let original_diff_path = eval_path.join("original.diff");
         let original_diff = if std::fs::exists(&original_diff_path)? {
@@ -31,16 +33,11 @@ impl Judge {
         Ok(Self {
             original_diff,
             original_message,
-            model_name,
+            model,
         })
     }
 
     pub fn run(&self, eval_output: &EvalOutput, cx: &mut App) -> Task<anyhow::Result<String>> {
-        let model = match find_model(&self.model_name, cx) {
-            Ok(model) => model,
-            Err(err) => return Task::ready(Err(err)),
-        };
-
         // todo! also compare last message, to handle Q/A eval.
         let Some(original_diff) = self.original_diff.as_ref() else {
             return Task::ready(Err(anyhow!("No original.diff found")));
@@ -60,6 +57,7 @@ impl Judge {
             stop: Vec::new(),
         };
 
+        let model = self.model.clone();
         cx.spawn(move |cx| send_language_model_request(model, request, cx))
     }
 }

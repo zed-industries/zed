@@ -129,7 +129,7 @@ fn main() {
                     &evaluation_data_dir,
                     &repos_dir,
                     model.clone(),
-                    judge_model_name.clone(),
+                    judge_model.clone(),
                     app_state.clone(),
                     cx.clone(),
                 )
@@ -167,16 +167,14 @@ async fn run_eval(
     evaluation_data_dir: &Path,
     repos_dir: &Path,
     model: Arc<dyn LanguageModel>,
-    judge_model_name: String,
+    judge_model: Arc<dyn LanguageModel>,
     app_state: Arc<HeadlessAppState>,
     cx: AsyncApp,
 ) -> anyhow::Result<(EvalOutput, String)> {
     let eval_path = evaluation_data_dir.join(eval_name).canonicalize()?;
     let repo_path = repos_dir.canonicalize()?.join(eval_name);
     let eval = Eval::load(&eval_path, &repo_path, Some(SYSTEM_PROMPT.to_string()))?;
-
-    let judge = Judge::load(&eval_path, judge_model_name.clone())?;
-
+    let judge = Judge::load(&eval_path, judge_model)?;
     let eval_output = cx.update(|cx| eval.run(app_state, model, cx))?.await?;
     let judge_output = cx.update(|cx| judge.run(&eval_output, cx))?.await?;
     Ok((eval_output, judge_output))
