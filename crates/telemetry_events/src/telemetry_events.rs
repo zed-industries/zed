@@ -245,6 +245,10 @@ pub struct AssistantThreadFeedbackEvent {
     pub rating: ThreadFeedbackRating,
     /// The serialized thread data containing messages, tool calls, etc.
     pub thread_data: serde_json::Value,
+    /// The initial project snapshot taken when the thread was created
+    pub initial_project_snapshot: serde_json::Value,
+    /// The final project snapshot taken when the thread was first saved
+    pub final_project_snapshot: serde_json::Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

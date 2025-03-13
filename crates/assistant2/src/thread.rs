@@ -5,6 +5,7 @@ use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
+use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -16,8 +17,10 @@ use project::Project;
 use prompt_store::{AssistantSystemPromptWorktree, PromptBuilder};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
+use text::BufferId;
 use util::{post_inc, ResultExt, TryFutureExt as _};
 use uuid::Uuid;
+use worktree::WorktreeId;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
 use crate::thread_store::SavedThread;
@@ -62,6 +65,35 @@ pub struct Message {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectSnapshot {
+    pub worktree_snapshots: Vec<WorktreeSnapshot>,
+    pub unsaved_buffers: Vec<UnsavedBuffer>,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeSnapshot {
+    pub worktree_id: WorktreeId,
+    pub worktree_path: String,
+    pub git_state: Option<GitState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitState {
+    pub remote_url: Option<String>,
+    pub head_sha: Option<String>,
+    pub current_branch: Option<String>,
+    pub diff: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnsavedBuffer {
+    pub path: Option<String>,
+    pub buffer_id: BufferId,
+    pub is_dirty: bool,
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -80,9 +112,87 @@ pub struct Thread {
     tool_use: ToolUseState,
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
+    initial_project_snapshot: Option<ProjectSnapshot>,
+    final_project_snapshot: Option<ProjectSnapshot>,
 }
 
 impl Thread {
+    /// Creates a snapshot of the current project state including git information and unsaved buffers
+    pub fn create_project_snapshot(project: Entity<Project>, cx: &AppContext) -> ProjectSnapshot {
+        let mut worktree_snapshots = Vec::new();
+        let mut unsaved_buffers = Vec::new();
+        
+        // Get all worktrees in the project
+        let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        
+        // Capture information for each worktree
+        for worktree_handle in worktrees {
+            let worktree = worktree_handle.read(cx);
+            let worktree_id = worktree.id();
+            let worktree_path = worktree.abs_path().to_string_lossy().to_string();
+            
+            // Get git information if this is a git repository
+            let git_state = match project.read(cx).git_repository_for_worktree(&worktree_handle, cx) {
+                Some(repo) => {
+                    // Get the remote URL
+                    let remote_url = repo.read(cx).get_remotes(None, cx.into()).now_or_never()
+                        .and_then(|result| result.ok())
+                        .and_then(|remotes| remotes.first().cloned())
+                        .map(|remote| remote.name.to_string());
+                    
+                    // Get the current branch and HEAD SHA
+                    let current_branch = repo.read(cx).current_branch(cx.into()).now_or_never()
+                        .and_then(|result| result.ok())
+                        .map(|branch| branch.name.to_string());
+                    
+                    let head_sha = repo.read(cx).head_sha(cx.into()).now_or_never()
+                        .and_then(|result| result.ok())
+                        .map(|sha| sha.to_string());
+                    
+                    // Get the diff
+                    let diff = repo.read(cx).diff(DiffType::HeadToWorktree, cx.into()).now_or_never()
+                        .and_then(|result| result.ok());
+                    
+                    Some(GitState {
+                        remote_url,
+                        head_sha,
+                        current_branch,
+                        diff,
+                    })
+                },
+                None => None,
+            };
+            
+            worktree_snapshots.push(WorktreeSnapshot {
+                worktree_id,
+                worktree_path,
+                git_state,
+            });
+        }
+        
+        // Get unsaved buffers
+        let buffer_store = project.read(cx).buffer_store();
+        for (buffer_id, buffer_handle) in buffer_store.read(cx).buffers() {
+            let buffer = buffer_handle.read(cx);
+            let path = buffer.file().map(|file| file.path().to_string_lossy().to_string());
+            let is_dirty = buffer.is_dirty();
+            
+            if is_dirty {
+                unsaved_buffers.push(UnsavedBuffer {
+                    path,
+                    buffer_id: *buffer_id,
+                    is_dirty,
+                });
+            }
+        }
+        
+        ProjectSnapshot {
+            worktree_snapshots,
+            unsaved_buffers,
+            timestamp: Utc::now(),
+        }
+    }
+
     pub fn new(
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
@@ -90,6 +200,9 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
+        
+        // Take an initial snapshot of the project state
+        let initial_snapshot = Self::create_project_snapshot(project.clone(), cx);
 
         Self {
             id: ThreadId::new(),
@@ -108,6 +221,8 @@ impl Thread {
             tool_use: ToolUseState::new(),
             scripting_session,
             scripting_tool_use: ToolUseState::new(),
+            initial_project_snapshot: Some(initial_snapshot),
+            final_project_snapshot: None,
         }
     }
 
@@ -157,6 +272,8 @@ impl Thread {
             tool_use,
             scripting_session,
             scripting_tool_use,
+            initial_project_snapshot: saved.initial_project_snapshot,
+            final_project_snapshot: saved.final_project_snapshot,
         }
     }
 

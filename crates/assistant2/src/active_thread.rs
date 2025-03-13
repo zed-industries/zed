@@ -68,6 +68,30 @@ struct EditMessageState {
     editor: Entity<Editor>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SerializableThread {
+    id: String,
+    messages: Vec<SerializableMessage>,
+    tool_uses: Vec<SerializableToolUse>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializableMessage {
+    id: usize,
+    role: String,
+    text: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializableToolUse {
+    id: String,
+    message_id: usize,
+    name: String,
+    input: serde_json::Value,
+    status: String,
+    result: Option<String>,
+}
+
 impl ActiveThread {
     fn create_serializable_thread(&self, thread: &Thread) -> SerializableThread {
         let mut serializable_messages = Vec::new();
@@ -596,10 +620,21 @@ impl ActiveThread {
         use telemetry_events::{Event, AssistantThreadFeedbackEvent, ThreadFeedbackRating};
         
         // Serialize the thread data to JSON
-        let thread_data = self.thread.update(cx, |thread, _cx| {
+        let (thread_data, initial_snapshot, final_snapshot) = self.thread.update(cx, |thread, _cx| {
             // Create a serializable representation of the Thread
             let serializable_thread = self.create_serializable_thread(thread);
-            serde_json::to_value(serializable_thread).unwrap_or_else(|_| serde_json::Value::Null)
+            let thread_data = serde_json::to_value(serializable_thread).unwrap_or_else(|_| serde_json::Value::Null);
+            
+            // Get the project snapshots
+            let initial_snapshot = thread.initial_project_snapshot.clone()
+                .map(|snapshot| serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null))
+                .unwrap_or(serde_json::Value::Null);
+                
+            let final_snapshot = thread.final_project_snapshot.clone()
+                .map(|snapshot| serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::Value::Null))
+                .unwrap_or(serde_json::Value::Null);
+                
+            (thread_data, initial_snapshot, final_snapshot)
         });
         
         // Create the feedback event
@@ -611,6 +646,8 @@ impl ActiveThread {
                 ThreadFeedbackRating::Negative 
             },
             thread_data,
+            initial_project_snapshot: initial_snapshot,
+            final_project_snapshot: final_snapshot,
         });
 
         // Use the telemetry API to send the event
