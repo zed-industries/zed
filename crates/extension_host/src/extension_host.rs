@@ -1317,9 +1317,11 @@ impl ExtensionStore {
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
 
-                ExtensionEvents::global(cx).update(cx, |this, cx| {
-                    this.emit(extension::Event::ExtensionsInstalledChanged, cx)
-                });
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionsInstalledChanged, cx)
+                    });
+                }
             })
             .ok();
         })
