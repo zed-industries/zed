@@ -556,12 +556,21 @@ pub trait LspAdapter: 'static + Send + Sync {
         Some(Arc::from("".as_ref()))
     }
 
-    fn zed_json_schema_is_primary_schema_adapter(&self) -> bool {
+    /// Method only implemented by the default JSON language server adapter.
+    /// Used to provide dynamic reloading of the JSON schemas used to
+    /// provide autocompletion and diagnostics in Zed setting and keybind
+    /// files
+    fn is_primary_zed_json_schema_adapter(&self) -> bool {
         false
     }
 
-    async fn zed_json_schema_clear_schema_cache(self: Arc<Self>) {
-        panic!("Not implemented for this adapter. This method should only be called on the default JSON language server adapter")
+    /// Method only implemented by the default JSON language server adapter.
+    /// Used to clear the cache of JSON schemas that are used to provide
+    /// autocompletion and diagnostics in Zed settings and keybinds files.
+    /// Should not be called unless the callee is sure that
+    /// `Self::is_primary_zed_json_schema_adapter` returns `true`
+    async fn clear_zed_json_schema_cache(self: Arc<Self>) {
+        unreachable!("Not implemented for this adapter. This method should only be called on the default JSON language server adapter");
     }
 }
 

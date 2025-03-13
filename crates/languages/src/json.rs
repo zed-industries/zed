@@ -289,11 +289,11 @@ impl LspAdapter for JsonLspAdapter {
         .collect()
     }
 
-    fn zed_json_schema_is_primary_schema_adapter(&self) -> bool {
+    fn is_primary_zed_json_schema_adapter(&self) -> bool {
         true
     }
 
-    async fn zed_json_schema_clear_schema_cache(self: Arc<Self>) {
+    async fn clear_zed_json_schema_cache(self: Arc<Self>) {
         self.workspace_config.write().await.take();
     }
 }

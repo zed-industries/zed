@@ -1213,9 +1213,6 @@ impl ExtensionStore {
 
         self.extension_index = new_index;
         cx.notify();
-        ExtensionEvents::global(cx).update(cx, |this, cx| {
-            this.emit(extension::Event::ExtensionsUpdated, cx)
-        });
 
         cx.spawn(|this, mut cx| async move {
             cx.background_spawn({
@@ -1317,6 +1314,10 @@ impl ExtensionStore {
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
+
+                ExtensionEvents::global(cx).update(cx, |this, cx| {
+                    this.emit(extension::Event::ExtensionsUpdated, cx)
+                });
             })
             .ok();
         })

@@ -3317,7 +3317,7 @@ impl LspStore {
                             let (json_adapter, json_server) = match states {
                                 LanguageServerState::Running {
                                     adapter, server, ..
-                                } if adapter.adapter.zed_json_schema_is_primary_schema_adapter() => {
+                                } if adapter.adapter.is_primary_zed_json_schema_adapter() => {
                                     (adapter.adapter.clone(), server.clone())
                                 }
                                 _ => continue,
@@ -3363,7 +3363,7 @@ impl LspStore {
                 return;
             };
             for (adapter, server, delegate) in servers {
-                adapter.clone().zed_json_schema_clear_schema_cache().await;
+                adapter.clone().clear_zed_json_schema_cache().await;
 
                 let Some(json_workspace_config) = adapter
                     .workspace_configuration(
