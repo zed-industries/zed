@@ -30,6 +30,8 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Write,
+    fs,
+    io::{self, BufRead},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -630,6 +632,7 @@ static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
     PythonEnvironmentKind::VirtualEnvWrapper,
     PythonEnvironmentKind::Venv,
     PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::PyenvVirtualEnv,
     PythonEnvironmentKind::Pixi,
     PythonEnvironmentKind::Conda,
     PythonEnvironmentKind::Pyenv,
@@ -649,6 +652,29 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
     }
 }
 
+/// Return the name of environment declared in <worktree-root/.venv.
+///
+/// https://virtualfish.readthedocs.io/en/latest/plugins.html#auto-activation-auto-activation
+fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
+    let dot_venv = worktree_root.join(".venv");
+
+    if fs::metadata(&dot_venv)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+    {
+        fs::File::open(&dot_venv)
+            .and_then(|file| {
+                let mut venv_name = String::new();
+                io::BufReader::new(file).read_line(&mut venv_name)?;
+                Ok(venv_name.trim().to_string())
+            })
+            .map_err(|e| log::info!("could not read {:?}: {:?}", dot_venv, e))
+            .ok()
+    } else {
+        None
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -664,7 +690,7 @@ impl ToolchainLister for PythonToolchainProvider {
             &environment,
         );
         let mut config = Configuration::default();
-        config.workspace_directories = Some(vec![worktree_root]);
+        config.workspace_directories = Some(vec![worktree_root.clone()]);
         for locator in locators.iter() {
             locator.configure(&config);
         }
@@ -678,28 +704,68 @@ impl ToolchainLister for PythonToolchainProvider {
             .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
+        let wr = worktree_root;
+        let wr_venv = get_worktree_venv_declaration(&wr);
+        // Sort detected environments by:
+        //     environment name matching activation file (<workdir>/.venv)
+        //     environment project dir matching workdir
+        //     general env priority
+        //     environment path matching the CONDA_PREFIX env var
+        //     executable path
         toolchains.sort_by(|lhs, rhs| {
-            env_priority(lhs.kind)
-                .cmp(&env_priority(rhs.kind))
-                .then_with(|| {
-                    if lhs.kind == Some(PythonEnvironmentKind::Conda) {
-                        environment
-                            .get_env_var("CONDA_PREFIX".to_string())
-                            .map(|conda_prefix| {
-                                let is_match = |exe: &Option<PathBuf>| {
-                                    exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
-                                };
-                                match (is_match(&lhs.executable), is_match(&rhs.executable)) {
-                                    (true, false) => Ordering::Less,
-                                    (false, true) => Ordering::Greater,
-                                    _ => Ordering::Equal,
-                                }
-                            })
-                            .unwrap_or(Ordering::Equal)
-                    } else {
-                        Ordering::Equal
-                    }
-                })
+            // Compare venv names against worktree .venv file
+            let venv_ordering =
+                wr_venv
+                    .as_ref()
+                    .map_or(Ordering::Equal, |venv| match (&lhs.name, &rhs.name) {
+                        (Some(l), Some(r)) => match (l == venv, r == venv) {
+                            (true, false) => Ordering::Less,
+                            (false, true) => Ordering::Greater,
+                            _ => Ordering::Equal,
+                        },
+                        (Some(l), None) if l == venv => Ordering::Less,
+                        (None, Some(r)) if r == venv => Ordering::Greater,
+                        _ => Ordering::Equal,
+                    });
+
+            // Compare project paths against worktree root
+            let proj_ordering = match (&lhs.project, &rhs.project) {
+                (Some(l), Some(r)) => match (l == &wr, r == &wr) {
+                    (true, false) => Ordering::Less,
+                    (false, true) => Ordering::Greater,
+                    _ => Ordering::Equal,
+                },
+                (Some(l), None) if l == &wr => Ordering::Less,
+                (None, Some(r)) if r == &wr => Ordering::Greater,
+                _ => Ordering::Equal,
+            };
+
+            // Compare environment priorities
+            let priority_ordering = env_priority(lhs.kind).cmp(&env_priority(rhs.kind));
+
+            // Compare conda prefixes
+            let conda_ordering = if lhs.kind == Some(PythonEnvironmentKind::Conda) {
+                environment
+                    .get_env_var("CONDA_PREFIX".to_string())
+                    .map(|conda_prefix| {
+                        let is_match = |exe: &Option<PathBuf>| {
+                            exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                        };
+                        match (is_match(&lhs.executable), is_match(&rhs.executable)) {
+                            (true, false) => Ordering::Less,
+                            (false, true) => Ordering::Greater,
+                            _ => Ordering::Equal,
+                        }
+                    })
+                    .unwrap_or(Ordering::Equal)
+            } else {
+                Ordering::Equal
+            };
+
+            venv_ordering
+                .then(proj_ordering)
+                .then(priority_ordering)
+                .then(conda_ordering)
                 .then_with(|| lhs.executable.cmp(&rhs.executable))
         });
 
