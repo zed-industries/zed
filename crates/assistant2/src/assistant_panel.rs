@@ -38,7 +38,9 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{InlineAssistant, NewPromptEditor, NewThread, OpenConfiguration, OpenHistory};
+use crate::{
+    InlineAssistant, NewPromptEditor, NewThread, OpenAsMarkdown, OpenConfiguration, OpenHistory,
+};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -1010,6 +1012,13 @@ impl Render for AssistantPanel {
             }))
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenAsMarkdown, window, cx| {
+                let Some(markdown) = this.active_thread(cx).read(cx).to_markdown().log_err() else {
+                    return;
+                };
+
+                dbg!(markdown);
             }))
             .on_action(cx.listener(Self::deploy_prompt_library))
             .child(self.render_toolbar(cx))
