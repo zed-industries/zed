@@ -53,18 +53,18 @@ pub struct ForegroundExecutor {
 /// the task to continue running, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
-pub struct Task<T>(TaskState<T>);
+pub struct Task<T>(TaskState<T, async_task::Task<T, ForegroundContext>, async_task::Task<T>>);
 
 #[derive(Debug)]
-enum TaskState<T> {
+enum TaskState<T, F, B> {
     /// A task that is ready to return a value
     Ready(Option<T>),
 
     /// A task that is currently running on the foreground.
-    ForegroundSpawned(async_task::Task<T, ForegroundContext>),
+    ForegroundSpawned(F),
 
     /// A task that is currently running on the background
-    BackgroundSpawned(async_task::Task<T>),
+    BackgroundSpawned(B),
 }
 
 impl<T> Task<T> {
@@ -79,6 +79,21 @@ impl<T> Task<T> {
             Task(TaskState::Ready(_)) => {}
             Task(TaskState::ForegroundSpawned(task)) => task.detach(),
             Task(TaskState::BackgroundSpawned(task)) => task.detach(),
+        }
+    }
+
+    /// Create a task that can be safely awaited outside of GPUI.
+    /// If the app quits while this task is incomplete, it will
+    /// produce None instead of panicking.
+    pub fn external(self) -> ExternalTask<T> {
+        match self.0 {
+            TaskState::Ready(r) => ExternalTask(TaskState::Ready(r)),
+            TaskState::ForegroundSpawned(task) => {
+                ExternalTask(TaskState::ForegroundSpawned(task.fallible()))
+            }
+            TaskState::BackgroundSpawned(task) => {
+                ExternalTask(TaskState::BackgroundSpawned(task.fallible()))
+            }
         }
     }
 }
@@ -106,6 +121,26 @@ impl<T> Future for Task<T> {
             Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
             Task(TaskState::ForegroundSpawned(task)) => task.poll(cx),
             Task(TaskState::BackgroundSpawned(task)) => task.poll(cx),
+        }
+    }
+}
+
+/// An ExternalTask is the same as a task, except it can be safely
+/// awaited outside of GPUI, without panicking.
+#[must_use]
+#[derive(Debug)]
+pub struct ExternalTask<T>(
+    TaskState<T, async_task::FallibleTask<T, ForegroundContext>, async_task::FallibleTask<T>>,
+);
+
+impl<T> Future for ExternalTask<T> {
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match unsafe { self.get_unchecked_mut() } {
+            ExternalTask(TaskState::Ready(val)) => Poll::Ready(val.take()),
+            ExternalTask(TaskState::ForegroundSpawned(task)) => task.poll(cx),
+            ExternalTask(TaskState::BackgroundSpawned(task)) => task.poll(cx),
         }
     }
 }
