@@ -76,8 +76,9 @@ impl Keystroke {
     }
 
     /// key syntax is:
-    /// [ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]
+    /// [secondary-][ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]
     /// key_char syntax is only used for generating test events,
+    /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
@@ -95,6 +96,13 @@ impl Keystroke {
                 "alt" => alt = true,
                 "shift" => shift = true,
                 "fn" => function = true,
+                "secondary" => {
+                    if cfg!(target_os = "macos") {
+                        platform = true
+                    } else {
+                        control = true
+                    };
+                }
                 "cmd" | "super" | "win" => platform = true,
                 _ => {
                     if let Some(next) = components.peek() {

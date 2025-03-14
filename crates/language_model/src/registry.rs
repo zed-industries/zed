@@ -18,6 +18,7 @@ impl Global for GlobalLanguageModelRegistry {}
 #[derive(Default)]
 pub struct LanguageModelRegistry {
     active_model: Option<ActiveModel>,
+    editor_model: Option<ActiveModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
     inline_alternatives: Vec<Arc<dyn LanguageModel>>,
 }
@@ -29,6 +30,7 @@ pub struct ActiveModel {
 
 pub enum Event {
     ActiveModelChanged,
+    EditorModelChanged,
     ProviderStateChanged,
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
@@ -128,6 +130,22 @@ impl LanguageModelRegistry {
         }
     }
 
+    pub fn select_editor_model(
+        &mut self,
+        provider: &LanguageModelProviderId,
+        model_id: &LanguageModelId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(provider) = self.provider(provider) else {
+            return;
+        };
+
+        let models = provider.provided_models(cx);
+        if let Some(model) = models.iter().find(|model| &model.id() == model_id).cloned() {
+            self.set_editor_model(Some(model), cx);
+        }
+    }
+
     pub fn set_active_provider(
         &mut self,
         provider: Option<Arc<dyn LanguageModelProvider>>,
@@ -162,12 +180,38 @@ impl LanguageModelRegistry {
         }
     }
 
+    pub fn set_editor_model(
+        &mut self,
+        model: Option<Arc<dyn LanguageModel>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(model) = model {
+            let provider_id = model.provider_id();
+            if let Some(provider) = self.providers.get(&provider_id).cloned() {
+                self.editor_model = Some(ActiveModel {
+                    provider,
+                    model: Some(model),
+                });
+                cx.emit(Event::EditorModelChanged);
+            } else {
+                log::warn!("Active model's provider not found in registry");
+            }
+        } else {
+            self.editor_model = None;
+            cx.emit(Event::EditorModelChanged);
+        }
+    }
+
     pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {
         Some(self.active_model.as_ref()?.provider.clone())
     }
 
     pub fn active_model(&self) -> Option<Arc<dyn LanguageModel>> {
         self.active_model.as_ref()?.model.clone()
+    }
+
+    pub fn editor_model(&self) -> Option<Arc<dyn LanguageModel>> {
+        self.editor_model.as_ref()?.model.clone()
     }
 
     /// Selects and sets the inline alternatives for language models based on

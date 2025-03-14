@@ -7,9 +7,25 @@ use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use text::LineEnding;
 use util::ResultExt;
+
+#[derive(Serialize)]
+pub struct AssistantSystemPromptContext {
+    pub worktrees: Vec<AssistantSystemPromptWorktree>,
+}
+
+#[derive(Serialize)]
+pub struct AssistantSystemPromptWorktree {
+    pub root_name: String,
+    pub abs_path: Arc<Path>,
+}
 
 #[derive(Serialize)]
 pub struct ContentPromptDiagnosticContext {
@@ -214,6 +230,16 @@ impl PromptBuilder {
         }
 
         Ok(())
+    }
+
+    pub fn generate_assistant_system_prompt(
+        &self,
+        worktrees: Vec<AssistantSystemPromptWorktree>,
+    ) -> Result<String, RenderError> {
+        let prompt = AssistantSystemPromptContext { worktrees };
+        self.handlebars
+            .lock()
+            .render("assistant_system_prompt", &prompt)
     }
 
     pub fn generate_inline_transformation_prompt(

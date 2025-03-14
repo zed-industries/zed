@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.178.0"
+version = "0.179.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -98,7 +98,6 @@ remote.workspace = true
 repl.workspace = true
 reqwest_client.workspace = true
 rope.workspace = true
-scripting_tool.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true

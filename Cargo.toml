@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/anthropic",
+    "crates/askpass",
     "crates/assets",
     "crates/assistant",
     "crates/assistant2",
@@ -169,22 +170,15 @@ members = [
     #
 
     "extensions/emmet",
-    "extensions/erlang",
     "extensions/glsl",
-    "extensions/haskell",
     "extensions/html",
-    "extensions/lua",
     "extensions/perplexity",
     "extensions/proto",
-    "extensions/purescript",
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
-    "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
-    "extensions/uiua",
-    "extensions/zig",
 
     #
     # Tooling
@@ -207,6 +201,7 @@ edition = "2021"
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
+askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
@@ -371,7 +366,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", rev = "03c2907b44b4189aac5fdeaea331f5aab5c7072e" }
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -452,7 +447,7 @@ livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "
 ], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
+mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 nanoid = "0.4"
 nbformat = { version = "0.10.0" }
 nix = "0.29"
@@ -598,12 +593,14 @@ features = [
 ]
 
 [workspace.dependencies.windows]
-version = "0.58"
+version = "0.60"
 features = [
-    "implement",
+    "Foundation_Collections",
     "Foundation_Numerics",
-    "Storage",
+    "Storage_Search",
+    "Storage_Streams",
     "System_Threading",
+    "UI_StartScreen",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
@@ -622,9 +619,11 @@ features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
     "Win32_System_DataExchange",
+    "Win32_System_IO",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
@@ -749,6 +748,10 @@ new_ret_no_self = { level = "allow" }
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
+
+# in Rust it can be very tedious to reduce argument count without
+# running afoul of the borrow checker.
+too_many_arguments = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme"]
