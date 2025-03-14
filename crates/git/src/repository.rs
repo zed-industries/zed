@@ -588,6 +588,7 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         async move {
+            eprintln!("branches");
             let fields = [
                 "%(HEAD)",
                 "%(objectname)",
@@ -607,6 +608,7 @@ impl GitRepository for RealGitRepository {
                 .output()
                 .await?;
 
+            eprintln!("got output");
             if !output.status.success() {
                 return Err(anyhow!(
                     "Failed to git git branches:\n{}",
@@ -620,11 +622,13 @@ impl GitRepository for RealGitRepository {
             if branches.is_empty() {
                 let args = vec!["symbolic-ref", "--quiet", "--short", "HEAD"];
 
+                eprintln!("no branches");
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(args)
                     .output()
                     .await?;
+                eprintln!("symbolic-ref");
 
                 // git symbolic-ref returns a non-0 exit code if HEAD points
                 // to something other than a branch
