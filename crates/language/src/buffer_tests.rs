@@ -3163,7 +3163,11 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
         assert_eq!(
             BTreeSet::from_iter(["Pizza".to_string()]),
             snapshot
-                .words_in_range(Some("piz"), 0..snapshot.len())
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("piz"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
                 .into_keys()
                 .collect::<BTreeSet<_>>()
         );
@@ -3175,7 +3179,11 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
                 "ÖÄPPLE".to_string(),
             ]),
             snapshot
-                .words_in_range(Some("öp"), 0..snapshot.len())
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("öp"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
                 .into_keys()
                 .collect::<BTreeSet<_>>()
         );
@@ -3187,28 +3195,44 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
                 "öäpple".to_string(),
             ]),
             snapshot
-                .words_in_range(Some("öÄ"), 0..snapshot.len())
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("öÄ"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
                 .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
             BTreeSet::default(),
             snapshot
-                .words_in_range(Some("öÄ好"), 0..snapshot.len())
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("öÄ好"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
                 .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
             BTreeSet::from_iter(["bar你".to_string(),]),
             snapshot
-                .words_in_range(Some("你"), 0..snapshot.len())
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("你"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
                 .into_keys()
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
             BTreeSet::default(),
             snapshot
-                .words_in_range(Some(""), 0..snapshot.len())
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some(""),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                },)
                 .into_keys()
                 .collect::<BTreeSet<_>>()
         );
@@ -3225,7 +3249,36 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
                 "word2".to_string(),
             ]),
             snapshot
-                .words_in_range(None, 0..snapshot.len())
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: None,
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "0_isize".to_string(),
+                "123".to_string(),
+                "3".to_string(),
+                "4".to_string(),
+                "bar你".to_string(),
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+                "let".to_string(),
+                "Pizza".to_string(),
+                "word".to_string(),
+                "word2".to_string(),
+            ]),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: None,
+                    skip_digits: false,
+                    range: 0..snapshot.len(),
+                })
                 .into_keys()
                 .collect::<BTreeSet<_>>()
         );

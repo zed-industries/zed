@@ -106,7 +106,7 @@ use language::{
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
     Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
     EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -4095,7 +4095,11 @@ impl Editor {
                     WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
                     WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => cx
                         .background_spawn(async move {
-                            buffer_snapshot.words_in_range(None, word_search_range)
+                            buffer_snapshot.words_in_range(WordsQuery {
+                                fuzzy_contents: None,
+                                range: word_search_range,
+                                skip_digits: true,
+                            })
                         }),
                 };
 
@@ -4103,7 +4107,11 @@ impl Editor {
             }
             None => (
                 cx.background_spawn(async move {
-                    buffer_snapshot.words_in_range(None, word_search_range)
+                    buffer_snapshot.words_in_range(WordsQuery {
+                        fuzzy_contents: None,
+                        range: word_search_range,
+                        skip_digits: true,
+                    })
                 }),
                 Task::ready(Ok(Vec::new())),
             ),
