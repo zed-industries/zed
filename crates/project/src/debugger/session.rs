@@ -867,11 +867,11 @@ impl Session {
                 self.invalidate_generic();
             }
             Events::Exited(_event) => {
-                self.clear_active_debug_line(Ok(()), cx);
+                self.clear_active_debug_line(cx);
             }
             Events::Terminated(_) => {
                 self.is_session_terminated = true;
-                self.clear_active_debug_line(Ok(()), cx);
+                self.clear_active_debug_line(cx);
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);
@@ -1183,19 +1183,35 @@ impl Session {
         Some(())
     }
 
-    fn clear_active_debug_line(
+    fn on_step_response<T: DapCommand + PartialEq + Eq + Hash>(
+        thread_id: ThreadId,
+    ) -> impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response> + 'static
+    {
+        move |this, response, cx| match response.log_err() {
+            Some(response) => Some(response),
+            None => {
+                this.thread_states.stop_thread(thread_id);
+                cx.notify();
+                None
+            }
+        }
+    }
+
+    fn clear_active_debug_line_response(
         &mut self,
         response: Result<()>,
         cx: &mut Context<'_, Session>,
     ) -> Option<()> {
         response.log_err()?;
+        self.clear_active_debug_line(cx);
+        Some(())
+    }
 
+    fn clear_active_debug_line(&mut self, cx: &mut Context<Session>) {
         self.as_local()
             .expect("Message handler will only run in local mode")
             .breakpoint_store
             .update(cx, |store, cx| store.set_active_position(None, cx));
-
-        Some(())
     }
 
     pub fn pause_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
@@ -1252,7 +1268,7 @@ impl Session {
                 TerminateCommand {
                     restart: Some(false),
                 },
-                Self::clear_active_debug_line,
+                Self::clear_active_debug_line_response,
                 cx,
             )
         } else {
@@ -1262,7 +1278,7 @@ impl Session {
                     terminate_debuggee: Some(true),
                     suspend_debuggee: Some(false),
                 },
-                Self::clear_active_debug_line,
+                Self::clear_active_debug_line_response,
                 cx,
             )
         };
@@ -1286,20 +1302,6 @@ impl Session {
                     .ok_or_else(|| anyhow!("failed to fetch completions"))?,
             )
         })
-    }
-
-    fn on_step_response<T: DapCommand + PartialEq + Eq + Hash>(
-        thread_id: ThreadId,
-    ) -> impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response> + 'static
-    {
-        move |this, response, cx| match response.log_err() {
-            Some(response) => Some(response),
-            None => {
-                this.thread_states.stop_thread(thread_id);
-                cx.notify();
-                None
-            }
-        }
     }
 
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
@@ -1676,7 +1678,7 @@ impl Session {
                 TerminateThreadsCommand {
                     thread_ids: thread_ids.map(|ids| ids.into_iter().map(|id| id.0).collect()),
                 },
-                Self::clear_active_debug_line,
+                Self::clear_active_debug_line_response,
                 cx,
             )
             .detach();
