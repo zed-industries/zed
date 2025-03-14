@@ -1,3 +1,5 @@
+mod persistence;
+
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
@@ -5,15 +7,17 @@ use std::{
 };
 
 use client::parse_zed_link;
-use collections::HashMap;
 use command_palette_hooks::{
     CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
 };
+use db::anyhow;
+
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
-    ParentElement, Render, Styled, Task, UpdateGlobal, WeakEntity, Window,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
+use persistence::COMMAND_PALETTE_HISTORY;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
@@ -24,7 +28,6 @@ use zed_actions::{command_palette::Toggle, OpenZedUrl};
 
 pub fn init(cx: &mut App) {
     client::init_settings(cx);
-    cx.set_global(HitCounts::default());
     command_palette_hooks::init(cx);
     cx.observe_new(CommandPalette::register).detach();
 }
@@ -164,14 +167,6 @@ impl Clone for Command {
     }
 }
 
-/// Hit count for each command in the palette.
-/// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
-/// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
-#[derive(Default, Clone)]
-struct HitCounts(HashMap<String, usize>);
-
-impl Global for HitCounts {}
-
 impl CommandPaletteDelegate {
     fn new(
         command_palette: WeakEntity<CommandPalette>,
@@ -283,13 +278,24 @@ impl PickerDelegate for CommandPaletteDelegate {
         let (mut tx, mut rx) = postage::dispatch::channel(1);
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
-            let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
             let query = normalize_query(query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
-                        Reverse(hit_counts.0.get(&action.name).cloned()),
+                        // Ok, so what do we do here? Grab everything from the SQLite database
+                        // Reverse(stored_hit_counts.binary_search(|x| x.command_name == action.name).unwrap_or(default)),
+                        Reverse(
+                            COMMAND_PALETTE_HISTORY
+                                .read_command_history(&action.name)
+                                .map_or(0, |cmd| {
+                                    if let Some(cmd) = cmd {
+                                        cmd.invocations
+                                    } else {
+                                        0
+                                    }
+                                }),
+                        ),
                         action.name.clone(),
                     )
                 });
@@ -388,9 +394,14 @@ impl PickerDelegate for CommandPaletteDelegate {
         );
         self.matches.clear();
         self.commands.clear();
-        HitCounts::update_global(cx, |hit_counts, _cx| {
-            *hit_counts.0.entry(command.name).or_default() += 1;
-        });
+        let command_name = command.name.clone();
+        cx.background_spawn(async move {
+            COMMAND_PALETTE_HISTORY
+                .write_command_used(command_name)
+                .await?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
         let action = command.action;
         window.focus(&self.previous_focus_handle);
         self.dismissed(window, cx);
@@ -651,6 +662,124 @@ mod tests {
                 Point::new(2, 0)
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_prefers_by_hitcount_before_user_query(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.simulate_keystrokes("cmd-n");
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("1\n2\n3\n4\n5\n6\n", window, cx)
+        });
+
+        cx.simulate_keystrokes("cmd-shift-p");
+
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        cx.simulate_input("bcksp");
+
+        palette.update(cx, |palette, _| {
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
+        });
+
+        cx.simulate_keystrokes("enter");
+
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("go to line: Toggle");
+        cx.simulate_keystrokes("enter");
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<GoToLine>(cx).is_some())
+        });
+
+        cx.simulate_keystrokes("3 enter");
+
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("go to line: Toggle");
+        cx.simulate_keystrokes("enter");
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<GoToLine>(cx).is_some())
+        });
+
+        cx.simulate_keystrokes("1 enter");
+
+        cx.simulate_keystrokes("cmd-shift-p");
+
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        palette.update(cx, |palette, _| {
+            assert!(palette.delegate.commands.len() > 2);
+            assert_eq!(palette.delegate.matches[0].string, "go to line: toggle");
+            assert_eq!(palette.delegate.matches[1].string, "editor: backspace");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_saves_hitcount_to_kv_store(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.simulate_keystrokes("cmd-n");
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("1\n2\n3\n4\n5\n6\n", window, cx)
+        });
+
+        cx.simulate_keystrokes("cmd-shift-p");
+
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        cx.simulate_input("bcksp");
+
+        palette.update(cx, |palette, _| {
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
+        });
+
+        cx.simulate_keystrokes("enter");
+
+        let db_result = COMMAND_PALETTE_HISTORY.read_command_history("editor: backspace");
+
+        assert!(db_result.is_ok());
+        assert!(db_result.as_ref().expect("is ok").is_some());
+
+        let serialized_command = db_result.expect("is ok").expect("is some");
+        assert_eq!(serialized_command.command_name, "editor: backspace");
+        assert_eq!(serialized_command.invocations, 1);
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
