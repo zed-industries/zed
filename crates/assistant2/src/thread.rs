@@ -711,7 +711,7 @@ impl Thread {
                                 .expect("Script shouldn't still be running")
                         })?;
 
-                        Ok(message.into())
+                        Ok(message)
                     })
                 }
             };
