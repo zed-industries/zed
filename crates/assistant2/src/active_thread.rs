@@ -1,6 +1,7 @@
-use std::sync::Arc;
-use std::time::Duration;
-
+use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
+use crate::thread_store::ThreadStore;
+use crate::tool_use::{ToolUse, ToolUseStatus};
+use crate::ui::ContextPill;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -14,14 +15,12 @@ use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use scripting_tool::{ScriptingTool, ScriptingToolInput};
 use settings::Settings as _;
+use std::sync::Arc;
+use std::time::Duration;
 use theme::ThemeSettings;
+use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
-
-use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
-use crate::thread_store::ThreadStore;
-use crate::tool_use::{ToolUse, ToolUseStatus};
-use crate::ui::ContextPill;
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
@@ -498,7 +497,7 @@ impl ActiveThread {
         };
 
         let thread = self.thread.read(cx);
-
+        // Get all the data we need from thread before we start using it in closures
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
         let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
@@ -653,28 +652,27 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => v_flex()
-                .id(("message-container", ix))
-                .child(message_content)
-                .map(|parent| {
-                    if tool_uses.is_empty() && scripting_tool_uses.is_empty() {
-                        return parent;
-                    }
-
-                    parent.child(
-                        v_flex()
-                            .children(
-                                tool_uses
-                                    .into_iter()
-                                    .map(|tool_use| self.render_tool_use(tool_use, cx)),
+            Role::Assistant => {
+                v_flex()
+                    .id(("message-container", ix))
+                    .child(message_content)
+                    .when(
+                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                        |parent| {
+                            parent.child(
+                                v_flex()
+                                    .children(
+                                        tool_uses
+                                            .into_iter()
+                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                    )
+                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                        self.render_scripting_tool_use(tool_use, cx)
+                                    })),
                             )
-                            .children(
-                                scripting_tool_uses
-                                    .into_iter()
-                                    .map(|tool_use| self.render_scripting_tool_use(tool_use, cx)),
-                            ),
+                        },
                     )
-                }),
+            }
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
