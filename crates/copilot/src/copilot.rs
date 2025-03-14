@@ -170,7 +170,9 @@ enum SignInStatus {
         prompt: Option<request::PromptUserDeviceFlow>,
         task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
     },
-    SignedOut,
+    SignedOut {
+        awaiting_signing_in: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -180,7 +182,9 @@ pub enum Status {
     },
     Error(Arc<str>),
     Disabled,
-    SignedOut,
+    SignedOut {
+        awaiting_signing_in: bool,
+    },
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
     },
@@ -345,8 +349,8 @@ impl Copilot {
             buffers: Default::default(),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
-        this.enable_or_disable_copilot(cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.enable_or_disable_copilot(cx))
+        this.start_copilot(true, false, cx);
+        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
             .detach();
         this
     }
@@ -364,26 +368,40 @@ impl Copilot {
         }
     }
 
-    fn enable_or_disable_copilot(&mut self, cx: &mut Context<Self>) {
+    fn start_copilot(
+        &mut self,
+        check_edit_prediction_provider: bool,
+        awaiting_sign_in_after_start: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.server, CopilotServer::Disabled) {
+            return;
+        }
+        let language_settings = all_language_settings(None, cx);
+        if check_edit_prediction_provider
+            && language_settings.edit_predictions.provider != EditPredictionProvider::Copilot
+        {
+            return;
+        }
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        let language_settings = all_language_settings(None, cx);
-        if language_settings.edit_predictions.provider == EditPredictionProvider::Copilot {
-            if matches!(self.server, CopilotServer::Disabled) {
-                let env = self.build_env(&language_settings.edit_predictions.copilot);
-                let start_task = cx
-                    .spawn(move |this, cx| {
-                        Self::start_language_server(server_id, http, node_runtime, env, this, cx)
-                    })
-                    .shared();
-                self.server = CopilotServer::Starting { task: start_task };
-                cx.notify();
-            }
-        } else {
-            self.server = CopilotServer::Disabled;
-            cx.notify();
-        }
+        let env = self.build_env(&language_settings.edit_predictions.copilot);
+        let start_task = cx
+            .spawn(move |this, cx| {
+                Self::start_language_server(
+                    server_id,
+                    http,
+                    node_runtime,
+                    env,
+                    this,
+                    awaiting_sign_in_after_start,
+                    cx,
+                )
+            })
+            .shared();
+        self.server = CopilotServer::Starting { task: start_task };
+        cx.notify();
     }
 
     fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
@@ -449,6 +467,7 @@ impl Copilot {
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
+        awaiting_sign_in_after_start: bool,
         mut cx: AsyncApp,
     ) {
         let start_language_server = async {
@@ -522,7 +541,9 @@ impl Copilot {
                 Ok((server, status)) => {
                     this.server = CopilotServer::Running(RunningCopilotServer {
                         lsp: server,
-                        sign_in_status: SignInStatus::SignedOut,
+                        sign_in_status: SignInStatus::SignedOut {
+                            awaiting_signing_in: awaiting_sign_in_after_start,
+                        },
                         registered_buffers: Default::default(),
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
@@ -545,7 +566,7 @@ impl Copilot {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(|this, mut cx| async move {
@@ -633,10 +654,6 @@ impl Copilot {
                     anyhow::Ok(())
                 })
             }
-            CopilotServer::Disabled => cx.background_spawn(async move {
-                clear_copilot_config_dir().await;
-                anyhow::Ok(())
-            }),
             _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
@@ -651,7 +668,8 @@ impl Copilot {
                 let server_id = self.server_id;
                 move |this, cx| async move {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, http, node_runtime, env, this, cx).await
+                    Self::start_language_server(server_id, http, node_runtime, env, this, false, cx)
+                        .await
                 }
             })
             .shared();
@@ -961,7 +979,11 @@ impl Copilot {
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },
-                    SignInStatus::SignedOut => Status::SignedOut,
+                    SignInStatus::SignedOut {
+                        awaiting_signing_in,
+                    } => Status::SignedOut {
+                        awaiting_signing_in: *awaiting_signing_in,
+                    },
                 }
             }
         }
@@ -990,7 +1012,11 @@ impl Copilot {
                     }
                 }
                 request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
-                    server.sign_in_status = SignInStatus::SignedOut;
+                    if !matches!(server.sign_in_status, SignInStatus::SignedOut { .. }) {
+                        server.sign_in_status = SignInStatus::SignedOut {
+                            awaiting_signing_in: false,
+                        };
+                    }
                     cx.emit(Event::CopilotAuthSignedOut);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
@@ -1019,10 +1045,6 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
-}
-
-async fn clear_copilot_config_dir() {
-    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
