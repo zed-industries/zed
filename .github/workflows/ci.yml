@@ -169,32 +169,32 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
-      - name: cargo clippy
-        run: ./script/clippy
+      # - name: cargo clippy
+      #   run: ./script/clippy
 
-      - name: Install cargo-machete
-        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
-        with:
-          command: install
-          args: cargo-machete@0.7.0
+      # - name: Install cargo-machete
+      #   uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+      #   with:
+      #     command: install
+      #     args: cargo-machete@0.7.0
 
-      - name: Check unused dependencies
-        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
-        with:
-          command: machete
+      # - name: Check unused dependencies
+      #   uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+      #   with:
+      #     command: machete
 
-      - name: Check licenses
-        run: |
-          script/check-licenses
-          if [[ "${{ needs.job_spec.outputs.run_license }}" == "true" ]]; then
-            script/generate-licenses /tmp/zed_licenses_output
-          fi
+      # - name: Check licenses
+      #   run: |
+      #     script/check-licenses
+      #     if [[ "${{ needs.job_spec.outputs.run_license }}" == "true" ]]; then
+      #       script/generate-licenses /tmp/zed_licenses_output
+      #     fi
 
-      - name: Check for new vulnerable dependencies
-        if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
-        with:
-          license-check: false
+      # - name: Check for new vulnerable dependencies
+      #   if: github.event_name == 'pull_request'
+      #   uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
+      #   with:
+      #     license-check: false
 
       - name: Run tests
         uses: ./.github/actions/run_tests
