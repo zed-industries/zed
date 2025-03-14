@@ -4387,7 +4387,7 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if !unstaged {
+                    if unstaged {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
