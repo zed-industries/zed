@@ -1525,6 +1525,7 @@ impl LocalWorktree {
                     fs,
                     fs_case_sensitive,
                     status_updates_tx: scan_states_tx,
+                    scans_running: Arc::new(AtomicU32::new(0)),
                     executor: background,
                     scan_requests_rx,
                     path_prefixes_to_scan_rx,
@@ -4322,6 +4323,7 @@ struct BackgroundScanner {
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
     status_updates_tx: UnboundedSender<ScanState>,
+    scans_running: Arc<AtomicU32>,
     executor: BackgroundExecutor,
     scan_requests_rx: channel::Receiver<ScanRequest>,
     path_prefixes_to_scan_rx: channel::Receiver<PathPrefixScanRequest>,
@@ -4429,13 +4431,13 @@ impl BackgroundScanner {
 
         // Perform an initial scan of the directory.
         drop(scan_job_tx);
-        let scans_running = self.scan_dirs(true, scan_job_rx).await;
+        self.scan_dirs(true, scan_job_rx).await;
         {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+        let scanning = self.scans_running.load(atomic::Ordering::Acquire) > 0;
         log::trace!("new");
         self.send_status_update(scanning, SmallVec::new());
 
@@ -4463,7 +4465,7 @@ impl BackgroundScanner {
                 // these before handling changes reported by the filesystem.
                 request = self.next_scan_request().fuse() => {
                     let Ok(request) = request else { break };
-                    let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                    let scanning = self.scans_running.load(atomic::Ordering::Acquire) > 0;
                     if !self.process_scan_request(request, scanning).await {
                         return;
                     }
@@ -4486,7 +4488,7 @@ impl BackgroundScanner {
                             self.process_events(vec![abs_path]).await;
                         }
                     }
-                    let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                    let scanning = self.scans_running.load(atomic::Ordering::Acquire) > 0;
                     log::trace!("path prefix request");
                     self.send_status_update(scanning, request.done);
                 }
@@ -4693,6 +4695,7 @@ impl BackgroundScanner {
         let phase = self.phase;
         let status_update_tx = self.status_updates_tx.clone();
         let state = self.state.clone();
+        let scans_running = self.scans_running.clone();
         self.executor
             .spawn(async move {
                 if let Some(status_update) = status_update {
@@ -4708,7 +4711,7 @@ impl BackgroundScanner {
                     #[cfg(test)]
                     state.snapshot.check_git_invariants();
                 }
-                let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                let scanning = scans_running.load(atomic::Ordering::Acquire) > 0;
                 log::trace!("process events");
                 send_status_update_inner(phase, state, status_update_tx, scanning, SmallVec::new());
             })
@@ -4736,7 +4739,7 @@ impl BackgroundScanner {
         }
         let scans_running = Arc::new(AtomicU32::new(0));
         while let Ok(job) = scan_job_rx.recv().await {
-            self.scan_dir(&scans_running, &job).await.log_err();
+            self.scan_dir(&job).await.log_err();
         }
 
         !mem::take(&mut self.state.lock().paths_to_scan).is_empty()
@@ -4746,16 +4749,16 @@ impl BackgroundScanner {
         &self,
         enable_progress_updates: bool,
         scan_jobs_rx: channel::Receiver<ScanJob>,
-    ) -> FsScanned {
+    ) {
         if self
             .status_updates_tx
             .unbounded_send(ScanState::Started)
             .is_err()
         {
-            return FsScanned::default();
+            return;
         }
 
-        let scans_running = Arc::new(AtomicU32::new(1));
+        self.scans_running.fetch_add(1, atomic::Ordering::Release);
         let progress_update_count = AtomicUsize::new(0);
         self.executor
             .scoped(|scope| {
@@ -4801,7 +4804,7 @@ impl BackgroundScanner {
                                 // Recursively load directories from the file system.
                                 job = scan_jobs_rx.recv().fuse() => {
                                     let Ok(job) = job else { break };
-                                    if let Err(err) = self.scan_dir(&scans_running, &job).await {
+                                    if let Err(err) = self.scan_dir(&job).await {
                                         if job.path.as_ref() != Path::new("") {
                                             log::error!("error scanning directory {:?}: {}", job.abs_path, err);
                                         }
@@ -4814,11 +4817,8 @@ impl BackgroundScanner {
             })
             .await;
 
-        log::trace!("fs scanned: {scans_running:p} scans_running -= 1");
-        scans_running.fetch_sub(1, atomic::Ordering::Release);
-        FsScanned {
-            status_scans: scans_running,
-        }
+        log::trace!("fs scanned: {:p} scans_running -= 1", self.scans_running);
+        self.scans_running.fetch_sub(1, atomic::Ordering::Release);
     }
 
     fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
@@ -4832,7 +4832,7 @@ impl BackgroundScanner {
         )
     }
 
-    async fn scan_dir(&self, scans_running: &Arc<AtomicU32>, job: &ScanJob) -> Result<()> {
+    async fn scan_dir(&self, job: &ScanJob) -> Result<()> {
         let root_abs_path;
         let root_char_bag;
         {
@@ -4890,16 +4890,16 @@ impl BackgroundScanner {
                         let path_key = local_repo.work_directory.path_key();
                         log::trace!(
                             "schedule {:p} scans_running += 1",
-                            Arc::as_ptr(scans_running)
+                            Arc::as_ptr(&self.scans_running)
                         );
-                        scans_running.fetch_add(1, atomic::Ordering::Release);
+                        self.scans_running.fetch_add(1, atomic::Ordering::Release);
                         let (old, rx) = self.schedule_git_statuses_update(&mut state, local_repo);
                         if old.is_some() {
                             log::trace!(
                                 "schedule {:p} scans_running -= 1",
-                                Arc::as_ptr(scans_running)
+                                Arc::as_ptr(&self.scans_running)
                             );
-                            scans_running.fetch_sub(1, atomic::Ordering::Release);
+                            self.scans_running.fetch_sub(1, atomic::Ordering::Release);
                         }
                         git_status_update_jobs.insert(path_key, rx);
                     }
@@ -5022,7 +5022,7 @@ impl BackgroundScanner {
         let task_state = self.state.clone();
         let phase = self.phase;
         let status_updates_tx = self.status_updates_tx.clone();
-        let scans_running = scans_running.clone();
+        let scans_running = self.scans_running.clone();
         self.executor
             .spawn(async move {
                 if !git_status_update_jobs.is_empty() {
