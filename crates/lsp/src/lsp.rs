@@ -415,16 +415,21 @@ impl LanguageServer {
                     cx,
                 )
                 .log_err()
+                .await
             }
         });
         let stderr_input_task = stderr
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
                 let stderr_captures = stderr_capture.clone();
-                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
+                cx.spawn(async move |_| {
+                    Self::handle_stderr(stderr, io_handlers, stderr_captures)
+                        .log_err()
+                        .await
+                })
             })
             .unwrap_or_else(|| Task::ready(None));
-        let input_task = cx.spawn(|_| async move {
+        let input_task = cx.spawn(async move |_| {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });

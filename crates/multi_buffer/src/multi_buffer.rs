@@ -1645,7 +1645,7 @@ impl MultiBuffer {
             .detach()
         }
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, mut cx| {
             let mut results_by_buffer_id = HashMap::default();
             while let Some((buffer_id, buffer, ranges, excerpt_ranges, range_counts)) =
                 excerpt_ranges_rx.next().await
@@ -1665,7 +1665,7 @@ impl MultiBuffer {
                 let mut ranges = ranges.into_iter();
                 let mut range_counts = range_counts.into_iter();
                 for excerpt_ranges in excerpt_ranges.chunks(100) {
-                    let excerpt_ids = match this.update(&mut cx, |this, cx| {
+                    let excerpt_ids = match this.update(cx, |this, cx| {
                         this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
                     }) {
                         Ok(excerpt_ids) => excerpt_ids,

@@ -487,7 +487,7 @@ impl TerminalBuilder {
         //Event loop
         cx.spawn(async move |terminal, mut cx| {
             while let Some(event) = self.events_rx.next().await {
-                terminal.update(&mut cx, |terminal, cx| {
+                terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
                     terminal.process_event(&event, cx);
                 })?;
@@ -525,7 +525,7 @@ impl TerminalBuilder {
                         break 'outer;
                     }
 
-                    terminal.update(&mut cx, |this, cx| {
+                    terminal.update(cx, |this, cx| {
                         if wakeup {
                             this.process_event(&AlacTermEvent::Wakeup, cx);
                         }
@@ -1776,7 +1776,7 @@ impl Terminal {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx.spawn(|_| async move {
+                return cx.spawn(async move |_| {
                     let _ = completion_receiver.recv().await;
                 });
             }

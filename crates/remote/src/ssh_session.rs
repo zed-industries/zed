@@ -821,7 +821,7 @@ impl SshRemoteClient {
                     outgoing_rx,
                     connection_activity_tx,
                     delegate.clone(),
-                    &mut cx,
+                    cx,
                 );
                 anyhow::Ok((ssh_connection, io_task))
             }
@@ -848,7 +848,7 @@ impl SshRemoteClient {
             }
         });
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             let new_state = reconnect_task.await;
             this.update(cx, |this, cx| {
                 this.try_set_state(cx, |old_state| {
@@ -904,9 +904,7 @@ impl SshRemoteClient {
             return Task::ready(Err(anyhow!("SshRemoteClient lost")));
         };
 
-        cx.spawn(|mut cx| {
-            let this = this.clone();
-            async move {
+        cx.spawn(async move |cx| {
                 let mut missed_heartbeats = 0;
 
                 let keepalive_timer = cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse();
@@ -922,7 +920,7 @@ impl SshRemoteClient {
 
                             if missed_heartbeats != 0 {
                                 missed_heartbeats = 0;
-                                this.update(&mut cx, |this, mut cx| {
+                                this.update(cx, |this, mut cx| {
                                     this.handle_heartbeat_result(missed_heartbeats, &mut cx)
                                 })?;
                             }
@@ -953,7 +951,7 @@ impl SshRemoteClient {
                                 continue;
                             }
 
-                            let result = this.update(&mut cx, |this, mut cx| {
+                            let result = this.update(cx, |this, mut cx| {
                                 this.handle_heartbeat_result(missed_heartbeats, &mut cx)
                             })?;
                             if result.is_break() {
@@ -964,7 +962,7 @@ impl SshRemoteClient {
 
                     keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
                 }
-            }
+
         })
     }
 
@@ -1002,7 +1000,7 @@ impl SshRemoteClient {
         io_task: Task<Result<i32>>,
         cx: &AsyncApp,
     ) -> Task<Result<()>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let result = io_task.await;
 
             match result {
@@ -1011,21 +1009,21 @@ impl SshRemoteClient {
                         match error {
                             ProxyLaunchError::ServerNotRunning => {
                                 log::error!("failed to reconnect because server is not running");
-                                this.update(&mut cx, |this, cx| {
+                                this.update(cx, |this, cx| {
                                     this.set_state(State::ServerNotRunning, cx);
                                 })?;
                             }
                         }
                     } else if exit_code > 0 {
                         log::error!("proxy process terminated unexpectedly");
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.reconnect(cx).ok();
                         })?;
                     }
                 }
                 Err(error) => {
                     log::warn!("ssh io task died with error: {:?}. reconnecting...", error);
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.reconnect(cx).ok();
                     })?;
                 }
@@ -1114,7 +1112,7 @@ impl SshRemoteClient {
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
-        client_cx.spawn(|cx| async move {
+        client_cx.spawn(async move |cx| {
             let connection = cx
                 .update_global(|c: &mut ConnectionPool, _| {
                     if let Some(ConnectionPoolEntry::Connecting(c)) = c.connections.get(&opts) {
@@ -1216,8 +1214,8 @@ impl ConnectionPool {
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
                 let delegate = delegate.clone();
-                cx.spawn(|mut cx| async move {
-                    delegate.set_status(Some("Waiting for existing connection attempt"), &mut cx);
+                cx.spawn(async move |cx| {
+                    delegate.set_status(Some("Waiting for existing connection attempt"), cx);
                 })
                 .detach();
                 return task.clone();
@@ -1237,8 +1235,8 @@ impl ConnectionPool {
             .spawn({
                 let opts = opts.clone();
                 let delegate = delegate.clone();
-                |mut cx| async move {
-                    let connection = SshRemoteConnection::new(opts.clone(), delegate, &mut cx)
+                async move |cx| {
+                    let connection = SshRemoteConnection::new(opts.clone(), delegate, cx)
                         .await
                         .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>);
 
