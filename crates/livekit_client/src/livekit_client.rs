@@ -9,13 +9,17 @@ mod remote_video_track_view;
 pub mod test;
 
 use anyhow::{anyhow, Context as _, Result};
+use coreaudio::sys::OSType;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::{io, Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
 };
+use media::core_video::__CVImageBuffer;
 use parking_lot::Mutex;
-use std::{borrow::Cow, collections::VecDeque, future::Future, pin::Pin, sync::Arc, thread};
+use std::{
+    borrow::Cow, collections::VecDeque, ffi::c_void, future::Future, pin::Pin, sync::Arc, thread,
+};
 use util::{debug_panic, ResultExt as _};
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use webrtc::{
@@ -162,6 +166,7 @@ pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let resolution = capture_source.resolution()?;
+    dbg!(&resolution);
     let track_source = NativeVideoSource::new(VideoResolution {
         width: resolution.width.0 as u32,
         height: resolution.height.0 as u32,
@@ -473,9 +478,25 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     use media::core_video::CVImageBuffer;
 
     let buffer = buffer.as_native()?;
-    let pixel_buffer = buffer.get_cv_pixel_buffer();
+    let pixel_buffer = buffer.get_cv_pixel_buffer() as CVImageBufferRef;
     if pixel_buffer.is_null() {
         return None;
+    }
+
+    unsafe {
+        let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
+        let height = CVPixelBufferGetHeight(pixel_buffer);
+        let width = CVPixelBufferGetWidth(pixel_buffer);
+        let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
+        let data_size = CVPixelBufferGetDataSize(pixel_buffer);
+        dbg!(
+            "<<<<<<<<< {}",
+            format,
+            width,
+            height,
+            bytes_per_row,
+            data_size
+        );
     }
 
     unsafe { Some(CVImageBuffer::wrap_under_get_rule(pixel_buffer as _)) }
@@ -524,11 +545,37 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     ))))
 }
 
+type CVImageBufferRef = *const __CVImageBuffer;
+extern "C" {
+    fn CVPixelBufferLockBaseAddress(pixelBuffer: CVImageBufferRef, flags: u32) -> i32;
+    fn CVPixelBufferUnlockBaseAddress(pixelBuffer: CVImageBufferRef, flags: u32) -> i32;
+    fn CVPixelBufferGetBaseAddress(pixelBuffer: CVImageBufferRef) -> *mut c_void;
+    fn CVPixelBufferGetDataSize(pixelBuffer: CVImageBufferRef) -> usize;
+    fn CVPixelBufferGetPixelFormatType(pixelBuffer: CVImageBufferRef) -> OSType;
+    fn CVPixelBufferGetHeight(pixelBuffer: CVImageBufferRef) -> i64;
+    fn CVPixelBufferGetWidth(pixelBuffer: CVImageBufferRef) -> i64;
+    fn CVPixelBufferGetBytesPerRow(pixelBuffer: CVImageBufferRef) -> i64;
+}
+
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     use core_foundation::base::TCFType as _;
 
     let pixel_buffer = frame.0.as_concrete_TypeRef();
+    unsafe {
+        let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
+        let height = CVPixelBufferGetHeight(pixel_buffer);
+        let width = CVPixelBufferGetWidth(pixel_buffer);
+        let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
+        let data_size = CVPixelBufferGetDataSize(pixel_buffer);
+        dbg!(
+            ">>>>>>>>>>>>>>>>>>>>>> {}",
+            format,
+            width,
+            height,
+            bytes_per_row
+        );
+    }
     std::mem::forget(frame.0);
     unsafe {
         Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
