@@ -53,25 +53,19 @@ Ensure you have the required API keys set, either from a dev run of Zed or via t
 To run a specific evaluation:
 
 ```bash
-cargo run -p assistant_eval bubbletea-add-set-window-title
+cargo run -p assistant_eval -- bubbletea-add-set-window-title
 ```
 
-To run a specific evaluation with logs:
+The arguments are regex patterns for the evaluation names to run, so to run all evaluations that contain `bubbletea`, run:
 
 ```bash
-RUST_LOG="assistant_eval=info" cargo run -p assistant_eval bubbletea-add-set-window-title
+cargo run -p assistant_eval -- bubbletea
 ```
 
 To run all evaluations:
 
 ```bash
 cargo run -p assistant_eval -- --all
-```
-
-To run all evaluations with logs:
-
-```bash
-RUST_LOG="assistant_eval=info" cargo run -p assistant_eval -- --all
 ```
 
 ## Evaluation Data Structure
