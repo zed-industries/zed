@@ -17,11 +17,11 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
-    ForegroundTask, DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId,
-    Hitbox, HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, TooltipId, Visibility, Window,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -2320,7 +2320,7 @@ impl ElementClickedState {
 
 pub(crate) enum ActiveTooltip {
     /// Currently delaying before showing the tooltip.
-    WaitingForShow { _task: ForegroundTask<()> },
+    WaitingForShow { _task: Task<()> },
     /// Tooltip is visible, element was hovered or for hoverable tooltips, the tooltip was hovered.
     Visible {
         tooltip: AnyTooltip,
@@ -2330,7 +2330,7 @@ pub(crate) enum ActiveTooltip {
     /// before hiding it.
     WaitingForHide {
         tooltip: AnyTooltip,
-        _task: ForegroundTask<()>,
+        _task: Task<()>,
     },
 }
 

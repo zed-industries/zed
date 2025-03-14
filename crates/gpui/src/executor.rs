@@ -110,73 +110,6 @@ impl<T> Future for Task<T> {
     }
 }
 
-/// Task is a primitive that allows work to happen in the background.
-///
-/// It implements [`Future`] so you can `.await` on it.
-///
-/// If you drop a task it will be cancelled immediately. Calling [`Task::detach`] allows
-/// the task to continue running, but with no way to return a value.
-#[must_use]
-#[derive(Debug)]
-pub struct ForegroundTask<T>(ForegroundTaskState<T>);
-
-#[derive(Debug)]
-enum ForegroundTaskState<T> {
-    /// A task that is ready to return a value
-    Ready(Option<T>),
-
-    /// A task that is currently running.
-    Spawned(async_task::FallibleTask<T, ForegroundContext>),
-}
-
-impl<T> ForegroundTask<T> {
-    /// Creates a new task that will resolve with the value
-    pub fn ready(val: T) -> Self {
-        ForegroundTask(ForegroundTaskState::Ready(Some(val)))
-    }
-
-    /// Detaching a task runs it to completion in the background
-    pub fn detach(self) {
-        match self {
-            ForegroundTask(ForegroundTaskState::Ready(_)) => {}
-            ForegroundTask(ForegroundTaskState::Spawned(task)) => task.detach(),
-        }
-    }
-}
-
-impl<E, T> ForegroundTask<Result<T, E>>
-where
-    T: 'static,
-    E: 'static + Debug,
-{
-    /// Run the task to completion in the background and log any
-    /// errors that occur.
-    #[track_caller]
-    pub fn detach_and_log_err(self, cx: &App) {
-        let location = core::panic::Location::caller();
-        cx.foreground_executor()
-            .spawn(async {
-                if let Some(r) = self.await {
-                    Task::ready(r).log_tracked_err(*location).await;
-                }
-            })
-            .detach();
-    }
-}
-
-impl<T> Future for ForegroundTask<T> {
-    type Output = Option<T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        match unsafe { self.get_unchecked_mut() } {
-            ForegroundTask(ForegroundTaskState::Ready(val)) => {
-                Poll::Ready(Some(val.take().unwrap()))
-            }
-            ForegroundTask(ForegroundTaskState::Spawned(task)) => task.poll(cx),
-        }
-    }
-}
-
 /// A task label is an opaque identifier that you can use to
 /// refer to a task in tests.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -561,12 +494,12 @@ impl ForegroundExecutor {
         &self,
         mut context: ForegroundContext,
         future: impl Future<Output = R> + 'static,
-    ) -> ForegroundTask<R>
+    ) -> Task<R>
     where
         R: 'static,
     {
         let task = self.spawn_internal(future, context);
-        ForegroundTask(ForegroundTaskState::Spawned(task.fallible()))
+        Task(TaskState::ForegroundSpawned(task))
     }
 
     #[track_caller]

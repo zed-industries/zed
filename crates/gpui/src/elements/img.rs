@@ -1,8 +1,8 @@
 use crate::{
     px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
-    ForegroundTask, DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
-    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Window,
+    DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
     SMOOTH_SVG_SCALE_FACTOR,
 };
 use anyhow::{anyhow, Result};
@@ -230,7 +230,7 @@ impl DerefMut for Stateful<Img> {
 struct ImgState {
     frame_index: usize,
     last_frame_time: Option<Instant>,
-    started_loading: Option<(Instant, ForegroundTask<()>)>,
+    started_loading: Option<(Instant, Task<()>)>,
 }
 
 /// The image layout state between frames

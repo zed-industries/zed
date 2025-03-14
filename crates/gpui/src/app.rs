@@ -32,7 +32,7 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
     AnyWindowHandle, AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    ForegroundTask, DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundContext,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundContext,
     ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle,
     PromptLevel, Render, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
@@ -1049,7 +1049,7 @@ impl App {
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ForegroundTask<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
