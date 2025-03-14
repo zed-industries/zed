@@ -2678,7 +2678,7 @@ mod tests {
                 ],
                 cx,
             );
-            Editor::for_multibuffer(multibuffer, None, false, window, cx)
+            Editor::for_multibuffer(multibuffer, None, window, cx)
         });
 
         let search_bar = cx.new_window_entity(|window, cx| {
