@@ -4402,7 +4402,7 @@ impl LspStore {
         position: PointUtf16,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let language_registry = self.languages.clone();
 
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -4430,7 +4430,7 @@ impl LspStore {
                 let mut result = Vec::new();
                 populate_labels_for_completions(completions, language, lsp_adapter, &mut result)
                     .await;
-                Ok(result)
+                Ok(Some(result))
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
@@ -4444,7 +4444,7 @@ impl LspStore {
             )
             .completions;
             if !completion_settings.lsp {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
 
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
@@ -4523,7 +4523,7 @@ impl LspStore {
                     }
                 }
 
-                Ok(completions)
+                Ok(Some(completions))
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))

@@ -9353,6 +9353,67 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Fallback,
+            lsp: false,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    cx.set_state(indoc! {"ˇ
+        0_usize
+        let
+        33
+        4.5f32
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["let"],
+                "With no digits in the completion query, no digits should be in the word completions"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+        editor.cancel(&Cancel, window, cx);
+    });
+
+    cx.set_state(indoc! {"3ˇ
+        0_usize
+        let
+        3
+        33.35f32
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(&menu), &["33", "35f32"], "The digit is in the completion query, \
+                return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_multiline_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

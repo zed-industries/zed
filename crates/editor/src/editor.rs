@@ -4085,6 +4085,9 @@ impl Editor {
             .completion_provider
             .as_ref()
             .filter(|_| !ignore_completion_provider);
+        let skip_digits = query
+            .as_ref()
+            .map_or(true, |query| !query.chars().any(|c| c.is_digit(10)));
 
         let (mut words, provided_completions) = match provider {
             Some(provider) => {
@@ -4098,7 +4101,7 @@ impl Editor {
                             buffer_snapshot.words_in_range(WordsQuery {
                                 fuzzy_contents: None,
                                 range: word_search_range,
-                                skip_digits: true,
+                                skip_digits,
                             })
                         }),
                 };
@@ -4110,10 +4113,10 @@ impl Editor {
                     buffer_snapshot.words_in_range(WordsQuery {
                         fuzzy_contents: None,
                         range: word_search_range,
-                        skip_digits: true,
+                        skip_digits,
                     })
                 }),
-                Task::ready(Ok(Vec::new())),
+                Task::ready(Ok(None)),
             ),
         };
 
@@ -4129,7 +4132,7 @@ impl Editor {
                 })?;
 
                 let mut completions = Vec::new();
-                if let Some(provided_completions) = provided_completions.await.log_err() {
+                if let Some(provided_completions) = provided_completions.await.log_err().flatten() {
                     completions.extend(provided_completions);
                     if completion_settings.words == WordsCompletionMode::Fallback {
                         words = Task::ready(HashMap::default());
@@ -16936,7 +16939,7 @@ pub trait CompletionProvider {
         trigger: CompletionContext,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Vec<Completion>>>;
+    ) -> Task<Result<Option<Vec<Completion>>>>;
 
     fn resolve_completions(
         &self,
@@ -17176,15 +17179,25 @@ impl CompletionProvider for Entity<Project> {
         options: CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         self.update(cx, |project, cx| {
             let snippets = snippet_completions(project, buffer, buffer_position, cx);
             let project_completions = project.completions(buffer, buffer_position, options, cx);
             cx.background_spawn(async move {
-                let mut completions = project_completions.await?;
                 let snippets_completions = snippets.await?;
-                completions.extend(snippets_completions);
-                Ok(completions)
+                match project_completions.await? {
+                    Some(mut completions) => {
+                        completions.extend(snippets_completions);
+                        Ok(Some(completions))
+                    }
+                    None => {
+                        if snippets_completions.is_empty() {
+                            Ok(None)
+                        } else {
+                            Ok(Some(snippets_completions))
+                        }
+                    }
+                }
             })
         })
     }
