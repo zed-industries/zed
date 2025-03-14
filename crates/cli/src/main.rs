@@ -346,6 +346,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
+        _ = path;
         // not implemented for bsd, windows. Could be, but isn't yet
         return None;
     }
