@@ -69,9 +69,9 @@ pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
-pub(crate) use windows::*;
-#[cfg(target_os = "windows")]
 pub use windows::key_codes::*;
+#[cfg(target_os = "windows")]
+pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
@@ -183,7 +183,6 @@ pub(crate) trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -196,7 +195,6 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn keyboard_layout(&self) -> String;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -217,6 +215,14 @@ pub(crate) trait Platform: 'static {
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
+
+    fn keyboard_layout(&self) -> String;
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+    fn keystroke_remapping(
+        &self,
+        input: &str,
+        char_matching: bool,
+    ) -> Result<(KeystrokeKey, Modifiers)>;
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.

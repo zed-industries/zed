@@ -1,4 +1,8 @@
+use anyhow::Context;
+use util::ResultExt;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
+
+use crate::Modifiers;
 
 /// TODO:
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Hash)]
@@ -531,7 +535,7 @@ impl KeyCodes {
         })
     }
     /// input is standard US English layout key
-    pub fn parse(input: &str) -> anyhow::Result<(Self, bool)> {
+    fn parse(input: &str) -> anyhow::Result<(Self, bool)> {
         if let Some(key) = Self::basic_parse(input) {
             return Ok((key, false));
         }
@@ -585,7 +589,7 @@ impl KeyCodes {
     }
 
     /// TODO:
-    pub fn parse_char(input: &str) -> anyhow::Result<(Self, bool, bool, bool)> {
+    fn parse_char(input: &str) -> anyhow::Result<(Self, bool, bool, bool)> {
         if let Some(key) = Self::basic_parse(input) {
             return Ok((key, false, false, false));
         }
@@ -955,4 +959,25 @@ impl From<VIRTUAL_KEY> for KeyCodes {
             _ => KeyCodes::Unknown,
         }
     }
+}
+
+pub(crate) fn keystroke_remapping(
+    input: &str,
+    char_matching: bool,
+) -> anyhow::Result<(KeyCodes, Modifiers)> {
+    let mut modifiers = Modifiers::default();
+    if char_matching {
+        if let Some((key, shift, ctrl, alt)) = KeyCodes::parse_char(input)
+        .context(format!("Failed to remap keystroke based on char matching: source {}, fallback to use Virtual Key based remapping", input))
+        .log_err()
+        {
+            modifiers.shift = shift;
+            modifiers.control = ctrl;
+            modifiers.alt = alt;
+            return Ok((key, modifiers));
+        }
+    }
+    let (key, shift) = KeyCodes::parse(input)?;
+    modifiers.shift = shift;
+    Ok((key, modifiers))
 }
