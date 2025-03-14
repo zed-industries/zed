@@ -458,7 +458,7 @@ impl GitStore {
                 .or_insert_with(|| cx.new(|_| BufferDiffState::default()));
 
             let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
-            dbg!("subscribing");
+
             cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
             diff_state.update(cx, |diff_state, cx| {
                 diff_state.language = language;
