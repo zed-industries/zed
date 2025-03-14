@@ -538,8 +538,8 @@ mod test {
             })
             .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("a", false).unwrap());
-        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g", false).unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("a", false, None).unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g", false, None).unwrap());
 
         window
             .update(cx, |test_view, _, _| {

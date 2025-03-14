@@ -392,7 +392,6 @@ impl KeymapFile {
             context,
             key_equivalents,
             use_key_equivalents,
-            cx,
         ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {

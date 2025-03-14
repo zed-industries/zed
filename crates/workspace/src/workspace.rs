@@ -1943,7 +1943,7 @@ impl Workspace {
         let mut keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')
-            .flat_map(|k| Keystroke::parse(k, false, cx).log_err())
+            .flat_map(|k| Keystroke::parse(k, false, None).log_err())
             .collect();
         keystrokes.reverse();
 

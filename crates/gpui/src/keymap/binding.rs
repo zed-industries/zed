@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use collections::HashMap;
 
-use crate::{Action, App, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke};
+use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke};
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
@@ -24,21 +24,13 @@ impl Clone for KeyBinding {
 
 impl KeyBinding {
     /// Construct a new keybinding from the given data. Panics on parse error.
-    pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>, cx: &App) -> Self {
+    pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
         let context_predicate = if let Some(context) = context {
             Some(KeyBindingContextPredicate::parse(context).unwrap().into())
         } else {
             None
         };
-        Self::load(
-            keystrokes,
-            Box::new(action),
-            context_predicate,
-            None,
-            false,
-            cx,
-        )
-        .unwrap()
+        Self::load(keystrokes, Box::new(action), context_predicate, None, false).unwrap()
     }
 
     /// Load a keybinding from the given raw data.
@@ -48,22 +40,11 @@ impl KeyBinding {
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
         use_key_equivalents: bool,
-        cx: &App,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(|input| Keystroke::parse(input, !use_key_equivalents, cx))
+            .map(|input| Keystroke::parse(input, !use_key_equivalents, key_equivalents))
             .collect::<std::result::Result<_, _>>()?;
-
-        // if let Some(equivalents) = key_equivalents {
-        //     for keystroke in keystrokes.iter_mut() {
-        //         if keystroke.key.chars().count() == 1 {
-        //             if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
-        //                 keystroke.key = key.to_string();
-        //             }
-        //         }
-        //     }
-        // }
 
         Ok(Self {
             keystrokes,

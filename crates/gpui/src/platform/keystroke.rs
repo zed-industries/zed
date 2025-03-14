@@ -1,13 +1,17 @@
-use anyhow::Context;
+/// TODO:
+#[cfg(target_os = "windows")]
+pub mod keycodes;
+
+use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt::{Display, Write},
 };
-use util::ResultExt;
 
-use crate::{App, KeyCodes, KeyPosition};
+#[cfg(target_os = "windows")]
+pub use keycodes::*;
 
 /// TODO:
 #[cfg(target_os = "windows")]
@@ -90,10 +94,11 @@ impl Keystroke {
     /// key_char syntax is only used for generating test events,
     /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
+    #[cfg_attr(target_os = "windows", allow(unused_variables))]
     pub fn parse(
         source: &str,
         char_based_matching: bool,
-        cx: &App,
+        key_equivalents: Option<&HashMap<char, char>>,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
         let mut alt = false;
@@ -121,49 +126,10 @@ impl Keystroke {
                 _ => {
                     if let Some(next) = components.peek() {
                         if next.is_empty() && source.ends_with('-') {
-                            // key = Some(String::from("-"));
-                            key = Some(KeyCodes::Minus);
+                            key = Some(String::from("-"));
                             break;
                         } else if next.len() > 1 && next.starts_with('>') {
-                            let keystroke_key = keystroke_mapping(
-                                source,
-                                component,
-                                char_based_matching,
-                                &mut shift,
-                                &mut control,
-                                &mut alt,
-                                &mut platform,
-                                &mut function,
-                                cx,
-                            )?;
-                            key = Some(keystroke_key);
-                            // if char_based_matching {
-                            //     if let Some((result_key, result_shift, result_ctrl, result_alt)) =
-                            //         KeyCodes::parse_char(component).log_err()
-                            //     {
-                            //         key = Some(result_key);
-                            //         shift |= result_shift;
-                            //         control |= result_ctrl;
-                            //         alt |= result_alt;
-                            //     } else {
-                            //         log::error!("Failed to parse key: {} based on char matching, fall back to normal", component);
-                            //         if let Some((result_key, result_shift)) =
-                            //             KeyCodes::parse(component)
-                            //                 .context("Failed to fallback char matching")
-                            //                 .log_err()
-                            //         {
-                            //             key = Some(result_key);
-                            //             shift |= result_shift;
-                            //         }
-                            //     }
-                            // } else {
-                            //     if let Some((result_key, result_shift)) =
-                            //         KeyCodes::parse(component).log_err()
-                            //     {
-                            //         key = Some(result_key);
-                            //         shift |= result_shift;
-                            //     }
-                            // }
+                            key = Some(String::from(component));
                             key_char = Some(String::from(&next[1..]));
                             components.next();
                         } else {
@@ -172,18 +138,7 @@ impl Keystroke {
                             });
                         }
                     } else {
-                        let keystroke_key = keystroke_mapping(
-                            source,
-                            component,
-                            char_based_matching,
-                            &mut shift,
-                            &mut control,
-                            &mut alt,
-                            &mut platform,
-                            &mut function,
-                            cx,
-                        )?;
-                        key = Some(keystroke_key);
+                        key = Some(String::from(component));
                     }
                 }
             }
@@ -193,24 +148,19 @@ impl Keystroke {
         // This sets the `key` to the modifier, and disables the modifier
         if key.is_none() {
             if shift {
-                // key = Some("shift".to_string());
-                key = Some(KeyCodes::Shift(KeyPosition::Any));
+                key = Some("shift".to_string());
                 shift = false;
             } else if control {
-                // key = Some("control".to_string());
-                key = Some(KeyCodes::Control(KeyPosition::Any));
+                key = Some("control".to_string());
                 control = false;
             } else if alt {
-                // key = Some("alt".to_string());
-                key = Some(KeyCodes::Alt(KeyPosition::Any));
+                key = Some("alt".to_string());
                 alt = false;
             } else if platform {
-                // key = Some("platform".to_string());
-                key = Some(KeyCodes::Platform(KeyPosition::Any));
+                key = Some("platform".to_string());
                 platform = false;
             } else if function {
-                // key = Some("function".to_string());
-                key = Some(KeyCodes::Function);
+                key = Some("function".to_string());
                 function = false;
             }
         }
@@ -218,6 +168,17 @@ impl Keystroke {
         let key = key.ok_or_else(|| InvalidKeystrokeError {
             keystroke: source.to_owned(),
         })?;
+        #[cfg(not(target_os = "windows"))]
+        let key = perform_mapping(key, char_based_matching, key_equivalents)?;
+        #[cfg(target_os = "windows")]
+        let key = perform_mapping(
+            source,
+            &key,
+            char_based_matching,
+            &mut shift,
+            &mut control,
+            &mut alt,
+        )?;
 
         Ok(Keystroke {
             modifiers: Modifiers {
@@ -611,22 +572,37 @@ impl Modifiers {
     }
 }
 
-fn keystroke_mapping(
+#[cfg(not(target_os = "windows"))]
+fn perform_mapping(
+    key: String,
+    char_based_matching: bool,
+    key_equivalents: Option<&HashMap<char, char>>,
+) -> String {
+    if char_based_matching {
+        if let Some(equivalents) = key_equivalents {
+            if key.chars().count() == 1 {
+                if let Some(key) = equivalents.get(&key.chars().next().unwrap()) {
+                    return key.to_string();
+                }
+            }
+        }
+    }
+    key
+}
+
+#[cfg(target_os = "windows")]
+fn perform_mapping(
     source: &str,
     input: &str,
-    matching_char: bool,
+    char_based_matching: bool,
     shift: &mut bool,
     control: &mut bool,
     alt: &mut bool,
-    platform: &mut bool,
-    function: &mut bool,
-    cx: &App,
 ) -> std::result::Result<KeystrokeKey, InvalidKeystrokeError> {
     let (keystroke_key, modifiers) =
-        cx.keystroke_remapping(input, matching_char)
-            .map_err(|_| InvalidKeystrokeError {
-                keystroke: input.to_owned(),
-            })?;
+        keystroke_remapping(input, char_based_matching).map_err(|_| InvalidKeystrokeError {
+            keystroke: input.to_owned(),
+        })?;
     if *shift && modifiers.shift {
         log::error!("Keystroke remapping conflict detected while mapping {}! {} is remapped to shift-{:?}, but shift is already pressed",source, input, keystroke_key);
     } else {
@@ -641,16 +617,6 @@ fn keystroke_mapping(
         log::error!("Keystroke remapping conflict detected while mapping {}! {} is remapped to alt-{:?}, but alt is already pressed",source, input, keystroke_key);
     } else {
         *alt = modifiers.alt;
-    }
-    if *platform && modifiers.platform {
-        log::error!("Keystroke remapping conflict detected while mapping {}! {} is remapped to platform-{:?}, but platform is already pressed",source, input, keystroke_key);
-    } else {
-        *platform = modifiers.platform;
-    }
-    if *function && modifiers.function {
-        log::error!("Keystroke remapping conflict detected while mapping {}! {} is remapped to function-{:?}, but function is already pressed",source, input, keystroke_key);
-    } else {
-        *function = modifiers.function;
     }
     Ok(keystroke_key)
 }

@@ -406,15 +406,6 @@ impl App {
         subscription
     }
 
-    /// TODO:
-    pub fn keystroke_remapping(
-        &self,
-        input: &str,
-        char_matching: bool,
-    ) -> Result<(KeystrokeKey, Modifiers)> {
-        self.platform.keystroke_remapping(input, char_matching)
-    }
-
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&self) {
         self.platform.quit();

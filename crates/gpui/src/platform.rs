@@ -69,8 +69,6 @@ pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
-pub use windows::key_codes::*;
-#[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -218,11 +216,6 @@ pub(crate) trait Platform: 'static {
 
     fn keyboard_layout(&self) -> String;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
-    fn keystroke_remapping(
-        &self,
-        input: &str,
-        char_matching: bool,
-    ) -> Result<(KeystrokeKey, Modifiers)>;
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.

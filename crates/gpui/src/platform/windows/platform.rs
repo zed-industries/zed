@@ -686,14 +686,6 @@ impl Platform for WindowsPlatform {
             .log_err();
         }
     }
-
-    fn keystroke_remapping(
-        &self,
-        input: &str,
-        char_matching: bool,
-    ) -> Result<(KeystrokeKey, Modifiers)> {
-        keystroke_remapping(input, char_matching)
-    }
 }
 
 impl Drop for WindowsPlatform {
