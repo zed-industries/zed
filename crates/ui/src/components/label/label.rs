@@ -29,7 +29,10 @@ use gpui::StyleRefinement;
 ///
 /// let my_label = Label::new("Deleted").strikethrough(true);
 /// ```
-#[derive(IntoElement, IntoComponent)]
+#[derive(
+    IntoElement,
+    // RegisterComponent
+)]
 pub struct Label {
     base: LabelLike,
     label: SharedString,
@@ -199,53 +202,53 @@ mod label_preview {
     use crate::prelude::*;
 
     // View this component preview using `workspace: open component-preview`
-    impl ComponentPreview for Label {
-        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Sizes",
-                        vec![
-                            single_example("Default", Label::new("Project Explorer").into_any_element()),
-                            single_example("Small", Label::new("File: main.rs").size(LabelSize::Small).into_any_element()),
-                            single_example("Large", Label::new("Welcome to Zed").size(LabelSize::Large).into_any_element()),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Colors",
-                        vec![
-                            single_example("Default", Label::new("Status: Ready").into_any_element()),
-                            single_example("Accent", Label::new("New Update Available").color(Color::Accent).into_any_element()),
-                            single_example("Error", Label::new("Build Failed").color(Color::Error).into_any_element()),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Styles",
-                        vec![
-                            single_example("Default", Label::new("Normal Text").into_any_element()),
-                            single_example("Bold", Label::new("Important Notice").weight(gpui::FontWeight::BOLD).into_any_element()),
-                            single_example("Italic", Label::new("Code Comment").italic().into_any_element()),
-                            single_example("Strikethrough", Label::new("Deprecated Feature").strikethrough().into_any_element()),
-                            single_example("Underline", Label::new("Clickable Link").underline().into_any_element()),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Line Height Styles",
-                        vec![
-                            single_example("Default", Label::new("Multi-line\nText\nExample").into_any_element()),
-                            single_example("UI Label", Label::new("Compact\nUI\nLabel").line_height_style(LineHeightStyle::UiLabel).into_any_element()),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Special Cases",
-                        vec![
-                            single_example("Single Line", Label::new("Line 1\nLine 2\nLine 3").single_line().into_any_element()),
-                            single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
-                        ],
-                    ),
-                ])
-                .into_any_element()
-        }
-    }
+    // impl ComponentPreview for Label {
+    //     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+    //         v_flex()
+    //             .gap_6()
+    //             .children(vec![
+    //                 example_group_with_title(
+    //                     "Sizes",
+    //                     vec![
+    //                         single_example("Default", Label::new("Project Explorer").into_any_element()),
+    //                         single_example("Small", Label::new("File: main.rs").size(LabelSize::Small).into_any_element()),
+    //                         single_example("Large", Label::new("Welcome to Zed").size(LabelSize::Large).into_any_element()),
+    //                     ],
+    //                 ),
+    //                 example_group_with_title(
+    //                     "Colors",
+    //                     vec![
+    //                         single_example("Default", Label::new("Status: Ready").into_any_element()),
+    //                         single_example("Accent", Label::new("New Update Available").color(Color::Accent).into_any_element()),
+    //                         single_example("Error", Label::new("Build Failed").color(Color::Error).into_any_element()),
+    //                     ],
+    //                 ),
+    //                 example_group_with_title(
+    //                     "Styles",
+    //                     vec![
+    //                         single_example("Default", Label::new("Normal Text").into_any_element()),
+    //                         single_example("Bold", Label::new("Important Notice").weight(gpui::FontWeight::BOLD).into_any_element()),
+    //                         single_example("Italic", Label::new("Code Comment").italic().into_any_element()),
+    //                         single_example("Strikethrough", Label::new("Deprecated Feature").strikethrough().into_any_element()),
+    //                         single_example("Underline", Label::new("Clickable Link").underline().into_any_element()),
+    //                     ],
+    //                 ),
+    //                 example_group_with_title(
+    //                     "Line Height Styles",
+    //                     vec![
+    //                         single_example("Default", Label::new("Multi-line\nText\nExample").into_any_element()),
+    //                         single_example("UI Label", Label::new("Compact\nUI\nLabel").line_height_style(LineHeightStyle::UiLabel).into_any_element()),
+    //                     ],
+    //                 ),
+    //                 example_group_with_title(
+    //                     "Special Cases",
+    //                     vec![
+    //                         single_example("Single Line", Label::new("Line 1\nLine 2\nLine 3").single_line().into_any_element()),
+    //                         single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
+    //                     ],
+    //                 ),
+    //             ])
+    //             .into_any_element()
+    //     }
+    // }
 }

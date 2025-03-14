@@ -5,7 +5,7 @@ use theme::ThemeSettings;
 use crate::prelude::*;
 use crate::{h_flex, v_flex, Color, KeyBinding, Label, LabelSize, StyledExt};
 
-#[derive(IntoComponent)]
+// #[derive(RegisterComponent)]
 pub struct Tooltip {
     title: SharedString,
     meta: Option<SharedString>,
@@ -223,14 +223,14 @@ impl Render for LinkPreview {
 }
 
 // View this component preview using `workspace: open component-preview`
-impl ComponentPreview for Tooltip {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        example_group(vec![single_example(
-            "Text only",
-            Button::new("delete-example", "Delete")
-                .tooltip(Tooltip::text("This is a tooltip!"))
-                .into_any_element(),
-        )])
-        .into_any_element()
-    }
-}
+// impl ComponentPreview for Tooltip {
+//     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+//         example_group(vec![single_example(
+//             "Text only",
+//             Button::new("delete-example", "Delete")
+//                 .tooltip(Tooltip::text("This is a tooltip!"))
+//                 .into_any_element(),
+//         )])
+//         .into_any_element()
+//     }
+// }

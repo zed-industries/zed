@@ -4,36 +4,34 @@ use std::sync::LazyLock;
 
 use collections::HashMap;
 use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
-use linkme::distributed_slice;
+pub use linkme::distributed_slice;
 use parking_lot::RwLock;
 use theme::ActiveTheme;
 
 pub trait Component {
-    fn scope() -> Option<ComponentScope>;
+    fn scope() -> ComponentScope {
+        ComponentScope::None
+    }
     fn name() -> &'static str {
         std::any::type_name::<Self>()
     }
     fn description() -> Option<&'static str> {
         None
     }
-}
-
-pub trait ComponentPreview: Component {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement;
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        None
+    }
 }
 
 #[distributed_slice]
 pub static __ALL_COMPONENTS: [fn()] = [..];
 
-#[distributed_slice]
-pub static __ALL_PREVIEWS: [fn()] = [..];
-
 pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
     LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
 
 pub struct ComponentRegistry {
-    components: Vec<(Option<ComponentScope>, &'static str, Option<&'static str>)>,
-    previews: HashMap<&'static str, fn(&mut Window, &mut App) -> AnyElement>,
+    components: Vec<(ComponentScope, &'static str, Option<&'static str>)>,
+    previews: HashMap<&'static str, fn(&mut Window, &mut App) -> Option<AnyElement>>,
 }
 
 impl ComponentRegistry {
@@ -47,30 +45,16 @@ impl ComponentRegistry {
 
 pub fn init() {
     let component_fns: Vec<_> = __ALL_COMPONENTS.iter().cloned().collect();
-    let preview_fns: Vec<_> = __ALL_PREVIEWS.iter().cloned().collect();
-
     for f in component_fns {
-        f();
-    }
-    for f in preview_fns {
         f();
     }
 }
 
 pub fn register_component<T: Component>() {
     let component_data = (T::scope(), T::name(), T::description());
-    COMPONENT_DATA.write().components.push(component_data);
-}
-
-pub fn register_preview<T: ComponentPreview>() {
-    let preview_data = (
-        T::name(),
-        T::preview as fn(&mut Window, &mut App) -> AnyElement,
-    );
-    COMPONENT_DATA
-        .write()
-        .previews
-        .insert(preview_data.0, preview_data.1);
+    let mut data = COMPONENT_DATA.write();
+    data.components.push(component_data);
+    data.previews.insert(T::name(), T::preview);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -80,29 +64,25 @@ pub struct ComponentId(pub &'static str);
 pub struct ComponentMetadata {
     id: ComponentId,
     name: SharedString,
-    scope: Option<ComponentScope>,
+    scope: ComponentScope,
     description: Option<SharedString>,
-    preview: Option<fn(&mut Window, &mut App) -> AnyElement>,
+    preview: Option<fn(&mut Window, &mut App) -> Option<AnyElement>>,
 }
 
 impl ComponentMetadata {
     pub fn id(&self) -> ComponentId {
         self.id.clone()
     }
-
     pub fn name(&self) -> SharedString {
         self.name.clone()
     }
-
-    pub fn scope(&self) -> Option<ComponentScope> {
+    pub fn scope(&self) -> ComponentScope {
         self.scope.clone()
     }
-
     pub fn description(&self) -> Option<SharedString> {
         self.description.clone()
     }
-
-    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> AnyElement> {
+    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> Option<AnyElement>> {
         self.preview
     }
 }
@@ -113,26 +93,18 @@ impl AllComponents {
     pub fn new() -> Self {
         AllComponents(HashMap::default())
     }
-
-    /// Returns all components with previews
     pub fn all_previews(&self) -> Vec<&ComponentMetadata> {
         self.0.values().filter(|c| c.preview.is_some()).collect()
     }
-
-    /// Returns all components with previews sorted by name
     pub fn all_previews_sorted(&self) -> Vec<ComponentMetadata> {
         let mut previews: Vec<ComponentMetadata> =
             self.all_previews().into_iter().cloned().collect();
         previews.sort_by_key(|a| a.name());
         previews
     }
-
-    /// Returns all components
     pub fn all(&self) -> Vec<&ComponentMetadata> {
         self.0.values().collect()
     }
-
-    /// Returns all components sorted by name
     pub fn all_sorted(&self) -> Vec<ComponentMetadata> {
         let mut components: Vec<ComponentMetadata> = self.all().into_iter().cloned().collect();
         components.sort_by_key(|a| a.name());
@@ -142,7 +114,6 @@ impl AllComponents {
 
 impl Deref for AllComponents {
     type Target = HashMap<ComponentId, ComponentMetadata>;
-
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -157,7 +128,6 @@ impl DerefMut for AllComponents {
 pub fn components() -> AllComponents {
     let data = COMPONENT_DATA.read();
     let mut all_components = AllComponents::new();
-
     for (ref scope, name, description) in &data.components {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
@@ -173,7 +143,6 @@ pub fn components() -> AllComponents {
             },
         );
     }
-
     all_components
 }
 
@@ -186,6 +155,7 @@ pub enum ComponentScope {
     Collaboration,
     VersionControl,
     Unknown(SharedString),
+    None,
 }
 
 impl Display for ComponentScope {
@@ -198,6 +168,7 @@ impl Display for ComponentScope {
             ComponentScope::Collaboration => write!(f, "Collaboration"),
             ComponentScope::VersionControl => write!(f, "Version Control"),
             ComponentScope::Unknown(name) => write!(f, "Unknown: {}", name),
+            ComponentScope::None => write!(f, "None"),
         }
     }
 }
@@ -211,6 +182,7 @@ impl From<&str> for ComponentScope {
             "Editor" => ComponentScope::Editor,
             "Collaboration" => ComponentScope::Collaboration,
             "Version Control" | "VersionControl" => ComponentScope::VersionControl,
+            "None" => ComponentScope::None,
             _ => ComponentScope::Unknown(SharedString::new(value)),
         }
     }
@@ -225,6 +197,7 @@ impl From<String> for ComponentScope {
             "Editor" => ComponentScope::Editor,
             "Collaboration" => ComponentScope::Collaboration,
             "Version Control" | "VersionControl" => ComponentScope::VersionControl,
+            "None" => ComponentScope::None,
             _ => ComponentScope::Unknown(SharedString::new(value)),
         }
     }
@@ -233,14 +206,10 @@ impl From<String> for ComponentScope {
 /// Which side of the preview to show labels on
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExampleLabelSide {
-    /// Left side
     Left,
-    /// Right side
     Right,
-    /// Top side
     #[default]
     Top,
-    /// Bottom side
     Bottom,
 }
 
@@ -256,14 +225,12 @@ pub struct ComponentExample {
 impl RenderOnce for ComponentExample {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base = div().flex();
-
         let base = match self.label_side {
             ExampleLabelSide::Right => base.flex_row(),
             ExampleLabelSide::Left => base.flex_row_reverse(),
             ExampleLabelSide::Bottom => base.flex_col(),
             ExampleLabelSide::Top => base.flex_col_reverse(),
         };
-
         base.gap_2()
             .p_2()
             .text_size(px(10.))
@@ -277,7 +244,6 @@ impl RenderOnce for ComponentExample {
 }
 
 impl ComponentExample {
-    /// Create a new example with the given variant name and example value.
     pub fn new(variant_name: impl Into<SharedString>, element: AnyElement) -> Self {
         Self {
             variant_name: variant_name.into(),
@@ -286,8 +252,6 @@ impl ComponentExample {
             grow: false,
         }
     }
-
-    /// Set the example to grow to fill the available horizontal space.
     pub fn grow(mut self) -> Self {
         self.grow = true;
         self
@@ -348,7 +312,6 @@ impl RenderOnce for ComponentExampleGroup {
 }
 
 impl ComponentExampleGroup {
-    /// Create a new group of examples with the given title.
     pub fn new(examples: Vec<ComponentExample>) -> Self {
         Self {
             title: None,
@@ -357,8 +320,6 @@ impl ComponentExampleGroup {
             vertical: false,
         }
     }
-
-    /// Create a new group of examples with the given title.
     pub fn with_title(title: impl Into<SharedString>, examples: Vec<ComponentExample>) -> Self {
         Self {
             title: Some(title.into()),
@@ -367,21 +328,16 @@ impl ComponentExampleGroup {
             vertical: false,
         }
     }
-
-    /// Set the group to grow to fill the available horizontal space.
     pub fn grow(mut self) -> Self {
         self.grow = true;
         self
     }
-
-    /// Lay the group out vertically.
     pub fn vertical(mut self) -> Self {
         self.vertical = true;
         self
     }
 }
 
-/// Create a single example
 pub fn single_example(
     variant_name: impl Into<SharedString>,
     example: AnyElement,
@@ -389,12 +345,10 @@ pub fn single_example(
     ComponentExample::new(variant_name, example)
 }
 
-/// Create a group of examples without a title
 pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {
     ComponentExampleGroup::new(examples)
 }
 
-/// Create a group of examples with a title
 pub fn example_group_with_title(
     title: impl Into<SharedString>,
     examples: Vec<ComponentExample>,

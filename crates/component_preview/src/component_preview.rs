@@ -169,8 +169,7 @@ impl ComponentPreview {
     fn scope_ordered_entries(&self) -> Vec<PreviewEntry> {
         use std::collections::HashMap;
 
-        let mut scope_groups: HashMap<Option<ComponentScope>, Vec<ComponentMetadata>> =
-            HashMap::default();
+        let mut scope_groups: HashMap<ComponentScope, Vec<ComponentMetadata>> = HashMap::default();
 
         for component in &self.components {
             scope_groups
@@ -192,6 +191,7 @@ impl ComponentPreview {
             ComponentScope::Notification,
             ComponentScope::Collaboration,
             ComponentScope::VersionControl,
+            ComponentScope::None,
         ];
 
         // Always show all components first
@@ -199,8 +199,7 @@ impl ComponentPreview {
         entries.push(PreviewEntry::Separator);
 
         for scope in known_scopes.iter() {
-            let scope_key = Some(scope.clone());
-            if let Some(components) = scope_groups.remove(&scope_key) {
+            if let Some(components) = scope_groups.remove(scope) {
                 if !components.is_empty() {
                     entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
 
@@ -212,11 +211,9 @@ impl ComponentPreview {
         }
 
         for (scope, components) in &scope_groups {
-            if let Some(ComponentScope::Unknown(_)) = scope {
+            if let ComponentScope::Unknown(_) = scope {
                 if !components.is_empty() {
-                    if let Some(scope_value) = scope {
-                        entries.push(PreviewEntry::SectionHeader(scope_value.to_string().into()));
-                    }
+                    entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
 
                     for component in components {
                         entries.push(PreviewEntry::Component(component.clone()));
@@ -225,7 +222,7 @@ impl ComponentPreview {
             }
         }
 
-        if let Some(components) = scope_groups.get(&None) {
+        if let Some(components) = scope_groups.get(&ComponentScope::None) {
             if !components.is_empty() {
                 entries.push(PreviewEntry::Separator);
                 entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
@@ -354,13 +351,12 @@ impl ComponentPreview {
                         v_flex()
                             .gap_1()
                             .child(
-                                h_flex()
-                                    .gap_1()
-                                    .text_xl()
-                                    .child(div().child(name))
-                                    .when_some(scope, |this, scope| {
+                                h_flex().gap_1().text_xl().child(div().child(name)).when(
+                                    !matches!(scope, ComponentScope::None),
+                                    |this| {
                                         this.child(div().opacity(0.5).child(format!("({})", scope)))
-                                    }),
+                                    },
+                                ),
                             )
                             .when_some(description, |this, description| {
                                 this.child(
@@ -373,7 +369,7 @@ impl ComponentPreview {
                             }),
                     )
                     .when_some(component.preview(), |this, preview| {
-                        this.child(preview(window, cx))
+                        this.children(preview(window, cx))
                     }),
             )
             .into_any_element()

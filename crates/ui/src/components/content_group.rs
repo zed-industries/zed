@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use component::{example_group, single_example, ComponentPreview};
+use component::{example_group, single_example, Component};
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
@@ -23,8 +23,10 @@ pub fn h_container() -> ContentGroup {
 }
 
 /// A flexible container component that can hold other elements.
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Layout")]
+#[derive(
+    IntoElement,
+    // RegisterComponent
+)]
 pub struct ContentGroup {
     base: Div,
     border: bool,
@@ -89,45 +91,45 @@ impl RenderOnce for ContentGroup {
 }
 
 // View this component preview using `workspace: open component-preview`
-impl ComponentPreview for ContentGroup {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        example_group(vec![
-            single_example(
-                "Default",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .child(Label::new("Default ContentBox"))
-                    .into_any_element(),
-            )
-            .grow(),
-            single_example(
-                "Without Border",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .borderless()
-                    .child(Label::new("Borderless ContentBox"))
-                    .into_any_element(),
-            )
-            .grow(),
-            single_example(
-                "Without Fill",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .unfilled()
-                    .child(Label::new("Unfilled ContentBox"))
-                    .into_any_element(),
-            )
-            .grow(),
-        ])
-        .into_any_element()
-    }
-}
+// impl ComponentPreview for ContentGroup {
+//     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+//         example_group(vec![
+//             single_example(
+//                 "Default",
+//                 ContentGroup::new()
+//                     .flex_1()
+//                     .items_center()
+//                     .justify_center()
+//                     .h_48()
+//                     .child(Label::new("Default ContentBox"))
+//                     .into_any_element(),
+//             )
+//             .grow(),
+//             single_example(
+//                 "Without Border",
+//                 ContentGroup::new()
+//                     .flex_1()
+//                     .items_center()
+//                     .justify_center()
+//                     .h_48()
+//                     .borderless()
+//                     .child(Label::new("Borderless ContentBox"))
+//                     .into_any_element(),
+//             )
+//             .grow(),
+//             single_example(
+//                 "Without Fill",
+//                 ContentGroup::new()
+//                     .flex_1()
+//                     .items_center()
+//                     .justify_center()
+//                     .h_48()
+//                     .unfilled()
+//                     .child(Label::new("Unfilled ContentBox"))
+//                     .into_any_element(),
+//             )
+//             .grow(),
+//         ])
+//         .into_any_element()
+//     }
+// }

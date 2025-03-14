@@ -8,9 +8,10 @@ pub use gpui::{
 };
 
 pub use component::{
-    example_group, example_group_with_title, single_example, ComponentPreview, ComponentScope,
+    distributed_slice, example_group, example_group_with_title, single_example, Component,
+    ComponentScope,
 };
-pub use ui_macros::IntoComponent;
+pub use ui_macros::RegisterComponent;
 
 pub use crate::animation::{AnimationDirection, AnimationDuration, DefaultAnimations};
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};
