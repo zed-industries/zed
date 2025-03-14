@@ -395,7 +395,6 @@ impl ActiveThread {
                 editor::EditorMode::AutoHeight { max_lines: 8 },
                 buffer,
                 None,
-                false,
                 window,
                 cx,
             );

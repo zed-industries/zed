@@ -795,9 +795,8 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
         cx.background_spawn(async move {
-            let mut cmd = new_smol_command(&git_binary_path);
+            let mut cmd = new_smol_command("git");
             cmd.current_dir(&working_directory?)
                 .envs(env)
                 .args(["commit", "--quiet", "-m"])
