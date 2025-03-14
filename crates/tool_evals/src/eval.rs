@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use assistant2::RequestKind;
 use collections::HashMap;
 use gpui::{App, Task};
-use language_model::LanguageModel;
+use language_model::{LanguageModel, TokenUsage};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -26,6 +26,7 @@ pub struct EvalOutput {
     pub elapsed_time: Duration,
     pub assistant_response_count: usize,
     pub tool_use_counts: HashMap<Arc<str>, u32>,
+    pub token_usage: TokenUsage,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +118,7 @@ impl Eval {
                     elapsed_time,
                     assistant_response_count,
                     tool_use_counts: assistant.tool_use_counts.clone(),
+                    token_usage: thread.cumulative_token_usage(),
                 })
             })?
         })
@@ -150,6 +152,7 @@ impl EvalOutput {
             "elapsed_time_ms": self.elapsed_time.as_millis(),
             "assistant_response_count": self.assistant_response_count,
             "tool_use_counts": self.tool_use_counts,
+            "token_usage": self.token_usage,
             "eval_output_value": eval_output_value,
         });
 
