@@ -1561,17 +1561,23 @@ impl MultiBuffer {
                 }
                 merged_ranges.push(range)
             }
-            let buffer_snapshot = snapshot
-                .buffer_for_excerpt(*self.excerpts_by_path.get(&path).unwrap().first().unwrap())
-                .unwrap()
-                .clone();
-            let buffer = self
+            let Some(excerpt_id) = excerpt_ids.first() else {
+                continue;
+            };
+            let Some(buffer_id) = &snapshot.buffer_id_for_excerpt(*excerpt_id) else {
+                continue;
+            };
+
+            let Some(buffer) = self
                 .buffers
                 .borrow()
-                .get(&buffer_snapshot.remote_id())
-                .unwrap()
-                .buffer
-                .clone();
+                .get(buffer_id)
+                .map(|b| b.buffer.clone())
+            else {
+                continue;
+            };
+
+            let buffer_snapshot = buffer.read(cx).snapshot();
             self.update_path_excerpts(path.clone(), buffer, &buffer_snapshot, merged_ranges, cx);
         }
     }
