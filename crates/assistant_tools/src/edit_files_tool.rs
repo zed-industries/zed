@@ -2,7 +2,7 @@ mod edit_action;
 pub mod log;
 
 use anyhow::{anyhow, Context, Result};
-use assistant_tool::{Tool, ToolResult};
+use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
@@ -80,8 +80,9 @@ impl Tool for EditFilesTool {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>> {
+    ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<EditFilesToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -93,14 +94,20 @@ impl Tool for EditFilesTool {
                     log.new_request(input.edit_instructions.clone(), cx)
                 });
 
-                let task =
-                    EditToolRequest::new(input, messages, project, Some((log.clone(), req_id)), cx);
+                let task = EditToolRequest::new(
+                    input,
+                    messages,
+                    project,
+                    action_log,
+                    Some((log.clone(), req_id)),
+                    cx,
+                );
 
                 cx.spawn(|mut cx| async move {
                     let result = task.await;
 
                     let str_result = match &result {
-                        Ok(out) => Ok(out.output.clone()),
+                        Ok(out) => Ok(out.clone()),
                         Err(err) => Err(err.to_string()),
                     };
 
@@ -113,7 +120,7 @@ impl Tool for EditFilesTool {
                 })
             }
 
-            None => EditToolRequest::new(input, messages, project, None, cx),
+            None => EditToolRequest::new(input, messages, project, action_log, None, cx),
         }
     }
 }
@@ -123,7 +130,8 @@ struct EditToolRequest {
     changed_buffers: HashSet<Entity<language::Buffer>>,
     bad_searches: Vec<BadSearch>,
     project: Entity<Project>,
-    log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
+    action_log: Entity<ActionLog>,
+    tool_log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
 }
 
 #[derive(Debug)]
@@ -143,9 +151,10 @@ impl EditToolRequest {
         input: EditFilesToolInput,
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
+        action_log: Entity<ActionLog>,
+        tool_log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>> {
+    ) -> Task<Result<String>> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.editor_model() else {
             return Task::ready(Err(anyhow!("No editor model configured")));
@@ -193,8 +202,9 @@ impl EditToolRequest {
                 parser: EditActionParser::new(),
                 changed_buffers: HashSet::default(),
                 bad_searches: Vec::new(),
+                action_log,
                 project,
-                log,
+                tool_log,
             };
 
             while let Some(chunk) = chunks.stream.next().await {
@@ -208,7 +218,7 @@ impl EditToolRequest {
     async fn process_response_chunk(&mut self, chunk: &str, cx: &mut AsyncApp) -> Result<()> {
         let new_actions = self.parser.parse_chunk(chunk);
 
-        if let Some((ref log, req_id)) = self.log {
+        if let Some((ref log, req_id)) = self.tool_log {
             log.update(cx, |log, cx| {
                 log.push_editor_response_chunk(req_id, chunk, &new_actions, cx)
             })
@@ -313,7 +323,7 @@ impl EditToolRequest {
         anyhow::Ok(DiffResult::Diff(diff))
     }
 
-    async fn finalize(self, cx: &mut AsyncApp) -> Result<ToolResult> {
+    async fn finalize(self, cx: &mut AsyncApp) -> Result<String> {
         let mut answer = match self.changed_buffers.len() {
             0 => "No files were edited.".to_string(),
             1 => "Successfully edited ".to_string(),
@@ -340,11 +350,17 @@ impl EditToolRequest {
             }
         }
 
+        self.action_log
+            .update(cx, |log, cx| {
+                log.notify_buffers_changed(self.changed_buffers, cx)
+            })
+            .log_err();
+
         let errors = self.parser.errors();
 
         if errors.is_empty() && self.bad_searches.is_empty() {
             let answer = answer.trim_end().to_string();
-            Ok(ToolResult::new(answer).with_buffers(self.changed_buffers))
+            Ok(answer)
         } else {
             if !self.bad_searches.is_empty() {
                 writeln!(

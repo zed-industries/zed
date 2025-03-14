@@ -2,12 +2,11 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_tool::{ToolResult, ToolWorkingSet};
+use assistant_tool::{ActionLog, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
-use language::Buffer;
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -82,6 +81,7 @@ pub struct Thread {
     tool_use: ToolUseState,
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
+    action_log: Entity<ActionLog>,
 }
 
 impl Thread {
@@ -92,6 +92,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
+        let action_log = cx.new(|_| ActionLog::new());
 
         Self {
             id: ThreadId::new(),
@@ -110,6 +111,7 @@ impl Thread {
             tool_use: ToolUseState::new(),
             scripting_session,
             scripting_tool_use: ToolUseState::new(),
+            action_log,
         }
     }
 
@@ -159,6 +161,7 @@ impl Thread {
             tool_use,
             scripting_session,
             scripting_tool_use,
+            action_log: cx.new(|_| ActionLog::new()),
         }
     }
 
@@ -665,7 +668,13 @@ impl Thread {
 
         for tool_use in pending_tool_uses {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let task = tool.run(tool_use.input, &request.messages, self.project.clone(), cx);
+                let task = tool.run(
+                    tool_use.input,
+                    &request.messages,
+                    self.project.clone(),
+                    self.action_log.clone(),
+                    cx,
+                );
 
                 self.insert_tool_output(tool_use.id.clone(), task, cx);
             }
@@ -714,7 +723,7 @@ impl Thread {
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        output: Task<Result<ToolResult>>,
+        output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn(|thread, mut cx| {
@@ -723,11 +732,6 @@ impl Thread {
                 let output = output.await;
                 thread
                     .update(&mut cx, |thread, cx| {
-                        let affected_buffers = output
-                            .as_ref()
-                            .map(|output| output.affected_buffers.clone())
-                            .unwrap_or_default();
-
                         let pending_tool_use = thread
                             .tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -735,7 +739,6 @@ impl Thread {
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
                             pending_tool_use,
-                            affected_buffers,
                         });
                     })
                     .ok();
@@ -749,7 +752,7 @@ impl Thread {
     pub fn insert_scripting_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        output: Task<Result<ToolResult>>,
+        output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn(|thread, mut cx| {
@@ -758,11 +761,6 @@ impl Thread {
                 let output = output.await;
                 thread
                     .update(&mut cx, |thread, cx| {
-                        let affected_buffers = output
-                            .as_ref()
-                            .map(|output| output.affected_buffers.clone())
-                            .unwrap_or_default();
-
                         let pending_tool_use = thread
                             .scripting_tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -770,7 +768,6 @@ impl Thread {
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
                             pending_tool_use,
-                            affected_buffers,
                         });
                     })
                     .ok();
@@ -863,6 +860,10 @@ impl Thread {
 
         Ok(String::from_utf8_lossy(&markdown).to_string())
     }
+
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -887,8 +888,6 @@ pub enum ThreadEvent {
         tool_use_id: LanguageModelToolUseId,
         /// The pending tool use that corresponds to this tool.
         pending_tool_use: Option<PendingToolUse>,
-        /// The buffers that were affected by this tool call.
-        affected_buffers: HashSet<Entity<Buffer>>,
     },
 }
 

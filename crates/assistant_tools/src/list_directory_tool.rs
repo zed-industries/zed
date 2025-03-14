@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::{Tool, ToolResult};
+use assistant_tool::{Tool, ActionLog};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -55,8 +55,9 @@ impl Tool for ListDirectoryTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>> {
+    ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -91,8 +92,8 @@ impl Tool for ListDirectoryTool {
             .unwrap();
         }
         if output.is_empty() {
-            return Task::ready(Ok(format!("{} is empty.", input.path.display()).into()));
+            return Task::ready(Ok(format!("{} is empty.", input.path.display())));
         }
-        Task::ready(Ok(output.into()))
+        Task::ready(Ok(output))
     }
 }

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use assistant_tool::{Tool, ToolResult};
+use assistant_tool::{Tool, ActionLog};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -49,8 +49,9 @@ impl Tool for ReadFileTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>> {
+    ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -71,7 +72,7 @@ impl Tool for ReadFileTool {
                     .file()
                     .map_or(false, |file| file.disk_state().exists())
                 {
-                    Ok(buffer.text().into())
+                    Ok(buffer.text())
                 } else {
                     Err(anyhow!("File does not exist"))
                 }

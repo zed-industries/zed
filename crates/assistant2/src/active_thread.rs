@@ -342,9 +342,7 @@ impl ActiveThread {
                 });
             }
             ThreadEvent::ToolFinished {
-                pending_tool_use,
-                affected_buffers,
-                ..
+                pending_tool_use, ..
             } => {
                 if let Some(tool_use) = pending_tool_use {
                     self.render_scripting_tool_use_markdown(
@@ -357,10 +355,16 @@ impl ActiveThread {
                 }
 
                 if self.thread.read(cx).all_tools_finished() {
-                    let context_update_task = if !affected_buffers.is_empty() {
+                    let pending_refresh_buffers = self.thread.update(cx, |thread, cx| {
+                        thread.action_log().update(cx, |action_log, _cx| {
+                            action_log.take_pending_refresh_buffers()
+                        })
+                    });
+
+                    let context_update_task = if !pending_refresh_buffers.is_empty() {
                         let refresh_task = refresh_context_store_text(
                             self.context_store.clone(),
-                            &affected_buffers,
+                            &pending_refresh_buffers,
                             cx,
                         );
 

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::{Tool, ToolResult};
+use assistant_tool::{Tool, ActionLog};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -37,8 +37,9 @@ impl Tool for BashTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>> {
+    ) -> Task<Result<String>> {
         let input: BashToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -65,17 +66,16 @@ impl Tool for BashTool {
 
             if output.status.success() {
                 if output_string.is_empty() {
-                    Ok("Command executed successfully.".to_string().into())
+                    Ok("Command executed successfully.".to_string())
                 } else {
-                    Ok(output_string.into())
+                    Ok(output_string)
                 }
             } else {
                 Ok(format!(
                     "Command failed with exit code {}\n{}",
                     output.status.code().unwrap_or(-1),
                     &output_string
-                )
-                .into())
+                ))
             }
         })
     }

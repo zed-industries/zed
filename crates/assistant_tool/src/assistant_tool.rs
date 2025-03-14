@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashSet;
+use gpui::Context;
 use gpui::{App, Entity, SharedString, Task};
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
@@ -49,36 +50,39 @@ pub trait Tool: 'static + Send + Sync {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>>;
+    ) -> Task<Result<String>>;
 }
 
-/// Represents the result of a tool execution, including the output text and any buffers affected.
-pub struct ToolResult {
-    /// The textual output produced by the tool
-    pub output: String,
-    /// Set of buffers that were modified during tool execution
-    pub affected_buffers: HashSet<Entity<Buffer>>,
+/// Tracks buffer changes that need processing or refreshing.
+#[derive(Debug)]
+pub struct ActionLog {
+    changed_buffers: HashSet<Entity<Buffer>>,
+    pending_refresh: HashSet<Entity<Buffer>>,
 }
 
-impl ToolResult {
-    /// Creates a new tool result with the given output
-    pub fn new(output: String) -> Self {
+impl ActionLog {
+    /// Creates a new, empty action log.
+    pub fn new() -> Self {
         Self {
-            output,
-            affected_buffers: HashSet::default(),
+            changed_buffers: HashSet::default(),
+            pending_refresh: HashSet::default(),
         }
     }
 
-    /// Adds a set of affected buffers to this result
-    pub fn with_buffers(mut self, buffers: HashSet<Entity<Buffer>>) -> Self {
-        self.affected_buffers = buffers;
-        self
+    /// Registers buffers that have changed and need refreshing.
+    pub fn notify_buffers_changed(
+        &mut self,
+        buffers: HashSet<Entity<Buffer>>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.changed_buffers.extend(buffers.clone());
+        self.pending_refresh.extend(buffers);
     }
-}
 
-impl From<String> for ToolResult {
-    fn from(output: String) -> Self {
-        Self::new(output)
+    /// Takes and returns the set of buffers pending refresh, clearing internal state.
+    pub fn take_pending_refresh_buffers(&mut self) -> HashSet<Entity<Buffer>> {
+        std::mem::take(&mut self.pending_refresh)
     }
 }

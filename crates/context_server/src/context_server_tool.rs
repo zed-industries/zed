@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use assistant_tool::{Tool, ToolResult, ToolSource};
+use assistant_tool::{Tool, ActionLog, ToolSource};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -61,8 +61,9 @@ impl Tool for ContextServerTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>> {
+    ) -> Task<Result<String>> {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             cx.foreground_executor().spawn({
                 let tool_name = self.tool.name.clone();
@@ -98,7 +99,7 @@ impl Tool for ContextServerTool {
                             }
                         }
                     }
-                    Ok(result.into())
+                    Ok(result)
                 }
             })
         } else {

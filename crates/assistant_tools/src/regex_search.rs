@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::{Tool, ToolResult};
+use assistant_tool::{Tool, ActionLog};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
@@ -38,8 +38,9 @@ impl Tool for RegexSearchTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<ToolResult>> {
+    ) -> Task<Result<String>> {
         const CONTEXT_LINES: u32 = 2;
 
         let input = match serde_json::from_value::<RegexSearchToolInput>(input) {
@@ -110,9 +111,9 @@ impl Tool for RegexSearchTool {
             }
 
             if output.is_empty() {
-                Ok("No matches found".to_string().into())
+                Ok("No matches found".to_string())
             } else {
-                Ok(output.into())
+                Ok(output)
             }
         })
     }
