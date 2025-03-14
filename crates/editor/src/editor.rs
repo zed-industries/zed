@@ -3977,20 +3977,34 @@ impl Editor {
         }))
     }
 
+    pub fn show_word_completions(
+        &mut self,
+        _: &ShowWordCompletions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_completions_menu(true, None, window, cx);
+    }
+
     pub fn show_completions(
         &mut self,
         options: &ShowCompletions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_completions_menu(false, options.trigger.as_deref(), window, cx);
+    }
+
+    fn open_completions_menu(
+        &mut self,
+        ignore_completion_provider: bool,
+        trigger: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending_rename.is_some() {
             return;
         }
-
-        let Some(provider) = self.completion_provider.as_ref() else {
-            return;
-        };
-
         if !self.snippet_stack.is_empty() && self.context_menu.borrow().as_ref().is_some() {
             return;
         }
@@ -4012,14 +4026,14 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
 
-        let trigger_kind = match &options.trigger {
+        let trigger_kind = match trigger {
             Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
                 CompletionTriggerKind::TRIGGER_CHARACTER
             }
             _ => CompletionTriggerKind::INVOKED,
         };
         let completion_context = CompletionContext {
-            trigger_character: options.trigger.as_ref().and_then(|trigger| {
+            trigger_character: trigger.and_then(|trigger| {
                 if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
                     Some(String::from(trigger))
                 } else {
@@ -4028,8 +4042,7 @@ impl Editor {
             }),
             trigger_kind,
         };
-        let completions =
-            provider.completions(&buffer, buffer_position, completion_context, window, cx);
+
         let (old_range, word_kind) = buffer_snapshot.surrounding_word(buffer_position);
         let (old_range, word_to_exclude) = if word_kind == Some(CharKind::Word) {
             let word_to_exclude = buffer_snapshot
@@ -4067,15 +4080,38 @@ impl Editor {
         );
         let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
             ..buffer_snapshot.point_to_offset(max_word_search);
-        let words = match completion_settings.words {
-            WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
-            WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => {
+
+        let provider = self
+            .completion_provider
+            .as_ref()
+            .filter(|_| !ignore_completion_provider);
+
+        let (mut words, provided_completions) = match provider {
+            Some(provider) => {
+                let completions =
+                    provider.completions(&buffer, buffer_position, completion_context, window, cx);
+
+                let words = match completion_settings.words {
+                    WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
+                    WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => cx
+                        .background_spawn(async move {
+                            buffer_snapshot.words_in_range(None, word_search_range)
+                        }),
+                };
+
+                (words, completions)
+            }
+            None => (
                 cx.background_spawn(async move {
                     buffer_snapshot.words_in_range(None, word_search_range)
-                })
-            }
+                }),
+                Task::ready(Ok(Vec::new())),
+            ),
         };
-        let sort_completions = provider.sort_completions();
+
+        let sort_completions = provider
+            .as_ref()
+            .map_or(true, |provider| provider.sort_completions());
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_in(window, |editor, mut cx| {
@@ -4083,54 +4119,33 @@ impl Editor {
                 editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
-                let mut completions = completions.await.log_err().unwrap_or_default();
 
-                match completion_settings.words {
-                    WordsCompletionMode::Enabled => {
-                        let mut words = words.await;
-                        if let Some(word_to_exclude) = &word_to_exclude {
-                            words.remove(word_to_exclude);
-                        }
-                        for lsp_completion in &completions {
-                            words.remove(&lsp_completion.new_text);
-                        }
-                        completions.extend(words.into_iter().map(|(word, word_range)| {
-                            Completion {
-                                old_range: old_range.clone(),
-                                new_text: word.clone(),
-                                label: CodeLabel::plain(word, None),
-                                documentation: None,
-                                source: CompletionSource::BufferWord {
-                                    word_range,
-                                    resolved: false,
-                                },
-                                confirm: None,
-                            }
-                        }));
+                let mut completions = Vec::new();
+                if let Some(provided_completions) = provided_completions.await.log_err() {
+                    completions.extend(provided_completions);
+                    if completion_settings.words == WordsCompletionMode::Fallback {
+                        words = Task::ready(HashMap::default());
                     }
-                    WordsCompletionMode::Fallback => {
-                        if completions.is_empty() {
-                            completions.extend(
-                                words
-                                    .await
-                                    .into_iter()
-                                    .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
-                                    .map(|(word, word_range)| Completion {
-                                        old_range: old_range.clone(),
-                                        new_text: word.clone(),
-                                        label: CodeLabel::plain(word, None),
-                                        documentation: None,
-                                        source: CompletionSource::BufferWord {
-                                            word_range,
-                                            resolved: false,
-                                        },
-                                        confirm: None,
-                                    }),
-                            );
-                        }
-                    }
-                    WordsCompletionMode::Disabled => {}
                 }
+
+                let mut words = words.await;
+                if let Some(word_to_exclude) = &word_to_exclude {
+                    words.remove(word_to_exclude);
+                }
+                for lsp_completion in &completions {
+                    words.remove(&lsp_completion.new_text);
+                }
+                completions.extend(words.into_iter().map(|(word, word_range)| Completion {
+                    old_range: old_range.clone(),
+                    new_text: word.clone(),
+                    label: CodeLabel::plain(word, None),
+                    documentation: None,
+                    source: CompletionSource::BufferWord {
+                        word_range,
+                        resolved: false,
+                    },
+                    confirm: None,
+                }));
 
                 let menu = if completions.is_empty() {
                     None
@@ -4188,7 +4203,7 @@ impl Editor {
                     }
                 })?;
 
-                Ok::<_, anyhow::Error>(())
+                anyhow::Ok(())
             }
             .log_err()
         });
