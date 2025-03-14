@@ -24,7 +24,8 @@ use language_model::{
     AuthenticateError, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
-use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
+use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_store::PromptBuilder;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
@@ -296,7 +297,8 @@ impl AssistantPanel {
                 &LanguageModelRegistry::global(cx),
                 window,
                 |this, _, event: &language_model::Event, window, cx| match event {
-                    language_model::Event::ActiveModelChanged => {
+                    language_model::Event::ActiveModelChanged
+                    | language_model::Event::EditorModelChanged => {
                         this.completion_provider_changed(window, cx);
                     }
                     language_model::Event::ProviderStateChanged => {

@@ -12,10 +12,11 @@ use futures::FutureExt as _;
 use gpui::{
     prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
 };
-use heed::types::SerdeBincode;
+use heed::types::{SerdeBincode, SerdeJson};
 use heed::Database;
-use language_model::Role;
+use language_model::{LanguageModelToolUseId, Role};
 use project::Project;
+use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
@@ -26,9 +27,9 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct ThreadStore {
-    #[allow(unused)]
     project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
+    prompt_builder: Arc<PromptBuilder>,
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SavedThreadMetadata>,
@@ -38,6 +39,7 @@ impl ThreadStore {
     pub fn new(
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
     ) -> Result<Entity<Self>> {
         let this = cx.new(|cx| {
@@ -49,6 +51,7 @@ impl ThreadStore {
             let this = Self {
                 project,
                 tools,
+                prompt_builder,
                 context_server_manager,
                 context_server_tool_ids: HashMap::default(),
                 threads: Vec::new(),
@@ -78,7 +81,14 @@ impl ThreadStore {
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
-        cx.new(|cx| Thread::new(self.tools.clone(), cx))
+        cx.new(|cx| {
+            Thread::new(
+                self.project.clone(),
+                self.tools.clone(),
+                self.prompt_builder.clone(),
+                cx,
+            )
+        })
     }
 
     pub fn open_thread(
@@ -96,7 +106,16 @@ impl ThreadStore {
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
             this.update(&mut cx, |this, cx| {
-                cx.new(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
+                cx.new(|cx| {
+                    Thread::from_saved(
+                        id.clone(),
+                        thread,
+                        this.project.clone(),
+                        this.tools.clone(),
+                        this.prompt_builder.clone(),
+                        cx,
+                    )
+                })
             })
         })
     }
@@ -109,10 +128,35 @@ impl ThreadStore {
                 updated_at: thread.updated_at(),
                 messages: thread
                     .messages()
-                    .map(|message| SavedMessage {
-                        id: message.id,
-                        role: message.role,
-                        text: message.text.clone(),
+                    .map(|message| {
+                        let all_tool_uses = thread
+                            .tool_uses_for_message(message.id)
+                            .into_iter()
+                            .chain(thread.scripting_tool_uses_for_message(message.id))
+                            .map(|tool_use| SavedToolUse {
+                                id: tool_use.id,
+                                name: tool_use.name,
+                                input: tool_use.input,
+                            })
+                            .collect();
+                        let all_tool_results = thread
+                            .tool_results_for_message(message.id)
+                            .into_iter()
+                            .chain(thread.scripting_tool_results_for_message(message.id))
+                            .map(|tool_result| SavedToolResult {
+                                tool_use_id: tool_result.tool_use_id.clone(),
+                                is_error: tool_result.is_error,
+                                content: tool_result.content.clone(),
+                            })
+                            .collect();
+
+                        SavedMessage {
+                            id: message.id,
+                            role: message.role,
+                            text: message.text.clone(),
+                            tool_uses: all_tool_uses,
+                            tool_results: all_tool_results,
+                        }
                     })
                     .collect(),
             };
@@ -239,11 +283,29 @@ pub struct SavedThread {
     pub messages: Vec<SavedMessage>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SavedMessage {
     pub id: MessageId,
     pub role: Role,
     pub text: String,
+    #[serde(default)]
+    pub tool_uses: Vec<SavedToolUse>,
+    #[serde(default)]
+    pub tool_results: Vec<SavedToolResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SavedToolUse {
+    pub id: LanguageModelToolUseId,
+    pub name: SharedString,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SavedToolResult {
+    pub tool_use_id: LanguageModelToolUseId,
+    pub is_error: bool,
+    pub content: Arc<str>,
 }
 
 struct GlobalThreadsDatabase(
@@ -255,7 +317,7 @@ impl Global for GlobalThreadsDatabase {}
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerdeBincode<SavedThread>>,
+    threads: Database<SerdeBincode<ThreadId>, SerdeJson<SavedThread>>,
 }
 
 impl ThreadsDatabase {
@@ -270,7 +332,7 @@ impl ThreadsDatabase {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
+                let database_path = paths::support_dir().join("threads/threads-db.1.mdb");
                 async move { ThreadsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))

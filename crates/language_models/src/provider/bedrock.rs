@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::ui::InstructionListItem;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::Region;
@@ -37,7 +38,7 @@ use settings::{Settings, SettingsStore};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
 use crate::AllLanguageModelSettings;
@@ -83,7 +84,6 @@ const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
 pub struct State {
     credentials: Option<BedrockCredentials>,
     credentials_from_env: bool,
-    region: Option<String>,
     _subscription: Subscription,
 }
 
@@ -175,7 +175,6 @@ impl BedrockLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
             credentials: None,
-            region: Some(String::from("us-east-1")),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
@@ -311,7 +310,7 @@ impl BedrockModel {
                     Ok((
                         credentials.access_key_id.clone(),
                         credentials.secret_access_key.clone(),
-                        state.region.clone(),
+                        credentials.region.clone(),
                     ))
                 } else {
                     return Err(anyhow!("Failed to read credentials"));
@@ -331,7 +330,7 @@ impl BedrockModel {
                     None,
                     "Keychain",
                 ))
-                .region(Region::new(region.unwrap()))
+                .region(Region::new(region))
                 .http_client(self.http_client.clone())
                 .build(),
         );
@@ -401,7 +400,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+            let response = request.map_err(|err| anyhow!(err))?.await;
             Ok(map_to_language_model_completion_events(
                 response,
                 owned_handle,
@@ -425,26 +424,28 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
         );
 
-        request.tool_choice = Some(BedrockToolChoice::Tool(
-            BedrockSpecificTool::builder()
-                .name(name.clone())
-                .build()
-                .unwrap(),
-        ));
+        request.tool_choice = BedrockSpecificTool::builder()
+            .name(name.clone())
+            .build()
+            .log_err()
+            .map(BedrockToolChoice::Tool);
 
-        request.tools = vec![BedrockTool::builder()
+        if let Some(tool) = BedrockTool::builder()
             .name(name.clone())
             .description(description.clone())
             .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
             .build()
-            .unwrap()];
+            .log_err()
+        {
+            request.tools.push(tool);
+        }
 
         let handle = self.handler.clone();
 
         let request = self.stream_completion(request, _cx);
         self.request_limiter
             .run(async move {
-                let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+                let response = request.map_err(|err| anyhow!(err))?.await;
                 Ok(extract_tool_args_from_events(name, response, handle)
                     .await?
                     .boxed())
@@ -733,7 +734,7 @@ pub fn map_to_language_model_completion_events(
                                                     Ok(LanguageModelCompletionEvent::ToolUse(
                                                         LanguageModelToolUse {
                                                             id: tool_use.id.into(),
-                                                            name: tool_use.name,
+                                                            name: tool_use.name.into(),
                                                             input: if tool_use.input_json.is_empty()
                                                             {
                                                                 Value::Null
@@ -758,7 +759,8 @@ pub fn map_to_language_model_completion_events(
                         None
                     })
                     .await
-                    .unwrap()
+                    .log_err()
+                    .flatten()
             }
         },
     )
@@ -774,7 +776,9 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    const PLACEHOLDER_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "XXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str =
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -804,12 +808,12 @@ impl ConfigurationView {
         Self {
             access_key_id_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
                 editor
             }),
             secret_access_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
                 editor
             }),
             region_editor: cx.new(|cx| {
@@ -954,43 +958,89 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const IAM_CONSOLE_URL: &str = "https://us-east-1.console.aws.amazon.com/iam/home";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
-            "- Create a pair at:",
-            "- Paste your Access Key ID, Secret Key, and Region below and hit enter to use the assistant:",
-        ];
         let env_var_set = self.state.read(cx).credentials_from_env;
+        let bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border_variant;
+        let input_base_styles = || {
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .bg(bg_color)
+                .border_1()
+                .border_color(border_color)
+                .rounded_sm()
+        };
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
-                .on_action(cx.listener(Self::save_credentials))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("iam_console", IAM_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
-                )
-                )
-                .child(Label::new(INSTRUCTIONS[2]))
+                .on_action(cx.listener(ConfigurationView::save_credentials))
+                .child(Label::new("To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:"))
                 .child(
-                    h_flex()
-                        .gap_1()
-                        .child(self.render_aa_id_editor(cx))
-                        .child(self.render_sk_editor(cx))
-                        .child(self.render_region_editor(cx))
+                    List::new()
+                        .child(
+                            InstructionListItem::new(
+                                "Start by",
+                                Some("creating a user and security credentials"),
+                                Some("https://us-east-1.console.aws.amazon.com/iam/home")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::new(
+                                "Grant that user permissions according to this documentation:",
+                                Some("Prerequisites"),
+                                Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::new(
+                                "Select the models you would like access to:",
+                                Some("Bedrock Model Catalog"),
+                                Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::text_only("Fill the fields below and hit enter to start using the assistant")
+                        )
+                )
+                .child(
+                    v_flex()
+                        .my_2()
+                        .gap_1p5()
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Access Key ID").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_aa_id_editor(cx))
+                                )
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Secret Access Key").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_sk_editor(cx))
+                                )
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Region").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_region_editor(cx))
+                                )
+                            )
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} and {ZED_BEDROCK_REGION_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
                     )
-                        .size(LabelSize::Small),
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                 )
                 .into_any()
         } else {

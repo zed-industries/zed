@@ -20,9 +20,10 @@ use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::ResultExt;
 
+use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
 
 const PROVIDER_ID: &str = "google";
@@ -508,13 +509,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:",
-            "- Create one by visiting:",
-            "- Paste your API key below and hit enter to use the assistant",
-        ];
-
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -523,17 +517,18 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("google_console", GOOGLE_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _, cx| cx.open_url(GOOGLE_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(InstructionListItem::new(
+                            "Create one by visiting",
+                            Some("Google AI's console"),
+                            Some("https://aistudio.google.com/app/apikey"),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste your API key below and hit enter to start using the assistant",
+                        )),
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()
@@ -543,14 +538,14 @@ impl Render for ConfigurationView {
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
+                        .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
                 .child(
                     Label::new(
                         format!("You can also assign the {GOOGLE_AI_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .into_any()
         } else {

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{active_item_selection_properties, TaskContexts};
+use crate::TaskContexts;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
@@ -209,13 +209,6 @@ impl PickerDelegate for TasksModalDelegate {
                     match &mut picker.delegate.candidates {
                         Some(candidates) => string_match_candidates(candidates.iter()),
                         None => {
-                            let Ok((worktree, location)) =
-                                picker.delegate.workspace.update(cx, |workspace, cx| {
-                                    active_item_selection_properties(workspace, cx)
-                                })
-                            else {
-                                return Vec::new();
-                            };
                             let Some(task_inventory) = picker
                                 .delegate
                                 .task_store
@@ -228,8 +221,6 @@ impl PickerDelegate for TasksModalDelegate {
 
                             let (used, current) =
                                 task_inventory.read(cx).used_and_current_resolved_tasks(
-                                    worktree,
-                                    location,
                                     &picker.delegate.task_contexts,
                                     cx,
                                 );
@@ -509,7 +500,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .h_8()
                 .p_2()
                 .justify_between()
-                .rounded_b_md()
+                .rounded_b_sm()
                 .bg(cx.theme().colors().ghost_element_selected)
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
@@ -611,7 +602,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use util::path;
-    use workspace::CloseInactiveTabsAndPanes;
+    use workspace::{CloseInactiveTabsAndPanes, OpenOptions, OpenVisible};
 
     use crate::{modal::Spawn, tests::init_test};
 
@@ -655,14 +646,22 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "With no global tasks and no open item, no tasks should be listed"
+            vec!["another one", "example task"],
+            "With no global tasks and no open item, a single worktree should be used and its tasks listed"
         );
         drop(tasks_picker);
 
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -815,8 +814,8 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "Should list no file or worktree context-dependent when no file is open"
+            vec![concat!("opened now: ", path!("/dir")).to_string()],
+            "When no file is open for a single worktree, should autodetect all worktree-related tasks"
         );
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);
@@ -828,7 +827,10 @@ mod tests {
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/dir/file_with.odd_extension")),
-                    true,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 )
@@ -855,7 +857,10 @@ mod tests {
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/dir/file_without_extension")),
-                    true,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 )
@@ -963,7 +968,15 @@ mod tests {
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a1.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a1.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1004,7 +1017,15 @@ mod tests {
 
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a2.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1027,7 +1048,15 @@ mod tests {
 
         let _rs_file = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/b.rs")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/b.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1042,7 +1071,15 @@ mod tests {
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a2.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();

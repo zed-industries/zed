@@ -37,7 +37,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
-use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, Project, ProjectItem};
@@ -1075,45 +1075,36 @@ impl OutlinePanel {
                     });
                 } else {
                     let mut offset = Point::default();
-                    let show_excerpt_controls = active_editor
-                        .read(cx)
-                        .display_map
-                        .read(cx)
-                        .show_excerpt_controls();
                     let expand_excerpt_control_height = 1.0;
                     if let Some(buffer_id) = scroll_to_buffer {
                         let current_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
                         if current_folded {
-                            if show_excerpt_controls {
-                                let previous_buffer_id = self
-                                    .fs_entries
-                                    .iter()
-                                    .rev()
-                                    .filter_map(|entry| match entry {
-                                        FsEntry::File(file) => Some(file.buffer_id),
-                                        FsEntry::ExternalFile(external_file) => {
-                                            Some(external_file.buffer_id)
-                                        }
-                                        FsEntry::Directory(..) => None,
-                                    })
-                                    .skip_while(|id| *id != buffer_id)
-                                    .nth(1);
-                                if let Some(previous_buffer_id) = previous_buffer_id {
-                                    if !active_editor
-                                        .read(cx)
-                                        .is_buffer_folded(previous_buffer_id, cx)
-                                    {
-                                        offset.y += expand_excerpt_control_height;
+                            let previous_buffer_id = self
+                                .fs_entries
+                                .iter()
+                                .rev()
+                                .filter_map(|entry| match entry {
+                                    FsEntry::File(file) => Some(file.buffer_id),
+                                    FsEntry::ExternalFile(external_file) => {
+                                        Some(external_file.buffer_id)
                                     }
+                                    FsEntry::Directory(..) => None,
+                                })
+                                .skip_while(|id| *id != buffer_id)
+                                .nth(1);
+                            if let Some(previous_buffer_id) = previous_buffer_id {
+                                if !active_editor
+                                    .read(cx)
+                                    .is_buffer_folded(previous_buffer_id, cx)
+                                {
+                                    offset.y += expand_excerpt_control_height;
                                 }
                             }
                         } else {
                             if multi_buffer_snapshot.as_singleton().is_none() {
                                 offset.y = -(active_editor.read(cx).file_header_size() as f32);
                             }
-                            if show_excerpt_controls {
-                                offset.y -= expand_excerpt_control_height;
-                            }
+                            offset.y -= expand_excerpt_control_height;
                         }
                     }
                     active_editor.update(cx, |editor, cx| {
@@ -1148,7 +1139,7 @@ impl OutlinePanel {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             self.cached_entries
                 .iter()
@@ -2360,7 +2351,6 @@ impl OutlinePanel {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_search_match(
         &mut self,
         multi_buffer_snapshot: Option<&MultiBufferSnapshot>,
@@ -2452,7 +2442,6 @@ impl OutlinePanel {
         ))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
         rendered_entry: PanelEntry,
@@ -3836,7 +3825,6 @@ impl OutlinePanel {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_entry(
         &self,
         state: &mut GenerationState,
@@ -4054,7 +4042,6 @@ impl OutlinePanel {
         update_cached_entries
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
         state: &mut GenerationState,
@@ -4113,7 +4100,6 @@ impl OutlinePanel {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
@@ -4911,7 +4897,7 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::open))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_parent))
@@ -5169,7 +5155,7 @@ mod tests {
     use search::project_search::{self, perform_project_search};
     use serde_json::json;
     use util::path;
-    use workspace::OpenVisible;
+    use workspace::{OpenOptions, OpenVisible};
 
     use super::*;
 
@@ -5780,7 +5766,10 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![PathBuf::from("/root/two")],
-                    OpenVisible::OnlyDirectories,
+                    OpenOptions {
+                        visible: Some(OpenVisible::OnlyDirectories),
+                        ..Default::default()
+                    },
                     None,
                     window,
                     cx,
@@ -5851,7 +5840,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.select_prev(&SelectPrev, window, cx);
+            outline_panel.select_previous(&SelectPrevious, window, cx);
             outline_panel.open(&Open, window, cx);
         });
         cx.executor()
@@ -5971,7 +5960,15 @@ struct OutlineEntryExcerpt {
 
         let _editor = workspace
             .update(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/root/src/lib.rs")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/root/src/lib.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .unwrap()
             .await
@@ -6138,7 +6135,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6165,7 +6162,7 @@ outline: struct OutlineEntryExcerpt
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6192,7 +6189,7 @@ outline: struct OutlineEntryExcerpt
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6219,7 +6216,7 @@ outline: struct OutlineEntryExcerpt
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()
@@ -6246,7 +6243,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_prev(&SelectPrev, window, cx);
+                outline_panel.select_previous(&SelectPrevious, window, cx);
             });
         });
         cx.executor()

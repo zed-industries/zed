@@ -10,6 +10,12 @@ To preview the docs locally you will need to install [mdBook](https://rust-lang.
 mdbook serve docs
 ```
 
+Before committing, verify that the docs are formatted in the way prettier expects with:
+
+```
+cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
+```
+
 ## Preprocessor
 
 We have a custom mdbook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).

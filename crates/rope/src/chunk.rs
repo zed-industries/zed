@@ -78,7 +78,7 @@ pub struct ChunkSlice<'a> {
     text: &'a str,
 }
 
-impl<'a> Into<Chunk> for ChunkSlice<'a> {
+impl Into<Chunk> for ChunkSlice<'_> {
     fn into(self) -> Chunk {
         Chunk {
             chars: self.chars,

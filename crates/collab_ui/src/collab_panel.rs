@@ -17,7 +17,7 @@ use gpui::{
     ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString,
     Styled, Subscription, Task, TextStyle, WeakEntity, Window,
 };
-use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
     proto::{self, ChannelVisibility, PeerId},
@@ -869,7 +869,6 @@ impl CollabPanel {
             })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_participant_project(
         &self,
         project_id: u64,
@@ -1430,7 +1429,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.take().unwrap_or(0);
         if ix > 0 {
             self.selection = Some(ix - 1);
@@ -2878,7 +2877,7 @@ impl Render for CollabPanel {
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
             .on_action(cx.listener(CollabPanel::select_next))
-            .on_action(cx.listener(CollabPanel::select_prev))
+            .on_action(cx.listener(CollabPanel::select_previous))
             .on_action(cx.listener(CollabPanel::confirm))
             .on_action(cx.listener(CollabPanel::insert_space))
             .on_action(cx.listener(CollabPanel::remove_selected_channel))

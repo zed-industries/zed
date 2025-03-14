@@ -3,7 +3,6 @@ use crate::{
     tests::{rust_lang, TestServer},
 };
 use call::ActiveCall;
-use collections::HashMap;
 use editor::{
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
@@ -1537,6 +1536,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                     show_parameter_hints: false,
                     show_other_hints: true,
                     show_background: false,
+                    toggle_on_modifiers_press: None,
                 })
             });
         });
@@ -1552,6 +1552,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                     show_parameter_hints: false,
                     show_other_hints: true,
                     show_background: false,
+                    toggle_on_modifiers_press: None,
                 })
             });
         });
@@ -1770,6 +1771,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                     show_parameter_hints: false,
                     show_other_hints: false,
                     show_background: false,
+                    toggle_on_modifiers_press: None,
                 })
             });
         });
@@ -1785,6 +1787,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                     show_parameter_hints: true,
                     show_other_hints: true,
                     show_background: false,
+                    toggle_on_modifiers_press: None,
                 })
             });
         });
@@ -1979,7 +1982,6 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             blame_entry("3a3a3a", 2..3),
             blame_entry("4c4c4c", 3..4),
         ],
-        permalinks: HashMap::default(), // This field is deprecrated
         messages: [
             ("1b1b1b", "message for idx-0"),
             ("0d0d0d", "message for idx-1"),
@@ -2023,11 +2025,20 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+    let buffer_id_b = editor_b.update(cx_b, |editor_b, cx| {
+        editor_b
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .remote_id()
+    });
 
     // client_b now requests git blame for the open buffer
     editor_b.update_in(cx_b, |editor_b, window, cx| {
         assert!(editor_b.blame().is_none());
-        editor_b.toggle_git_blame(&editor::actions::ToggleGitBlame {}, window, cx);
+        editor_b.toggle_git_blame(&git::Blame {}, window, cx);
     });
 
     cx_a.executor().run_until_parked();
@@ -2041,6 +2052,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                     &(0..4)
                         .map(|row| RowInfo {
                             buffer_row: Some(row),
+                            buffer_id: Some(buffer_id_b),
                             ..Default::default()
                         })
                         .collect::<Vec<_>>(),
@@ -2088,6 +2100,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                     &(0..4)
                         .map(|row| RowInfo {
                             buffer_row: Some(row),
+                            buffer_id: Some(buffer_id_b),
                             ..Default::default()
                         })
                         .collect::<Vec<_>>(),
@@ -2123,6 +2136,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                     &(0..4)
                         .map(|row| RowInfo {
                             buffer_row: Some(row),
+                            buffer_id: Some(buffer_id_b),
                             ..Default::default()
                         })
                         .collect::<Vec<_>>(),

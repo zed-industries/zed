@@ -353,7 +353,6 @@ impl Zeta {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn request_completion_impl<F, R>(
         &mut self,
         workspace: Option<Entity<Workspace>>,
@@ -489,8 +488,8 @@ impl Zeta {
                                         NotificationId::unique::<ZedUpdateRequiredError>(),
                                         cx,
                                         |cx| {
-                                            cx.new(|_| {
-                                                ErrorMessagePrompt::new(err.to_string())
+                                            cx.new(|cx| {
+                                                ErrorMessagePrompt::new(err.to_string(), cx)
                                                     .with_link_button(
                                                         "Update Zed",
                                                         "https://zed.dev/releases",
@@ -791,7 +790,6 @@ and then another
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
         prediction_response: PredictEditsResponse,
         buffer: Entity<Buffer>,
