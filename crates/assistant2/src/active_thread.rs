@@ -8,7 +8,7 @@ use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
     ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity,
+    UnderlineStyle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -19,16 +19,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::Color;
-use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
+use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
-use workspace::{
-    notifications::{NotificationId, NotifyTaskExt},
-    Toast, Workspace,
-};
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     save_thread_task: Option<Task<()>>,
@@ -51,7 +46,6 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
-        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -62,7 +56,6 @@ impl ActiveThread {
 
         let mut this = Self {
             language_registry,
-            workspace,
             thread_store,
             thread: thread.clone(),
             save_thread_task: None,
@@ -494,34 +487,6 @@ impl ActiveThread {
         self.confirm_editing_message(&menu::Confirm, window, cx);
     }
 
-    fn handle_feedback_click(
-        &mut self,
-        is_positive: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let workspace = self.workspace.clone();
-        let report = self
-            .thread
-            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
-
-        cx.spawn(|_, mut cx| async move {
-            report.await?;
-            workspace.update(&mut cx, |workspace, cx| {
-                let message = if is_positive {
-                    "Positive feedback recorded. Thank you!"
-                } else {
-                    "Negative feedback recorded. Thank you for helping us improve!"
-                };
-
-                struct ThreadFeedback;
-                let id = NotificationId::unique::<ThreadFeedback>();
-                workspace.show_toast(Toast::new(id, message).autohide(), cx)
-            })
-        })
-        .detach_and_notify_err(window, cx);
-    }
-
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -556,11 +521,6 @@ impl ActiveThread {
             .map(|(_, state)| state.editor.clone());
 
         let colors = cx.theme().colors();
-
-        // Determine if this is the last assistant message in the thread
-        // which is where we want to add the feedback buttons
-        let is_last_assistant_message =
-            message.role == Role::Assistant && ix == self.messages.len() - 1;
 
         let message_content = v_flex()
             .child(
@@ -693,61 +653,27 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => v_flex()
-                .id(("message-container", ix))
-                .child(message_content)
-                .map(|parent| {
-                    let parent = if is_last_assistant_message {
-                        // Add feedback buttons for the last assistant message
-                        parent.child(
-                            h_flex()
-                                .px_2p5()
-                                .py_1()
-                                .gap_2()
-                                .justify_end()
-                                .child(
-                                    IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
-                                        .style(ButtonStyle::Subtle)
-                                        .tooltip(Tooltip::text("Helpful"))
-                                        .on_click(cx.listener({
-                                            move |this, _, window, cx| {
-                                                this.handle_feedback_click(true, window, cx);
-                                            }
-                                        })),
-                                )
-                                .child(
-                                    IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
-                                        .style(ButtonStyle::Subtle)
-                                        .tooltip(Tooltip::text("Not Helpful"))
-                                        .on_click(cx.listener({
-                                            move |this, _, window, cx| {
-                                                this.handle_feedback_click(false, window, cx);
-                                            }
-                                        })),
-                                ),
-                        )
-                    } else {
-                        parent
-                    };
-
-                    if tool_uses.is_empty() && scripting_tool_uses.is_empty() {
-                        return parent;
-                    }
-
-                    parent.child(
-                        v_flex()
-                            .children(
-                                tool_uses
-                                    .into_iter()
-                                    .map(|tool_use| self.render_tool_use(tool_use, cx)),
+            Role::Assistant => {
+                v_flex()
+                    .id(("message-container", ix))
+                    .child(message_content)
+                    .when(
+                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                        |parent| {
+                            parent.child(
+                                v_flex()
+                                    .children(
+                                        tool_uses
+                                            .into_iter()
+                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                    )
+                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                        self.render_scripting_tool_use(tool_use, cx)
+                                    })),
                             )
-                            .children(
-                                scripting_tool_uses
-                                    .into_iter()
-                                    .map(|tool_use| self.render_scripting_tool_use(tool_use, cx)),
-                            ),
+                        },
                     )
-                }),
+            }
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
