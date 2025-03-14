@@ -198,13 +198,8 @@ impl ProjectDiagnosticsEditor {
 
         let excerpts = cx.new(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new(|cx| {
-            let mut editor = Editor::for_multibuffer(
-                excerpts.clone(),
-                Some(project_handle.clone()),
-                true,
-                window,
-                cx,
-            );
+            let mut editor =
+                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), window, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.disable_inline_diagnostics();
             editor

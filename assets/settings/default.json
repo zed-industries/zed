@@ -1092,11 +1092,12 @@
     //
     // May take 3 values:
     // 1. "enabled"
-    //   Always fetch document's words for completions.
+    //   Always fetch document's words for completions along with LSP completions.
     // 2. "fallback"
-    //   Only if LSP response errors/times out/is empty, use document's words to show completions.
+    //   Only if LSP response errors or times out, use document's words to show completions.
     // 3. "disabled"
     //   Never fetch or complete document's words for completions.
+    //   (Word-based completions can still be queried via a separate action)
     //
     // Default: fallback
     "words": "fallback",
@@ -1107,8 +1108,8 @@
     // When fetching LSP completions, determines how long to wait for a response of a particular server.
     // When set to 0, waits indefinitely.
     //
-    // Default: 500
-    "lsp_fetch_timeout_ms": 500
+    // Default: 0
+    "lsp_fetch_timeout_ms": 0
   },
   // Different settings for specific languages.
   "languages": {
