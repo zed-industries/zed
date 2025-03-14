@@ -1,4 +1,4 @@
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global};
 
 pub fn init(cx: &mut App) {
     let extension_events = cx.new(ExtensionEvents::new);
@@ -14,8 +14,10 @@ pub struct ExtensionEvents;
 
 impl ExtensionEvents {
     /// Returns the global [`ExtensionEvents`].
-    pub fn global(cx: &App) -> Entity<Self> {
-        GlobalExtensionEvents::global(cx).0.clone()
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        return cx
+            .try_global::<GlobalExtensionEvents>()
+            .map(|g| g.0.clone());
     }
 
     fn new(_cx: &mut Context<Self>) -> Self {
@@ -29,7 +31,7 @@ impl ExtensionEvents {
 
 #[derive(Clone)]
 pub enum Event {
-    ExtensionsUpdated,
+    ExtensionsInstalledChanged,
 }
 
 impl EventEmitter<Event> for ExtensionEvents {}

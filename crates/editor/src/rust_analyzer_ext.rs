@@ -86,7 +86,7 @@ pub fn expand_macro_recursively(
                 cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name));
             workspace.add_item_to_active_pane(
                 Box::new(cx.new(|cx| {
-                    let mut editor = Editor::for_multibuffer(multibuffer, None, false, window, cx);
+                    let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
                     editor.set_read_only(true);
                     editor
                 })),

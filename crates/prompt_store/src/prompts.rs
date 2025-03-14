@@ -7,13 +7,24 @@ use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use text::LineEnding;
 use util::ResultExt;
 
 #[derive(Serialize)]
 pub struct AssistantSystemPromptContext {
-    pub worktree_root_names: Vec<String>,
+    pub worktrees: Vec<AssistantSystemPromptWorktree>,
+}
+
+#[derive(Serialize)]
+pub struct AssistantSystemPromptWorktree {
+    pub root_name: String,
+    pub abs_path: Arc<Path>,
 }
 
 #[derive(Serialize)]
@@ -223,11 +234,9 @@ impl PromptBuilder {
 
     pub fn generate_assistant_system_prompt(
         &self,
-        worktree_root_names: Vec<String>,
+        worktrees: Vec<AssistantSystemPromptWorktree>,
     ) -> Result<String, RenderError> {
-        let prompt = AssistantSystemPromptContext {
-            worktree_root_names,
-        };
+        let prompt = AssistantSystemPromptContext { worktrees };
         self.handlebars
             .lock()
             .render("assistant_system_prompt", &prompt)

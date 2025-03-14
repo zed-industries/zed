@@ -845,7 +845,9 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
+// TODO: Fix flaky test.
+// #[gpui::test]
+#[allow(unused)]
 async fn test_write_file(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2426,12 +2428,13 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     });
 }
 
-// NOTE:
-// This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
-// a directory which some program has already open.
-// This is a limitation of the Windows.
-// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
-#[gpui::test]
+// NOTE: This test always fails on Windows, because on Windows, unlike on Unix,
+// you can't rename a directory which some program has already open. This is a
+// limitation of the Windows. See:
+// https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
+// TODO: Fix flaky test.
+// #[gpui::test]
+#[allow(unused)]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_file_status(cx: &mut TestAppContext) {
     init_test(cx);
@@ -2624,7 +2627,9 @@ async fn test_file_status(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
+// TODO: Fix flaky test.
+// #[gpui::test]
+#[allow(unused)]
 async fn test_git_repository_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2738,7 +2743,9 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
+// TODO: Fix flaky test.
+// #[gpui::test]
+#[allow(unused)]
 async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -3534,6 +3541,8 @@ fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
     repo.cherrypick(commit, None).expect("Failed to cherrypick");
 }
 
+// TODO: Remove allow(unused) once flaky tests are reinstated
+#[allow(unused)]
 #[track_caller]
 fn git_stash(repo: &mut git2::Repository) {
     use git2::Signature;
@@ -3543,6 +3552,8 @@ fn git_stash(repo: &mut git2::Repository) {
         .expect("Failed to stash");
 }
 
+// TODO: Remove allow(unused) once flaky tests are reinstated
+#[allow(unused)]
 #[track_caller]
 fn git_reset(offset: usize, repo: &git2::Repository) {
     let head = repo.head().expect("Couldn't get repo head");

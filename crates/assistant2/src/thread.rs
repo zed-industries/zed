@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -10,10 +11,10 @@ use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason,
+    Role, StopReason, TokenUsage,
 };
 use project::Project;
-use prompt_store::PromptBuilder;
+use prompt_store::{AssistantSystemPromptWorktree, PromptBuilder};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
 use util::{post_inc, ResultExt, TryFutureExt as _};
@@ -80,6 +81,7 @@ pub struct Thread {
     tool_use: ToolUseState,
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
+    cumulative_token_usage: TokenUsage,
 }
 
 impl Thread {
@@ -108,6 +110,7 @@ impl Thread {
             tool_use: ToolUseState::new(),
             scripting_session,
             scripting_tool_use: ToolUseState::new(),
+            cumulative_token_usage: TokenUsage::default(),
         }
     }
 
@@ -157,6 +160,8 @@ impl Thread {
             tool_use,
             scripting_session,
             scripting_tool_use,
+            // TODO: persist token usage?
+            cumulative_token_usage: TokenUsage::default(),
         }
     }
 
@@ -199,7 +204,7 @@ impl Thread {
     }
 
     pub fn is_streaming(&self) -> bool {
-        !self.pending_completions.is_empty()
+        !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
@@ -388,8 +393,14 @@ impl Thread {
         let worktree_root_names = self
             .project
             .read(cx)
-            .worktree_root_names(cx)
-            .map(ToString::to_string)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                AssistantSystemPromptWorktree {
+                    root_name: worktree.root_name().into(),
+                    abs_path: worktree.abs_path(),
+                }
+            })
             .collect::<Vec<_>>();
         let system_prompt = self
             .prompt_builder
@@ -487,6 +498,7 @@ impl Thread {
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
+                let mut current_token_usage = TokenUsage::default();
 
                 while let Some(event) = events.next().await {
                     let event = event?;
@@ -498,6 +510,12 @@ impl Thread {
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
+                            }
+                            LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
+                                thread.cumulative_token_usage =
+                                    thread.cumulative_token_usage.clone() + token_usage.clone()
+                                        - current_token_usage.clone();
+                                current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 if let Some(last_message) = thread.messages.last_mut() {
@@ -796,6 +814,58 @@ impl Thread {
         } else {
             false
         }
+    }
+
+    pub fn to_markdown(&self) -> Result<String> {
+        let mut markdown = Vec::new();
+
+        if let Some(summary) = self.summary() {
+            writeln!(markdown, "# {summary}\n")?;
+        };
+
+        for message in self.messages() {
+            writeln!(
+                markdown,
+                "## {role}\n",
+                role = match message.role {
+                    Role::User => "User",
+                    Role::Assistant => "Assistant",
+                    Role::System => "System",
+                }
+            )?;
+            writeln!(markdown, "{}\n", message.text)?;
+
+            for tool_use in self.tool_uses_for_message(message.id) {
+                writeln!(
+                    markdown,
+                    "**Use Tool: {} ({})**",
+                    tool_use.name, tool_use.id
+                )?;
+                writeln!(markdown, "```json")?;
+                writeln!(
+                    markdown,
+                    "{}",
+                    serde_json::to_string_pretty(&tool_use.input)?
+                )?;
+                writeln!(markdown, "```")?;
+            }
+
+            for tool_result in self.tool_results_for_message(message.id) {
+                write!(markdown, "**Tool Results: {}", tool_result.tool_use_id)?;
+                if tool_result.is_error {
+                    write!(markdown, " (Error)")?;
+                }
+
+                writeln!(markdown, "**\n")?;
+                writeln!(markdown, "{}", tool_result.content)?;
+            }
+        }
+
+        Ok(String::from_utf8_lossy(&markdown).to_string())
+    }
+
+    pub fn cumulative_token_usage(&self) -> TokenUsage {
+        self.cumulative_token_usage.clone()
     }
 }
 
