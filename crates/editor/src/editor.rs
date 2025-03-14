@@ -2918,6 +2918,17 @@ impl Editor {
                                 .next()
                                 .map_or(true, |c| scope.should_autoclose_before(c));
 
+                            let preceding_text_allows_autoclose = selection.start.column == 0
+                                || snapshot.reversed_chars_at(selection.start).next().map_or(
+                                    true,
+                                    |c| {
+                                        bracket_pair.start != bracket_pair.end
+                                            || !snapshot
+                                                .char_classifier_at(selection.start)
+                                                .is_word(c)
+                                    },
+                                );
+
                             let is_closing_quote = if bracket_pair.end == bracket_pair.start
                                 && bracket_pair.start.len() == 1
                             {
@@ -2935,6 +2946,7 @@ impl Editor {
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
+                                && preceding_text_allows_autoclose
                                 && !is_closing_quote
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
