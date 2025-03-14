@@ -4040,10 +4040,7 @@ impl LspStore {
                         .as_ref()
                         .map(|options| options.commands.as_slice())
                         .unwrap_or_default();
-                    // TODO kb fix r-a and add capabilities?
-                    // TODO kb also, do not show such tasks if theur commands are not in the capabilities?
-                    dbg!((available_commands, &command.command));
-                    if dbg!(available_commands.contains(&command.command)) || true {
+                    if available_commands.contains(&command.command) {
                         this.update(&mut cx, |this, _| {
                             this.as_local_mut()
                                 .unwrap()
