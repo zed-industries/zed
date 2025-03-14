@@ -311,13 +311,10 @@ fn pipe_to_tmp(mut src: impl io::Read, mut dest: fs::File) -> Result<()> {
 }
 
 fn anonymous_fd(path: &str) -> Option<fs::File> {
-    use std::os::{
-        fd::{self, FromRawFd},
-        unix::fs::FileTypeExt,
-    };
-
     #[cfg(target_os = "linux")]
     {
+        use std::os::fd::{self, FromRawFd};
+
         let fd_str = path.strip_prefix("/proc/self/fd/")?;
 
         let link = fs::read_link(path).ok()?;
@@ -331,6 +328,11 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
     }
     #[cfg(target_os = "macos")]
     {
+        use std::os::{
+            fd::{self, FromRawFd},
+            unix::fs::FileTypeExt,
+        };
+
         let fd_str = path.strip_prefix("/dev/fd/")?;
 
         let metadata = fs::metadata(path).ok()?;
@@ -342,8 +344,11 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         let file = unsafe { fs::File::from_raw_fd(fd) };
         return Some(file);
     }
-    // not implemented for bsd, windows. Could be, but isn't yet
-    return None;
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        // not implemented for bsd, windows. Could be, but isn't yet
+        return None;
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
