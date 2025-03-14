@@ -15007,7 +15007,8 @@ impl Editor {
         let _ = maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let Some((_, active_position)) = breakpoint_store.read(cx).active_position().cloned()
+            let Some((_, _, active_position)) =
+                breakpoint_store.read(cx).active_position().cloned()
             else {
                 self.clear_row_highlights::<DebugCurrentRowHighlight>();
                 return None;

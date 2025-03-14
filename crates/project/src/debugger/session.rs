@@ -1225,7 +1225,9 @@ impl Session {
         self.as_local()
             .expect("Message handler will only run in local mode")
             .breakpoint_store
-            .update(cx, |store, cx| store.set_active_position(None, cx));
+            .update(cx, |store, cx| {
+                store.remove_active_position(Some(self.id), cx)
+            });
     }
 
     pub fn pause_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
