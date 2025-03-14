@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use util::ResultExt;
 
 /// Represents an edit action to be performed on a file.
@@ -5,16 +6,16 @@ use util::ResultExt;
 pub enum EditAction {
     /// Replace specific content in a file with new content
     Replace {
-        file_path: String,
+        file_path: PathBuf,
         old: String,
         new: String,
     },
     /// Write content to a file (create or overwrite)
-    Write { file_path: String, content: String },
+    Write { file_path: PathBuf, content: String },
 }
 
 impl EditAction {
-    pub fn file_path(&self) -> &str {
+    pub fn file_path(&self) -> &Path {
         match self {
             EditAction::Replace { file_path, .. } => file_path,
             EditAction::Write { file_path, .. } => file_path,
@@ -78,10 +79,10 @@ impl EditActionParser {
     pub fn parse_chunk(&mut self, input: &str) -> Vec<EditAction> {
         use State::*;
 
-        const FENCE: &[u8] = b"\n```";
-        const SEARCH_MARKER: &[u8] = b"<<<<<<< SEARCH\n";
-        const DIVIDER: &[u8] = b"=======\n";
-        const NL_DIVIDER: &[u8] = b"\n=======\n";
+        const FENCE: &[u8] = b"```";
+        const SEARCH_MARKER: &[u8] = b"<<<<<<< SEARCH";
+        const DIVIDER: &[u8] = b"=======";
+        const NL_DIVIDER: &[u8] = b"\n=======";
         const REPLACE_MARKER: &[u8] = b">>>>>>> REPLACE";
         const NL_REPLACE_MARKER: &[u8] = b"\n>>>>>>> REPLACE";
 
@@ -96,8 +97,8 @@ impl EditActionParser {
                 self.column += 1;
             }
 
-            match self.state {
-                Default => match match_marker(byte, FENCE, &mut self.marker_ix) {
+            match &self.state {
+                Default => match match_marker(byte, FENCE, false, &mut self.marker_ix) {
                     MarkerMatch::Complete => {
                         self.to_state(OpenFence);
                     }
@@ -105,12 +106,11 @@ impl EditActionParser {
                     MarkerMatch::None => {
                         if self.marker_ix > 0 {
                             self.marker_ix = 0;
+                        } else if self.pre_fence_line.ends_with(b"\n") {
                             self.pre_fence_line.clear();
                         }
 
-                        if byte != b'\n' {
-                            self.pre_fence_line.push(byte);
-                        }
+                        self.pre_fence_line.push(byte);
                     }
                 },
                 OpenFence => {
@@ -120,7 +120,7 @@ impl EditActionParser {
                     }
                 }
                 SearchMarker => {
-                    if self.expect_marker(byte, SEARCH_MARKER) {
+                    if self.expect_marker(byte, SEARCH_MARKER, true) {
                         self.to_state(SearchBlock);
                     }
                 }
@@ -129,6 +129,7 @@ impl EditActionParser {
                         byte,
                         DIVIDER,
                         NL_DIVIDER,
+                        true,
                         &mut self.marker_ix,
                         &mut self.old_bytes,
                     ) {
@@ -140,6 +141,7 @@ impl EditActionParser {
                         byte,
                         REPLACE_MARKER,
                         NL_REPLACE_MARKER,
+                        true,
                         &mut self.marker_ix,
                         &mut self.new_bytes,
                     ) {
@@ -147,10 +149,11 @@ impl EditActionParser {
                     }
                 }
                 CloseFence => {
-                    if self.expect_marker(byte, FENCE) {
+                    if self.expect_marker(byte, FENCE, false) {
                         if let Some(action) = self.action() {
                             actions.push(action);
                         }
+                        self.errors();
                         self.reset();
                     }
                 }
@@ -171,7 +174,14 @@ impl EditActionParser {
             return None;
         }
 
-        let file_path = String::from_utf8(std::mem::take(&mut self.pre_fence_line)).log_err()?;
+        let mut pre_fence_line = std::mem::take(&mut self.pre_fence_line);
+
+        if pre_fence_line.ends_with(b"\n") {
+            pre_fence_line.pop();
+            pop_carriage_return(&mut pre_fence_line);
+        }
+
+        let file_path = PathBuf::from(String::from_utf8(pre_fence_line).log_err()?);
         let content = String::from_utf8(std::mem::take(&mut self.new_bytes)).log_err()?;
 
         if self.old_bytes.is_empty() {
@@ -187,8 +197,8 @@ impl EditActionParser {
         }
     }
 
-    fn expect_marker(&mut self, byte: u8, marker: &'static [u8]) -> bool {
-        match match_marker(byte, marker, &mut self.marker_ix) {
+    fn expect_marker(&mut self, byte: u8, marker: &'static [u8], trailing_newline: bool) -> bool {
+        match match_marker(byte, marker, trailing_newline, &mut self.marker_ix) {
             MarkerMatch::Complete => true,
             MarkerMatch::Partial => false,
             MarkerMatch::None => {
@@ -230,14 +240,27 @@ enum MarkerMatch {
     Complete,
 }
 
-fn match_marker(byte: u8, marker: &[u8], marker_ix: &mut usize) -> MarkerMatch {
-    if byte == marker[*marker_ix] {
+fn match_marker(
+    byte: u8,
+    marker: &[u8],
+    trailing_newline: bool,
+    marker_ix: &mut usize,
+) -> MarkerMatch {
+    if trailing_newline && *marker_ix >= marker.len() {
+        if byte == b'\n' {
+            MarkerMatch::Complete
+        } else if byte == b'\r' {
+            MarkerMatch::Partial
+        } else {
+            MarkerMatch::None
+        }
+    } else if byte == marker[*marker_ix] {
         *marker_ix += 1;
 
-        if *marker_ix >= marker.len() {
-            MarkerMatch::Complete
-        } else {
+        if *marker_ix < marker.len() || trailing_newline {
             MarkerMatch::Partial
+        } else {
+            MarkerMatch::Complete
         }
     } else {
         MarkerMatch::None
@@ -248,6 +271,7 @@ fn collect_until_marker(
     byte: u8,
     marker: &[u8],
     nl_marker: &[u8],
+    trailing_newline: bool,
     marker_ix: &mut usize,
     buf: &mut Vec<u8>,
 ) -> bool {
@@ -258,8 +282,11 @@ fn collect_until_marker(
         nl_marker
     };
 
-    match match_marker(byte, marker, marker_ix) {
-        MarkerMatch::Complete => true,
+    match match_marker(byte, marker, trailing_newline, marker_ix) {
+        MarkerMatch::Complete => {
+            pop_carriage_return(buf);
+            true
+        }
         MarkerMatch::Partial => false,
         MarkerMatch::None => {
             if *marker_ix > 0 {
@@ -267,7 +294,7 @@ fn collect_until_marker(
                 *marker_ix = 0;
 
                 // The beginning of marker might match current byte
-                match match_marker(byte, marker, marker_ix) {
+                match match_marker(byte, marker, trailing_newline, marker_ix) {
                     MarkerMatch::Complete => return true,
                     MarkerMatch::Partial => return false,
                     MarkerMatch::None => { /* no match, keep collecting */ }
@@ -278,6 +305,12 @@ fn collect_until_marker(
 
             false
         }
+    }
+}
+
+fn pop_carriage_return(buf: &mut Vec<u8>) {
+    if buf.ends_with(b"\r") {
+        buf.pop();
     }
 }
 
@@ -342,11 +375,12 @@ fn replacement() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -368,11 +402,12 @@ fn replacement() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -398,11 +433,12 @@ This change makes the function better.
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -435,7 +471,7 @@ fn new_util() -> bool { true }
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
@@ -443,11 +479,12 @@ fn new_util() -> bool { true }
         assert_eq!(
             actions[1],
             EditAction::Replace {
-                file_path: "src/utils.rs".to_string(),
+                file_path: PathBuf::from("src/utils.rs"),
                 old: "fn old_util() -> bool { false }".to_string(),
                 new: "fn new_util() -> bool { true }".to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -483,11 +520,12 @@ fn replacement() {
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {\n    println!(\"This is the original function\");\n    let x = 42;\n    if x > 0 {\n        println!(\"Positive number\");\n    }\n}".to_string(),
                 new: "fn replacement() {\n    println!(\"This is the replacement function\");\n    let x = 100;\n    if x > 50 {\n        println!(\"Large number\");\n    } else {\n        println!(\"Small number\");\n    }\n}".to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -512,11 +550,12 @@ fn new_function() {
         assert_eq!(
             actions[0],
             EditAction::Write {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 content: "fn new_function() {\n    println!(\"This function is being added\");\n}"
                     .to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -533,18 +572,32 @@ fn this_will_be_deleted() {
 "#;
 
         let mut parser = EditActionParser::new();
-        let actions = parser.parse_chunk(input);
-
+        let actions = parser.parse_chunk(&input);
         assert_eq!(actions.len(), 1);
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn this_will_be_deleted() {\n    println!(\"Deleting this function\");\n}"
                     .to_string(),
                 new: "".to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
+
+        let actions = parser.parse_chunk(&input.replace("\n", "\r\n"));
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0],
+            EditAction::Replace {
+                file_path: PathBuf::from("src/main.rs"),
+                old:
+                    "fn this_will_be_deleted() {\r\n    println!(\"Deleting this function\");\r\n}"
+                        .to_string(),
+                new: "".to_string(),
+            }
+        );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -590,10 +643,12 @@ fn replacement() {}"#;
         let mut parser = EditActionParser::new();
         let actions1 = parser.parse_chunk(input_part1);
         assert_eq!(actions1.len(), 0);
+        assert_eq!(parser.errors().len(), 0);
 
         let actions2 = parser.parse_chunk(input_part2);
         // No actions should be complete yet
         assert_eq!(actions2.len(), 0);
+        assert_eq!(parser.errors().len(), 0);
 
         let actions3 = parser.parse_chunk(input_part3);
         // The third chunk should complete the action
@@ -601,11 +656,12 @@ fn replacement() {}"#;
         assert_eq!(
             actions3[0],
             EditAction::Replace {
-                file_path: "src/main.rs".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
                 old: "fn original() {}".to_string(),
                 new: "fn replacement() {}".to_string(),
             }
         );
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -615,24 +671,27 @@ fn replacement() {}"#;
 
         // Check parser is in the correct state
         assert_eq!(parser.state, State::SearchBlock);
-        assert_eq!(parser.pre_fence_line, b"src/main.rs");
+        assert_eq!(parser.pre_fence_line, b"src/main.rs\n");
+        assert_eq!(parser.errors().len(), 0);
 
         // Continue parsing
         let actions2 = parser.parse_chunk("original code\n=======\n");
         assert_eq!(parser.state, State::ReplaceBlock);
         assert_eq!(parser.old_bytes, b"original code");
+        assert_eq!(parser.errors().len(), 0);
 
         let actions3 = parser.parse_chunk("replacement code\n>>>>>>> REPLACE\n```\n");
 
         // After complete parsing, state should reset
         assert_eq!(parser.state, State::Default);
-        assert!(parser.pre_fence_line.is_empty());
+        assert_eq!(parser.pre_fence_line, b"\n");
         assert!(parser.old_bytes.is_empty());
         assert!(parser.new_bytes.is_empty());
 
         assert_eq!(actions1.len(), 0);
         assert_eq!(actions2.len(), 0);
         assert_eq!(actions3.len(), 1);
+        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -654,14 +713,9 @@ fn replacement() {}
         assert_eq!(parser.errors().len(), 1);
         let error = &parser.errors()[0];
 
-        assert_eq!(error.line, 3);
-        assert_eq!(error.column, 9);
         assert_eq!(
-            error.kind,
-            ParseErrorKind::ExpectedMarker {
-                expected: b"<<<<<<< SEARCH\n",
-                found: b'W'
-            }
+            error.to_string(),
+            "input:3:9: Expected marker \"<<<<<<< SEARCH\", found 'W'"
         );
     }
 
@@ -694,10 +748,15 @@ fn new_utils_func() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "src/utils.rs".to_string(),
+                file_path: PathBuf::from("src/utils.rs"),
                 old: "fn utils_func() {}".to_string(),
                 new: "fn new_utils_func() {}".to_string(),
             }
+        );
+        assert_eq!(parser.errors().len(), 1);
+        assert_eq!(
+            parser.errors()[0].to_string(),
+            "input:8:1: Expected marker \"```\", found '<'".to_string()
         );
 
         // The parser should continue after an error
@@ -737,50 +796,91 @@ fn new_utils_func() {}
         assert_eq!(
             actions[0],
             EditAction::Replace {
-                file_path: "mathweb/flask/app.py".to_string(),
+                file_path: PathBuf::from("mathweb/flask/app.py"),
                 old: "from flask import Flask".to_string(),
                 new: "import math\nfrom flask import Flask".to_string(),
             }
+            .fix_lf(),
         );
 
         assert_eq!(
-                    actions[1],
-                    EditAction::Replace {
-                        file_path: "mathweb/flask/app.py".to_string(),
-                        old: "def factorial(n):\n    \"compute factorial\"\n\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n".to_string(),
-                        new: "".to_string(),
-                    }
-                );
+            actions[1],
+            EditAction::Replace {
+                file_path: PathBuf::from("mathweb/flask/app.py"),
+                old: "def factorial(n):\n    \"compute factorial\"\n\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n".to_string(),
+                new: "".to_string(),
+            }
+            .fix_lf()
+        );
 
         assert_eq!(
             actions[2],
             EditAction::Replace {
-                file_path: "mathweb/flask/app.py".to_string(),
+                file_path: PathBuf::from("mathweb/flask/app.py"),
                 old: "    return str(factorial(n))".to_string(),
                 new: "    return str(math.factorial(n))".to_string(),
             }
+            .fix_lf(),
         );
 
         assert_eq!(
             actions[3],
             EditAction::Write {
-                file_path: "hello.py".to_string(),
+                file_path: PathBuf::from("hello.py"),
                 content: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")"
                     .to_string(),
             }
+            .fix_lf(),
         );
 
         assert_eq!(
             actions[4],
             EditAction::Replace {
-                file_path: "main.py".to_string(),
+                file_path: PathBuf::from("main.py"),
                 old: "def hello():\n    \"print a greeting\"\n\n    print(\"hello\")".to_string(),
                 new: "from hello import hello".to_string(),
             }
+            .fix_lf(),
         );
 
-        // Ensure we have no parsing errors
-        assert!(errors.is_empty(), "Parsing errors found: {:?}", errors);
+        // The system prompt includes some text that would produce errors
+        assert_eq!(
+            errors[0].to_string(),
+            "input:102:1: Expected marker \"<<<<<<< SEARCH\", found '3'"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            errors[1].to_string(),
+            "input:109:0: Expected marker \"<<<<<<< SEARCH\", found '\\n'"
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            errors[1].to_string(),
+            "input:108:1: Expected marker \"<<<<<<< SEARCH\", found '\\r'"
+        );
+    }
+
+    impl EditAction {
+        fn fix_lf(self: EditAction) -> EditAction {
+            #[cfg(windows)]
+            match self {
+                EditAction::Replace {
+                    file_path,
+                    old,
+                    new,
+                } => EditAction::Replace {
+                    file_path: file_path.clone(),
+                    old: old.replace("\n", "\r\n"),
+                    new: new.replace("\n", "\r\n"),
+                },
+                EditAction::Write { file_path, content } => EditAction::Write {
+                    file_path: file_path.clone(),
+                    content: content.replace("\n", "\r\n"),
+                },
+            }
+            #[cfg(not(windows))]
+            self
+        }
     }
 
     #[test]
@@ -800,7 +900,7 @@ fn replacement() {}
 
         assert_eq!(parser.errors().len(), 1);
         let error = &parser.errors()[0];
-        let expected_error = r#"input:3:9: Expected marker "<<<<<<< SEARCH\n", found 'W'"#;
+        let expected_error = r#"input:3:9: Expected marker "<<<<<<< SEARCH", found 'W'"#;
 
         assert_eq!(format!("{}", error), expected_error);
     }

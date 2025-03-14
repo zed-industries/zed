@@ -150,6 +150,14 @@ impl MessageEditor {
     }
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_editor_empty(cx) {
+            return;
+        }
+
+        if self.thread.read(cx).is_streaming() {
+            return;
+        }
+
         self.send_to_model(RequestKind::Chat, window, cx);
     }
 

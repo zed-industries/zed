@@ -2254,6 +2254,7 @@ impl AssistantContext {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) => {}
+                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
 

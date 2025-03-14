@@ -412,7 +412,6 @@ gpui::actions!(
         Tab,
         Backtab,
         ToggleAutoSignatureHelp,
-        ToggleGitBlame,
         ToggleGitBlameInline,
         ToggleIndentGuides,
         ToggleInlayHints,
