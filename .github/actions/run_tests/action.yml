@@ -22,4 +22,5 @@ runs:
       shell: bash -euxo pipefail {0}
       env:
         RUST_LOG: worktree=trace
-      run: cargo nextest run -p worktree --no-fail-fast
+      run: |
+        for i in $(seq 100); do cargo nextest run -p worktree --no-fail-fast; done
