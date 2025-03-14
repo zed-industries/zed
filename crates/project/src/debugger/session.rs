@@ -867,11 +867,11 @@ impl Session {
                 self.invalidate_generic();
             }
             Events::Exited(_event) => {
-                self.clear_active_debug_line(&(), cx);
+                self.clear_active_debug_line(Ok(()), cx);
             }
             Events::Terminated(_) => {
                 self.is_session_terminated = true;
-                self.clear_active_debug_line(&(), cx);
+                self.clear_active_debug_line(Ok(()), cx);
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);
@@ -947,7 +947,8 @@ impl Session {
     fn fetch<T: DapCommand + PartialEq + Eq + Hash>(
         &mut self,
         request: T,
-        process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
+        process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response>
+            + 'static,
         cx: &mut Context<Self>,
     ) {
         const {
@@ -997,7 +998,8 @@ impl Session {
         session_id: SessionId,
         mode: &Mode,
         request: T,
-        process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
+        process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response>
+            + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
         if !T::is_supported(&capabilities) {
@@ -1009,19 +1011,18 @@ impl Session {
         }
         let request = mode.request_dap(session_id, request, cx);
         cx.spawn(|this, mut cx| async move {
-            let result = request.await.log_err()?;
-            this.update(&mut cx, |this, cx| {
-                process_result(this, &result, cx);
-            })
-            .log_err();
-            Some(result)
+            let result = request.await;
+            this.update(&mut cx, |this, cx| process_result(this, result, cx))
+                .log_err()
+                .flatten()
         })
     }
 
     fn request<T: DapCommand + PartialEq + Eq + Hash>(
         &self,
         request: T,
-        process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
+        process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response>
+            + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
         Self::request_inner(
@@ -1060,6 +1061,8 @@ impl Session {
         self.fetch(
             dap_command::ThreadsCommand,
             |this, result, cx| {
+                let result = result.log_err()?;
+
                 this.threads = result
                     .iter()
                     .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
@@ -1068,6 +1071,8 @@ impl Session {
                 this.invalidate_command_type::<StackTraceCommand>();
                 cx.emit(SessionEvent::Threads);
                 cx.notify();
+
+                Some(result)
             },
             cx,
         );
@@ -1087,9 +1092,13 @@ impl Session {
         self.fetch(
             dap_command::ModulesCommand,
             |this, result, cx| {
+                let result = result.log_err()?;
+
                 this.modules = result.iter().cloned().collect();
                 cx.emit(SessionEvent::Modules);
                 cx.notify();
+
+                Some(result)
             },
             cx,
         );
@@ -1157,9 +1166,11 @@ impl Session {
         self.fetch(
             dap_command::LoadedSourcesCommand,
             |this, result, cx| {
+                let result = result.log_err()?;
                 this.loaded_sources = result.iter().cloned().collect();
                 cx.emit(SessionEvent::LoadedSources);
                 cx.notify();
+                Some(result)
             },
             cx,
         );
@@ -1167,13 +1178,24 @@ impl Session {
         &self.loaded_sources
     }
 
-    fn empty_response(&mut self, _: &(), _cx: &mut Context<Self>) {}
+    fn empty_response(&mut self, res: Result<()>, _cx: &mut Context<Self>) -> Option<()> {
+        res.log_err()?;
+        Some(())
+    }
 
-    fn clear_active_debug_line(&mut self, _: &(), cx: &mut Context<'_, Session>) {
+    fn clear_active_debug_line(
+        &mut self,
+        response: Result<()>,
+        cx: &mut Context<'_, Session>,
+    ) -> Option<()> {
+        response.log_err()?;
+
         self.as_local()
             .expect("Message handler will only run in local mode")
             .breakpoint_store
-            .update(cx, |store, cx| store.set_active_position(None, cx))
+            .update(cx, |store, cx| store.set_active_position(None, cx));
+
+        Some(())
     }
 
     pub fn pause_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
@@ -1255,7 +1277,7 @@ impl Session {
         query: CompletionsQuery,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<dap::CompletionItem>>> {
-        let task = self.request(query, |_, _, _| {}, cx);
+        let task = self.request(query, |_, result, _| result.log_err(), cx);
 
         cx.background_executor().spawn(async move {
             anyhow::Ok(
@@ -1266,7 +1288,22 @@ impl Session {
         })
     }
 
+    fn on_step_response<T: DapCommand + PartialEq + Eq + Hash>(
+        thread_id: ThreadId,
+    ) -> impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response> + 'static
+    {
+        move |this, response, cx| match response.log_err() {
+            Some(response) => Some(response),
+            None => {
+                this.thread_states.stop_thread(thread_id);
+                cx.notify();
+                None
+            }
+        }
+    }
+
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.thread_states.continue_thread(thread_id);
         self.request(
             ContinueCommand {
                 args: ContinueArguments {
@@ -1274,7 +1311,7 @@ impl Session {
                     single_thread: Some(true),
                 },
             },
-            |_, _, _| {}, // todo: what do we do about the payload here?
+            Self::on_step_response::<ContinueCommand>(thread_id),
             cx,
         )
         .detach();
@@ -1308,11 +1345,17 @@ impl Session {
             },
         };
 
-        self.request(command, Self::empty_response, cx).detach();
+        self.thread_states.continue_thread(thread_id);
+        self.request(
+            command,
+            Self::on_step_response::<NextCommand>(thread_id),
+            cx,
+        )
+        .detach();
     }
 
     pub fn step_in(
-        &self,
+        &mut self,
         thread_id: ThreadId,
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
@@ -1332,11 +1375,17 @@ impl Session {
             },
         };
 
-        self.request(command, Self::empty_response, cx).detach();
+        self.thread_states.continue_thread(thread_id);
+        self.request(
+            command,
+            Self::on_step_response::<StepInCommand>(thread_id),
+            cx,
+        )
+        .detach();
     }
 
     pub fn step_out(
-        &self,
+        &mut self,
         thread_id: ThreadId,
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
@@ -1356,11 +1405,17 @@ impl Session {
             },
         };
 
-        self.request(command, Self::empty_response, cx).detach();
+        self.thread_states.continue_thread(thread_id);
+        self.request(
+            command,
+            Self::on_step_response::<StepOutCommand>(thread_id),
+            cx,
+        )
+        .detach();
     }
 
     pub fn step_back(
-        &self,
+        &mut self,
         thread_id: ThreadId,
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
@@ -1380,7 +1435,14 @@ impl Session {
             },
         };
 
-        self.request(command, Self::empty_response, cx).detach();
+        self.thread_states.continue_thread(thread_id);
+
+        self.request(
+            command,
+            Self::on_step_response::<StepBackCommand>(thread_id),
+            cx,
+        )
+        .detach();
     }
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
@@ -1399,6 +1461,8 @@ impl Session {
                     levels: None,
                 },
                 move |this, stack_frames, cx| {
+                    let stack_frames = stack_frames.log_err()?;
+
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
                         thread.stack_frame_ids =
                             stack_frames.iter().map(|frame| frame.id).collect();
@@ -1410,7 +1474,7 @@ impl Session {
 
                     this.stack_frames.extend(
                         stack_frames
-                            .into_iter()
+                            .iter()
                             .cloned()
                             .map(|frame| (frame.id, StackFrame::from(frame))),
                     );
@@ -1420,6 +1484,7 @@ impl Session {
 
                     cx.emit(SessionEvent::StackTrace);
                     cx.notify();
+                    Some(stack_frames)
                 },
                 cx,
             );
@@ -1447,8 +1512,9 @@ impl Session {
             self.fetch(
                 ScopesCommand { stack_frame_id },
                 move |this, scopes, cx| {
+                    let scopes = scopes.log_err()?;
 
-                    for scope in scopes {
+                    for scope in scopes .iter(){
                         this.variables(scope.variables_reference, cx);
                     }
 
@@ -1465,6 +1531,8 @@ impl Session {
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
                         "Sent scopes request for stack_frame_id that doesn't exist or hasn't been fetched"
                     );
+
+                    Some(scopes)
                 },
                 cx,
             );
@@ -1492,10 +1560,12 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
+                let variables = variables.log_err()?;
                 this.variables
                     .insert(variables_reference, variables.clone());
 
                 cx.emit(SessionEvent::Variables);
+                Some(variables)
             },
             cx,
         );
@@ -1520,9 +1590,11 @@ impl Session {
                     value,
                     variables_reference,
                 },
-                move |this, _response, cx| {
+                move |this, response, cx| {
+                    let response = response.log_err()?;
                     this.invalidate_command_type::<VariablesCommand>();
                     cx.notify();
+                    Some(response)
                 },
                 cx,
             )
@@ -1546,6 +1618,7 @@ impl Session {
                 source,
             },
             |this, response, cx| {
+                let response = response.log_err()?;
                 this.output.push_back(dap::OutputEvent {
                     category: None,
                     output: response.result.clone(),
@@ -1560,6 +1633,7 @@ impl Session {
 
                 this.invalidate_command_type::<ScopesCommand>();
                 cx.notify();
+                Some(response)
             },
             cx,
         )
@@ -1574,7 +1648,9 @@ impl Session {
         self.fetch(
             LocationsCommand { reference },
             move |this, response, _| {
+                let response = response.log_err()?;
                 this.locations.insert(reference, response.clone());
+                Some(response)
             },
             cx,
         );

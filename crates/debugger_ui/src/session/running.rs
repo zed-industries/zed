@@ -13,7 +13,7 @@ use module_list::ModuleList;
 use project::debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus};
 use rpc::proto::ViewId;
 use settings::Settings;
-use stack_frame_list::{StackFrameList, StackFrameListEvent};
+use stack_frame_list::StackFrameList;
 use ui::{
     div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context,
     ContextMenu, Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
