@@ -99,7 +99,20 @@ impl Focusable for CopilotCodeVerification {
 }
 
 impl EventEmitter<DismissEvent> for CopilotCodeVerification {}
-impl ModalView for CopilotCodeVerification {}
+impl ModalView for CopilotCodeVerification {
+    fn on_before_dismiss(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        self.copilot.update(cx, |copilot, cx| {
+            if matches!(copilot.status(), Status::SigningIn { .. }) {
+                copilot.sign_out(cx).detach_and_log_err(cx);
+            }
+        });
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 impl CopilotCodeVerification {
     pub fn new(copilot: &Entity<Copilot>, cx: &mut Context<Self>) -> Self {
@@ -194,14 +207,12 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-enable-cancel-button", "Cancel")
                     .full_width()
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|_, _, _, cx| {
                         cx.emit(DismissEvent);
-                        this.copilot
-                            .update(cx, |copilot, cx| copilot.sign_out(cx))
-                            .detach_and_log_err(cx);
                     })),
             )
     }
+
     fn render_enabled_modal(cx: &mut Context<Self>) -> impl Element {
         v_flex()
             .gap_2()
