@@ -4,6 +4,7 @@ mod judge;
 
 use clap::Parser;
 use eval::{Eval, EvalOutput};
+use futures::{stream, StreamExt};
 use gpui::{Application, AsyncApp};
 use headless_assistant::{authenticate_model_provider, find_model, HeadlessAppState};
 use judge::Judge;
@@ -36,6 +37,9 @@ struct Args {
     /// Name of the judge model (default: value of `--model_name`).
     #[arg(long)]
     judge_model_name: Option<String>,
+    /// Number of evaluations to run concurrently (default: 10)
+    #[arg(short, long, default_value = "10")]
+    concurrency: usize,
 }
 
 fn main() {
@@ -74,6 +78,7 @@ fn main() {
     }
 
     println!("Will run the following evals: {evals_to_run:?}");
+    println!("Running up to {} evals concurrently", args.concurrency);
 
     let editor_model_name = if let Some(model_name) = args.editor_model_name {
         model_name
@@ -104,6 +109,7 @@ fn main() {
         let judge_model_provider_id = judge_model.provider_id();
 
         cx.spawn(move |cx| async move {
+            // Authenticate all model providers first
             cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))
                 .unwrap()
                 .await
@@ -119,18 +125,37 @@ fn main() {
                 .await
                 .unwrap();
 
-            for eval_name in evals_to_run {
-                println!("Running eval named {eval_name}");
-                let result = run_eval(
-                    &eval_name,
-                    &evaluation_data_dir,
-                    &repos_dir,
-                    model.clone(),
-                    judge_model.clone(),
-                    app_state.clone(),
-                    cx.clone(),
-                )
+            // Create a stream of futures for concurrent execution
+            let results = stream::iter(evals_to_run)
+                .map(|eval_name| {
+                    let eval_data_dir = evaluation_data_dir.clone();
+                    let repos_dir = repos_dir.clone();
+                    let model = model.clone();
+                    let judge_model = judge_model.clone();
+                    let app_state = app_state.clone();
+                    let cx = cx.clone();
+
+                    async move {
+                        println!("Starting eval named {eval_name}");
+                        let result = run_eval(
+                            &eval_name,
+                            &eval_data_dir,
+                            &repos_dir,
+                            model,
+                            judge_model,
+                            app_state,
+                            cx,
+                        )
+                        .await;
+                        (eval_name, result)
+                    }
+                })
+                .buffer_unordered(args.concurrency)
+                .collect::<Vec<_>>()
                 .await;
+
+            // Process results in order of completion
+            for (eval_name, result) in results {
                 match result {
                     Ok((eval_output, judge_output)) => {
                         println!("Generated diff for {eval_name}:\n");
