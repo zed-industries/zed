@@ -691,12 +691,13 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
+        let lighter_border = cx.theme().colors().border.opacity(0.5);
+
         div().px_2p5().child(
             v_flex()
-                .gap_1()
                 .rounded_lg()
                 .border_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(lighter_border)
                 .child(
                     h_flex()
                         .justify_between()
@@ -711,7 +712,7 @@ impl ActiveThread {
                                 element.rounded_md()
                             }
                         })
-                        .border_color(cx.theme().colors().border)
+                        .border_color(lighter_border)
                         .child(
                             h_flex()
                                 .gap_1()
@@ -728,7 +729,11 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(Label::new(tool_use.name)),
+                                .child(
+                                    Label::new(tool_use.name)
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx),
+                                ),
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
@@ -765,39 +770,60 @@ impl ActiveThread {
                         return parent;
                     }
 
+                    let content_container = || v_flex().py_1().gap_0p5().px_2p5();
+
                     parent.child(
                         v_flex()
+                            .gap_1()
+                            .bg(cx.theme().colors().editor_background)
+                            .rounded_b_lg()
                             .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .py_1()
-                                    .px_2p5()
+                                content_container()
                                     .border_b_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .child(Label::new("Input:"))
-                                    .child(Label::new(
-                                        serde_json::to_string_pretty(&tool_use.input)
-                                            .unwrap_or_default(),
-                                    )),
+                                    .border_color(lighter_border)
+                                    .child(
+                                        Label::new("Input")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx),
+                                    )
+                                    .child(
+                                        Label::new(
+                                            serde_json::to_string_pretty(&tool_use.input)
+                                                .unwrap_or_default(),
+                                        )
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx),
+                                    ),
                             )
-                            .map(|parent| match tool_use.status {
-                                ToolUseStatus::Finished(output) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Result:"))
-                                        .child(Label::new(output)),
+                            .map(|container| match tool_use.status {
+                                ToolUseStatus::Finished(output) => container.child(
+                                    content_container()
+                                        .child(
+                                            Label::new("Result")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new(output)
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx),
+                                        ),
                                 ),
-                                ToolUseStatus::Error(err) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Error:"))
-                                        .child(Label::new(err)),
+                                ToolUseStatus::Error(err) => container.child(
+                                    content_container()
+                                        .child(
+                                            Label::new("Error")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new(err).size(LabelSize::Small).buffer_font(cx),
+                                        ),
                                 ),
-                                ToolUseStatus::Pending | ToolUseStatus::Running => parent,
+                                ToolUseStatus::Pending | ToolUseStatus::Running => container,
                             }),
                     )
                 }),
