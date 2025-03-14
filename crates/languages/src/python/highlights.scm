@@ -56,13 +56,13 @@
 (function_definition
   parameters: (parameters
   [
-      (identifier) @function.arguments ; Simple parameters
+      (identifier) @variable.parameter; Simple parameters
       (typed_parameter
-        (identifier) @function.arguments) ; Typed parameters
+        (identifier) @variable.parameter) ; Typed parameters
       (default_parameter
-        name: (identifier) @function.arguments) ; Default parameters
+        name: (identifier) @variable.parameter) ; Default parameters
       (typed_default_parameter
-        name: (identifier) @function.arguments) ; Typed default parameters
+        name: (identifier) @variable.parameter) ; Typed default parameters
   ]))
 
 ; Keyword arguments
