@@ -533,10 +533,15 @@ impl VariableList {
                 .expect("If there's a variable entry there has to be a state that goes with it");
 
             visual_entries.push(format!(
-                "{}{} {}",
+                "{}{} {}{}",
                 INDENT.repeat(state.depth),
                 if state.is_expanded { "v" } else { ">" },
                 entry.dap_kind.name(),
+                if self.selection.as_ref() == Some(&entry.path) {
+                    " <=== selected"
+                } else {
+                    ""
+                }
             ));
         }
 
