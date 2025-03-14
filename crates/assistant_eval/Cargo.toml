@@ -27,6 +27,7 @@ futures.workspace = true
 git.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
+itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true

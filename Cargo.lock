@@ -582,6 +582,7 @@ dependencies = [
  "git",
  "gpui",
  "gpui_tokio",
+ "itertools 0.14.0",
  "language",
  "language_model",
  "language_models",

@@ -15,7 +15,10 @@ use std::{
 use util::command::new_smol_command;
 
 pub struct Eval {
+    pub name: String,
+    pub path: PathBuf,
     pub repo_path: PathBuf,
+    pub eval_setup: EvalSetup,
     pub user_prompt: String,
 }
 
@@ -30,7 +33,7 @@ pub struct EvalOutput {
 }
 
 #[derive(Deserialize)]
-struct EvalSetup {
+pub struct EvalSetup {
     pub url: String,
     pub base_sha: String,
 }
@@ -38,39 +41,38 @@ struct EvalSetup {
 impl Eval {
     /// Loads the eval from a path (typically in `evaluation_data`). Clones and checks out the repo
     /// if necessary.
-    pub async fn load(eval_path: &Path, repos_dir: &Path) -> anyhow::Result<Self> {
-        let prompt_path = eval_path.join("prompt.txt");
+    pub async fn load(name: String, path: PathBuf, repos_dir: &Path) -> anyhow::Result<Self> {
+        let prompt_path = path.join("prompt.txt");
         let user_prompt = smol::unblock(|| std::fs::read_to_string(prompt_path)).await?;
-        let setup_path = eval_path.join("setup.json");
+        let setup_path = path.join("setup.json");
         let setup_contents = smol::unblock(|| std::fs::read_to_string(setup_path)).await?;
-        let setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
-
-        let repo_path = repos_dir.join(repo_dir_name(&setup.url));
-        checkout_repo(&setup, &repo_path).await?;
-
+        let eval_setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
+        let repo_path = repos_dir.join(repo_dir_name(&eval_setup.url));
         Ok(Eval {
+            name,
+            path,
             repo_path,
+            eval_setup,
             user_prompt,
         })
     }
 
     pub fn run(
-        &self,
+        self,
         app_state: Arc<HeadlessAppState>,
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Task<anyhow::Result<EvalOutput>> {
-        let repo_path = self.repo_path.clone();
-        let user_prompt = self.user_prompt.clone();
-
         cx.spawn(move |mut cx| async move {
+            checkout_repo(&self.eval_setup, &self.repo_path).await?;
+
             let (assistant, done_rx) =
                 cx.update(|cx| HeadlessAssistant::new(app_state.clone(), cx))??;
 
             let _worktree = assistant
                 .update(&mut cx, |assistant, cx| {
                     assistant.project.update(cx, |project, cx| {
-                        project.create_worktree(&repo_path, true, cx)
+                        project.create_worktree(&self.repo_path, true, cx)
                     })
                 })?
                 .await?;
@@ -80,7 +82,7 @@ impl Eval {
             assistant.update(&mut cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    thread.insert_user_message(user_prompt.clone(), context, cx);
+                    thread.insert_user_message(self.user_prompt.clone(), context, cx);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });
             })?;
@@ -89,7 +91,7 @@ impl Eval {
 
             let elapsed_time = start_time.elapsed()?;
 
-            let diff = query_git(&repo_path, vec!["diff"]).await?;
+            let diff = query_git(&self.repo_path, vec!["diff"]).await?;
 
             assistant.update(&mut cx, |assistant, cx| {
                 let thread = assistant.thread.read(cx);
@@ -118,21 +120,19 @@ impl EvalOutput {
     // Method to save the output to a directory
     pub fn save_to_directory(
         &self,
-        eval_name: &str,
         output_dir: &Path,
         eval_output_value: String,
-    ) -> anyhow::Result<PathBuf> {
+    ) -> anyhow::Result<()> {
         // Create the output directory if it doesn't exist
-        let eval_output_dir = output_dir.join(eval_name);
-        fs::create_dir_all(&eval_output_dir)?;
+        fs::create_dir_all(&output_dir)?;
 
         // Save the diff to a file
-        let diff_path = eval_output_dir.join("diff.patch");
+        let diff_path = output_dir.join("diff.patch");
         let mut diff_file = fs::File::create(&diff_path)?;
         diff_file.write_all(self.diff.as_bytes())?;
 
         // Save the last message to a file
-        let message_path = eval_output_dir.join("assistant_response.txt");
+        let message_path = output_dir.join("assistant_response.txt");
         let mut message_file = fs::File::create(&message_path)?;
         message_file.write_all(self.last_message.as_bytes())?;
 
@@ -152,7 +152,7 @@ impl EvalOutput {
             .to_string();
 
         // Path to metrics file
-        let metrics_path = eval_output_dir.join("metrics.json");
+        let metrics_path = output_dir.join("metrics.json");
 
         // Load existing metrics if the file exists, or create a new object
         let mut historical_metrics = if metrics_path.exists() {
@@ -173,7 +173,7 @@ impl EvalOutput {
         let mut metrics_file = fs::File::create(&metrics_path)?;
         metrics_file.write_all(metrics_json.as_bytes())?;
 
-        Ok(eval_output_dir)
+        Ok(())
     }
 }
 

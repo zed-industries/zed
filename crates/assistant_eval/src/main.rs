@@ -7,14 +7,12 @@ use eval::{Eval, EvalOutput};
 use futures::{stream, StreamExt};
 use gpui::{Application, AsyncApp};
 use headless_assistant::{authenticate_model_provider, find_model, HeadlessAppState};
+use itertools::Itertools;
 use judge::Judge;
 use language_model::{LanguageModel, LanguageModelRegistry};
 use regex::Regex;
 use reqwest_client::ReqwestClient;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{cmp, path::PathBuf, sync::Arc};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -49,7 +47,7 @@ fn main() {
     let app = Application::headless().with_http_client(http_client.clone());
 
     let crate_dir = PathBuf::from("../zed-agent-bench");
-    let evaluation_data_dir = crate_dir.join("evaluation_data");
+    let evaluation_data_dir = crate_dir.join("evaluation_data").canonicalize().unwrap();
     let repos_dir = crate_dir.join("repos").canonicalize().unwrap();
 
     let all_evals = std::fs::read_dir(&evaluation_data_dir)
@@ -114,45 +112,80 @@ fn main() {
                 .unwrap()
                 .await
                 .unwrap();
-
             cx.update(|cx| authenticate_model_provider(editor_model_provider_id.clone(), cx))
                 .unwrap()
                 .await
                 .unwrap();
-
             cx.update(|cx| authenticate_model_provider(judge_model_provider_id.clone(), cx))
                 .unwrap()
                 .await
                 .unwrap();
 
-            // Create a stream of futures for concurrent execution
-            let results = stream::iter(evals_to_run)
+            let loaded_evals = stream::iter(evals_to_run)
                 .map(|eval_name| {
-                    let eval_data_dir = evaluation_data_dir.clone();
+                    let eval_path = evaluation_data_dir.join(&eval_name);
                     let repos_dir = repos_dir.clone();
+                    async move {
+                        match Eval::load(eval_name.clone(), eval_path, &repos_dir).await {
+                            Ok(eval) => Some(eval),
+                            Err(err) => {
+                                // TODO: Persist errors / surface errors at the end.
+                                println!("Error loading {eval_name}: {err}");
+                                None
+                            }
+                        }
+                    }
+                })
+                .buffer_unordered(args.concurrency)
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+
+            // The evals need to be loaded and grouped by URL before concurrently running, since
+            // evals that use the same remote URL will use the same working directory.
+            let mut evals_grouped_by_url: Vec<Vec<Eval>> = loaded_evals
+                .into_iter()
+                .map(|eval| (eval.eval_setup.url.clone(), eval))
+                .into_group_map()
+                .into_values()
+                .collect::<Vec<_>>();
+
+            // Sort groups in descending order, so that bigger groups start first.
+            evals_grouped_by_url.sort_by_key(|evals| cmp::Reverse(evals.len()));
+
+            let results = stream::iter(evals_grouped_by_url)
+                .map(|evals| {
                     let model = model.clone();
                     let judge_model = judge_model.clone();
                     let app_state = app_state.clone();
                     let cx = cx.clone();
 
                     async move {
-                        println!("Starting eval named {eval_name}");
-                        let result = run_eval(
-                            &eval_name,
-                            &eval_data_dir,
-                            &repos_dir,
-                            model,
-                            judge_model,
-                            app_state,
-                            cx,
-                        )
-                        .await;
-                        (eval_name, result)
+                        let mut results = Vec::new();
+                        for eval in evals {
+                            let name = eval.name.clone();
+                            println!("Starting eval named {}", name);
+                            let result = run_eval(
+                                eval,
+                                model.clone(),
+                                judge_model.clone(),
+                                app_state.clone(),
+                                cx.clone(),
+                            )
+                            .await;
+                            results.push((name, result));
+                        }
+                        results
                     }
                 })
                 .buffer_unordered(args.concurrency)
                 .collect::<Vec<_>>()
-                .await;
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
 
             // Process results in order of completion
             for (eval_name, result) in results {
@@ -171,6 +204,7 @@ fn main() {
                         println!("Judge output for {eval_name}: {judge_output}");
                     }
                     Err(err) => {
+                        // TODO: Persist errors / surface errors at the end.
                         println!("Error running {eval_name}: {err}");
                     }
                 }
@@ -185,20 +219,16 @@ fn main() {
 }
 
 async fn run_eval(
-    eval_name: &str,
-    evaluation_data_dir: &Path,
-    repos_dir: &Path,
+    eval: Eval,
     model: Arc<dyn LanguageModel>,
     judge_model: Arc<dyn LanguageModel>,
     app_state: Arc<HeadlessAppState>,
     cx: AsyncApp,
 ) -> anyhow::Result<(EvalOutput, String)> {
-    let eval_path = evaluation_data_dir.join(eval_name).canonicalize()?;
-    let eval = Eval::load(&eval_path, &repos_dir).await?;
-    let judge = Judge::load(&eval_path, judge_model).await?;
+    let path = eval.path.clone();
+    let judge = Judge::load(&path, judge_model).await?;
     let eval_output = cx.update(|cx| eval.run(app_state, model, cx))?.await?;
-    let output_dir = Path::new(evaluation_data_dir);
     let judge_output = cx.update(|cx| judge.run(&eval_output, cx))?.await?;
-    eval_output.save_to_directory(eval_name, output_dir, judge_output.to_string())?;
+    eval_output.save_to_directory(&path, judge_output.to_string())?;
     Ok((eval_output, judge_output))
 }
