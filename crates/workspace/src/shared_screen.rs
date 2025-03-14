@@ -1,11 +1,11 @@
-#[cfg(target_os = "macos")]
+#[cfg(any())]
 mod macos;
 
-#[cfg(target_os = "macos")]
+#[cfg(any())]
 pub use macos::*;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all())]
 mod cross_platform;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all())]
 pub use cross_platform::*;
