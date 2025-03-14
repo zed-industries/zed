@@ -626,14 +626,15 @@ impl RunningState {
     }
 
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
-        // todo(debugger): We should check that this debug line is associated with this item
         self.workspace
             .update(cx, |workspace, cx| {
                 workspace
                     .project()
                     .read(cx)
                     .breakpoint_store()
-                    .update(cx, |store, cx| store.set_active_position(None, cx))
+                    .update(cx, |store, cx| {
+                        store.remove_active_position(Some(self.session_id), cx)
+                    })
             })
             .log_err();
 
@@ -653,7 +654,9 @@ impl RunningState {
                     .project()
                     .read(cx)
                     .breakpoint_store()
-                    .update(cx, |store, cx| store.set_active_position(None, cx))
+                    .update(cx, |store, cx| {
+                        store.remove_active_position(Some(self.session_id), cx)
+                    })
             })
             .log_err();
 
@@ -669,9 +672,9 @@ impl RunningState {
     }
 
     pub fn toggle_ignore_breakpoints(&mut self, cx: &mut Context<Self>) {
-        self.session
-            .update(cx, |session, cx| session.toggle_ignore_breakpoints(cx))
-            .detach_and_log_err(cx);
+        self.session.update(cx, |session, cx| {
+            session.toggle_ignore_breakpoints(cx).detach();
+        });
     }
 }
 

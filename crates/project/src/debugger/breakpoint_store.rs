@@ -4,6 +4,7 @@
 use anyhow::{anyhow, Result};
 use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
+use dap::client::SessionId;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{
@@ -78,7 +79,7 @@ enum BreakpointStoreMode {
 pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    active_stack_frame: Option<(Arc<Path>, text::Anchor)>,
+    active_stack_frame: Option<(SessionId, Arc<Path>, text::Anchor)>,
     // E.g ssh
     mode: BreakpointStoreMode,
 }
@@ -353,16 +354,32 @@ impl BreakpointStore {
             })
     }
 
-    pub fn active_position(&self) -> Option<&(Arc<Path>, text::Anchor)> {
+    pub fn active_position(&self) -> Option<&(SessionId, Arc<Path>, text::Anchor)> {
         self.active_stack_frame.as_ref()
+    }
+
+    pub fn remove_active_position(
+        &mut self,
+        session_id: Option<SessionId>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session_id) = session_id {
+            self.active_stack_frame
+                .take_if(|(id, _, _)| *id == session_id);
+        } else {
+            self.active_stack_frame.take();
+        }
+
+        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
+        cx.notify();
     }
 
     pub fn set_active_position(
         &mut self,
-        position: Option<(Arc<Path>, text::Anchor)>,
+        position: (SessionId, Arc<Path>, text::Anchor),
         cx: &mut Context<Self>,
     ) {
-        self.active_stack_frame = position;
+        self.active_stack_frame = Some(position);
         cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
         cx.notify();
     }

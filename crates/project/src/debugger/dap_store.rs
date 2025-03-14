@@ -332,10 +332,12 @@ impl DapStore {
                     session.set_ignore_breakpoints(envelope.payload.ignore, cx)
                 })
             } else {
-                Task::ready(Ok(()))
+                Task::ready(())
             }
         })?
-        .await
+        .await;
+
+        Ok(())
     }
 
     pub fn new_session(
