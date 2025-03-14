@@ -65,7 +65,6 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let excluded_windows = NSArray::array(nil);
             let filter: id = msg_send![filter, initWithDisplay:self.sc_display excludingWindows:excluded_windows];
             let configuration: id = msg_send![configuration, init];
-            let _: id = msg_send![configuration, setPixelFormat: 0x42475241];
             let delegate: id = msg_send![delegate, init];
             let output: id = msg_send![output, init];
 
