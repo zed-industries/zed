@@ -267,11 +267,11 @@ impl LocalMode {
     }
 
     fn send_breakpoints(
-        &mut self,
+        &self,
         ignore_breakpoints: bool,
         last_updated_path: Option<Arc<Path>>,
         cx: &mut App,
-    ) -> Task<std::vec::Vec<Result<std::vec::Vec<dap::Breakpoint>>>> {
+    ) -> Task<()> {
         let mut breakpoint_tasks = Vec::new();
         let mut breakpoints = self
             .breakpoint_store
@@ -307,8 +307,9 @@ impl LocalMode {
             ));
         }
 
-        let task = futures::future::join_all(breakpoint_tasks);
-        cx.background_spawn(task)
+        cx.background_spawn(async move {
+            let _ = futures::future::join_all(breakpoint_tasks).await;
+        })
     }
 
     async fn get_adapter_binary(
@@ -1124,52 +1125,23 @@ impl Session {
         self.ignore_breakpoints
     }
 
-    pub fn toggle_ignore_breakpoints(&mut self, cx: &App) -> Task<Result<()>> {
+    pub fn toggle_ignore_breakpoints(&mut self, cx: &mut App) -> Task<()> {
         self.set_ignore_breakpoints(!self.ignore_breakpoints, cx)
     }
 
-    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool, _cx: &App) -> Task<Result<()>> {
+    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &mut App) -> Task<()> {
         if self.ignore_breakpoints == ignore {
-            return Task::ready(Err(anyhow!(
-                "Can't set ignore breakpoint to state it's already at"
-            )));
+            return Task::ready(());
         }
+
         self.ignore_breakpoints = ignore;
-        // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
-        todo!();
-        /*
-                let mut tasks: Vec<Task<()>> = Vec::new();
-        >>>>>>> debugger
 
-                for (_abs_path, serialized_breakpoints) in self
-                    .breakpoint_store
-                    .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
-                    .into_iter()
-                {
-                    let _source_breakpoints = if self.ignore_breakpoints {
-                        serialized_breakpoints
-                            .iter()
-                            .map(|bp| bp.to_source_breakpoint())
-                            .collect::<Vec<_>>()
-                    } else {
-                        vec![]
-                    };
-
-                    todo!(
-                        r#"tasks.push(self.send_breakpoints(
-                        abs_path,
-                        source_breakpoints,
-                        self.ignore_breakpoints,
-                        false,
-                        cx,
-                        ));"#
-                    );
-                }
-
-                cx.background_executor().spawn(async move {
-                    join_all(tasks).await;
-                    Ok(())
-                })*/
+        if let Some(local) = self.as_local() {
+            local.send_breakpoints(ignore, None, cx)
+        } else {
+            // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
+            todo!();
+        }
     }
 
     pub fn breakpoints_enabled(&self) -> bool {
