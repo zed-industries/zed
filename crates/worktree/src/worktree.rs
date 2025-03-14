@@ -4709,6 +4709,7 @@ impl BackgroundScanner {
                     state.snapshot.check_git_invariants();
                 }
                 let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                log::trace!("process events");
                 send_status_update_inner(phase, state, status_update_tx, scanning, SmallVec::new());
             })
             .detach();
