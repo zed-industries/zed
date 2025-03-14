@@ -21,7 +21,7 @@ impl AlacModifiers {
             ks.modifiers.platform,
         ) {
             (false, false, false, false) => AlacModifiers::None,
-            (true, false, false, false) => AlacModifiers::Alt,
+            (true, false, _, false) => AlacModifiers::Alt, // TODO:
             (false, true, false, false) => AlacModifiers::Ctrl,
             (false, false, true, false) => AlacModifiers::Shift,
             (false, true, true, false) => AlacModifiers::CtrlShift,
@@ -422,9 +422,14 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         }
     }
 
+    // TODO:
+    // We're setting text?
     let alt_meta_binding =
         if alt_is_meta && modifiers == AlacModifiers::Alt && keystroke.key.unparse().is_ascii() {
-            Some(format!("\x1b{}", keystroke.key.unparse()))
+            Some(format!(
+                "\x1b{}",
+                keystroke.key.to_output_string(keystroke.modifiers.shift)
+            ))
         } else {
             None
         };
@@ -564,10 +569,12 @@ mod test {
     #[test]
     fn test_ctrl_codes() {
         let letters_lower = 'a'..='z';
-        let letters_upper = 'A'..='Z';
+        // TODO:
+        // We not longer support uppercase letters as keys
+        // let letters_upper = 'A'..='Z';
         let mode = TermMode::ANY;
 
-        for (lower, upper) in letters_lower.zip(letters_upper) {
+        for lower in letters_lower {
             assert_eq!(
                 to_esc_str(
                     &Keystroke::parse(&format!("ctrl-{}", lower), false, None).unwrap(),
@@ -575,13 +582,12 @@ mod test {
                     false
                 ),
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-shift-{}", upper), false, None).unwrap(),
+                    &Keystroke::parse(&format!("ctrl-shift-{}", lower), false, None).unwrap(),
                     &mode,
                     false
                 ),
-                "On letter: {}/{}",
+                "On letter: {}",
                 lower,
-                upper
             )
         }
     }
@@ -590,9 +596,14 @@ mod test {
     fn alt_is_meta() {
         let ascii_printable = ' '..='~';
         for character in ascii_printable {
+            let character = if character == ' ' {
+                "space".to_string()
+            } else {
+                character.to_string()
+            };
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", character), false, None).unwrap(),
+                    &Keystroke::parse(&format!("alt-{}", character), true, None).unwrap(),
                     &TermMode::NONE,
                     true
                 )

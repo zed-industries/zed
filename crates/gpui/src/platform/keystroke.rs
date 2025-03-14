@@ -9,6 +9,7 @@ use std::{
     error::Error,
     fmt::{Display, Write},
 };
+use util::ResultExt;
 
 #[cfg(target_os = "windows")]
 pub use keycodes::*;
@@ -178,7 +179,12 @@ impl Keystroke {
             &mut shift,
             &mut control,
             &mut alt,
-        )?;
+        )
+        .log_err()
+        .unwrap_or(KeyCodes::Unknown); // TODO:
+        if key == KeyCodes::Unknown {
+            key_char = Some(source.to_string());
+        }
 
         Ok(Keystroke {
             modifiers: Modifiers {
@@ -243,31 +249,31 @@ impl Keystroke {
             && !self.modifiers.function
             && !self.modifiers.alt
         {
-            // self.key_char = match self.key.as_str() {
-            //     "space" => Some(" ".into()),
-            //     "tab" => Some("\t".into()),
-            //     "enter" => Some("\n".into()),
-            //     key if !is_printable_key(key) || key.is_empty() => None,
-            //     key => {
-            //         if self.modifiers.shift {
-            //             Some(key.to_uppercase())
-            //         } else {
-            //             Some(key.into())
-            //         }
-            //     }
-            // }
-            self.key_char = match self.key {
-                KeyCodes::Space => Some(" ".into()),
-                KeyCodes::Tab => Some("\t".into()),
-                KeyCodes::Enter => Some("\n".into()),
-                key if !is_printable_key(&key) || key == KeyCodes::Unknown => None,
-                key => {
-                    if self.modifiers.shift {
-                        Some(key.unparse().to_uppercase())
-                    } else {
-                        Some(key.unparse().into())
+            #[cfg(not(target_os = "windows"))]
+            {
+                self.key_char = match self.key.as_str() {
+                    "space" => Some(" ".into()),
+                    "tab" => Some("\t".into()),
+                    "enter" => Some("\n".into()),
+                    key if !is_printable_key(key) || key.is_empty() => None,
+                    key => {
+                        if self.modifiers.shift {
+                            Some(key.to_uppercase())
+                        } else {
+                            Some(key.into())
+                        }
                     }
-                }
+                };
+            }
+            #[cfg(target_os = "windows")]
+            {
+                self.key_char = match self.key {
+                    KeyCodes::Space => Some(" ".into()),
+                    KeyCodes::Tab => Some("\t".into()),
+                    KeyCodes::Enter => Some("\n".into()),
+                    key if !is_printable_key(&key) || key == KeyCodes::Unknown => None,
+                    key => Some(key.to_output_string(self.modifiers.shift)),
+                };
             }
         }
         self
@@ -606,17 +612,17 @@ fn perform_mapping(
     if *shift && modifiers.shift {
         log::error!("Keystroke remapping conflict detected while mapping \"{}\"! {} is remapped to shift-{:?}, but shift is already pressed",source, input, keystroke_key);
     } else {
-        *shift = modifiers.shift;
+        *shift |= modifiers.shift;
     }
     if *control && modifiers.control {
         log::error!("Keystroke remapping conflict detected while mapping \"{}\"! {} is remapped to ctrl-{:?}, but ctrl is already pressed",source, input, keystroke_key);
     } else {
-        *control = modifiers.control;
+        *control |= modifiers.control;
     }
     if *alt && modifiers.alt {
         log::error!("Keystroke remapping conflict detected while mapping \"{}\"! {} is remapped to alt-{:?}, but alt is already pressed",source, input, keystroke_key);
     } else {
-        *alt = modifiers.alt;
+        *alt |= modifiers.alt;
     }
     Ok(keystroke_key)
 }

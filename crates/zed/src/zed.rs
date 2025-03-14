@@ -4360,10 +4360,11 @@ mod tests {
             );
             #[cfg(target_os = "windows")]
             assert!(
-                // and key strokes contain the given key
-                bindings
-                    .into_iter()
-                    .any(|binding| binding.keystrokes().iter().any(|k| k.key.unparse() == key)),
+                // TODO:
+                bindings.into_iter().any(|binding| binding
+                    .keystrokes()
+                    .iter()
+                    .any(|k| k.key.to_output_string(k.modifiers.shift) == key)),
                 "On {} Failed to find {} with key binding {}",
                 line,
                 action.name(),

@@ -1350,12 +1350,12 @@ async fn test_sneak(cx: &mut gpui::TestAppContext) {
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
-                "S",
+                "shift-s",
                 PushSneakBackward { first_char: None },
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
-                "S",
+                "shift-s",
                 PushSneakBackward { first_char: None },
                 Some("vim_mode == visual"),
             ),
@@ -1382,7 +1382,7 @@ async fn test_sneak(cx: &mut gpui::TestAppContext) {
     );
 
     // Visual sneak backwards multibyte & multiline
-    cx.simulate_keystrokes("v S < l");
+    cx.simulate_keystrokes("v shift-s < l");
     cx.assert_state(
         indoc! {
             r#"«ˇ<label for="guests">
@@ -1394,7 +1394,7 @@ async fn test_sneak(cx: &mut gpui::TestAppContext) {
 
     // Sneak backwards repeated
     cx.set_state(r#"11 12 13 ˇ14"#, Mode::Normal);
-    cx.simulate_keystrokes("S space 1");
+    cx.simulate_keystrokes("shift-s space 1");
     cx.assert_state(r#"11 12ˇ 13 14"#, Mode::Normal);
     cx.simulate_keystrokes(";");
     cx.assert_state(r#"11ˇ 12 13 14"#, Mode::Normal);
@@ -1472,6 +1472,9 @@ async fn test_remap_adjacent_dog_cat(cx: &mut gpui::TestAppContext) {
 async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
     cx.update(|_, cx| {
+        // What? 📌 is a key?
+        // This is definitely wrong, if we want to insert some text, we should use SendText or something else,
+        // but not SendKeystrokes.
         cx.bind_keys([
             KeyBinding::new(
                 "p i n",

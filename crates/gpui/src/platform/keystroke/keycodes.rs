@@ -782,6 +782,62 @@ impl KeyCodes {
             // KeyCodes::OEMClear => "UnImplemented",
         }
     }
+
+    /// TODO:
+    pub fn to_output_string(&self, shift: bool) -> String {
+        if shift {
+            match self {
+                KeyCodes::Semicolon => ":".to_string(),
+                KeyCodes::Plus => "+".to_string(),
+                KeyCodes::Comma => "<".to_string(),
+                KeyCodes::Minus => "_".to_string(),
+                KeyCodes::Period => ">".to_string(),
+                KeyCodes::Slash => "?".to_string(),
+                KeyCodes::Tilde => "~".to_string(),
+                KeyCodes::LeftBracket => "{".to_string(),
+                KeyCodes::Backslash => "|".to_string(),
+                KeyCodes::RightBracket => "}".to_string(),
+                KeyCodes::Quote => "\"".to_string(),
+                KeyCodes::Digital0 => ")".to_string(),
+                KeyCodes::Digital1 => "!".to_string(),
+                KeyCodes::Digital2 => "@".to_string(),
+                KeyCodes::Digital3 => "#".to_string(),
+                KeyCodes::Digital4 => "$".to_string(),
+                KeyCodes::Digital5 => "%".to_string(),
+                KeyCodes::Digital6 => "^".to_string(),
+                KeyCodes::Digital7 => "&".to_string(),
+                KeyCodes::Digital8 => "*".to_string(),
+                KeyCodes::Digital9 => "(".to_string(),
+                _ => self.unparse().to_uppercase(),
+            }
+        } else {
+            match self {
+                KeyCodes::Semicolon => ";",
+                KeyCodes::Plus => "=",
+                KeyCodes::Comma => ",",
+                KeyCodes::Minus => "-",
+                KeyCodes::Period => ".",
+                KeyCodes::Slash => "/",
+                KeyCodes::Tilde => "`",
+                KeyCodes::LeftBracket => "[",
+                KeyCodes::Backslash => "\\",
+                KeyCodes::RightBracket => "]",
+                KeyCodes::Quote => "'",
+                KeyCodes::Digital0 => "0",
+                KeyCodes::Digital1 => "1",
+                KeyCodes::Digital2 => "2",
+                KeyCodes::Digital3 => "3",
+                KeyCodes::Digital4 => "4",
+                KeyCodes::Digital5 => "5",
+                KeyCodes::Digital6 => "6",
+                KeyCodes::Digital7 => "7",
+                KeyCodes::Digital8 => "8",
+                KeyCodes::Digital9 => "9",
+                _ => self.unparse(),
+            }
+            .to_string()
+        }
+    }
 }
 
 impl From<VIRTUAL_KEY> for KeyCodes {

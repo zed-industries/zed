@@ -9075,7 +9075,7 @@ async fn test_completion(cx: &mut TestAppContext) {
         threeˇ
         additional edit
     "});
-    cx.simulate_keystroke(" ");
+    cx.simulate_keystroke("space");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.simulate_keystroke("s");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
@@ -9626,7 +9626,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     assert!(request.next().await.is_some());
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-    cx.simulate_keystroke("S");
+    cx.simulate_keystroke("shift-s");
     cx.simulate_keystroke("o");
     cx.simulate_keystroke("m");
     cx.condition(|editor, _| editor.context_menu_visible())
