@@ -208,6 +208,7 @@ impl WindowsPlatform {
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.on_keyboard_layout_change.take() {
             drop(lock);
+            callback();
             self.state
                 .borrow_mut()
                 .callbacks
@@ -223,6 +224,7 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
+                    WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
                     WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
@@ -262,7 +264,6 @@ impl WindowsPlatform {
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
-            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
             _ => unreachable!(),
         }
         false

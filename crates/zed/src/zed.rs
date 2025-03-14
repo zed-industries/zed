@@ -1252,10 +1252,16 @@ pub fn handle_keymap_file_changes(
     .detach();
 
     let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+    let mut current_keyboard_layout = cx.keyboard_layout().clone();
     cx.on_keyboard_layout_change(move |cx| {
         let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
         if next_mapping != current_mapping {
             current_mapping = next_mapping;
+            keyboard_layout_tx.unbounded_send(()).ok();
+        }
+        let new_keyboard_layout = cx.keyboard_layout().clone();
+        if new_keyboard_layout != current_keyboard_layout {
+            current_keyboard_layout = new_keyboard_layout;
             keyboard_layout_tx.unbounded_send(()).ok();
         }
     })

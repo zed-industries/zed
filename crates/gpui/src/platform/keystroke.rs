@@ -1,3 +1,4 @@
+use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -126,6 +127,16 @@ impl Keystroke {
                                     shift |= result_shift;
                                     control |= result_ctrl;
                                     alt |= result_alt;
+                                } else {
+                                    log::error!("Failed to parse key: {} based on char matching, fall back to normal", component);
+                                    if let Some((result_key, result_shift)) =
+                                        KeyCodes::parse(component)
+                                            .context("Failed to fallback char matching")
+                                            .log_err()
+                                    {
+                                        key = Some(result_key);
+                                        shift |= result_shift;
+                                    }
                                 }
                             } else {
                                 if let Some((result_key, result_shift)) =
@@ -152,6 +163,16 @@ impl Keystroke {
                                 shift |= result_shift;
                                 control |= result_ctrl;
                                 alt |= result_alt;
+                            } else {
+                                log::error!("Failed to parse key: {} based on char matching, fall back to normal", component);
+                                // println!("Failed to parse key: {} based on char matching, fall back to normal", component);
+                                if let Some((result_key, result_shift)) = KeyCodes::parse(component)
+                                    .context("Failed to fallback char matching")
+                                    .log_err()
+                                {
+                                    key = Some(result_key);
+                                    shift |= result_shift;
+                                }
                             }
                         } else {
                             if let Some((result_key, result_shift)) =
