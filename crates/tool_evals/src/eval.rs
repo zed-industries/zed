@@ -16,7 +16,6 @@ use util::command::new_smol_command;
 
 pub struct Eval {
     pub repo_path: PathBuf,
-    pub system_prompt: Option<String>,
     pub user_prompt: String,
 }
 
@@ -39,11 +38,7 @@ struct EvalSetup {
 impl Eval {
     /// Loads the eval from a path (typically in `evaluation_data`). Clones and checks out the repo
     /// if necessary.
-    pub async fn load(
-        eval_path: &Path,
-        repos_dir: &Path,
-        system_prompt: Option<String>,
-    ) -> anyhow::Result<Self> {
+    pub async fn load(eval_path: &Path, repos_dir: &Path) -> anyhow::Result<Self> {
         let prompt_path = eval_path.join("prompt.txt");
         let user_prompt = smol::unblock(|| std::fs::read_to_string(prompt_path)).await?;
         let setup_path = eval_path.join("setup.json");
@@ -55,7 +50,6 @@ impl Eval {
 
         Ok(Eval {
             repo_path,
-            system_prompt,
             user_prompt,
         })
     }
@@ -67,7 +61,6 @@ impl Eval {
         cx: &mut App,
     ) -> Task<anyhow::Result<EvalOutput>> {
         let repo_path = self.repo_path.clone();
-        let system_prompt = self.system_prompt.clone();
         let user_prompt = self.user_prompt.clone();
 
         cx.spawn(move |mut cx| async move {
@@ -87,13 +80,6 @@ impl Eval {
             assistant.update(&mut cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    if let Some(system_prompt) = system_prompt {
-                        thread.insert_message(
-                            language_model::Role::System,
-                            system_prompt.clone(),
-                            cx,
-                        );
-                    }
                     thread.insert_user_message(user_prompt.clone(), context, cx);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });

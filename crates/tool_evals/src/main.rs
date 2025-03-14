@@ -15,8 +15,6 @@ use std::{
     sync::Arc,
 };
 
-const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
-
 #[derive(Parser, Debug)]
 #[command(
     name = "tool_evals",
@@ -171,7 +169,7 @@ async fn run_eval(
     cx: AsyncApp,
 ) -> anyhow::Result<(EvalOutput, String)> {
     let eval_path = evaluation_data_dir.join(eval_name).canonicalize()?;
-    let eval = Eval::load(&eval_path, &repos_dir, Some(SYSTEM_PROMPT.to_string())).await?;
+    let eval = Eval::load(&eval_path, &repos_dir).await?;
     let judge = Judge::load(&eval_path, judge_model).await?;
     let eval_output = cx.update(|cx| eval.run(app_state, model, cx))?.await?;
     let output_dir = Path::new(evaluation_data_dir);
