@@ -1,5 +1,5 @@
 [package]
-name = "logger"
+name = "zlog"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,11 +9,10 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/logger.rs"
+path = "src/zlog.rs"
 
 [features]
 default = []
 
 [dependencies]
 log.workspace = true
-
