@@ -11,7 +11,7 @@ use language_model::{
 };
 
 use crate::thread::MessageId;
-use crate::thread_store::SavedMessage;
+use crate::thread_store::SerializedMessage;
 
 #[derive(Debug)]
 pub struct ToolUse {
@@ -46,11 +46,11 @@ impl ToolUseState {
         }
     }
 
-    /// Constructs a [`ToolUseState`] from the given list of [`SavedMessage`]s.
+    /// Constructs a [`ToolUseState`] from the given list of [`SerializedMessage`]s.
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
-    pub fn from_saved_messages(
-        messages: &[SavedMessage],
+    pub fn from_serialized_messages(
+        messages: &[SerializedMessage],
         mut filter_by_tool_name: impl FnMut(&str) -> bool,
     ) -> Self {
         let mut this = Self::new();
@@ -226,12 +226,12 @@ impl ToolUseState {
         output: Result<String>,
     ) -> Option<PendingToolUse> {
         match output {
-            Ok(output) => {
+            Ok(tool_result) => {
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        content: output.into(),
+                        content: tool_result.into(),
                         is_error: false,
                     },
                 );
