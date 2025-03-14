@@ -4387,7 +4387,7 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if unstaged {
+                    if !unstaged {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -6774,7 +6774,7 @@ impl Element for EditorElement {
                         let unstaged = diff_status.has_secondary_hunk();
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
 
-                        let staged_highlight = LineHighlight {
+                        let unstaged_highlight = LineHighlight {
                             background: (background_color.opacity(if is_light {
                                 0.08
                             } else {
@@ -6788,7 +6788,7 @@ impl Element for EditorElement {
                             }),
                         };
 
-                        let unstaged_highlight =
+                        let staged_highlight =
                             solid_background(background_color.opacity(hunk_opacity)).into();
 
                         let background = if unstaged {
