@@ -201,7 +201,8 @@ impl EditToolRequest {
 
             let mut request = Self {
                 parser: EditActionParser::new(),
-                output: "I successfully applied these edit actions:".to_string(),
+                // we start with the success header so we don't need to shift the output in the common case
+                output: Self::SUCCESS_OUTPUT_HEADER.to_string(),
                 changed_buffers: HashSet::default(),
                 bad_searches: Vec::new(),
                 action_log,
@@ -330,6 +331,11 @@ impl EditToolRequest {
         anyhow::Ok(DiffResult::Diff(diff))
     }
 
+    const SUCCESS_OUTPUT_HEADER: &str = "Successfully applied. Here's a list of changes:";
+    const ERROR_OUTPUT_HEADER_NO_EDITS: &str = "I couldn't apply any edits!.\n\n";
+    const ERROR_OUTPUT_HEADER_WITH_EDITS: &str =
+        "Errors occurred. First, here's a list of the edits we managed to apply:";
+
     async fn finalize(self, cx: &mut AsyncApp) -> Result<String> {
         let changed_buffer_count = self.changed_buffers.len();
 
@@ -359,8 +365,16 @@ impl EditToolRequest {
         } else {
             let mut output = self.output;
 
-            if !output.is_empty() {
-                output.push_str("\n\n");
+            if output.is_empty() {
+                output.replace_range(
+                    0..Self::SUCCESS_OUTPUT_HEADER.len(),
+                    Self::ERROR_OUTPUT_HEADER_NO_EDITS,
+                );
+            } else {
+                output.replace_range(
+                    0..Self::SUCCESS_OUTPUT_HEADER.len(),
+                    Self::ERROR_OUTPUT_HEADER_WITH_EDITS,
+                );
             }
 
             if !self.bad_searches.is_empty() {
@@ -379,10 +393,10 @@ impl EditToolRequest {
                 }
 
                 writeln!(&mut output, "Make sure to use exact searches.")?;
-            }
 
-            if !output.is_empty() {
-                output.push_str("\n\n");
+                if !errors.is_empty() {
+                    output.push_str("\n\n");
+                }
             }
 
             if !errors.is_empty() {
