@@ -8,7 +8,7 @@ use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
     ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle,
+    UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -21,11 +21,14 @@ use theme::ThemeSettings;
 use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
 use util::ResultExt as _;
-use workspace::notifications::NotifyTaskExt;
-use workspace::{notifications::NotificationId, Toast};
+use workspace::{
+    notifications::{NotificationId, NotifyTaskExt},
+    Toast, Workspace,
+};
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     save_thread_task: Option<Task<()>>,
@@ -48,6 +51,7 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -58,6 +62,7 @@ impl ActiveThread {
 
         let mut this = Self {
             language_registry,
+            workspace,
             thread_store,
             thread: thread.clone(),
             save_thread_task: None,
@@ -495,9 +500,7 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = window.root::<workspace::Workspace>().flatten() else {
-            return;
-        };
+        let workspace = self.workspace.clone();
         let report = self
             .thread
             .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
