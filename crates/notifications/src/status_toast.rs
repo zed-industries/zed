@@ -33,7 +33,7 @@ impl From<IconName> for ToastIcon {
     }
 }
 
-// #[derive(RegisterComponent)]
+#[derive(RegisterComponent)]
 pub struct StatusToast {
     icon: Option<ToastIcon>,
     text: SharedString,
@@ -134,69 +134,84 @@ impl Focusable for StatusToast {
 
 impl EventEmitter<DismissEvent> for StatusToast {}
 
-// impl ComponentPreview for StatusToast {
-//     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
-//         let text_example = StatusToast::new("Operation completed", cx, |this, _| this);
+impl Component for StatusToast {
+    fn scope() -> ComponentScope {
+        ComponentScope::Notification
+    }
 
-//         let action_example = StatusToast::new("Update ready to install", cx, |this, _cx| {
-//             this.action("Restart", |_, _| {})
-//         });
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let text_example = StatusToast::new("Operation completed", cx, |this, _| this);
 
-//         let icon_example = StatusToast::new(
-//             "Nathan Sobo accepted your contact request",
-//             cx,
-//             |this, _| this.icon(ToastIcon::new(IconName::Check).color(Color::Muted)),
-//         );
+        let action_example = StatusToast::new("Update ready to install", cx, |this, _cx| {
+            this.action("Restart", |_, _| {})
+        });
 
-//         let success_example = StatusToast::new("Pushed 4 changes to `zed/main`", cx, |this, _| {
-//             this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-//         });
+        let icon_example = StatusToast::new(
+            "Nathan Sobo accepted your contact request",
+            cx,
+            |this, _| this.icon(ToastIcon::new(IconName::Check).color(Color::Muted)),
+        );
 
-//         let error_example = StatusToast::new(
-//             "git push: Couldn't find remote origin `iamnbutler/zed`",
-//             cx,
-//             |this, _cx| {
-//                 this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-//                     .action("More Info", |_, _| {})
-//             },
-//         );
+        let success_example = StatusToast::new("Pushed 4 changes to `zed/main`", cx, |this, _| {
+            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+        });
 
-//         let warning_example = StatusToast::new("You have outdated settings", cx, |this, _cx| {
-//             this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
-//                 .action("More Info", |_, _| {})
-//         });
+        let error_example = StatusToast::new(
+            "git push: Couldn't find remote origin `iamnbutler/zed`",
+            cx,
+            |this, _cx| {
+                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                    .action("More Info", |_, _| {})
+            },
+        );
 
-//         let pr_example =
-//             StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
-//                 this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-//                     .action("Open Pull Request", |_, cx| {
-//                         cx.open_url("https://github.com/")
-//                     })
-//             });
+        let warning_example = StatusToast::new("You have outdated settings", cx, |this, _cx| {
+            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
+                .action("More Info", |_, _| {})
+        });
 
-//         v_flex()
-//             .gap_6()
-//             .p_4()
-//             .children(vec![
-//                 example_group_with_title(
-//                     "Basic Toast",
-//                     vec![
-//                         single_example("Text", div().child(text_example).into_any_element()),
-//                         single_example("Action", div().child(action_example).into_any_element()),
-//                         single_example("Icon", div().child(icon_example).into_any_element()),
-//                     ],
-//                 ),
-//                 example_group_with_title(
-//                     "Examples",
-//                     vec![
-//                         single_example("Success", div().child(success_example).into_any_element()),
-//                         single_example("Error", div().child(error_example).into_any_element()),
-//                         single_example("Warning", div().child(warning_example).into_any_element()),
-//                         single_example("Create PR", div().child(pr_example).into_any_element()),
-//                     ],
-//                 )
-//                 .vertical(),
-//             ])
-//             .into_any_element()
-//     }
-// }
+        let pr_example =
+            StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
+                this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                    .action("Open Pull Request", |_, cx| {
+                        cx.open_url("https://github.com/")
+                    })
+            });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .p_4()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Toast",
+                        vec![
+                            single_example("Text", div().child(text_example).into_any_element()),
+                            single_example(
+                                "Action",
+                                div().child(action_example).into_any_element(),
+                            ),
+                            single_example("Icon", div().child(icon_example).into_any_element()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Examples",
+                        vec![
+                            single_example(
+                                "Success",
+                                div().child(success_example).into_any_element(),
+                            ),
+                            single_example("Error", div().child(error_example).into_any_element()),
+                            single_example(
+                                "Warning",
+                                div().child(warning_example).into_any_element(),
+                            ),
+                            single_example("Create PR", div().child(pr_example).into_any_element()),
+                        ],
+                    )
+                    .vertical(),
+                ])
+                .into_any_element(),
+        )
+    }
+}

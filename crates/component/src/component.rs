@@ -76,6 +76,17 @@ impl ComponentMetadata {
     pub fn name(&self) -> SharedString {
         self.name.clone()
     }
+
+    pub fn scopeless_name(&self) -> SharedString {
+        self.name
+            .clone()
+            .split("::")
+            .last()
+            .unwrap_or(&self.name)
+            .to_string()
+            .into()
+    }
+
     pub fn scope(&self) -> ComponentScope {
         self.scope.clone()
     }

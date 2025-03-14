@@ -247,7 +247,10 @@ impl ComponentPreview {
                 let id = component_metadata.id();
                 let selected = self.active_page == PreviewPage::Component(id.clone());
                 ListItem::new(ix)
-                    .child(Label::new(component_metadata.name().clone()).color(Color::Default))
+                    .child(
+                        Label::new(component_metadata.scopeless_name().clone())
+                            .color(Color::Default),
+                    )
                     .selectable(true)
                     .toggle_state(selected)
                     .inset(true)
@@ -330,7 +333,7 @@ impl ComponentPreview {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        let name = component.name();
+        let name = component.scopeless_name();
         let scope = component.scope();
 
         let description = component.description();

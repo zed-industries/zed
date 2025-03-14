@@ -27,6 +27,7 @@ strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 ui_macros.workspace = true
 util.workspace = true
+documented = "0.9.1"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

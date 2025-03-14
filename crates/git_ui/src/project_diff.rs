@@ -1033,10 +1033,7 @@ impl Render for ProjectDiffToolbar {
     }
 }
 
-#[derive(
-    IntoElement,
-    // RegisterComponent
-)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ProjectDiffEmptyState {
     pub no_repo: bool,
     pub can_push_and_pull: bool,
@@ -1208,112 +1205,118 @@ mod preview {
     use super::ProjectDiffEmptyState;
 
     // View this component preview using `workspace: open component-preview`
-    // impl ComponentPreview for ProjectDiffEmptyState {
-    //     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-    //         let unknown_upstream: Option<UpstreamTracking> = None;
-    //         let ahead_of_upstream: Option<UpstreamTracking> = Some(
-    //             UpstreamTrackingStatus {
-    //                 ahead: 2,
-    //                 behind: 0,
-    //             }
-    //             .into(),
-    //         );
+    impl Component for ProjectDiffEmptyState {
+        fn scope() -> ComponentScope {
+            ComponentScope::VersionControl
+        }
 
-    //         let not_ahead_or_behind_upstream: Option<UpstreamTracking> = Some(
-    //             UpstreamTrackingStatus {
-    //                 ahead: 0,
-    //                 behind: 0,
-    //             }
-    //             .into(),
-    //         );
+        fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+            let unknown_upstream: Option<UpstreamTracking> = None;
+            let ahead_of_upstream: Option<UpstreamTracking> = Some(
+                UpstreamTrackingStatus {
+                    ahead: 2,
+                    behind: 0,
+                }
+                .into(),
+            );
 
-    //         fn branch(upstream: Option<UpstreamTracking>) -> Branch {
-    //             Branch {
-    //                 is_head: true,
-    //                 name: "some-branch".into(),
-    //                 upstream: upstream.map(|tracking| Upstream {
-    //                     ref_name: "origin/some-branch".into(),
-    //                     tracking,
-    //                 }),
-    //                 most_recent_commit: Some(CommitSummary {
-    //                     sha: "abc123".into(),
-    //                     subject: "Modify stuff".into(),
-    //                     commit_timestamp: 1710932954,
-    //                     has_parent: true,
-    //                 }),
-    //             }
-    //         }
+            let not_ahead_or_behind_upstream: Option<UpstreamTracking> = Some(
+                UpstreamTrackingStatus {
+                    ahead: 0,
+                    behind: 0,
+                }
+                .into(),
+            );
 
-    //         let no_repo_state = ProjectDiffEmptyState {
-    //             no_repo: true,
-    //             can_push_and_pull: false,
-    //             focus_handle: None,
-    //             current_branch: None,
-    //         };
+            fn branch(upstream: Option<UpstreamTracking>) -> Branch {
+                Branch {
+                    is_head: true,
+                    name: "some-branch".into(),
+                    upstream: upstream.map(|tracking| Upstream {
+                        ref_name: "origin/some-branch".into(),
+                        tracking,
+                    }),
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "abc123".into(),
+                        subject: "Modify stuff".into(),
+                        commit_timestamp: 1710932954,
+                        has_parent: true,
+                    }),
+                }
+            }
 
-    //         let no_changes_state = ProjectDiffEmptyState {
-    //             no_repo: false,
-    //             can_push_and_pull: true,
-    //             focus_handle: None,
-    //             current_branch: Some(branch(not_ahead_or_behind_upstream)),
-    //         };
+            let no_repo_state = ProjectDiffEmptyState {
+                no_repo: true,
+                can_push_and_pull: false,
+                focus_handle: None,
+                current_branch: None,
+            };
 
-    //         let ahead_of_upstream_state = ProjectDiffEmptyState {
-    //             no_repo: false,
-    //             can_push_and_pull: true,
-    //             focus_handle: None,
-    //             current_branch: Some(branch(ahead_of_upstream)),
-    //         };
+            let no_changes_state = ProjectDiffEmptyState {
+                no_repo: false,
+                can_push_and_pull: true,
+                focus_handle: None,
+                current_branch: Some(branch(not_ahead_or_behind_upstream)),
+            };
 
-    //         let unknown_upstream_state = ProjectDiffEmptyState {
-    //             no_repo: false,
-    //             can_push_and_pull: true,
-    //             focus_handle: None,
-    //             current_branch: Some(branch(unknown_upstream)),
-    //         };
+            let ahead_of_upstream_state = ProjectDiffEmptyState {
+                no_repo: false,
+                can_push_and_pull: true,
+                focus_handle: None,
+                current_branch: Some(branch(ahead_of_upstream)),
+            };
 
-    //         let (width, height) = (px(480.), px(320.));
+            let unknown_upstream_state = ProjectDiffEmptyState {
+                no_repo: false,
+                can_push_and_pull: true,
+                focus_handle: None,
+                current_branch: Some(branch(unknown_upstream)),
+            };
 
-    //         v_flex()
-    //             .gap_6()
-    //             .children(vec![example_group(vec![
-    //                 single_example(
-    //                     "No Repo",
-    //                     div()
-    //                         .w(width)
-    //                         .h(height)
-    //                         .child(no_repo_state)
-    //                         .into_any_element(),
-    //                 ),
-    //                 single_example(
-    //                     "No Changes",
-    //                     div()
-    //                         .w(width)
-    //                         .h(height)
-    //                         .child(no_changes_state)
-    //                         .into_any_element(),
-    //                 ),
-    //                 single_example(
-    //                     "Unknown Upstream",
-    //                     div()
-    //                         .w(width)
-    //                         .h(height)
-    //                         .child(unknown_upstream_state)
-    //                         .into_any_element(),
-    //                 ),
-    //                 single_example(
-    //                     "Ahead of Remote",
-    //                     div()
-    //                         .w(width)
-    //                         .h(height)
-    //                         .child(ahead_of_upstream_state)
-    //                         .into_any_element(),
-    //                 ),
-    //             ])
-    //             .vertical()])
-    //             .into_any_element()
-    //     }
-    // }
+            let (width, height) = (px(480.), px(320.));
+
+            Some(
+                v_flex()
+                    .gap_6()
+                    .children(vec![example_group(vec![
+                        single_example(
+                            "No Repo",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(no_repo_state)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "No Changes",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(no_changes_state)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Unknown Upstream",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(unknown_upstream_state)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Ahead of Remote",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(ahead_of_upstream_state)
+                                .into_any_element(),
+                        ),
+                    ])
+                    .vertical()])
+                    .into_any_element(),
+            )
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
