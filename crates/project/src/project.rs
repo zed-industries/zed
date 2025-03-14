@@ -850,7 +850,6 @@ impl Project {
                     buffer_store.clone(),
                     environment.clone(),
                     fs.clone(),
-                    client.clone().into(),
                     cx,
                 )
             });
@@ -979,7 +978,6 @@ impl Project {
                     buffer_store.clone(),
                     environment.clone(),
                     ssh_proto.clone(),
-                    ProjectId(SSH_PROJECT_ID),
                     cx,
                 )
             });
@@ -1861,6 +1859,9 @@ impl Project {
         self.settings_observer.update(cx, |settings_observer, cx| {
             settings_observer.shared(project_id, self.client.clone().into(), cx)
         });
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.shared(project_id, self.client.clone().into(), cx)
+        });
 
         self.client_state = ProjectClientState::Shared {
             remote_id: project_id,
@@ -1941,6 +1942,9 @@ impl Project {
             });
             self.settings_observer.update(cx, |settings_observer, cx| {
                 settings_observer.unshared(cx);
+            });
+            self.git_store.update(cx, |git_store, cx| {
+                git_store.unshared(cx);
             });
 
             self.client
@@ -2167,10 +2171,8 @@ impl Project {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
-
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_unstaged_diff(buffer, cx)
-        })
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
     pub fn open_uncommitted_diff(
@@ -2181,9 +2183,8 @@ impl Project {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
-
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_uncommitted_diff(buffer, cx)
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.open_uncommitted_diff(buffer, cx)
         })
     }
 
@@ -2741,8 +2742,8 @@ impl Project {
                         if buffers.is_empty() {
                             None
                         } else {
-                            Some(this.buffer_store.update(cx, |buffer_store, cx| {
-                                buffer_store.recalculate_buffer_diffs(buffers, cx)
+                            Some(this.git_store.update(cx, |git_store, cx| {
+                                git_store.recalculate_buffer_diffs(buffers, cx)
                             }))
                         }
                     })
@@ -3964,6 +3965,9 @@ impl Project {
                 for buffer in buffer_store.buffers() {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
+            });
+            this.git_store.update(cx, |git_store, _| {
+                git_store.forget_shared_diffs_for(&peer_id);
             });
 
             cx.emit(Event::CollaboratorLeft(peer_id));
