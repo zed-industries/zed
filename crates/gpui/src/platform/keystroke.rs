@@ -604,17 +604,17 @@ fn perform_mapping(
             keystroke: input.to_owned(),
         })?;
     if *shift && modifiers.shift {
-        log::error!("Keystroke remapping conflict detected while mapping {}! {} is remapped to shift-{:?}, but shift is already pressed",source, input, keystroke_key);
+        log::error!("Keystroke remapping conflict detected while mapping \"{}\"! {} is remapped to shift-{:?}, but shift is already pressed",source, input, keystroke_key);
     } else {
         *shift = modifiers.shift;
     }
     if *control && modifiers.control {
-        log::error!("Keystroke remapping conflict detected while mapping {}! {} is remapped to ctrl-{:?}, but ctrl is already pressed",source, input, keystroke_key);
+        log::error!("Keystroke remapping conflict detected while mapping \"{}\"! {} is remapped to ctrl-{:?}, but ctrl is already pressed",source, input, keystroke_key);
     } else {
         *control = modifiers.control;
     }
     if *alt && modifiers.alt {
-        log::error!("Keystroke remapping conflict detected while mapping {}! {} is remapped to alt-{:?}, but alt is already pressed",source, input, keystroke_key);
+        log::error!("Keystroke remapping conflict detected while mapping \"{}\"! {} is remapped to alt-{:?}, but alt is already pressed",source, input, keystroke_key);
     } else {
         *alt = modifiers.alt;
     }

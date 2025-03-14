@@ -611,7 +611,6 @@ impl KeyCodes {
         let ctrl = high & 2;
         let alt = high & 8;
         let this = VIRTUAL_KEY(low as u16).into();
-        println!("==> parse_char: {input} -> {this:?}, shift: {shift}, ctrl: {ctrl}, alt: {alt}");
         Ok((this, shift != 0, ctrl != 0, alt != 0))
     }
 
