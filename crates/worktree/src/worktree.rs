@@ -4878,7 +4878,8 @@ impl BackgroundScanner {
         swap_to_front(&mut child_paths, *GITIGNORE);
         swap_to_front(&mut child_paths, *DOT_GIT);
 
-        let mut git_status_update_jobs = HashMap::default();
+        //let mut git_status_update_jobs = HashMap::default();
+        let mut git_status_update_jobs = Vec::new();
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
@@ -4893,21 +4894,22 @@ impl BackgroundScanner {
                         self.watcher.as_ref(),
                     );
                     if let Some(local_repo) = repo {
-                        let path_key = local_repo.work_directory.path_key();
+                        let _path_key = local_repo.work_directory.path_key();
                         log::trace!(
                             "schedule {:p} scans_running += 1",
                             Arc::as_ptr(&self.scans_running)
                         );
                         self.inc_scans_running();
-                        let (old, rx) = self.schedule_git_statuses_update(&mut state, local_repo);
-                        if old.is_some() {
-                            log::trace!(
-                                "schedule {:p} scans_running -= 1",
-                                Arc::as_ptr(&self.scans_running)
-                            );
-                            self.dec_scans_running(1);
-                        }
-                        git_status_update_jobs.insert(path_key, rx);
+                        let (_old, rx) = self.schedule_git_statuses_update(&mut state, local_repo);
+                        //if old.is_some() {
+                        //    log::trace!(
+                        //        "schedule {:p} scans_running -= 1",
+                        //        Arc::as_ptr(&self.scans_running)
+                        //    );
+                        //    self.dec_scans_running(1);
+                        //}
+                        //git_status_update_jobs.insert(path_key, rx);
+                        git_status_update_jobs.push(rx);
                     }
                 }
             } else if child_name == *GITIGNORE {
@@ -5032,7 +5034,7 @@ impl BackgroundScanner {
         self.executor
             .spawn(async move {
                 if !git_status_update_jobs.is_empty() {
-                    let status_updates = join_all(git_status_update_jobs.into_values()).await;
+                    let status_updates = join_all(git_status_update_jobs).await;
                     let status_updated = status_updates
                         .iter()
                         .any(|update_result| update_result.is_ok());
