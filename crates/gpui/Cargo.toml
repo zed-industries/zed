@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
+repository = "https://github.com/zed-industries/zed"
 publish.workspace = true
 license = "Apache-2.0"
 
