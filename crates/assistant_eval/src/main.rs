@@ -18,7 +18,7 @@ use std::{
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "tool_evals",
+    name = "assistant_eval",
     disable_version_flag = true,
     before_help = "Tool eval runner"
 )]

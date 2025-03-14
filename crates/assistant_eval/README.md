@@ -53,25 +53,25 @@ Ensure you have the required API keys set, either from a dev run of Zed or via t
 To run a specific evaluation:
 
 ```bash
-cargo run -p tool_evals bubbletea-add-set-window-title
+cargo run -p assistant_eval bubbletea-add-set-window-title
 ```
 
 To run a specific evaluation with logs:
 
 ```bash
-RUST_LOG="tool_evals=info" cargo run -p tool_evals bubbletea-add-set-window-title
+RUST_LOG="assistant_eval=info" cargo run -p assistant_eval bubbletea-add-set-window-title
 ```
 
 To run all evaluations:
 
 ```bash
-cargo run -p tool_evals -- --all
+cargo run -p assistant_eval -- --all
 ```
 
 To run all evaluations with logs:
 
 ```bash
-RUST_LOG="tool_evals=info" cargo run -p tool_evals -- --all
+RUST_LOG="assistant_eval=info" cargo run -p assistant_eval -- --all
 ```
 
 ## Evaluation Data Structure
