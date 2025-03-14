@@ -875,6 +875,7 @@ impl Thread {
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
+        let client = self.project.read(cx).client();
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
@@ -890,6 +891,7 @@ impl Thread {
                 thread_data,
                 final_project_snapshot
             );
+            client.telemetry().flush_events();
 
             Ok(())
         })
@@ -969,8 +971,6 @@ impl Thread {
                     });
 
                     match repo_result {
-                        Err(_) => None,
-                        Ok(None) => None,
                         Ok(Some((remote_url, head_sha, repository))) => {
                             // Get diff asynchronously
                             let diff = repository
@@ -985,6 +985,7 @@ impl Thread {
                                 diff,
                             })
                         }
+                        Err(_) | Ok(None) => None,
                     }
                 }
             };
