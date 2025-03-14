@@ -4436,6 +4436,7 @@ impl BackgroundScanner {
         }
 
         let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+        log::trace!("new");
         self.send_status_update(scanning, SmallVec::new());
 
         // Process any any FS events that occurred while performing the initial scan.
@@ -4786,6 +4787,7 @@ impl BackgroundScanner {
                                     ) {
                                         Ok(_) => {
                                             last_progress_update_count += 1;
+                                            log::trace!("periodic");
                                             self.send_status_update(true, SmallVec::new());
                                         }
                                         Err(count) => {
