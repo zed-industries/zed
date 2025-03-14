@@ -405,7 +405,7 @@ impl LanguageServer {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
-            move |cx| {
+            async move |cx| {
                 Self::handle_input(
                     stdout,
                     on_unhandled_notification,
@@ -481,7 +481,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -801,7 +801,7 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
-        cx.spawn(|_| async move {
+        cx.spawn(async move |_| {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();

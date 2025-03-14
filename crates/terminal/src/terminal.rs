@@ -485,7 +485,7 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn(|terminal, mut cx| async move {
+        cx.spawn(async move |terminal, mut cx| {
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(&mut cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency

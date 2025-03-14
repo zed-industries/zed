@@ -173,12 +173,14 @@ impl AsyncApp {
 
     /// Schedule a future to be polled in the background.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.clone()))
+        let mut cx = self.clone();
+        self.foreground_executor
+            .spawn(async move { f(&mut cx).await })
     }
 
     /// Determine whether global state of the specified type has been assigned.
@@ -299,12 +301,14 @@ impl AsyncWindowContext {
     /// Schedule a future to be executed on the main thread. This is used for collecting
     /// the results of background tasks and updating the UI.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncWindowContext) -> R + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.clone()))
+        let mut cx = self.clone();
+        self.foreground_executor
+            .spawn(async move { f(&mut cx).await })
     }
 
     /// Present a platform dialog.

@@ -29,15 +29,15 @@ impl RemoteVideoTrackView {
         Self {
             track,
             latest_frame: None,
-            _maintain_frame: cx.spawn_in(window, |this, mut cx| async move {
+            _maintain_frame: cx.spawn_in(window, async move |this, cx| {
                 futures::pin_mut!(frames);
                 while let Some(frame) = frames.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.latest_frame = Some(frame);
                         cx.notify();
                     })?;
                 }
-                this.update(&mut cx, |_this, cx| {
+                this.update(cx, |_this, cx| {
                     #[cfg(not(target_os = "macos"))]
                     {
                         use util::ResultExt as _;
