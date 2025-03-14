@@ -177,7 +177,6 @@ impl Cell {
                         EditorMode::AutoHeight { max_lines: 1024 },
                         multi_buffer,
                         None,
-                        false,
                         window,
                         cx,
                     );
@@ -397,7 +396,7 @@ impl Render for MarkdownCell {
                 h_flex()
                     .w_full()
                     .pr_6()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))
@@ -572,7 +571,7 @@ impl Render for CodeCell {
                 h_flex()
                     .w_full()
                     .pr_6()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))
@@ -598,7 +597,7 @@ impl Render for CodeCell {
                 h_flex()
                     .w_full()
                     .pr_6()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))
@@ -646,7 +645,7 @@ impl Render for CodeCell {
                                             // .w_full()
                                             // .mt_3()
                                             // .p_3()
-                                            // .rounded_md()
+                                            // .rounded_sm()
                                             // .bg(cx.theme().colors().editor_background)
                                             // .border(px(1.))
                                             // .border_color(cx.theme().colors().border)
@@ -718,7 +717,7 @@ impl Render for RawCell {
                 h_flex()
                     .w_full()
                     .pr_2()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))

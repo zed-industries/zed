@@ -2,7 +2,7 @@
 
 PHP support is available through the [PHP extension](https://github.com/zed-extensions/php).
 
-- Tree Sitter: https://github.com/tree-sitter/tree-sitter-php
+- Tree-sitter: https://github.com/tree-sitter/tree-sitter-php
 - Language Servers:
   - [phpactor](https://github.com/phpactor/phpactor)
   - [intelephense](https://github.com/bmewburn/vscode-intelephense/)
@@ -45,4 +45,4 @@ To switch to `intelephense`, add the following to your `settings.json`:
 
 Zed supports syntax highlighting for PHPDoc comments.
 
-- Tree Sitter: [claytonrcarter/tree-sitter-phpdoc](https://github.com/claytonrcarter/tree-sitter-phpdoc)
+- Tree-sitter: [claytonrcarter/tree-sitter-phpdoc](https://github.com/claytonrcarter/tree-sitter-phpdoc)

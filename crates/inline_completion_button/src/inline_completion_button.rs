@@ -18,7 +18,7 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{self, all_language_settings, AllLanguageSettings, EditPredictionProvider},
-    File, Language,
+    EditPredictionsMode, File, Language,
 };
 use regex::Regex;
 use settings::{update_settings_file, Settings, SettingsStore};
@@ -410,26 +410,39 @@ impl InlineCompletionButton {
 
         menu = menu.header("Show Edit Predictions For");
 
+        let language_state = self.language.as_ref().map(|language| {
+            (
+                language.clone(),
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_edit_predictions,
+            )
+        });
+
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
-            menu = menu.toggleable_entry(
-                "This Buffer",
-                self.editor_show_predictions,
-                IconPosition::Start,
-                Some(Box::new(ToggleEditPrediction)),
-                {
-                    let editor_focus_handle = editor_focus_handle.clone();
-                    move |window, cx| {
-                        editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
-                    }
-                },
-            );
+            let entry = ContextMenuEntry::new("This Buffer")
+                .toggleable(IconPosition::Start, self.editor_show_predictions)
+                .action(Box::new(ToggleEditPrediction))
+                .handler(move |window, cx| {
+                    editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
+                });
+
+            match language_state.clone() {
+                Some((language, false)) => {
+                    menu = menu.item(
+                        entry
+                            .disabled(true)
+                            .documentation_aside(move |_cx| {
+                                Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
+                                    .into_any_element()
+                            })
+                    );
+                }
+                Some(_) | None => menu = menu.item(entry),
+            }
         }
 
-        if let Some(language) = self.language.clone() {
+        if let Some((language, language_enabled)) = language_state {
             let fs = fs.clone();
-            let language_enabled =
-                language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_edit_predictions;
 
             menu = menu.toggleable_entry(
                 language.name(),
@@ -443,13 +456,47 @@ impl InlineCompletionButton {
         }
 
         let settings = AllLanguageSettings::get_global(cx);
-        let globally_enabled = settings.show_inline_completions(None, cx);
+
+        let globally_enabled = settings.show_edit_predictions(None, cx);
         menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
             let fs = fs.clone();
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
         });
-        menu = menu.separator().header("Privacy Settings");
 
+        menu = menu.separator().header("Display Modes");
+        let current_mode = settings.edit_predictions_mode();
+        let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
+        let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
+
+        menu = menu.item(
+            ContextMenuEntry::new("Eager")
+                .toggleable(IconPosition::Start, eager_mode)
+                .documentation_aside(move |_| {
+                    Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
+                })
+                .handler({
+                    let fs = fs.clone();
+                    move |_, cx| {
+                        toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Eager, cx)
+                    }
+                }),
+        );
+
+        menu = menu.item(
+            ContextMenuEntry::new("Subtle")
+                .toggleable(IconPosition::Start, subtle_mode)
+                .documentation_aside(move |_| {
+                    Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
+                })
+                .handler({
+                    let fs = fs.clone();
+                    move |_, cx| {
+                        toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Subtle, cx)
+                    }
+                }),
+        );
+
+        menu = menu.separator().header("Privacy Settings");
         if let Some(provider) = &self.edit_prediction_provider {
             let data_collection = provider.data_collection_state(cx);
             if data_collection.is_supported() {
@@ -577,44 +624,6 @@ impl InlineCompletionButton {
             );
         }
 
-        if cx.has_flag::<feature_flags::PredictEditsNonEagerModeFeatureFlag>() {
-            let is_eager_preview_enabled = match settings.edit_predictions_mode() {
-                language::EditPredictionsMode::Auto => false,
-                language::EditPredictionsMode::EagerPreview => true,
-            };
-            menu = menu.separator().toggleable_entry(
-                "Eager Preview Mode",
-                is_eager_preview_enabled,
-                IconPosition::Start,
-                None,
-                {
-                    let fs = fs.clone();
-                    move |_window, cx| {
-                        update_settings_file::<AllLanguageSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _cx| {
-                                let new_mode = match is_eager_preview_enabled {
-                                    true => language::EditPredictionsMode::Auto,
-                                    false => language::EditPredictionsMode::EagerPreview,
-                                };
-
-                                if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                                    edit_predictions.mode = new_mode;
-                                } else {
-                                    settings.edit_predictions =
-                                        Some(language_settings::EditPredictionSettingsContent {
-                                            mode: new_mode,
-                                            ..Default::default()
-                                        });
-                                }
-                            },
-                        );
-                    }
-                },
-            );
-        }
-
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu
                 .separator()
@@ -689,7 +698,7 @@ impl InlineCompletionButton {
             Some(
                 file.map(|file| {
                     all_language_settings(Some(file), cx)
-                        .inline_completions_enabled_for_path(file.path())
+                        .edit_predictions_enabled_for_file(file, cx)
                 })
                 .unwrap_or(true),
             )
@@ -812,7 +821,7 @@ async fn open_disabled_globs_setting_in_editor(
 }
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_edit_predictions = all_language_settings(None, cx).show_inline_completions(None, cx);
+    let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_edit_predictions = Some(!show_edit_predictions)
     });
@@ -832,7 +841,7 @@ fn toggle_show_inline_completions_for_language(
     cx: &mut App,
 ) {
     let show_edit_predictions =
-        all_language_settings(None, cx).show_inline_completions(Some(&language), cx);
+        all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())
@@ -847,4 +856,23 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
             .get_or_insert(Default::default())
             .edit_prediction_provider = Some(EditPredictionProvider::None);
     });
+}
+
+fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &mut App) {
+    let settings = AllLanguageSettings::get_global(cx);
+    let current_mode = settings.edit_predictions_mode();
+
+    if current_mode != mode {
+        update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _cx| {
+            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                edit_predictions.mode = mode;
+            } else {
+                settings.edit_predictions =
+                    Some(language_settings::EditPredictionSettingsContent {
+                        mode,
+                        ..Default::default()
+                    });
+            }
+        });
+    }
 }

@@ -24,12 +24,12 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::LanguageModelRegistry;
-use language_models::report_assistant_event;
+use language_model::{report_assistant_event, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
+use project::LspAction;
 use project::{CodeAction, ProjectTransaction};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -480,7 +480,6 @@ impl InlineAssistant {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1342,7 +1341,7 @@ impl InlineAssistant {
                     });
 
                     enum DeletedLines {}
-                    let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
+                    let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
@@ -1451,7 +1450,6 @@ struct InlineAssistScrollLock {
 }
 
 impl EditorInlineAssists {
-    #[allow(clippy::too_many_arguments)]
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
@@ -1563,7 +1561,6 @@ pub struct InlineAssist {
 }
 
 impl InlineAssist {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
@@ -1728,10 +1725,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             Task::ready(Ok(vec![CodeAction {
                 server_id: language::LanguageServerId(0),
                 range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
-                lsp_action: lsp::CodeAction {
+                lsp_action: LspAction::Action(Box::new(lsp::CodeAction {
                     title: "Fix with Assistant".into(),
                     ..Default::default()
-                },
+                })),
             }]))
         } else {
             Task::ready(Ok(Vec::new()))

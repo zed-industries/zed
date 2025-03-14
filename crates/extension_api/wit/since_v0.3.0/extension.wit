@@ -4,10 +4,12 @@ world extension {
     import github;
     import http-client;
     import platform;
+    import process;
     import nodejs;
 
-    use common.{range};
+    use common.{env-vars, range};
     use lsp.{completion, symbol};
+    use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
 
     /// Initializes the extension.
@@ -55,19 +57,6 @@ world extension {
 
     /// Updates the installation status for the given language server.
     import set-language-server-installation-status: func(language-server-name: string, status: language-server-installation-status);
-
-    /// A list of environment variables.
-    type env-vars = list<tuple<string, string>>;
-
-    /// A command.
-    record command {
-        /// The command to execute.
-        command: string,
-        /// The arguments to pass to the command.
-        args: list<string>,
-        /// The environment variables to set for the command.
-        env: env-vars,
-    }
 
     /// A Zed worktree.
     resource worktree {

@@ -125,8 +125,10 @@ impl IconSize {
 pub enum IconName {
     Ai,
     AiAnthropic,
+    AiBedrock,
     AiAnthropicHosted,
     AiDeepSeek,
+    AiEdit,
     AiGoogle,
     AiLmStudio,
     AiMistral,
@@ -190,6 +192,8 @@ pub enum IconName {
     ExpandVertical,
     Exit,
     ExternalLink,
+    ExpandUp,
+    ExpandDown,
     Eye,
     File,
     FileCode,
@@ -217,6 +221,7 @@ pub enum IconName {
     Github,
     Globe,
     GitBranch,
+    GitBranchSmall,
     Hash,
     HistoryRerun,
     Indicator,
@@ -235,6 +240,7 @@ pub enum IconName {
     Menu,
     MessageBubbles,
     MessageCircle,
+    Cloud,
     Mic,
     MicMute,
     Microscope,
@@ -326,6 +332,7 @@ pub enum IconName {
     ZedPredictUp,
     ZedPredictDown,
     ZedPredictDisabled,
+    ZedPredictError,
     ZedXCopilot,
 }
 
@@ -491,7 +498,7 @@ impl RenderOnce for IconWithIndicator {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Icon {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

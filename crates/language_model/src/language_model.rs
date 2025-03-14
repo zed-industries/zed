@@ -3,31 +3,38 @@ mod rate_limiter;
 mod registry;
 mod request;
 mod role;
+mod telemetry;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
 use anyhow::Result;
+use client::Client;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
-pub use model::*;
 use proto::Plan;
-pub use rate_limiter::*;
-pub use registry::*;
-pub use request::*;
-pub use role::*;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
+use std::ops::{Add, Sub};
 use std::{future::Future, sync::Arc};
 use thiserror::Error;
 use ui::IconName;
+use util::serde::is_default;
+
+pub use crate::model::*;
+pub use crate::rate_limiter::*;
+pub use crate::registry::*;
+pub use crate::request::*;
+pub use crate::role::*;
+pub use crate::telemetry::*;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 
-pub fn init(cx: &mut App) {
+pub fn init(client: Arc<Client>, cx: &mut App) {
     registry::init(cx);
+    RefreshLlmTokenListener::register(client.clone(), cx);
 }
 
 /// The availability of a [`LanguageModel`].
@@ -54,6 +61,7 @@ pub enum LanguageModelCompletionEvent {
     Text(String),
     ToolUse(LanguageModelToolUse),
     StartMessage { message_id: String },
+    UsageUpdate(TokenUsage),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -62,6 +70,46 @@ pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
+pub struct TokenUsage {
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub input_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub output_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub cache_creation_input_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub cache_read_input_tokens: u32,
+}
+
+impl Add<TokenUsage> for TokenUsage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cache_creation_input_tokens: self.cache_creation_input_tokens
+                + other.cache_creation_input_tokens,
+            cache_read_input_tokens: self.cache_read_input_tokens + other.cache_read_input_tokens,
+        }
+    }
+}
+
+impl Sub<TokenUsage> for TokenUsage {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens - other.input_tokens,
+            output_tokens: self.output_tokens - other.output_tokens,
+            cache_creation_input_tokens: self.cache_creation_input_tokens
+                - other.cache_creation_input_tokens,
+            cache_read_input_tokens: self.cache_read_input_tokens - other.cache_read_input_tokens,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
@@ -85,7 +133,7 @@ where
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
-    pub name: String,
+    pub name: Arc<str>,
     pub input: serde_json::Value,
 }
 
@@ -171,6 +219,7 @@ pub trait LanguageModel: Send + Sync {
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                         Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
+                        Ok(LanguageModelCompletionEvent::UsageUpdate(_)) => None,
                         Err(err) => Some(Err(err)),
                     }
                 }))
@@ -247,6 +296,7 @@ pub trait LanguageModelProvider: 'static {
     fn icon(&self) -> IconName {
         IconName::ZedAssistant
     }
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;

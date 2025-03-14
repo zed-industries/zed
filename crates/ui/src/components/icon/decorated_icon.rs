@@ -26,7 +26,7 @@ impl RenderOnce for DecoratedIcon {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for DecoratedIcon {
-    fn preview(_window: &mut Window, cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let decoration_x = IconDecoration::new(
             IconDecorationKind::X,
             cx.theme().colors().surface_background,

@@ -29,19 +29,24 @@ use gpui::{
     WeakEntity,
 };
 use indexed_docs::IndexedDocsStore;
-use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
+use language::{
+    language_settings::{all_language_settings, SoftWrap},
+    BufferSnapshot, LspAdapterDelegate, ToOffset,
+};
 use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
     Role,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::{
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+};
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings};
+use settings::{update_settings_file, Settings, SettingsStore};
 use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::SelectionGoal;
 use ui::{
@@ -49,7 +54,7 @@ use ui::{
     Tooltip,
 };
 use util::{maybe, ResultExt};
-use workspace::searchable::SearchableItemHandle;
+use workspace::searchable::{Direction, SearchableItemHandle};
 use workspace::{
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
@@ -77,7 +82,6 @@ actions!(
         InsertIntoEditor,
         QuoteSelection,
         Split,
-        ToggleModelSelector,
     ]
 );
 
@@ -230,6 +234,13 @@ impl ContextEditor {
             editor.set_completion_provider(Some(Box::new(completion_provider)));
             editor.set_menu_inline_completions_policy(MenuInlineCompletionsPolicy::Never);
             editor.set_collaboration_hub(Box::new(project.clone()));
+
+            let show_edit_predictions = all_language_settings(None, cx)
+                .edit_predictions
+                .enabled_in_assistant;
+
+            editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
+
             editor
         });
 
@@ -238,24 +249,9 @@ impl ContextEditor {
             cx.subscribe_in(&context, window, Self::handle_context_event),
             cx.subscribe_in(&editor, window, Self::handle_editor_event),
             cx.subscribe_in(&editor, window, Self::handle_editor_search_event),
+            cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
         ];
 
-        let fs_clone = fs.clone();
-        let language_model_selector = cx.new(|cx| {
-            LanguageModelSelector::new(
-                move |model, cx| {
-                    update_settings_file::<AssistantSettings>(
-                        fs_clone.clone(),
-                        cx,
-                        move |settings, _| settings.set_model(model.clone()),
-                    );
-                },
-                window,
-                cx,
-            )
-        });
-
-        let language_model_selector_menu_handle = PopoverMenuHandle::default();
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
@@ -268,7 +264,7 @@ impl ContextEditor {
             image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
-            fs,
+            fs: fs.clone(),
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
@@ -280,14 +276,36 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
-            language_model_selector,
-            language_model_selector_menu_handle,
+            language_model_selector: cx.new(|cx| {
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }),
+            language_model_selector_menu_handle: PopoverMenuHandle::default(),
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, false, window, cx);
         this.patches_updated(&Vec::new(), &patch_ranges, window, cx);
         this
+    }
+
+    fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let show_edit_predictions = all_language_settings(None, cx)
+                .edit_predictions
+                .enabled_in_assistant;
+
+            editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
+        });
     }
 
     pub fn context(&self) -> &Entity<AssistantContext> {
@@ -517,7 +535,6 @@ impl ContextEditor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn run_command(
         &mut self,
         command_range: Range<language::Anchor>,
@@ -1087,7 +1104,7 @@ impl ContextEditor {
         patch: AssistantPatch,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let project = this.read_with(&cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
         let editor = cx.new_window_entity(|window, cx| {
@@ -1112,7 +1129,7 @@ impl ContextEditor {
             editor
         })?;
 
-        this.update_in(&mut cx, |this, window, cx| {
+        this.update(&mut cx, |this, _| {
             if let Some(patch_state) = this.patches.get_mut(&patch.range) {
                 patch_state.editor = Some(PatchEditorState {
                     editor: editor.downgrade(),
@@ -1120,19 +1137,12 @@ impl ContextEditor {
                 });
                 patch_state.update_task.take();
             }
-
-            this.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(
-                        Box::new(editor.clone()),
-                        None,
-                        false,
-                        window,
-                        cx,
-                    )
-                })
-                .log_err();
         })?;
+        this.read_with(&cx, |this, _| this.workspace.clone())?
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
+            })
+            .log_err();
 
         Ok(())
     }
@@ -1230,12 +1240,12 @@ impl ContextEditor {
             .child("Press")
             .child(
                 h_flex()
-                    .rounded_md()
+                    .rounded_sm()
                     .px_1()
                     .mr_0p5()
                     .border_1()
-                    .border_color(theme::color_alpha(colors.border_variant, 0.6))
-                    .bg(theme::color_alpha(colors.element_background, 0.6))
+                    .border_color(colors.border_variant.alpha(0.6))
+                    .bg(colors.element_background.alpha(0.6))
                     .child("esc"),
             )
             .child("to cancel")
@@ -1514,15 +1524,11 @@ impl ContextEditor {
 
                 (!text.is_empty()).then_some((text, true))
             } else {
-                let anchor = context_editor.selections.newest_anchor();
-                let text = context_editor
-                    .buffer()
-                    .read(cx)
-                    .read(cx)
-                    .text_for_range(anchor.range())
-                    .collect::<String>();
+                let selection = context_editor.selections.newest_adjusted(cx);
+                let buffer = context_editor.buffer().read(cx).snapshot(cx);
+                let selected_text = buffer.text_for_range(selection.range()).collect::<String>();
 
-                (!text.is_empty()).then_some((text, false))
+                (!selected_text.is_empty()).then_some((selected_text, false))
             }
         })
     }
@@ -1777,23 +1783,16 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
-            let mut selection = editor.selections.newest::<Point>(cx);
+        let (selection, creases) = self.editor.update(cx, |editor, cx| {
+            let mut selection = editor.selections.newest_adjusted(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-            let is_entire_line = selection.is_empty() || editor.selections.line_mode;
-            if is_entire_line {
-                selection.start = Point::new(selection.start.row, 0);
-                selection.end =
-                    cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
-                selection.goal = SelectionGoal::None;
-            }
+            selection.goal = SelectionGoal::None;
 
             let selection_start = snapshot.point_to_offset(selection.start);
 
             (
-                snapshot.clone(),
-                selection.clone(),
+                selection.map(|point| snapshot.point_to_offset(point)),
                 editor.display_map.update(cx, |display_map, cx| {
                     display_map
                         .snapshot(cx)
@@ -1833,7 +1832,6 @@ impl ContextEditor {
             )
         });
 
-        let selection = selection.map(|point| snapshot.point_to_offset(point));
         let context = self.context.read(cx);
 
         let mut text = String::new();
@@ -2043,15 +2041,6 @@ impl ContextEditor {
         });
     }
 
-    fn toggle_model_selector(
-        &mut self,
-        _: &ToggleModelSelector,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.language_model_selector_menu_handle.toggle(window, cx);
-    }
-
     fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         self.context.update(cx, |context, cx| {
             context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
@@ -2067,7 +2056,6 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
@@ -2102,7 +2090,7 @@ impl ContextEditor {
                 .ml(gutter_width)
                 .pb_1()
                 .w(max_width - gutter_width)
-                .rounded_md()
+                .rounded_sm()
                 .border_1()
                 .border_color(theme.colors().border_variant)
                 .overflow_hidden()
@@ -2883,6 +2871,7 @@ impl Render for ContextEditor {
             None
         };
 
+        let language_model_selector = self.language_model_selector_menu_handle.clone();
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2895,7 +2884,9 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
-            .on_action(cx.listener(ContextEditor::toggle_model_selector))
+            .on_action(move |_: &ToggleModelSelector, window, cx| {
+                language_model_selector.toggle(window, cx);
+            })
             .size_full()
             .children(self.render_notice(cx))
             .child(
@@ -3113,12 +3104,13 @@ impl SearchableItem for ContextEditor {
 
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |editor, cx| {
-            editor.active_match_index(matches, window, cx)
+            editor.active_match_index(direction, matches, window, cx)
         })
     }
 }
@@ -3428,7 +3420,7 @@ fn invoked_slash_command_fold_placeholder(
                 .ml_6()
                 .gap_2()
                 .bg(cx.theme().colors().surface_background)
-                .rounded_md()
+                .rounded_sm()
                 .child(Label::new(format!("/{}", command.name.clone())))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {

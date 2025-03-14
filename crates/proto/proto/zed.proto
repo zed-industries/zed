@@ -278,7 +278,6 @@ message Envelope {
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
 
-        GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
         UpdateGitBranch update_git_branch = 272;
@@ -321,7 +320,33 @@ message Envelope {
         GitCommitDetails git_commit_details = 302;
 
         SetIndexText set_index_text = 299;
-        GitCheckoutFiles git_checkout_files = 303; // current max
+        GitCheckoutFiles git_checkout_files = 303;
+
+        Push push = 304;
+        Fetch fetch = 305;
+        GetRemotes get_remotes = 306;
+        GetRemotesResponse get_remotes_response = 307;
+        Pull pull = 308;
+
+        ApplyCodeActionKind apply_code_action_kind = 309;
+        ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
+
+        RemoteMessageResponse remote_message_response = 311;
+
+        GitGetBranches git_get_branches = 312;
+        GitCreateBranch git_create_branch = 313;
+        GitChangeBranch git_change_branch = 314;
+
+        CheckForPushedCommits check_for_pushed_commits = 315;
+        CheckForPushedCommitsResponse check_for_pushed_commits_response = 316;
+
+        AskPassRequest ask_pass_request = 317;
+        AskPassResponse ask_pass_response = 318;
+
+        GitDiff git_diff = 319;
+        GitDiffResponse git_diff_response = 320;
+
+        GitInit git_init = 321; // current max
     }
 
     reserved 87 to 88;
@@ -337,6 +362,7 @@ message Envelope {
     reserved 221;
     reserved 224 to 229;
     reserved 246;
+    reserved 270;
     reserved 247 to 254;
     reserved 255 to 256;
 }
@@ -561,13 +587,23 @@ message JoinProject {
     uint64 project_id = 1;
 }
 
+message ListRemoteDirectoryConfig {
+    bool is_dir = 1;
+}
+
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
     string path = 2;
+    ListRemoteDirectoryConfig config = 3;
+}
+
+message EntryInfo {
+    bool is_dir = 1;
 }
 
 message ListRemoteDirectoryResponse {
     repeated string entries = 1;
+    repeated EntryInfo entry_info = 2;
 }
 
 message JoinProjectResponse {
@@ -910,6 +946,16 @@ message ChannelBufferVersion {
     uint64 epoch = 3;
 }
 
+message ApplyCodeActionKind {
+    uint64 project_id = 1;
+    string kind = 2;
+    repeated uint64 buffer_ids = 3;
+}
+
+message ApplyCodeActionKindResponse {
+    ProjectTransaction transaction = 1;
+}
+
 enum FormatTrigger {
     Save = 0;
     Manual = 1;
@@ -954,6 +1000,16 @@ message Completion {
     uint64 server_id = 4;
     bytes lsp_completion = 5;
     bool resolved = 6;
+    Source source = 7;
+    optional bytes lsp_defaults = 8;
+    optional Anchor buffer_word_start = 9;
+    optional Anchor buffer_word_end = 10;
+
+    enum Source {
+        Lsp = 0;
+        Custom = 1;
+        BufferWord = 2;
+    }
 }
 
 message GetCodeActions {
@@ -1241,6 +1297,11 @@ message CodeAction {
     Anchor start = 2;
     Anchor end = 3;
     bytes lsp_action = 4;
+    Kind kind = 5;
+    enum Kind {
+        Action = 0;
+        Command = 1;
+    }
 }
 
 message ProjectTransaction {
@@ -2265,8 +2326,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        repeated CommitPermalink permalinks = 3;
         optional string remote_url = 4;
+        reserved 3;
     }
 
     optional BlameResponse blame_response = 5;
@@ -2771,4 +2832,119 @@ message OpenCommitMessageBuffer {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
+}
+
+message Push {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
+    optional PushOptions options = 6;
+    uint64 askpass_id = 7;
+
+    enum PushOptions {
+        SET_UPSTREAM = 0;
+        FORCE = 1;
+    }
+}
+
+message Fetch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
+}
+
+message GetRemotes {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    optional string branch_name = 4;
+}
+
+message GetRemotesResponse {
+    repeated Remote remotes = 1;
+
+    message Remote {
+        string name = 1;
+    }
+}
+
+message Pull {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
+    uint64 askpass_id = 6;
+}
+
+message RemoteMessageResponse {
+    string stdout = 1;
+    string stderr = 2;
+}
+
+message AskPassRequest {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
+    string prompt = 5;
+}
+
+message AskPassResponse {
+    string response = 1;
+}
+
+message GitGetBranches {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message GitCreateBranch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string branch_name = 4;
+}
+
+message GitChangeBranch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string branch_name = 4;
+}
+
+message CheckForPushedCommits {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message CheckForPushedCommitsResponse {
+  repeated string pushed_to = 1;
+}
+
+message GitDiff {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    DiffType diff_type = 4;
+
+    enum DiffType {
+        HEAD_TO_WORKTREE = 0;
+        HEAD_TO_INDEX = 1;
+    }
+}
+
+message GitDiffResponse {
+    string diff = 1;
+}
+
+message GitInit {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string fallback_branch_name = 3;
 }

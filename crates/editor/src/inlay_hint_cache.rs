@@ -36,6 +36,7 @@ pub struct InlayHintCache {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
     pub(super) enabled: bool,
+    modifiers_override: bool,
     enabled_in_settings: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
     refresh_task: Task<()>,
@@ -265,6 +266,7 @@ impl InlayHintCache {
         Self {
             allowed_hint_kinds: inlay_hint_settings.enabled_inlay_hint_kinds(),
             enabled: inlay_hint_settings.enabled,
+            modifiers_override: false,
             enabled_in_settings: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
@@ -295,8 +297,9 @@ impl InlayHintCache {
         // visibility would not change when updating the setting if they were ever toggled.
         if new_hint_settings.enabled != self.enabled_in_settings {
             self.enabled = new_hint_settings.enabled;
+            self.enabled_in_settings = new_hint_settings.enabled;
+            self.modifiers_override = false;
         };
-        self.enabled_in_settings = new_hint_settings.enabled;
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
         self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
@@ -323,6 +326,7 @@ impl InlayHintCache {
                 }
             }
             (true, false) => {
+                self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 if self.hints.is_empty() {
                     ControlFlow::Break(None)
@@ -335,10 +339,37 @@ impl InlayHintCache {
                 }
             }
             (false, true) => {
+                self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 ControlFlow::Continue(())
             }
         }
+    }
+
+    pub(super) fn modifiers_override(&mut self, new_override: bool) -> Option<bool> {
+        if self.modifiers_override == new_override {
+            return None;
+        }
+        self.modifiers_override = new_override;
+        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
+        {
+            self.clear();
+            Some(false)
+        } else {
+            Some(true)
+        }
+    }
+
+    pub(super) fn toggle(&mut self, enabled: bool) -> bool {
+        if self.enabled == enabled {
+            return false;
+        }
+        self.enabled = enabled;
+        self.modifiers_override = false;
+        if !enabled {
+            self.clear();
+        }
+        true
     }
 
     /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
@@ -353,7 +384,8 @@ impl InlayHintCache {
         ignore_debounce: bool,
         cx: &mut Context<Editor>,
     ) -> Option<InlaySplice> {
-        if !self.enabled {
+        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
+        {
             return None;
         }
         let mut invalidated_hints = Vec::new();
@@ -549,6 +581,7 @@ impl InlayHintCache {
             self.version += 1;
         }
         self.update_tasks.clear();
+        self.refresh_task = Task::ready(());
         self.hints.clear();
     }
 
@@ -1288,6 +1321,7 @@ pub mod tests {
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
@@ -1391,6 +1425,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1493,6 +1528,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1712,6 +1748,7 @@ pub mod tests {
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1871,6 +1908,7 @@ pub mod tests {
                         .contains(&Some(InlayHintKind::Parameter)),
                     show_other_hints: new_allowed_hint_kinds.contains(&None),
                     show_background: false,
+                    toggle_on_modifiers_press: None,
                 })
             });
             cx.executor().run_until_parked();
@@ -1913,6 +1951,7 @@ pub mod tests {
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: another_allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -1967,6 +2006,7 @@ pub mod tests {
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: final_allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -2038,6 +2078,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2169,6 +2210,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2467,6 +2509,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2575,7 +2618,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
 
         let editor_edited = Arc::new(AtomicBool::new(false));
@@ -2787,7 +2830,6 @@ pub mod tests {
                     "main hint #5".to_string(),
                     "other hint(edited) #0".to_string(),
                     "other hint(edited) #1".to_string(),
-                    "other hint(edited) #2".to_string(),
                 ];
                 assert_eq!(
                     expected_hints,
@@ -2811,6 +2853,7 @@ pub mod tests {
                 show_parameter_hints: false,
                 show_other_hints: false,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2877,7 +2920,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
@@ -2992,6 +3035,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3023,6 +3067,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -3114,6 +3159,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -3187,6 +3233,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3246,6 +3293,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 

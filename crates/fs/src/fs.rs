@@ -5,16 +5,25 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use anyhow::{anyhow, Context as _, Result};
-use git::GitHostingProviderRegistry;
+#[cfg(any(test, feature = "test-support"))]
+use collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
+use git::status::StatusCode;
+#[cfg(any(test, feature = "test-support"))]
+use git::status::TrackedStatus;
 #[cfg(any(test, feature = "test-support"))]
 use git::{repository::RepoPath, status::FileStatus};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use std::borrow::Cow;
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::fd::AsFd;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+use util::command::new_std_command;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -127,7 +136,9 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
+    fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
+    fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
 
@@ -238,7 +249,6 @@ impl From<MTime> for proto::Timestamp {
 
 #[derive(Default)]
 pub struct RealFs {
-    git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
 }
 
@@ -291,14 +301,8 @@ impl FileHandle for std::fs::File {
 pub struct RealWatcher {}
 
 impl RealFs {
-    pub fn new(
-        git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
-        git_binary_path: Option<PathBuf>,
-    ) -> Self {
-        Self {
-            git_hosting_provider_registry,
-            git_binary_path,
-        }
+    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
+        Self { git_binary_path }
     }
 }
 
@@ -761,8 +765,30 @@ impl Fs for RealFs {
         Some(Arc::new(RealGitRepository::new(
             repo,
             self.git_binary_path.clone(),
-            self.git_hosting_provider_registry.clone(),
         )))
+    }
+
+    fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
+        let config = new_std_command("git")
+            .current_dir(abs_work_directory_path)
+            .args(&["config", "--global", "--get", "init.defaultBranch"])
+            .output()?;
+
+        let branch_name;
+
+        if config.status.success() && !config.stdout.is_empty() {
+            branch_name = String::from_utf8_lossy(&config.stdout);
+        } else {
+            branch_name = Cow::Borrowed(fallback_branch_name.as_str());
+        }
+
+        new_std_command("git")
+            .current_dir(abs_work_directory_path)
+            .args(&["init", "-b"])
+            .arg(branch_name.trim())
+            .output()?;
+
+        Ok(())
     }
 
     fn is_fake(&self) -> bool {
@@ -805,6 +831,10 @@ impl Fs for RealFs {
         temp_dir.close()?;
         case_sensitive
     }
+
+    fn home_dir(&self) -> Option<PathBuf> {
+        Some(paths::home_dir().clone())
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -838,6 +868,7 @@ struct FakeFsState {
     metadata_call_count: usize,
     read_dir_call_count: usize,
     moves: std::collections::HashMap<u64, PathBuf>,
+    home_dir: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1023,6 +1054,7 @@ impl FakeFs {
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
                 moves: Default::default(),
+                home_dir: None,
             }),
         });
 
@@ -1253,7 +1285,7 @@ impl FakeFs {
         self.with_git_state(dot_git, true, |state| {
             let branch = branch.map(Into::into);
             state.branches.extend(branch.clone());
-            state.current_branch_name = branch.map(Into::into)
+            state.current_branch_name = branch
         })
     }
 
@@ -1289,6 +1321,105 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
+        });
+    }
+
+    pub fn set_git_content_for_repo(
+        &self,
+        dot_git: &Path,
+        head_state: &[(RepoPath, String, Option<String>)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.head_contents.clear();
+            state.head_contents.extend(
+                head_state
+                    .iter()
+                    .map(|(path, head_content, _)| (path.clone(), head_content.clone())),
+            );
+            state.index_contents.clear();
+            state.index_contents.extend(head_state.iter().map(
+                |(path, head_content, index_content)| {
+                    (
+                        path.clone(),
+                        index_content.as_ref().unwrap_or(head_content).clone(),
+                    )
+                },
+            ));
+        });
+        self.recalculate_git_status(dot_git);
+    }
+
+    pub fn recalculate_git_status(&self, dot_git: &Path) {
+        let git_files: HashMap<_, _> = self
+            .files()
+            .iter()
+            .filter_map(|path| {
+                let repo_path =
+                    RepoPath::new(path.strip_prefix(dot_git.parent().unwrap()).ok()?.into());
+                let content = self
+                    .read_file_sync(path)
+                    .ok()
+                    .map(|content| String::from_utf8(content).unwrap());
+                Some((repo_path, content?))
+            })
+            .collect();
+        self.with_git_state(dot_git, false, |state| {
+            state.statuses.clear();
+            let mut paths: HashSet<_> = state.head_contents.keys().collect();
+            paths.extend(state.index_contents.keys());
+            paths.extend(git_files.keys());
+            for path in paths {
+                let head = state.head_contents.get(path);
+                let index = state.index_contents.get(path);
+                let fs = git_files.get(path);
+                let status = match (head, index, fs) {
+                    (Some(head), Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
+                        index_status: if head == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                        worktree_status: if fs == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                    }),
+                    (Some(head), Some(index), None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: if head == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (Some(_), None, Some(_)) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Added,
+                    }),
+                    (Some(_), None, None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (None, Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: if fs == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                    }),
+                    (None, Some(_), None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (None, None, Some(_)) => FileStatus::Untracked,
+                    (None, None, None) => {
+                        unreachable!();
+                    }
+                };
+                state.statuses.insert(path.clone(), status);
+            }
         });
     }
 
@@ -1334,10 +1465,19 @@ impl FakeFs {
         });
     }
 
+    pub fn set_error_message_for_index_write(&self, dot_git: &Path, message: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_index_write_error_message = message;
+        });
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
+        queue.push_back((
+            PathBuf::from(util::path!("/")),
+            self.state.lock().root.clone(),
+        ));
         while let Some((path, entry)) = queue.pop_front() {
             if let FakeFsEntry::Dir { entries, .. } = &*entry.lock() {
                 for (name, entry) in entries {
@@ -1358,7 +1498,10 @@ impl FakeFs {
     pub fn directories(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
+        queue.push_back((
+            PathBuf::from(util::path!("/")),
+            self.state.lock().root.clone(),
+        ));
         while let Some((path, entry)) = queue.pop_front() {
             if let FakeFsEntry::Dir { entries, .. } = &*entry.lock() {
                 for (name, entry) in entries {
@@ -1379,7 +1522,10 @@ impl FakeFs {
     pub fn files(&self) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
+        queue.push_back((
+            PathBuf::from(util::path!("/")),
+            self.state.lock().root.clone(),
+        ));
         while let Some((path, entry)) = queue.pop_front() {
             let e = entry.lock();
             match &*e {
@@ -1407,6 +1553,10 @@ impl FakeFs {
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
+    }
+
+    pub fn set_home_dir(&self, home_dir: PathBuf) {
+        self.state.lock().home_dir = Some(home_dir);
     }
 }
 
@@ -1951,6 +2101,14 @@ impl Fs for FakeFs {
         }
     }
 
+    fn git_init(
+        &self,
+        abs_work_directory_path: &Path,
+        _fallback_branch_name: String,
+    ) -> Result<()> {
+        smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
+    }
+
     fn is_fake(&self) -> bool {
         true
     }
@@ -1962,6 +2120,10 @@ impl Fs for FakeFs {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
+    }
+
+    fn home_dir(&self) -> Option<PathBuf> {
+        self.state.lock().home_dir.clone()
     }
 }
 
@@ -2007,11 +2169,56 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     ret
 }
 
-pub fn copy_recursive<'a>(
+pub async fn copy_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
     target: &'a Path,
     options: CopyOptions,
+) -> Result<()> {
+    for (is_dir, item) in read_dir_items(fs, source).await? {
+        let Ok(item_relative_path) = item.strip_prefix(source) else {
+            continue;
+        };
+        let target_item = if item_relative_path == Path::new("") {
+            target.to_path_buf()
+        } else {
+            target.join(item_relative_path)
+        };
+        if is_dir {
+            if !options.overwrite && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some()) {
+                if options.ignore_if_exists {
+                    continue;
+                } else {
+                    return Err(anyhow!("{target_item:?} already exists"));
+                }
+            }
+            let _ = fs
+                .remove_dir(
+                    &target_item,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await;
+            fs.create_dir(&target_item).await?;
+        } else {
+            fs.copy_file(&item, &target_item, options).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(bool, PathBuf)>> {
+    let mut items = Vec::new();
+    read_recursive(fs, source, &mut items).await?;
+    Ok(items)
+}
+
+fn read_recursive<'a>(
+    fs: &'a dyn Fs,
+    source: &'a Path,
+    output: &'a mut Vec<(bool, PathBuf)>,
 ) -> BoxFuture<'a, Result<()>> {
     use futures::future::FutureExt;
 
@@ -2020,39 +2227,19 @@ pub fn copy_recursive<'a>(
             .metadata(source)
             .await?
             .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
-        if metadata.is_dir {
-            if !options.overwrite && fs.metadata(target).await.is_ok_and(|m| m.is_some()) {
-                if options.ignore_if_exists {
-                    return Ok(());
-                } else {
-                    return Err(anyhow!("{target:?} already exists"));
-                }
-            }
 
-            let _ = fs
-                .remove_dir(
-                    target,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: true,
-                    },
-                )
-                .await;
-            fs.create_dir(target).await?;
+        if metadata.is_dir {
+            output.push((true, source.to_path_buf()));
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
                 if let Ok(child_path) = child_path {
-                    if let Some(file_name) = child_path.file_name() {
-                        let child_target_path = target.join(file_name);
-                        copy_recursive(fs, &child_path, &child_target_path, options).await?;
-                    }
+                    read_recursive(fs, &child_path, output).await?;
                 }
             }
-
-            Ok(())
         } else {
-            fs.copy_file(source, target, options).await
+            output.push((false, source.to_path_buf()));
         }
+        Ok(())
     }
     .boxed()
 }
@@ -2094,12 +2281,13 @@ mod tests {
     use super::*;
     use gpui::BackgroundExecutor;
     use serde_json::json;
+    use util::path;
 
     #[gpui::test]
     async fn test_fake_fs(executor: BackgroundExecutor) {
         let fs = FakeFs::new(executor.clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "dir1": {
                     "a": "A",
@@ -2118,32 +2306,393 @@ mod tests {
         assert_eq!(
             fs.files(),
             vec![
-                PathBuf::from("/root/dir1/a"),
-                PathBuf::from("/root/dir1/b"),
-                PathBuf::from("/root/dir2/c"),
-                PathBuf::from("/root/dir2/dir3/d"),
+                PathBuf::from(path!("/root/dir1/a")),
+                PathBuf::from(path!("/root/dir1/b")),
+                PathBuf::from(path!("/root/dir2/c")),
+                PathBuf::from(path!("/root/dir2/dir3/d")),
             ]
         );
 
-        fs.create_symlink("/root/dir2/link-to-dir3".as_ref(), "./dir3".into())
+        fs.create_symlink(path!("/root/dir2/link-to-dir3").as_ref(), "./dir3".into())
             .await
             .unwrap();
 
         assert_eq!(
-            fs.canonicalize("/root/dir2/link-to-dir3".as_ref())
+            fs.canonicalize(path!("/root/dir2/link-to-dir3").as_ref())
                 .await
                 .unwrap(),
-            PathBuf::from("/root/dir2/dir3"),
+            PathBuf::from(path!("/root/dir2/dir3")),
         );
         assert_eq!(
-            fs.canonicalize("/root/dir2/link-to-dir3/d".as_ref())
+            fs.canonicalize(path!("/root/dir2/link-to-dir3/d").as_ref())
                 .await
                 .unwrap(),
-            PathBuf::from("/root/dir2/dir3/d"),
+            PathBuf::from(path!("/root/dir2/dir3/d")),
         );
         assert_eq!(
-            fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
+            fs.load(path!("/root/dir2/link-to-dir3/d").as_ref())
+                .await
+                .unwrap(),
             "D",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive_with_single_file(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "a": "A",
+                "b": "B",
+                "inner": {}
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/b")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/a"));
+        let target = Path::new(path!("/outer/a copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/a copy")),
+                PathBuf::from(path!("/outer/b")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/a"));
+        let target = Path::new(path!("/outer/inner/a copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/a copy")),
+                PathBuf::from(path!("/outer/b")),
+                PathBuf::from(path!("/outer/inner/a copy")),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive_with_single_dir(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "a": "A",
+                "empty": {},
+                "non-empty": {
+                    "b": "B",
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/non-empty/b")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/empty")),
+                PathBuf::from(path!("/outer/non-empty")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/empty"));
+        let target = Path::new(path!("/outer/empty copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/non-empty/b")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/empty")),
+                PathBuf::from(path!("/outer/empty copy")),
+                PathBuf::from(path!("/outer/non-empty")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/non-empty"));
+        let target = Path::new(path!("/outer/non-empty copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/non-empty/b")),
+                PathBuf::from(path!("/outer/non-empty copy/b")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/empty")),
+                PathBuf::from(path!("/outer/empty copy")),
+                PathBuf::from(path!("/outer/non-empty")),
+                PathBuf::from(path!("/outer/non-empty copy")),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "inner1": {
+                    "a": "A",
+                    "b": "B",
+                    "inner3": {
+                        "d": "D",
+                    },
+                    "inner4": {}
+                },
+                "inner2": {
+                    "c": "C",
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/inner3/d")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/inner1")),
+                PathBuf::from(path!("/outer/inner2")),
+                PathBuf::from(path!("/outer/inner1/inner3")),
+                PathBuf::from(path!("/outer/inner1/inner4")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer"));
+        let target = Path::new(path!("/outer/inner1/outer"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/inner3/d")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/inner3/d")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/inner1")),
+                PathBuf::from(path!("/outer/inner2")),
+                PathBuf::from(path!("/outer/inner1/inner3")),
+                PathBuf::from(path!("/outer/inner1/inner4")),
+                PathBuf::from(path!("/outer/inner1/outer")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/inner3")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/inner4")),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive_with_overwriting(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "inner1": {
+                    "a": "A",
+                    "b": "B",
+                    "outer": {
+                        "inner1": {
+                            "a": "B"
+                        }
+                    }
+                },
+                "inner2": {
+                    "c": "C",
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+            ]
+        );
+        assert_eq!(
+            fs.load(path!("/outer/inner1/outer/inner1/a").as_ref())
+                .await
+                .unwrap(),
+            "B",
+        );
+
+        let source = Path::new(path!("/outer"));
+        let target = Path::new(path!("/outer/inner1/outer"));
+        copy_recursive(
+            fs.as_ref(),
+            source,
+            target,
+            CopyOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/outer/inner1/a")),
+            ]
+        );
+        assert_eq!(
+            fs.load(path!("/outer/inner1/outer/inner1/a").as_ref())
+                .await
+                .unwrap(),
+            "A"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive_with_ignoring(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "inner1": {
+                    "a": "A",
+                    "b": "B",
+                    "outer": {
+                        "inner1": {
+                            "a": "B"
+                        }
+                    }
+                },
+                "inner2": {
+                    "c": "C",
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+            ]
+        );
+        assert_eq!(
+            fs.load(path!("/outer/inner1/outer/inner1/a").as_ref())
+                .await
+                .unwrap(),
+            "B",
+        );
+
+        let source = Path::new(path!("/outer"));
+        let target = Path::new(path!("/outer/inner1/outer"));
+        copy_recursive(
+            fs.as_ref(),
+            source,
+            target,
+            CopyOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/outer/inner1/a")),
+            ]
+        );
+        assert_eq!(
+            fs.load(path!("/outer/inner1/outer/inner1/a").as_ref())
+                .await
+                .unwrap(),
+            "B"
         );
     }
 }

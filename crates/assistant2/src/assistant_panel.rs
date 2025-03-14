@@ -11,16 +11,18 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
 use client::zed_urls;
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    prelude::*, px, svg, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    prelude::*, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
+    FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal,
+    WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use project::Project;
-use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
+use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use time::UtcOffset;
 use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
@@ -36,7 +38,10 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{InlineAssistant, NewPromptEditor, NewThread, OpenConfiguration, OpenHistory};
+use crate::{
+    InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown, OpenConfiguration,
+    OpenHistory,
+};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -90,7 +95,6 @@ pub struct AssistantPanel {
     context_editor: Option<Entity<ContextEditor>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
-    tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
     history_store: Entity<HistoryStore>,
@@ -111,7 +115,7 @@ impl AssistantPanel {
             log::info!("[assistant2-debug] initializing ThreadStore");
             let thread_store = workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
-                ThreadStore::new(project, tools.clone(), cx)
+                ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
             })??;
             log::info!("[assistant2-debug] finished initializing ThreadStore");
 
@@ -131,7 +135,7 @@ impl AssistantPanel {
             log::info!("[assistant2-debug] finished initializing ContextStore");
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                cx.new(|cx| Self::new(workspace, thread_store, context_store, tools, window, cx))
+                cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
             })
         })
     }
@@ -140,7 +144,6 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
-        tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -166,30 +169,29 @@ impl AssistantPanel {
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
+        let thread = cx.new(|cx| {
+            ActiveThread::new(
+                thread.clone(),
+                thread_store.clone(),
+                language_registry.clone(),
+                window,
+                cx,
+            )
+        });
+
         Self {
             active_view: ActiveView::Thread,
-            workspace: workspace.clone(),
-            project,
+            workspace,
+            project: project.clone(),
             fs: fs.clone(),
-            language_registry: language_registry.clone(),
+            language_registry,
             thread_store: thread_store.clone(),
-            thread: cx.new(|cx| {
-                ActiveThread::new(
-                    thread.clone(),
-                    thread_store.clone(),
-                    workspace,
-                    language_registry,
-                    tools.clone(),
-                    window,
-                    cx,
-                )
-            }),
+            thread,
             message_editor,
             context_store,
             context_editor: None,
             configuration: None,
             configuration_subscription: None,
-            tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
             )
@@ -244,9 +246,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
-                self.workspace.clone(),
                 self.language_registry.clone(),
-                self.tools.clone(),
                 window,
                 cx,
             )
@@ -379,9 +379,7 @@ impl AssistantPanel {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
-                        this.workspace.clone(),
                         this.language_registry.clone(),
-                        this.tools.clone(),
                         window,
                         cx,
                     )
@@ -416,6 +414,65 @@ impl AssistantPanel {
         }
     }
 
+    pub(crate) fn open_active_thread_as_markdown(
+        &mut self,
+        _: &OpenActiveThreadAsMarkdown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self
+            .workspace
+            .upgrade()
+            .ok_or_else(|| anyhow!("workspace dropped"))
+            .log_err()
+        else {
+            return;
+        };
+
+        let markdown_language_task = workspace
+            .read(cx)
+            .app_state()
+            .languages
+            .language_for_name("Markdown");
+        let thread = self.active_thread(cx);
+        cx.spawn_in(window, |_this, mut cx| async move {
+            let markdown_language = markdown_language_task.await?;
+
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                let thread = thread.read(cx);
+                let markdown = thread.to_markdown()?;
+                let thread_summary = thread
+                    .summary()
+                    .map(|summary| summary.to_string())
+                    .unwrap_or_else(|| "Thread".to_string());
+
+                let project = workspace.project().clone();
+                let buffer = project.update(cx, |project, cx| {
+                    project.create_local_buffer(&markdown, Some(markdown_language), cx)
+                });
+                let buffer = cx.new(|cx| {
+                    MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
+                });
+
+                workspace.add_item_to_active_pane(
+                    Box::new(cx.new(|cx| {
+                        let mut editor =
+                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                        editor.set_breadcrumb_header(thread_summary);
+                        editor
+                    })),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+
+                anyhow::Ok(())
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn handle_assistant_configuration_event(
         &mut self,
         _entity: &Entity<AssistantConfiguration>,
@@ -431,7 +488,7 @@ impl AssistantPanel {
                         active_provider.id() != provider.id()
                     })
                 {
-                    if let Some(model) = provider.provided_models(cx).first().cloned() {
+                    if let Some(model) = provider.default_model(cx) {
                         update_settings_file::<AssistantSettings>(
                             self.fs.clone(),
                             cx,
@@ -457,6 +514,12 @@ impl AssistantPanel {
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
         self.context_editor.clone()
+    }
+
+    pub(crate) fn delete_context(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.context_store
+            .update(cx, |this, cx| this.delete_local_context(path, cx))
+            .detach_and_log_err(cx);
     }
 }
 
@@ -590,7 +653,6 @@ impl AssistantPanel {
 
         h_flex()
             .id("assistant-toolbar")
-            .px(DynamicSpacing::Base08.rems(cx))
             .h(Tab::container_height(cx))
             .flex_none()
             .justify_between()
@@ -599,71 +661,85 @@ impl AssistantPanel {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
+                div()
+                    .id("title")
+                    .overflow_x_scroll()
+                    .px(DynamicSpacing::Base08.rems(cx))
+                    .child(Label::new(title).truncate()),
+            )
+            .child(
                 h_flex()
-                    .w_full()
-                    .gap_1()
-                    .justify_between()
-                    .child(Label::new(title))
+                    .h_full()
+                    .pl_2()
+                    .gap_2()
+                    .bg(cx.theme().colors().tab_bar_background)
                     .children(if matches!(self.active_view, ActiveView::PromptEditor) {
                         self.context_editor
                             .as_ref()
                             .and_then(|editor| render_remaining_tokens(editor, cx))
                     } else {
                         None
-                    }),
-            )
-            .child(
-                h_flex()
-                    .h_full()
-                    .pl_1p5()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border)
-                    .gap(DynamicSpacing::Base02.rems(cx))
+                    })
                     .child(
-                        PopoverMenu::new("assistant-toolbar-new-popover-menu")
-                            .trigger_with_tooltip(
-                                IconButton::new("new", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Subtle),
-                                Tooltip::text("New…"),
-                            )
-                            .anchor(Corner::TopRight)
-                            .with_handle(self.new_item_context_menu_handle.clone())
-                            .menu(move |window, cx| {
-                                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                                    menu.action("New Thread", NewThread.boxed_clone())
-                                        .action("New Prompt Editor", NewPromptEditor.boxed_clone())
-                                }))
-                            }),
-                    )
-                    .child(
-                        IconButton::new("open-history", IconName::HistoryRerun)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip({
-                                let focus_handle = self.focus_handle(cx);
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "History",
-                                        &OpenHistory,
-                                        &focus_handle,
-                                        window,
-                                        cx,
+                        h_flex()
+                            .h_full()
+                            .px(DynamicSpacing::Base08.rems(cx))
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
+                            .gap(DynamicSpacing::Base02.rems(cx))
+                            .child(
+                                PopoverMenu::new("assistant-toolbar-new-popover-menu")
+                                    .trigger_with_tooltip(
+                                        IconButton::new("new", IconName::Plus)
+                                            .icon_size(IconSize::Small)
+                                            .style(ButtonStyle::Subtle),
+                                        Tooltip::text("New…"),
                                     )
-                                }
-                            })
-                            .on_click(move |_event, window, cx| {
-                                window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                            }),
-                    )
-                    .child(
-                        IconButton::new("configure-assistant", IconName::Settings)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip(Tooltip::text("Assistant Settings"))
-                            .on_click(move |_event, window, cx| {
-                                window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
-                            }),
+                                    .anchor(Corner::TopRight)
+                                    .with_handle(self.new_item_context_menu_handle.clone())
+                                    .menu(move |window, cx| {
+                                        Some(ContextMenu::build(
+                                            window,
+                                            cx,
+                                            |menu, _window, _cx| {
+                                                menu.action("New Thread", NewThread.boxed_clone())
+                                                    .action(
+                                                        "New Prompt Editor",
+                                                        NewPromptEditor.boxed_clone(),
+                                                    )
+                                            },
+                                        ))
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("open-history", IconName::HistoryRerun)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip({
+                                        let focus_handle = self.focus_handle(cx);
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "History",
+                                                &OpenHistory,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("configure-assistant", IconName::Settings)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(Tooltip::text("Assistant Settings"))
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
+                                    }),
+                            ),
                     ),
             )
     }
@@ -705,12 +781,11 @@ impl AssistantPanel {
     ) -> impl IntoElement {
         let recent_history = self
             .history_store
-            .update(cx, |this, cx| this.recent_entries(3, cx));
+            .update(cx, |this, cx| this.recent_entries(6, cx));
 
         let create_welcome_heading = || {
             h_flex()
                 .w_full()
-                .justify_center()
                 .child(Headline::new("Welcome to the Assistant Panel").size(HeadlineSize::Small))
         };
 
@@ -718,36 +793,27 @@ impl AssistantPanel {
         let no_error = configuration_error.is_none();
 
         v_flex()
-            .gap_2()
-            .child(
-                v_flex().w_full().child(
-                    svg()
-                        .path("icons/logo_96.svg")
-                        .text_color(cx.theme().colors().text)
-                        .w(px(40.))
-                        .h(px(40.))
-                        .mx_auto()
-                        .mb_4(),
-                ),
-            )
+            .p_1p5()
+            .size_full()
+            .justify_end()
+            .gap_1()
             .map(|parent| {
                 match configuration_error {
                     Some(ConfigurationError::ProviderNotAuthenticated)
                     | Some(ConfigurationError::NoProvider) => {
                         parent.child(
                             v_flex()
+                                .px_1p5()
                                 .gap_0p5()
                                 .child(create_welcome_heading())
                                 .child(
-                                    h_flex().mb_2().w_full().justify_center().child(
-                                        Label::new(
-                                            "To start using the assistant, configure at least one LLM provider.",
-                                        )
-                                        .color(Color::Muted),
-                                    ),
+                                    Label::new(
+                                        "To start using the assistant, configure at least one LLM provider.",
+                                    )
+                                    .color(Color::Muted),
                                 )
                                 .child(
-                                    h_flex().w_full().justify_center().child(
+                                    h_flex().mt_1().w_full().child(
                                         Button::new("open-configuration", "Configure a Provider")
                                             .size(ButtonSize::Compact)
                                             .icon(Some(IconName::Sliders))
@@ -761,7 +827,7 @@ impl AssistantPanel {
                         )
                     }
                     Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => parent
-                        .child(v_flex().gap_0p5().child(create_welcome_heading()).children(
+                        .child(v_flex().px_1p5().gap_0p5().child(create_welcome_heading()).children(
                             provider.render_accept_terms(
                                 LanguageModelProviderTosView::ThreadEmptyState,
                                 cx,
@@ -772,21 +838,40 @@ impl AssistantPanel {
             })
             .when(recent_history.is_empty() && no_error, |parent| {
                 parent.child(v_flex().gap_0p5().child(create_welcome_heading()).child(
-                    h_flex().w_full().justify_center().child(
-                        Label::new("Start typing to chat with your codebase").color(Color::Muted),
-                    ),
+                    Label::new("Start typing to chat with your codebase").color(Color::Muted),
                 ))
             })
             .when(!recent_history.is_empty(), |parent| {
                 parent
                     .child(
-                        h_flex().w_full().justify_center().child(
-                            Label::new("Recent Threads:")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        h_flex()
+                            .pl_1p5()
+                            .pb_1()
+                            .w_full()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new("Past Interactions")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Button::new("view-history", "View All")
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &OpenHistory,
+                                        &self.focus_handle(cx),
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                    }),
+                            ),
                     )
-                    .child(v_flex().mx_auto().w_4_5().gap_2().children(
+                    .child(v_flex().gap_1().children(
                         recent_history.into_iter().map(|entry| {
                             // TODO: Add keyboard navigation.
                             match entry {
@@ -801,22 +886,6 @@ impl AssistantPanel {
                             }
                         }),
                     ))
-                    .child(
-                        h_flex().w_full().justify_center().child(
-                            Button::new("view-all-past-threads", "View All Past Threads")
-                                .style(ButtonStyle::Subtle)
-                                .label_size(LabelSize::Small)
-                                .key_binding(KeyBinding::for_action_in(
-                                    &OpenHistory,
-                                    &self.focus_handle(cx),
-                                    window,
-                                    cx,
-                                ))
-                                .on_click(move |_event, window, cx| {
-                                    window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                                }),
-                        ),
-                    )
             })
     }
 
@@ -980,12 +1049,21 @@ impl AssistantPanel {
             )
             .into_any()
     }
+
+    fn key_context(&self) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("AssistantPanel2");
+        if matches!(self.active_view, ActiveView::PromptEditor) {
+            key_context.add("prompt_editor");
+        }
+        key_context
+    }
 }
 
 impl Render for AssistantPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .key_context("AssistantPanel2")
+            .key_context(self.key_context())
             .justify_between()
             .size_full()
             .on_action(cx.listener(Self::cancel))
@@ -995,17 +1073,13 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
             }))
+            .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_prompt_library))
             .child(self.render_toolbar(cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .child(
-                        h_flex()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(self.message_editor.clone()),
-                    )
+                    .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::PromptEditor => parent.children(self.context_editor.clone()),

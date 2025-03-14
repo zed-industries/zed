@@ -377,7 +377,7 @@ impl<'a> Statement<'a> {
     }
 }
 
-impl<'a> Drop for Statement<'a> {
+impl Drop for Statement<'_> {
     fn drop(&mut self) {
         unsafe {
             for raw_statement in self.raw_statements.iter() {

@@ -9,13 +9,12 @@ use futures::{channel::mpsc, future::LocalBoxFuture, join, SinkExt, Stream, Stre
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use language::{line_diff, Buffer, IndentKind, Point, TransactionId};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role,
+    report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
-use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use rope::Rope;
 use smol::future::FutureExt;
 use std::{

@@ -16,6 +16,7 @@ use gpui::{
 };
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
+use language::language_settings::CopilotSettings;
 use language::{
     language_settings::{all_language_settings, language_settings, EditPredictionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
@@ -169,7 +170,9 @@ enum SignInStatus {
         prompt: Option<request::PromptUserDeviceFlow>,
         task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
     },
-    SignedOut,
+    SignedOut {
+        awaiting_signing_in: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -179,7 +182,9 @@ pub enum Status {
     },
     Error(Arc<str>),
     Disabled,
-    SignedOut,
+    SignedOut {
+        awaiting_signing_in: bool,
+    },
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
     },
@@ -344,8 +349,8 @@ impl Copilot {
             buffers: Default::default(),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
-        this.enable_or_disable_copilot(cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.enable_or_disable_copilot(cx))
+        this.start_copilot(true, false, cx);
+        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
             .detach();
         this
     }
@@ -363,26 +368,64 @@ impl Copilot {
         }
     }
 
-    fn enable_or_disable_copilot(&mut self, cx: &mut Context<Self>) {
+    fn start_copilot(
+        &mut self,
+        check_edit_prediction_provider: bool,
+        awaiting_sign_in_after_start: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.server, CopilotServer::Disabled) {
+            return;
+        }
+        let language_settings = all_language_settings(None, cx);
+        if check_edit_prediction_provider
+            && language_settings.edit_predictions.provider != EditPredictionProvider::Copilot
+        {
+            return;
+        }
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        if all_language_settings(None, cx).edit_predictions.provider
-            == EditPredictionProvider::Copilot
-        {
-            if matches!(self.server, CopilotServer::Disabled) {
-                let start_task = cx
-                    .spawn(move |this, cx| {
-                        Self::start_language_server(server_id, http, node_runtime, this, cx)
-                    })
-                    .shared();
-                self.server = CopilotServer::Starting { task: start_task };
-                cx.notify();
-            }
+        let env = self.build_env(&language_settings.edit_predictions.copilot);
+        let start_task = cx
+            .spawn(move |this, cx| {
+                Self::start_language_server(
+                    server_id,
+                    http,
+                    node_runtime,
+                    env,
+                    this,
+                    awaiting_sign_in_after_start,
+                    cx,
+                )
+            })
+            .shared();
+        self.server = CopilotServer::Starting { task: start_task };
+        cx.notify();
+    }
+
+    fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
+        let proxy_url = copilot_settings.proxy.clone()?;
+        let no_verify = copilot_settings.proxy_no_verify;
+        let http_or_https_proxy = if proxy_url.starts_with("http:") {
+            "HTTP_PROXY"
+        } else if proxy_url.starts_with("https:") {
+            "HTTPS_PROXY"
         } else {
-            self.server = CopilotServer::Disabled;
-            cx.notify();
-        }
+            log::error!(
+                "Unsupported protocol scheme for language server proxy (must be http or https)"
+            );
+            return None;
+        };
+
+        let mut env = HashMap::default();
+        env.insert(http_or_https_proxy.to_string(), proxy_url);
+
+        if let Some(true) = no_verify {
+            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+        };
+
+        Some(env)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -422,7 +465,9 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
+        env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
+        awaiting_sign_in_after_start: bool,
         mut cx: AsyncApp,
     ) {
         let start_language_server = async {
@@ -432,8 +477,7 @@ impl Copilot {
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
-                // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
-                env: None,
+                env,
             };
 
             let root_path = if cfg!(target_os = "windows") {
@@ -450,6 +494,7 @@ impl Copilot {
                 binary,
                 root_path,
                 None,
+                Default::default(),
                 cx.clone(),
             )?;
 
@@ -496,7 +541,9 @@ impl Copilot {
                 Ok((server, status)) => {
                     this.server = CopilotServer::Running(RunningCopilotServer {
                         lsp: server,
-                        sign_in_status: SignInStatus::SignedOut,
+                        sign_in_status: SignInStatus::SignedOut {
+                            awaiting_signing_in: awaiting_sign_in_after_start,
+                        },
                         registered_buffers: Default::default(),
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
@@ -519,7 +566,7 @@ impl Copilot {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(|this, mut cx| async move {
@@ -597,20 +644,27 @@ impl Copilot {
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
-        if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
-            let server = server.clone();
-            cx.background_spawn(async move {
-                server
-                    .request::<request::SignOut>(request::SignOutParams {})
-                    .await?;
+        match &self.server {
+            CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
+                let server = server.clone();
+                cx.background_spawn(async move {
+                    server
+                        .request::<request::SignOut>(request::SignOutParams {})
+                        .await?;
+                    anyhow::Ok(())
+                })
+            }
+            CopilotServer::Disabled => cx.background_spawn(async {
+                clear_copilot_config_dir().await;
                 anyhow::Ok(())
-            })
-        } else {
-            Task::ready(Err(anyhow!("copilot hasn't started yet")))
+            }),
+            _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let language_settings = all_language_settings(None, cx);
+        let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
@@ -618,7 +672,8 @@ impl Copilot {
                 let server_id = self.server_id;
                 move |this, cx| async move {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, http, node_runtime, this, cx).await
+                    Self::start_language_server(server_id, http, node_runtime, env, this, false, cx)
+                        .await
                 }
             })
             .shared();
@@ -928,7 +983,11 @@ impl Copilot {
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },
-                    SignInStatus::SignedOut => Status::SignedOut,
+                    SignInStatus::SignedOut {
+                        awaiting_signing_in,
+                    } => Status::SignedOut {
+                        awaiting_signing_in: *awaiting_signing_in,
+                    },
                 }
             }
         }
@@ -957,7 +1016,11 @@ impl Copilot {
                     }
                 }
                 request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
-                    server.sign_in_status = SignInStatus::SignedOut;
+                    if !matches!(server.sign_in_status, SignInStatus::SignedOut { .. }) {
+                        server.sign_in_status = SignInStatus::SignedOut {
+                            awaiting_signing_in: false,
+                        };
+                    }
                     cx.emit(Event::CopilotAuthSignedOut);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
@@ -986,6 +1049,10 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
+}
+
+async fn clear_copilot_config_dir() {
+    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
@@ -1277,5 +1344,13 @@ mod tests {
         fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
             unimplemented!()
         }
+    }
+}
+
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
     }
 }

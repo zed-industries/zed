@@ -102,7 +102,12 @@ impl FallbackPromptRenderer {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
@@ -119,7 +124,7 @@ impl Render for FallbackPromptRenderer {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .elevation_3(cx)
