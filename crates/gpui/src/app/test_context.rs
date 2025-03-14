@@ -399,7 +399,7 @@ impl TestAppContext {
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
             .split(' ')
-            .map(|input| Keystroke::parse(input, false))
+            .map(|input| Keystroke::parse(input, false, None))
             .map(Result::unwrap)
         {
             self.dispatch_keystroke(window, keystroke);
@@ -415,7 +415,7 @@ impl TestAppContext {
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
         for keystroke in input
             .split("")
-            .map(|input| Keystroke::parse(input, false))
+            .map(|input| Keystroke::parse(input, false, None))
             .map(Result::unwrap)
         {
             self.dispatch_keystroke(window, keystroke);

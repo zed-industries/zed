@@ -463,18 +463,16 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
 
 #[cfg(test)]
 mod test {
-    use gpui::Modifiers;
-
     use super::*;
 
     #[test]
     fn test_scroll_keys() {
         //These keys should be handled by the scrolling element directly
         //Need to signify this by returning 'None'
-        let shift_pageup = Keystroke::parse("shift-pageup").unwrap();
-        let shift_pagedown = Keystroke::parse("shift-pagedown").unwrap();
-        let shift_home = Keystroke::parse("shift-home").unwrap();
-        let shift_end = Keystroke::parse("shift-end").unwrap();
+        let shift_pageup = Keystroke::parse("shift-pageup", false, None).unwrap();
+        let shift_pagedown = Keystroke::parse("shift-pagedown", false, None).unwrap();
+        let shift_home = Keystroke::parse("shift-home", false, None).unwrap();
+        let shift_end = Keystroke::parse("shift-end", false, None).unwrap();
 
         let none = TermMode::NONE;
         assert_eq!(to_esc_str(&shift_pageup, &none, false), None);
@@ -500,8 +498,8 @@ mod test {
             Some("\x1b[1;2F".to_string())
         );
 
-        let pageup = Keystroke::parse("pageup").unwrap();
-        let pagedown = Keystroke::parse("pagedown").unwrap();
+        let pageup = Keystroke::parse("pageup", false, None).unwrap();
+        let pagedown = Keystroke::parse("pagedown", false, None).unwrap();
         let any = TermMode::ANY;
 
         assert_eq!(
@@ -535,10 +533,10 @@ mod test {
         let app_cursor = TermMode::APP_CURSOR;
         let none = TermMode::NONE;
 
-        let up = Keystroke::parse("up").unwrap();
-        let down = Keystroke::parse("down").unwrap();
-        let left = Keystroke::parse("left").unwrap();
-        let right = Keystroke::parse("right").unwrap();
+        let up = Keystroke::parse("up", false, None).unwrap();
+        let down = Keystroke::parse("down", false, None).unwrap();
+        let left = Keystroke::parse("left", false, None).unwrap();
+        let right = Keystroke::parse("right", false, None).unwrap();
 
         assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".to_string()));
         assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".to_string()));
@@ -572,12 +570,12 @@ mod test {
         for (lower, upper) in letters_lower.zip(letters_upper) {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-{}", lower)).unwrap(),
+                    &Keystroke::parse(&format!("ctrl-{}", lower), false, None).unwrap(),
                     &mode,
                     false
                 ),
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-shift-{}", upper)).unwrap(),
+                    &Keystroke::parse(&format!("ctrl-shift-{}", upper), false, None).unwrap(),
                     &mode,
                     false
                 ),
@@ -594,7 +592,7 @@ mod test {
         for character in ascii_printable {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
+                    &Keystroke::parse(&format!("alt-{}", character), false, None).unwrap(),
                     &TermMode::NONE,
                     true
                 )
@@ -612,7 +610,7 @@ mod test {
         for key in gpui_keys {
             assert_ne!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
+                    &Keystroke::parse(&format!("alt-{}", key), false, None).unwrap(),
                     &TermMode::NONE,
                     true
                 )
@@ -635,15 +633,33 @@ mod test {
         //    8     | Shift + Alt + Control
         // ---------+---------------------------
         // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-        assert_eq!(2, modifier_code(&Keystroke::parse("shift-A").unwrap()));
-        assert_eq!(3, modifier_code(&Keystroke::parse("alt-A").unwrap()));
-        assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-A").unwrap()));
-        assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-A").unwrap()));
-        assert_eq!(6, modifier_code(&Keystroke::parse("shift-ctrl-A").unwrap()));
-        assert_eq!(7, modifier_code(&Keystroke::parse("alt-ctrl-A").unwrap()));
+        assert_eq!(
+            2,
+            modifier_code(&Keystroke::parse("shift-A", false, None).unwrap())
+        );
+        assert_eq!(
+            3,
+            modifier_code(&Keystroke::parse("alt-A", false, None).unwrap())
+        );
+        assert_eq!(
+            4,
+            modifier_code(&Keystroke::parse("shift-alt-A", false, None).unwrap())
+        );
+        assert_eq!(
+            5,
+            modifier_code(&Keystroke::parse("ctrl-A", false, None).unwrap())
+        );
+        assert_eq!(
+            6,
+            modifier_code(&Keystroke::parse("shift-ctrl-A", false, None).unwrap())
+        );
+        assert_eq!(
+            7,
+            modifier_code(&Keystroke::parse("alt-ctrl-A", false, None).unwrap())
+        );
         assert_eq!(
             8,
-            modifier_code(&Keystroke::parse("shift-ctrl-alt-A").unwrap())
+            modifier_code(&Keystroke::parse("shift-ctrl-alt-A", false, None).unwrap())
         );
     }
 }

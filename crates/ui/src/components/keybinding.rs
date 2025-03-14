@@ -472,7 +472,7 @@ mod tests {
     fn test_text_for_keystroke() {
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", false, None).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -480,7 +480,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", false, None).unwrap(),
                 PlatformStyle::Linux,
                 false
             ),
@@ -488,7 +488,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", false, None).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),
@@ -497,7 +497,7 @@ mod tests {
 
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", false, None).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -505,7 +505,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", false, None).unwrap(),
                 PlatformStyle::Linux,
                 false
             ),
@@ -513,7 +513,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", false, None).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),
@@ -522,7 +522,7 @@ mod tests {
 
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", false, None).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -530,7 +530,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", false, None).unwrap(),
                 PlatformStyle::Linux,
                 false,
             ),
@@ -538,7 +538,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", false, None).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),
