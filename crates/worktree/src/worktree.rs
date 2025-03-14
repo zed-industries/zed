@@ -4814,7 +4814,7 @@ impl BackgroundScanner {
             })
             .await;
 
-        log::trace!("fs scanned: scans_running -= 1");
+        log::trace!("fs scanned: {scans_running:?} scans_running -= 1");
         scans_running.fetch_sub(1, atomic::Ordering::Release);
         FsScanned {
             status_scans: scans_running,
@@ -4888,11 +4888,11 @@ impl BackgroundScanner {
                     );
                     if let Some(local_repo) = repo {
                         let path_key = local_repo.work_directory.path_key();
-                        log::trace!("schedule scans_running += 1");
+                        log::trace!("schedule {scans_running:p} scans_running += 1");
                         scans_running.fetch_add(1, atomic::Ordering::Release);
                         let (old, rx) = self.schedule_git_statuses_update(&mut state, local_repo);
                         if old.is_some() {
-                            log::trace!("schedule scans_running -= 1");
+                            log::trace!("schedule {scans_running:p} scans_running -= 1");
                             scans_running.fetch_sub(1, atomic::Ordering::Release);
                         }
                         git_status_update_jobs.insert(path_key, rx);
@@ -5024,7 +5024,10 @@ impl BackgroundScanner {
                     let status_updated = status_updates
                         .iter()
                         .any(|update_result| update_result.is_ok());
-                    log::trace!("status updates: scans_running -= {}", status_updates.len());
+                    log::trace!(
+                        "status updates: {scans_running:?} scans_running -= {}",
+                        status_updates.len()
+                    );
                     scans_running.fetch_sub(status_updates.len() as u32, atomic::Ordering::Release);
                     if status_updated {
                         let scanning = scans_running.load(atomic::Ordering::Acquire) > 0;
