@@ -121,7 +121,9 @@ impl HeadlessAssistant {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         thread.update(cx, |thread, cx| {
-                            thread.send_tool_results_to_model(model, cx);
+                            // Currently evals do not support specifying context.
+                            let updated_context = vec![];
+                            thread.send_tool_results_to_model(model, updated_context, cx);
                         });
                     }
                 }
