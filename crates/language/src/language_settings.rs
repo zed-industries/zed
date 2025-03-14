@@ -79,10 +79,10 @@ pub struct LanguageSettings {
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
-    // Whether to show wrap guides (vertical rulers) in the editor.
-    // Setting this to true will show a guide at the 'preferred_line_length' value
-    // if softwrap is set to 'preferred_line_length', and will show any
-    // additional guides as specified by the 'wrap_guides' setting.
+    /// Whether to show wrap guides (vertical rulers) in the editor.
+    /// Setting this to true will show a guide at the 'preferred_line_length' value
+    /// if softwrap is set to 'preferred_line_length', and will show any
+    /// additional guides as specified by the 'wrap_guides' setting.
     pub show_wrap_guides: bool,
     /// Character counts at which to show wrap guides (vertical rulers) in the editor.
     pub wrap_guides: Vec<usize>,
@@ -137,7 +137,7 @@ pub struct LanguageSettings {
     pub use_on_type_format: bool,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
-    // Controls how the editor handles the autoclosed characters.
+    /// Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
@@ -151,6 +151,8 @@ pub struct LanguageSettings {
     /// Whether to display inline and alongside documentation for items in the
     /// completions menu.
     pub show_completion_documentation: bool,
+    /// Completion settings for this language.
+    pub completions: CompletionSettings,
 }
 
 impl LanguageSettings {
@@ -304,6 +306,50 @@ pub struct AllLanguageSettingsContent {
     /// with languages.
     #[serde(default)]
     pub file_types: HashMap<Arc<str>, Vec<String>>,
+}
+
+/// Controls how completions are processed for this language.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CompletionSettings {
+    /// Controls how words are completed.
+    /// For large documents, not all words may be fetched for completion.
+    ///
+    /// Default: `fallback`
+    #[serde(default = "default_words_completion_mode")]
+    pub words: WordsCompletionMode,
+    /// Whether to fetch LSP completions or not.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub lsp: bool,
+    /// When fetching LSP completions, determines how long to wait for a response of a particular server.
+    /// When set to 0, waits indefinitely.
+    ///
+    /// Default: 500
+    #[serde(default = "lsp_fetch_timeout_ms")]
+    pub lsp_fetch_timeout_ms: u64,
+}
+
+/// Controls how document's words are completed.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WordsCompletionMode {
+    /// Always fetch document's words for completions.
+    Enabled,
+    /// Only if LSP response errors/times out/is empty,
+    /// use document's words to show completions.
+    Fallback,
+    /// Never fetch or complete document's words for completions.
+    Disabled,
+}
+
+fn default_words_completion_mode() -> WordsCompletionMode {
+    WordsCompletionMode::Fallback
+}
+
+fn lsp_fetch_timeout_ms() -> u64 {
+    500
 }
 
 /// The settings for a particular language.
@@ -478,6 +524,8 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub show_completion_documentation: Option<bool>,
+    /// Controls how completions are processed for this language.
+    pub completions: Option<CompletionSettings>,
 }
 
 /// The behavior of `editor::Rewrap`.
@@ -1381,6 +1429,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.show_completion_documentation,
         src.show_completion_documentation,
     );
+    merge(&mut settings.completions, src.completions);
 }
 
 /// Allows to enable/disable formatting with Prettier

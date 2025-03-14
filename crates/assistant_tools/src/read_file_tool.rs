@@ -4,17 +4,27 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use gpui::{App, Entity, Task};
-use project::{Project, ProjectPath, WorktreeId};
+use language_model::LanguageModelRequestMessage;
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
-    /// The ID of the worktree in which the file resides.
-    pub worktree_id: usize,
-    /// The path to the file to read.
+    /// The relative path of the file to read.
     ///
-    /// This path is relative to the worktree root, it must not be an absolute path.
+    /// This path should never be absolute, and the first component
+    /// of the path should always be a root directory in a project.
+    ///
+    /// <example>
+    /// If the project has the following root directories:
+    ///
+    /// - directory1
+    /// - directory2
+    ///
+    /// If you wanna access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.
+    /// If you wanna access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
+    /// </example>
     pub path: Arc<Path>,
 }
 
@@ -26,7 +36,7 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> String {
-        "Reads the content of a file specified by a worktree ID and path. Use this tool when you need to access the contents of a file in the project.".into()
+        include_str!("./read_file_tool/description.md").into()
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -37,6 +47,7 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
+        _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
@@ -45,9 +56,8 @@ impl Tool for ReadFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let project_path = ProjectPath {
-            worktree_id: WorktreeId::from_usize(input.worktree_id),
-            path: input.path,
+        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+            return Task::ready(Err(anyhow!("Path not found in project")));
         };
         cx.spawn(|cx| async move {
             let buffer = cx
@@ -56,7 +66,16 @@ impl Tool for ReadFileTool {
                 })?
                 .await?;
 
-            cx.update(|cx| buffer.read(cx).text())
+            buffer.read_with(&cx, |buffer, _cx| {
+                if buffer
+                    .file()
+                    .map_or(false, |file| file.disk_state().exists())
+                {
+                    Ok(buffer.text())
+                } else {
+                    Err(anyhow!("File does not exist"))
+                }
+            })?
         })
     }
 }
