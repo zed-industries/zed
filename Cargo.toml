@@ -440,7 +440,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 linkme = "0.3.31"
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "811ceae29fabee455f110c56cd66b3f49a7e5003", features = [
+livekit = { path = "../../rust/livekit-rust-sdks/livekit", features = [
     "dispatcher",
     "services-dispatcher",
     "rustls-tls-native-roots",
