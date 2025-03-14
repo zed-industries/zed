@@ -7,10 +7,20 @@ use editor::{
 use gpui::{actions, Context, Window};
 use language::Bias;
 use settings::Settings;
+use ui::px;
 
 actions!(
     vim,
-    [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
+    [
+        LineUp,
+        LineDown,
+        ScrollUp,
+        ScrollDown,
+        PageUp,
+        PageDown,
+        ScrollLeftHalfWay,
+        ScrollRightHalfWay,
+    ]
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
@@ -44,6 +54,25 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             }
         })
     });
+
+    Vim::action(editor, cx, |vim, _: &ScrollLeftHalfWay, window, cx| {
+        dbg!("here!");
+        vim.update_editor(window, cx, |_, editor, window, cx| {
+            editor.scroll_manager.horizontal_scroll(
+                |current, details| (current + details.editor_width / 2.).min(details.scroll_max),
+                cx,
+            );
+        });
+    });
+    // Vim::action(editor, cx, |vim, _: &ScrollRightHalfWay, window, cx| {
+    //     vim.scroll_horizontal(window, cx, |c| {
+    //         if let Some(c) = c {
+    //             ScrollAmount::Line(-c)
+    //         } else {
+    //             ScrollAmount::Page(-0.5)
+    //         }
+    //     })
+    // });
 }
 
 impl Vim {

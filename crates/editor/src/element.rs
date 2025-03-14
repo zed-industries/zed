@@ -15,7 +15,7 @@ use crate::{
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
-    scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
+    scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair, HorizontalLayoutDetails},
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint,
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk, GoToPreviousHunk,
@@ -7031,6 +7031,11 @@ impl Element for EditorElement {
                     );
 
                     self.editor.update(cx, |editor, cx| {
+                        editor.scroll_manager.latest_horizontal_details = HorizontalLayoutDetails {
+                            letter_width: letter_size.width.0,
+                            editor_width: editor_width.0,
+                            scroll_max: scroll_max.x,
+                        };
                         let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x);
 
                         let autoscrolled = if autoscroll_horizontally {

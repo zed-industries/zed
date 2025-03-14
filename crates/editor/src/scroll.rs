@@ -172,6 +172,13 @@ impl OngoingScroll {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct HorizontalLayoutDetails {
+    pub letter_width: f32,
+    pub editor_width: f32,
+    pub scroll_max: f32,
+}
+
 pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: f32,
     anchor: ScrollAnchor,
@@ -183,6 +190,7 @@ pub struct ScrollManager {
     dragging_scrollbar: AxisPair<bool>,
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
+    pub(crate) latest_horizontal_details: HorizontalLayoutDetails,
 }
 
 impl ScrollManager {
@@ -198,6 +206,7 @@ impl ScrollManager {
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
+            latest_horizontal_details: Default::default(),
         }
     }
 
@@ -376,6 +385,15 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) {
         self.dragging_scrollbar = self.dragging_scrollbar.apply_along(axis, |_| dragging);
+        cx.notify();
+    }
+
+    pub fn horizontal_scroll(
+        &mut self,
+        f: impl Fn(f32, &HorizontalLayoutDetails) -> f32,
+        cx: &mut Context<Editor>,
+    ) {
+        self.anchor.offset.x = f(self.anchor.offset.x, &self.latest_horizontal_details);
         cx.notify();
     }
 

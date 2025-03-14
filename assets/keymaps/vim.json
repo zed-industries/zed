@@ -155,6 +155,7 @@
       "z +": ["workspace::SendKeystrokes", "shift-l j z t ^"],
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
+      "z l": "vim::ScrollLeftHalfWay",
       "z .": ["workspace::SendKeystrokes", "z z ^"],
       "z b": "editor::ScrollCursorBottom",
       "z a": "editor::ToggleFold",
