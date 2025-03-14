@@ -445,11 +445,30 @@ impl Interactivity {
         self.can_drop_predicate = Some(Box::new(predicate));
     }
 
-    /// Bind the given callback to click events of this element
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_click`]
+    /// Bind the given callback to click events of this element for the given mouse button
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_button_click`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn on_click(&mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static)
+    pub fn on_click(
+        &mut self,
+        button: MouseButton,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) where
+        Self: Sized,
+    {
+        self.click_listeners
+            .push(Box::new(move |event, window, cx| {
+                if event.up.button == button {
+                    listener(event, window, cx)
+                }
+            }));
+    }
+
+    /// Bind the given callback to click events of this element for any mouse button
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_any_click`]
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_any_click(&mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static)
     where
         Self: Sized,
     {
@@ -989,15 +1008,46 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    /// Bind the given callback to click events of this element
-    /// The fluent API equivalent to [`Interactivity::on_click`]
+    /// Bind the given callback to left-click events of this element
+    /// The fluent API equivalent to [`Interactivity::on_click`] with [`MouseButton::Left`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_click(mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().on_click(listener);
+        self.interactivity().on_click(MouseButton::Left, listener);
+        self
+    }
+
+    /// Bind the given callback to click events of this element for the given mouse button
+    /// The fluent API equivalent to [`Interactivity::on_click`]
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_button_click(
+        mut self,
+        button: MouseButton,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().on_click(button, listener);
+        self
+    }
+
+    /// Bind the given callback to click events of this element for any mouse button
+    /// The fluent API equivalent to [`Interactivity::on_any_click`]
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_any_click(
+        mut self,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().on_any_click(listener);
         self
     }
 
@@ -1889,10 +1939,7 @@ impl Interactivity {
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
                     move |event: &MouseDownEvent, phase, window, _cx| {
-                        if phase == DispatchPhase::Bubble
-                            && event.button == MouseButton::Left
-                            && hitbox.is_hovered(window)
-                        {
+                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
                             window.refresh();
                         }
@@ -1909,7 +1956,8 @@ impl Interactivity {
 
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                         if let Some(mouse_down) = pending_mouse_down.clone() {
-                            if !cx.has_active_drag()
+                            if mouse_down.button == MouseButton::Left
+                                && !cx.has_active_drag()
                                 && (event.position - mouse_down.position).magnitude()
                                     > DRAG_THRESHOLD
                             {
@@ -1945,7 +1993,11 @@ impl Interactivity {
                         // propagation.
                         DispatchPhase::Capture => {
                             let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                            if pending_mouse_down.is_some() && hitbox.is_hovered(window) {
+                            if pending_mouse_down
+                                .as_ref()
+                                .is_some_and(|e| e.button == event.button)
+                                && hitbox.is_hovered(window)
+                            {
                                 captured_mouse_down = pending_mouse_down.take();
                                 window.refresh();
                             } else if pending_mouse_down.is_some() {
