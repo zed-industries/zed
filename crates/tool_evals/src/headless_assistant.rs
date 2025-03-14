@@ -4,7 +4,7 @@ use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{prelude::*, App, AsyncApp, Entity, Subscription, Task};
+use gpui::{prelude::*, App, AsyncApp, Entity, SemanticVersion, Subscription, Task};
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
@@ -134,6 +134,7 @@ impl HeadlessAssistant {
 }
 
 pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
+    release_channel::init(SemanticVersion::default(), cx);
     gpui_tokio::init(cx);
 
     let mut settings_store = SettingsStore::new(cx);

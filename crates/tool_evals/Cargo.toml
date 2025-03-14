@@ -37,6 +37,7 @@ project.workspace = true
 prompt_store.workspace = true
 rand.workspace = true
 regex.workspace = true
+release_channel.workspace = true
 reqwest_client.workspace = true
 scripting_tool.workspace = true
 serde.workspace = true

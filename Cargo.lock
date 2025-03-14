@@ -14266,6 +14266,7 @@ dependencies = [
  "prompt_store",
  "rand 0.8.5",
  "regex",
+ "release_channel",
  "reqwest_client",
  "scripting_tool",
  "serde",
