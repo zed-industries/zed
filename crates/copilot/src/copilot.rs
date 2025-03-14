@@ -654,6 +654,10 @@ impl Copilot {
                     anyhow::Ok(())
                 })
             }
+            CopilotServer::Disabled => cx.background_spawn(async {
+                clear_copilot_config_dir().await;
+                anyhow::Ok(())
+            }),
             _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
@@ -1045,6 +1049,10 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
+}
+
+async fn clear_copilot_config_dir() {
+    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
