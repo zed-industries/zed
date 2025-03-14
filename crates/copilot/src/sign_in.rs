@@ -1,9 +1,10 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    div, App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, Window,
+    div, percentage, svg, Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent,
+    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    MouseDownEvent, ParentElement, Render, Styled, Subscription, Transformation, Window,
 };
+use std::time::Duration;
 use ui::{prelude::*, Button, Label, Vector, VectorName};
 use util::ResultExt as _;
 use workspace::notifications::NotificationId;
@@ -21,7 +22,7 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
         return;
     };
     if matches!(copilot.read(cx).status(), Status::Disabled) {
-        copilot.update(cx, |this, cx| this.start_copilot(false, cx));
+        copilot.update(cx, |this, cx| this.start_copilot(false, true, cx));
     }
     match copilot.read(cx).status() {
         Status::Starting { task } => {
@@ -233,11 +234,28 @@ impl CopilotCodeVerification {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
     }
+
+    fn render_loading(window: &mut Window, _: &mut Context<Self>) -> impl Element {
+        let loading_icon = svg()
+            .size_8()
+            .path(IconName::ArrowCircle.path())
+            .text_color(window.text_style().color)
+            .with_animation(
+                "icon_circle_arrow",
+                Animation::new(Duration::from_secs(2)).repeat(),
+                |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+            );
+
+        h_flex().justify_center().child(loading_icon)
+    }
 }
 
 impl Render for CopilotCodeVerification {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prompt = match &self.status {
+            Status::SigningIn { prompt: None } => {
+                Self::render_loading(window, cx).into_any_element()
+            }
             Status::SigningIn {
                 prompt: Some(prompt),
             } => Self::render_prompting_modal(self.connect_clicked, prompt, cx).into_any_element(),
