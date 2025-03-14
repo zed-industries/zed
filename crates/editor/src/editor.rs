@@ -5200,6 +5200,9 @@ impl Editor {
         cx: &App,
     ) -> bool {
         maybe!({
+            if self.read_only(cx) {
+                return Some(false);
+            }
             let provider = self.edit_prediction_provider()?;
             if !provider.is_enabled(&buffer, buffer_position, cx) {
                 return Some(false);
