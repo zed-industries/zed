@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::{Tool, ActionLog};
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -82,9 +82,7 @@ impl Tool for DeletePathTool {
         }
 
         if matches.is_empty() {
-            return Task::ready(Ok(
-                format!("No paths in the project matched {glob:?}")
-            ));
+            return Task::ready(Ok(format!("No paths in the project matched {glob:?}")));
         }
 
         let paths_matched = matches.len();
@@ -161,8 +159,7 @@ impl Tool for DeletePathTool {
                     deleted_paths.len(),
                     deleted_paths.join("\n"),
                     errors.join("\n")
-                )
-                ))
+                )))
             }
         }
     }

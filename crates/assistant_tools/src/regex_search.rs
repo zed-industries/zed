@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::{Tool, ActionLog};
+use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;

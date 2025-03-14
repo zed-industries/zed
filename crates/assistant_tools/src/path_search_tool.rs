@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::{Tool, ActionLog};
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -79,8 +79,7 @@ impl Tool for PathSearchTool {
         if matches.is_empty() {
             Task::ready(Ok(format!(
                 "No paths in the project matched the glob {glob:?}"
-            )
-            ))
+            )))
         } else {
             // Sort to group entries in the same directory together.
             matches.sort();

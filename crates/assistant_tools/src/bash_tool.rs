@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::{Tool, ActionLog};
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;

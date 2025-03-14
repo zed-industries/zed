@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use assistant_tool::{Tool, ActionLog, ToolSource};
+use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;

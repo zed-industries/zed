@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::{Tool, ActionLog};
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::LanguageModelRequestMessage;
@@ -121,8 +121,7 @@ impl Tool for DiagnosticsTool {
             if has_diagnostics {
                 Task::ready(Ok(output))
             } else {
-                Task::ready(Ok("No errors or warnings found in the project."
-                    .to_string()))
+                Task::ready(Ok("No errors or warnings found in the project.".to_string()))
             }
         }
     }
