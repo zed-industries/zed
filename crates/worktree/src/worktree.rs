@@ -1565,6 +1565,7 @@ impl LocalWorktree {
                             barrier,
                             scanning,
                         } => {
+                            eprintln!("set is scanning {scanning:?}");
                             *this.is_scanning.0.borrow_mut() = scanning;
                             this.set_snapshot(snapshot, changes, cx);
                             drop(barrier);
@@ -4485,6 +4486,7 @@ impl BackgroundScanner {
                         }
                     }
                     let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                    log::trace!("path prefix request");
                     self.send_status_update(scanning, request.done);
                 }
 
@@ -4543,6 +4545,7 @@ impl BackgroundScanner {
         )
         .await;
 
+        log::trace!("process scan request");
         self.send_status_update(scanning, request.done)
     }
 
@@ -4815,6 +4818,7 @@ impl BackgroundScanner {
     }
 
     fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
+        eprintln!("status update outer");
         send_status_update_inner(
             self.phase,
             self.state.clone(),
@@ -5016,6 +5020,7 @@ impl BackgroundScanner {
                     scans_running.fetch_sub(status_updates.len() as u32, atomic::Ordering::Release);
                     if status_updated {
                         let scanning = scans_running.load(atomic::Ordering::Acquire) > 0;
+                        log::trace!("scan dir");
                         send_status_update_inner(
                             phase,
                             task_state,
@@ -5564,6 +5569,7 @@ fn send_status_update_inner(
     scanning: bool,
     barrier: SmallVec<[barrier::Sender; 1]>,
 ) -> bool {
+    log::trace!("status update inner {scanning:?}");
     let mut state = state.lock();
     if state.changed_paths.is_empty() && scanning {
         return true;
