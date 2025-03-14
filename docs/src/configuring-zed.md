@@ -2509,15 +2509,15 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 **Options**
 
-1. Set the icon theme to the dark version
+1. Set the icon theme to dark mode
 
 ```json
 {
-  "mode": "Zed (Default)"
+  "mode": "dark"
 }
 ```
 
-2. Set the icon theme to light version
+2. Set the icon theme to light mode
 
 ```json
 {
