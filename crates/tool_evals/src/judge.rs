@@ -9,7 +9,8 @@ use std::{path::Path, sync::Arc};
 
 pub struct Judge {
     pub original_diff: Option<String>,
-    pub _original_message: Option<String>,
+    #[allow(dead_code)]
+    pub original_message: Option<String>,
     pub model: Arc<dyn LanguageModel>,
 }
 
@@ -35,7 +36,7 @@ impl Judge {
 
         Ok(Self {
             original_diff: original_diff.await?,
-            _original_message: original_message.await?,
+            original_message: original_message.await?,
             model,
         })
     }
