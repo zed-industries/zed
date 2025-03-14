@@ -16,7 +16,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{
     debugger::{
         breakpoint_store::{Breakpoint, BreakpointEditAction, BreakpointKind},
-        session::ThreadId,
+        session::{ThreadId, ThreadStatus},
     },
     FakeFs, Project,
 };
@@ -658,191 +658,220 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    unimplemented!("Hasn't been reimplemented after refactor");
-    //     init_test(cx);
+    init_test(cx);
 
-    //     let fs = FakeFs::new(executor.clone());
+    let fs = FakeFs::new(executor.clone());
 
-    //     fs.insert_tree(
-    //         "/project",
-    //         json!({
-    //             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-    //         }),
-    //     )
-    //     .await;
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
 
-    //     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-    //     let workspace = init_test_workspace(&project, cx).await;
-    //     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    //     let task = project.update(cx, |project, cx| {
-    //         project.start_debug_session(dap::test_config(None), cx)
-    //     });
+    let task = project.update(cx, |project, cx| {
+        project.start_debug_session(
+            dap::test_config(Some(dap::Capabilities {
+                supports_step_back: Some(true),
+                ..Default::default()
+            })),
+            cx,
+        )
+    });
 
-    //     let (session, client) = task.await.unwrap();
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    const THREAD_ID_NUM: u64 = 1;
 
-    //     client
-    //         .on_request::<Initialize, _>(move |_, _| {
-    //             Ok(dap::Capabilities {
-    //                 supports_step_back: Some(true),
-    //                 ..Default::default()
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<dap::requests::Threads, _>(move |_, _| {
+            Ok(dap::ThreadsResponse {
+                threads: vec![dap::Thread {
+                    id: THREAD_ID_NUM,
+                    name: "Thread 1".into(),
+                }],
+            })
+        })
+        .await;
 
-    //     client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
 
-    //     client
-    //         .on_request::<StackTrace, _>(move |_, _| {
-    //             Ok(dap::StackTraceResponse {
-    //                 stack_frames: Vec::default(),
-    //                 total_frames: None,
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
 
-    //     client
-    //         .on_request::<Next, _>(move |_, _| {
-    //             Err(ErrorResponse {
-    //                 error: Some(dap::Message {
-    //                     id: 1,
-    //                     format: "error".into(),
-    //                     variables: None,
-    //                     send_telemetry: None,
-    //                     show_user: None,
-    //                     url: None,
-    //                     url_label: None,
-    //                 }),
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<Next, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
+        .await;
 
-    //     client
-    //         .on_request::<StepOut, _>(move |_, _| {
-    //             Err(ErrorResponse {
-    //                 error: Some(dap::Message {
-    //                     id: 1,
-    //                     format: "error".into(),
-    //                     variables: None,
-    //                     send_telemetry: None,
-    //                     show_user: None,
-    //                     url: None,
-    //                     url_label: None,
-    //                 }),
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<StepOut, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
+        .await;
 
-    //     client
-    //         .on_request::<StepIn, _>(move |_, _| {
-    //             Err(ErrorResponse {
-    //                 error: Some(dap::Message {
-    //                     id: 1,
-    //                     format: "error".into(),
-    //                     variables: None,
-    //                     send_telemetry: None,
-    //                     show_user: None,
-    //                     url: None,
-    //                     url_label: None,
-    //                 }),
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<StepIn, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
+        .await;
 
-    //     client
-    //         .on_request::<StepBack, _>(move |_, _| {
-    //             Err(ErrorResponse {
-    //                 error: Some(dap::Message {
-    //                     id: 1,
-    //                     format: "error".into(),
-    //                     variables: None,
-    //                     send_telemetry: None,
-    //                     show_user: None,
-    //                     url: None,
-    //                     url_label: None,
-    //                 }),
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<StepBack, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
+        .await;
 
-    //     client
-    //         .on_request::<Continue, _>(move |_, _| {
-    //             Err(ErrorResponse {
-    //                 error: Some(dap::Message {
-    //                     id: 1,
-    //                     format: "error".into(),
-    //                     variables: None,
-    //                     send_telemetry: None,
-    //                     show_user: None,
-    //                     url: None,
-    //                     url_label: None,
-    //                 }),
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<Continue, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
+        .await;
 
-    //     client
-    //         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-    //             reason: dap::StoppedEventReason::Pause,
-    //             description: None,
-    //             thread_id: Some(1),
-    //             preserve_focus_hint: None,
-    //             text: None,
-    //             all_threads_stopped: None,
-    //             hit_breakpoint_ids: None,
-    //         }))
-    //         .await;
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
 
-    //     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-    //     cx.run_until_parked();
+    let running_state =
+        active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
+            item.mode()
+                .as_running()
+                .expect("Session should be running by this point")
+                .clone()
+        });
 
-    //     for operation in &[
-    //         "step_over",
-    //         "continue_thread",
-    //         "step_back",
-    //         "step_in",
-    //         "step_out",
-    //     ] {
-    //         active_debug_session_panel(workspace, cx).update(
-    //             cx,
-    //             |debug_panel_item, cx| match *operation {
-    //                 "step_over" => debug_panel_item.step_over(cx),
-    //                 "continue_thread" => debug_panel_item.continue_thread(cx),
-    //                 "step_back" => debug_panel_item.step_back(cx),
-    //                 "step_in" => debug_panel_item.step_in(cx),
-    //                 "step_out" => debug_panel_item.step_out(cx),
-    //                 _ => unreachable!(),
-    //             },
-    //         );
+    cx.run_until_parked();
+    let thread_id = ThreadId(1);
 
-    //         cx.run_until_parked();
+    for operation in &[
+        "step_over",
+        "continue_thread",
+        "step_back",
+        "step_in",
+        "step_out",
+    ] {
+        running_state.update(cx, |running_state, cx| match *operation {
+            "step_over" => running_state.step_over(cx),
+            "continue_thread" => running_state.continue_thread(cx),
+            "step_back" => running_state.step_back(cx),
+            "step_in" => running_state.step_in(cx),
+            "step_out" => running_state.step_out(cx),
+            _ => unreachable!(),
+        });
 
-    //         active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
-    //             assert_eq!(
-    //                 debug_panel_item.thread_state().read(cx).status,
-    //                 debugger_panel::ThreadStatus::Stopped,
-    //                 "Thread status not reset to Stopped after failed {}",
-    //                 operation
-    //             );
+        // Check that we step the thread status to the correct intermediate state
+        running_state.update(cx, |running_state, cx| {
+            assert_eq!(
+                running_state
+                    .thread_status(cx)
+                    .expect("There should be an active thread selected"),
+                match *operation {
+                    "continue_thread" => ThreadStatus::Running,
+                    _ => ThreadStatus::Stepping,
+                },
+                "Thread status was not set to correct intermediate state after {} request",
+                operation
+            );
+        });
 
-    //             // update state to running, so we can test it actually changes the status back to stopped
-    //             debug_panel_item
-    //                 .thread_state()
-    //                 .update(cx, |thread_state, cx| {
-    //                     thread_state.status = ThreadStatus::Running;
-    //                     cx.notify();
-    //                 });
-    //         });
-    //     }
+        cx.run_until_parked();
 
-    //     let shutdown_session = project.update(cx, |project, cx| {
-    //         project.dap_store().update(cx, |dap_store, cx| {
-    //             dap_store.shutdown_session(&session.read(cx).id(), cx)
-    //         })
-    //     });
+        running_state.update(cx, |running_state, cx| {
+            assert_eq!(
+                running_state
+                    .thread_status(cx)
+                    .expect("There should be an active thread selected"),
+                ThreadStatus::Stopped,
+                "Thread status not reset to Stopped after failed {}",
+                operation
+            );
 
-    //     shutdown_session.await.unwrap();
+            // update state to running, so we can test it actually changes the status back to stopped
+            running_state
+                .session()
+                .update(cx, |session, cx| session.continue_thread(thread_id, cx));
+        });
+    }
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
 }
 
 // #[gpui::test]

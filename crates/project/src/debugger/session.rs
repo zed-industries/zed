@@ -79,6 +79,7 @@ pub enum ThreadStatus {
     #[default]
     Running,
     Stopped,
+    Stepping,
     Exited,
     Ended,
 }
@@ -481,6 +482,11 @@ impl ThreadStates {
     fn continue_thread(&mut self, thread_id: ThreadId) {
         self.known_thread_states
             .insert(thread_id, ThreadStatus::Running);
+    }
+
+    fn process_step(&mut self, thread_id: ThreadId) {
+        self.known_thread_states
+            .insert(thread_id, ThreadStatus::Stepping);
     }
 
     fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {
@@ -1007,8 +1013,16 @@ impl Session {
                 "Attempted to send a DAP request that isn't supported: {:?}",
                 request
             );
-            return Task::ready(None);
+            let error = Err(anyhow::Error::msg(
+                "Couldn't complete request because it's not supported",
+            ));
+            return cx.spawn(|this, mut cx| async move {
+                this.update(&mut cx, |this, cx| process_result(this, error, cx))
+                    .log_err()
+                    .flatten()
+            });
         }
+
         let request = mode.request_dap(session_id, request, cx);
         cx.spawn(|this, mut cx| async move {
             let result = request.await;
@@ -1347,7 +1361,7 @@ impl Session {
             },
         };
 
-        self.thread_states.continue_thread(thread_id);
+        self.thread_states.process_step(thread_id);
         self.request(
             command,
             Self::on_step_response::<NextCommand>(thread_id),
@@ -1377,7 +1391,7 @@ impl Session {
             },
         };
 
-        self.thread_states.continue_thread(thread_id);
+        self.thread_states.process_step(thread_id);
         self.request(
             command,
             Self::on_step_response::<StepInCommand>(thread_id),
@@ -1407,7 +1421,7 @@ impl Session {
             },
         };
 
-        self.thread_states.continue_thread(thread_id);
+        self.thread_states.process_step(thread_id);
         self.request(
             command,
             Self::on_step_response::<StepOutCommand>(thread_id),
@@ -1437,7 +1451,7 @@ impl Session {
             },
         };
 
-        self.thread_states.continue_thread(thread_id);
+        self.thread_states.process_step(thread_id);
 
         self.request(
             command,

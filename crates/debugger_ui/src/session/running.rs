@@ -498,6 +498,12 @@ impl RunningState {
         self.thread_id
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn thread_status(&self, cx: &App) -> Option<ThreadStatus> {
+        self.thread_id
+            .map(|id| self.session().read(cx).thread_status(id))
+    }
+
     fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
