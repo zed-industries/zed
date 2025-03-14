@@ -5589,6 +5589,7 @@ async fn update_branches(
     repository: &mut LocalRepositoryEntry,
 ) -> Result<()> {
     let branches = repository.repo().branches().await?;
+    log::trace!("retrieved branches");
     let snapshot = state.lock().snapshot.snapshot.clone();
     let mut repository = snapshot
         .repository(repository.work_directory.path_key())
@@ -5604,11 +5605,20 @@ async fn update_branches(
     Ok(())
 }
 
+struct NoisyDrop;
+
+impl Drop for NoisyDrop {
+    fn drop(&mut self) {
+        log::trace!("dropped a noisydrop");
+    }
+}
+
 async fn do_git_status_update(
     job_state: Arc<Mutex<BackgroundScannerState>>,
     mut local_repository: LocalRepositoryEntry,
     tx: oneshot::Sender<()>,
 ) {
+    let _noisy = NoisyDrop;
     let repository_name = local_repository.work_directory.display_name();
     log::trace!("updating git branches for repo {repository_name}");
     update_branches(&job_state, &mut local_repository)

@@ -20,4 +20,6 @@ runs:
 
     - name: Run tests
       shell: bash -euxo pipefail {0}
-      run: cargo nextest run --workspace --no-fail-fast
+      env:
+        RUST_LOG: worktree=trace
+      run: cargo nextest run -p worktree --no-fail-fast
