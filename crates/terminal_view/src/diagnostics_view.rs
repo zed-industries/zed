@@ -7,7 +7,7 @@ use diagnostics::{IncludeWarnings, ToggleWarnings};
 use editor::{actions, Editor};
 use gpui::{
     list, AppContext, ClickEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    ListAlignment, ListState, Subscription, Task, WeakEntity,
+    ListAlignment, ListOffset, ListState, Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
 use language::{
@@ -21,8 +21,8 @@ use settings::Settings;
 use ui::{
     div, h_flex, px, v_flex, AnyElement, App, ButtonCommon, Clickable, Color, Context, Element,
     FluentBuilder, Icon, IconButton, IconButtonShape, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, LabelSize, List, ListHeader, ListItem, ParentElement, Render,
-    Styled, Toggleable, Tooltip, Window,
+    IntoElement, Label, LabelCommon, LabelSize, List, ListHeader, ListItem, ParentElement, Pixels,
+    Render, Styled, Toggleable, Tooltip, Window,
 };
 use util::ResultExt;
 use workspace::item::TabContentParams;
@@ -536,9 +536,29 @@ impl DiagnosticsView {
     }
 
     fn autoscroll(&mut self, cx: &mut Context<Self>) {
-        // FIXME: if the number of diagnostics per file are higher than the number of items we can display on the screen it doesn't work properly
         if let Some(selected_entry) = self.selected_entry() {
-            self.diagnostic_list.scroll_to_reveal_item(selected_entry.0);
+            let height = self
+                .diagnostic_list
+                .bounds_for_item(selected_entry.0)
+                .map(|bound| bound.size.height.0);
+            let items_nb = self
+                .diagnostic_groups
+                .get_index(selected_entry.0)
+                .map(|diag_group| diag_group.1.len());
+            match (height, items_nb) {
+                (Some(height), Some(items_nb)) if items_nb != 0 => {
+                    // Height of each item in the list
+                    let pixels = height / items_nb as f32;
+                    self.diagnostic_list.scroll_to(ListOffset {
+                        item_ix: selected_entry.0,
+                        offset_in_item: Pixels(selected_entry.1 as f32 * pixels),
+                    });
+                }
+                _ => {
+                    self.diagnostic_list.scroll_to_reveal_item(selected_entry.0);
+                }
+            }
+
             cx.notify();
         }
     }

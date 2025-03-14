@@ -303,7 +303,6 @@ impl ListState {
             .last_layout_bounds
             .map_or(px(0.), |bounds| bounds.size.height);
         let padding = state.last_padding.unwrap_or_default();
-
         if ix <= scroll_top.item_ix {
             scroll_top.item_ix = ix;
             scroll_top.offset_in_item = px(0.);
