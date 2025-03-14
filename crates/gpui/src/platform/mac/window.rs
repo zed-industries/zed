@@ -109,6 +109,10 @@ unsafe fn build_classes() {
             handle_key_down as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(keyUp:),
+            handle_key_up as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(mouseDown:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
@@ -1217,6 +1221,22 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
 
 extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
     handle_key_event(this, native_event, false);
+}
+
+extern "C" fn handle_key_up(this: &Object, _: Sel, native_event: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+
+    let window_height = lock.content_size().height;
+    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
+
+    if let Some(event) = event {
+        if let Some(mut callback) = lock.event_callback.take() {
+            drop(lock);
+            callback(event);
+            window_state.as_ref().lock().event_callback = Some(callback);
+        }
+    }
 }
 
 // Things to test if you're modifying this method:
