@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::ui::InstructionListItem;
 use anyhow::{anyhow, Context as _, Result};
+use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
@@ -383,6 +384,7 @@ impl BedrockModel {
         // Configure AWS based on the authentication method
         Ok(async move {
             let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+                .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
                 .http_client(http_client)
                 .region(Region::new(region))
                 .timeout_config(TimeoutConfig::disabled());
