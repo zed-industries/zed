@@ -2618,7 +2618,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
 
         let editor_edited = Arc::new(AtomicBool::new(false));
@@ -2830,7 +2830,6 @@ pub mod tests {
                     "main hint #5".to_string(),
                     "other hint(edited) #0".to_string(),
                     "other hint(edited) #1".to_string(),
-                    "other hint(edited) #2".to_string(),
                 ];
                 assert_eq!(
                     expected_hints,
@@ -2921,7 +2920,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();

@@ -370,7 +370,6 @@ impl GitBlame {
                     async move {
                         let Some(Blame {
                             entries,
-                            permalinks,
                             messages,
                             remote_url,
                         }) = blame.await?
@@ -379,13 +378,8 @@ impl GitBlame {
                         };
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
-                        let commit_details = parse_commit_messages(
-                            messages,
-                            remote_url,
-                            &permalinks,
-                            provider_registry,
-                        )
-                        .await;
+                        let commit_details =
+                            parse_commit_messages(messages, remote_url, provider_registry).await;
 
                         anyhow::Ok(Some((entries, commit_details)))
                     }
@@ -477,7 +471,6 @@ fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree
 async fn parse_commit_messages(
     messages: impl IntoIterator<Item = (Oid, String)>,
     remote_url: Option<String>,
-    deprecated_permalinks: &HashMap<Oid, Url>,
     provider_registry: Arc<GitHostingProviderRegistry>,
 ) -> HashMap<Oid, ParsedCommitMessage> {
     let mut commit_details = HashMap::default();
@@ -495,11 +488,7 @@ async fn parse_commit_messages(
                 },
             ))
         } else {
-            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
-            // now do the parsing. This is here for backwards compatibility, so that
-            // when an old peer sends a client no `parsed_remote_url` but `deprecated_permalinks`,
-            // we fall back to that.
-            deprecated_permalinks.get(&oid).cloned()
+            None
         };
 
         let remote = parsed_remote_url

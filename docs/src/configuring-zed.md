@@ -917,7 +917,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ## Ensure Final Newline On Save
 
-- Description: Whether or not to ensure there's a single newline at the end of a buffer when saving it.
+- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
 
@@ -969,6 +969,16 @@ While other options may be changed at a runtime and should be placed under `sett
   }
 }
 ```
+
+## LSP Highlight Debounce
+
+- Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
+**Options**
+
+`integer` values representing milliseconds
 
 ## Format On Save
 
@@ -1528,6 +1538,78 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 **Options**
 
 `boolean` values
+
+## Icon Theme
+
+- Description: The icon theme setting can be specified in two forms - either as the name of an icon theme or as an object containing the `mode`, `dark`, and `light` icon themes for files/folders inside Zed.
+- Setting: `icon_theme`
+- Default: `Zed (Default)`
+
+### Icon Theme Object
+
+- Description: Specify the icon theme using an object that includes the `mode`, `dark`, and `light`.
+- Setting: `icon_theme`
+- Default:
+
+```json
+"icon_theme": {
+  "mode": "system",
+  "dark": "Zed (Default)",
+  "light": "Zed (Default)"
+},
+```
+
+### Mode
+
+- Description: Specify the icon theme mode.
+- Setting: `mode`
+- Default: `system`
+
+**Options**
+
+1. Set the icon theme to dark mode
+
+```json
+{
+  "mode": "dark"
+}
+```
+
+2. Set the icon theme to light mode
+
+```json
+{
+  "mode": "light"
+}
+```
+
+3. Set the icon theme to system mode
+
+```json
+{
+  "mode": "system"
+}
+```
+
+### Dark
+
+- Description: The name of the dark icon theme.
+- Setting: `dark`
+- Default: `Zed (Default)`
+
+**Options**
+
+Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+
+### Light
+
+- Description: The name of the light icon theme.
+- Setting: `light`
+- Default: `Zed (Default)`
+
+**Options**
+
+Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
 
 ## Inlay hints
 

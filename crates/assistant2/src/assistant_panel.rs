@@ -11,7 +11,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
 use client::zed_urls;
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
     prelude::*, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
@@ -38,7 +38,10 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{InlineAssistant, NewPromptEditor, NewThread, OpenConfiguration, OpenHistory};
+use crate::{
+    InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown, OpenConfiguration,
+    OpenHistory,
+};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -92,7 +95,6 @@ pub struct AssistantPanel {
     context_editor: Option<Entity<ContextEditor>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
-    tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
     history_store: Entity<HistoryStore>,
@@ -113,7 +115,7 @@ impl AssistantPanel {
             log::info!("[assistant2-debug] initializing ThreadStore");
             let thread_store = workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
-                ThreadStore::new(project, tools.clone(), cx)
+                ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
             })??;
             log::info!("[assistant2-debug] finished initializing ThreadStore");
 
@@ -133,7 +135,7 @@ impl AssistantPanel {
             log::info!("[assistant2-debug] finished initializing ContextStore");
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                cx.new(|cx| Self::new(workspace, thread_store, context_store, tools, window, cx))
+                cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
             })
         })
     }
@@ -142,7 +144,6 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
-        tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -154,10 +155,14 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(workspace.clone()));
+
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                message_editor_context_store.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
                 window,
@@ -168,30 +173,30 @@ impl AssistantPanel {
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
+        let thread = cx.new(|cx| {
+            ActiveThread::new(
+                thread.clone(),
+                thread_store.clone(),
+                language_registry.clone(),
+                message_editor_context_store.clone(),
+                window,
+                cx,
+            )
+        });
+
         Self {
             active_view: ActiveView::Thread,
-            workspace: workspace.clone(),
-            project,
+            workspace,
+            project: project.clone(),
             fs: fs.clone(),
-            language_registry: language_registry.clone(),
+            language_registry,
             thread_store: thread_store.clone(),
-            thread: cx.new(|cx| {
-                ActiveThread::new(
-                    thread.clone(),
-                    thread_store.clone(),
-                    workspace,
-                    language_registry,
-                    tools.clone(),
-                    window,
-                    cx,
-                )
-            }),
+            thread,
             message_editor,
             context_store,
             context_editor: None,
             configuration: None,
             configuration_subscription: None,
-            tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
             )
@@ -242,13 +247,16 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.create_thread(cx));
 
         self.active_view = ActiveView::Thread;
+
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(self.workspace.clone()));
+
         self.thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
-                self.workspace.clone(),
                 self.language_registry.clone(),
-                self.tools.clone(),
+                message_editor_context_store.clone(),
                 window,
                 cx,
             )
@@ -257,6 +265,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                message_editor_context_store,
                 self.thread_store.downgrade(),
                 thread,
                 window,
@@ -377,13 +386,14 @@ impl AssistantPanel {
             let thread = open_thread_task.await?;
             this.update_in(&mut cx, |this, window, cx| {
                 this.active_view = ActiveView::Thread;
+                let message_editor_context_store =
+                    cx.new(|_cx| crate::context_store::ContextStore::new(this.workspace.clone()));
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
-                        this.workspace.clone(),
                         this.language_registry.clone(),
-                        this.tools.clone(),
+                        message_editor_context_store.clone(),
                         window,
                         cx,
                     )
@@ -392,6 +402,7 @@ impl AssistantPanel {
                     MessageEditor::new(
                         this.fs.clone(),
                         this.workspace.clone(),
+                        message_editor_context_store,
                         this.thread_store.downgrade(),
                         thread,
                         window,
@@ -416,6 +427,65 @@ impl AssistantPanel {
 
             configuration.focus_handle(cx).focus(window);
         }
+    }
+
+    pub(crate) fn open_active_thread_as_markdown(
+        &mut self,
+        _: &OpenActiveThreadAsMarkdown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self
+            .workspace
+            .upgrade()
+            .ok_or_else(|| anyhow!("workspace dropped"))
+            .log_err()
+        else {
+            return;
+        };
+
+        let markdown_language_task = workspace
+            .read(cx)
+            .app_state()
+            .languages
+            .language_for_name("Markdown");
+        let thread = self.active_thread(cx);
+        cx.spawn_in(window, |_this, mut cx| async move {
+            let markdown_language = markdown_language_task.await?;
+
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                let thread = thread.read(cx);
+                let markdown = thread.to_markdown()?;
+                let thread_summary = thread
+                    .summary()
+                    .map(|summary| summary.to_string())
+                    .unwrap_or_else(|| "Thread".to_string());
+
+                let project = workspace.project().clone();
+                let buffer = project.update(cx, |project, cx| {
+                    project.create_local_buffer(&markdown, Some(markdown_language), cx)
+                });
+                let buffer = cx.new(|cx| {
+                    MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
+                });
+
+                workspace.add_item_to_active_pane(
+                    Box::new(cx.new(|cx| {
+                        let mut editor =
+                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                        editor.set_breadcrumb_header(thread_summary);
+                        editor
+                    })),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+
+                anyhow::Ok(())
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_assistant_configuration_event(
@@ -1018,17 +1088,13 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
             }))
+            .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_prompt_library))
             .child(self.render_toolbar(cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .child(
-                        h_flex()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(self.message_editor.clone()),
-                    )
+                    .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::PromptEditor => parent.children(self.context_editor.clone()),

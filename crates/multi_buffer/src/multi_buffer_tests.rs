@@ -29,7 +29,8 @@ fn test_empty_singleton(cx: &mut App) {
             buffer_id: Some(buffer_id),
             buffer_row: Some(0),
             multibuffer_row: Some(MultiBufferRow(0)),
-            diff_status: None
+            diff_status: None,
+            expand_info: None,
         }]
     );
 }
@@ -2118,6 +2119,7 @@ struct ReferenceRegion {
     range: Range<usize>,
     buffer_start: Option<Point>,
     status: Option<DiffHunkStatus>,
+    excerpt_id: Option<ExcerptId>,
 }
 
 impl ReferenceMultibuffer {
@@ -2274,6 +2276,7 @@ impl ReferenceMultibuffer {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: None,
+                        excerpt_id: Some(excerpt.id),
                     });
 
                     // Add the deleted text for the hunk.
@@ -2293,6 +2296,7 @@ impl ReferenceMultibuffer {
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
                             status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
+                            excerpt_id: Some(excerpt.id),
                         });
                     }
 
@@ -2308,6 +2312,7 @@ impl ReferenceMultibuffer {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: Some(DiffHunkStatus::added(hunk.secondary_status)),
+                        excerpt_id: Some(excerpt.id),
                     });
                     offset = hunk_range.end;
                 }
@@ -2322,6 +2327,7 @@ impl ReferenceMultibuffer {
                 range: len..text.len(),
                 buffer_start: Some(buffer.offset_to_point(offset)),
                 status: None,
+                excerpt_id: Some(excerpt.id),
             });
         }
 
@@ -2332,6 +2338,7 @@ impl ReferenceMultibuffer {
                 range: 0..1,
                 buffer_start: Some(Point::new(0, 0)),
                 status: None,
+                excerpt_id: None,
             });
         } else {
             text.pop();
@@ -2345,12 +2352,58 @@ impl ReferenceMultibuffer {
             .map(|line| {
                 let row_info = regions
                     .iter()
-                    .find(|region| region.range.contains(&ix))
-                    .map_or(RowInfo::default(), |region| {
+                    .position(|region| region.range.contains(&ix))
+                    .map_or(RowInfo::default(), |region_ix| {
+                        let region = &regions[region_ix];
                         let buffer_row = region.buffer_start.map(|start_point| {
                             start_point.row
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
+                        let is_excerpt_start = region_ix == 0
+                            || &regions[region_ix - 1].excerpt_id != &region.excerpt_id
+                            || regions[region_ix - 1].range.is_empty();
+                        let mut is_excerpt_end = region_ix == regions.len() - 1
+                            || &regions[region_ix + 1].excerpt_id != &region.excerpt_id;
+                        let is_start = !text[region.range.start..ix].contains('\n');
+                        let mut is_end = if region.range.end > text.len() {
+                            !text[ix..].contains('\n')
+                        } else {
+                            text[ix..region.range.end.min(text.len())]
+                                .matches('\n')
+                                .count()
+                                == 1
+                        };
+                        if region_ix < regions.len() - 1
+                            && !text[ix..].contains("\n")
+                            && region.status == Some(DiffHunkStatus::added_none())
+                            && regions[region_ix + 1].excerpt_id == region.excerpt_id
+                            && regions[region_ix + 1].range.start == text.len()
+                        {
+                            is_end = true;
+                            is_excerpt_end = true;
+                        }
+                        let mut expand_direction = None;
+                        if let Some(buffer) = &self
+                            .excerpts
+                            .iter()
+                            .find(|e| e.id == region.excerpt_id.unwrap())
+                            .map(|e| e.buffer.clone())
+                        {
+                            let needs_expand_up =
+                                is_excerpt_start && is_start && buffer_row.unwrap() > 0;
+                            let needs_expand_down = is_excerpt_end
+                                && is_end
+                                && buffer.read(cx).max_point().row > buffer_row.unwrap();
+                            expand_direction = if needs_expand_up && needs_expand_down {
+                                Some(ExpandExcerptDirection::UpAndDown)
+                            } else if needs_expand_up {
+                                Some(ExpandExcerptDirection::Up)
+                            } else if needs_expand_down {
+                                Some(ExpandExcerptDirection::Down)
+                            } else {
+                                None
+                            };
+                        }
                         RowInfo {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
@@ -2358,6 +2411,12 @@ impl ReferenceMultibuffer {
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
+                            expand_info: expand_direction.zip(region.excerpt_id).map(
+                                |(direction, excerpt_id)| ExpandInfo {
+                                    direction,
+                                    excerpt_id,
+                                },
+                            ),
                         }
                     });
                 ix += line.len() + 1;
@@ -3121,6 +3180,100 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     assert_eq!(point_2, Point::new(3, 0));
 }
 
+#[gpui::test]
+fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
+    let base_text_1 = "one\ntwo".to_owned();
+    let text_1 = "one\n".to_owned();
+
+    let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
+    let diff_1 = cx.new(|cx| BufferDiff::new_with_base_text(&base_text_1, &buffer_1, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer_1.clone(), cx);
+        multibuffer.add_diff(diff_1.clone(), cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            - two
+            "
+        ),
+    );
+
+    assert_eq!(snapshot.max_point(), Point::new(2, 0));
+    assert_eq!(snapshot.len(), 8);
+
+    assert_eq!(
+        snapshot
+            .dimensions_from_points::<Point>([Point::new(2, 0)])
+            .collect::<Vec<_>>(),
+        vec![Point::new(2, 0)]
+    );
+
+    let (_, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    assert_eq!(translated_offset, "one\n".len());
+    let (_, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
+    assert_eq!(translated_point, Point::new(1, 0));
+
+    // The same, for an excerpt that's not at the end of the multibuffer.
+
+    let text_2 = "foo\n".to_owned();
+    let buffer_2 = cx.new(|cx| Buffer::local(&text_2, cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(1, 0),
+                primary: None,
+            }],
+            cx,
+        );
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            - two
+
+              foo
+            "
+        ),
+    );
+
+    assert_eq!(
+        snapshot
+            .dimensions_from_points::<Point>([Point::new(2, 0)])
+            .collect::<Vec<_>>(),
+        vec![Point::new(2, 0)]
+    );
+
+    let buffer_1_id = buffer_1.read_with(cx, |buffer_1, _| buffer_1.remote_id());
+    let (buffer, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
+    assert_eq!(buffer.remote_id(), buffer_1_id);
+    assert_eq!(translated_offset, "one\n".len());
+    let (buffer, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
+    assert_eq!(buffer.remote_id(), buffer_1_id);
+    assert_eq!(translated_point, Point::new(1, 0));
+}
+
 fn format_diff(
     text: &str,
     row_infos: &Vec<RowInfo>,
@@ -3377,6 +3530,13 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
                 }
             }
         }
+    }
+
+    if let Some((buffer, offset)) = snapshot.point_to_buffer_offset(snapshot.max_point()) {
+        assert!(offset <= buffer.len());
+    }
+    if let Some((buffer, point, _)) = snapshot.point_to_buffer_point(snapshot.max_point()) {
+        assert!(point <= buffer.max_point());
     }
 }
 

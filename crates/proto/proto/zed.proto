@@ -1,4 +1,3 @@
-
 syntax = "proto3";
 package zed.messages;
 
@@ -333,9 +332,21 @@ message Envelope {
         ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
 
         RemoteMessageResponse remote_message_response = 311;
+
         GitGetBranches git_get_branches = 312;
         GitCreateBranch git_create_branch = 313;
-        GitChangeBranch git_change_branch = 314; // current max
+        GitChangeBranch git_change_branch = 314;
+
+        CheckForPushedCommits check_for_pushed_commits = 315;
+        CheckForPushedCommitsResponse check_for_pushed_commits_response = 316;
+
+        AskPassRequest ask_pass_request = 317;
+        AskPassResponse ask_pass_response = 318;
+
+        GitDiff git_diff = 319;
+        GitDiffResponse git_diff_response = 320;
+
+        GitInit git_init = 321; // current max
     }
 
     reserved 87 to 88;
@@ -989,6 +1000,16 @@ message Completion {
     uint64 server_id = 4;
     bytes lsp_completion = 5;
     bool resolved = 6;
+    Source source = 7;
+    optional bytes lsp_defaults = 8;
+    optional Anchor buffer_word_start = 9;
+    optional Anchor buffer_word_end = 10;
+
+    enum Source {
+        Lsp = 0;
+        Custom = 1;
+        BufferWord = 2;
+    }
 }
 
 message GetCodeActions {
@@ -1276,6 +1297,11 @@ message CodeAction {
     Anchor start = 2;
     Anchor end = 3;
     bytes lsp_action = 4;
+    Kind kind = 5;
+    enum Kind {
+        Action = 0;
+        Command = 1;
+    }
 }
 
 message ProjectTransaction {
@@ -2300,8 +2326,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        repeated CommitPermalink permalinks = 3;
         optional string remote_url = 4;
+        reserved 3;
     }
 
     optional BlameResponse blame_response = 5;
@@ -2815,6 +2841,7 @@ message Push {
     string remote_name = 4;
     string branch_name = 5;
     optional PushOptions options = 6;
+    uint64 askpass_id = 7;
 
     enum PushOptions {
         SET_UPSTREAM = 0;
@@ -2826,6 +2853,7 @@ message Fetch {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
 }
 
 message GetRemotes {
@@ -2849,11 +2877,24 @@ message Pull {
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
+    uint64 askpass_id = 6;
 }
 
 message RemoteMessageResponse {
     string stdout = 1;
     string stderr = 2;
+}
+
+message AskPassRequest {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    uint64 askpass_id = 4;
+    string prompt = 5;
+}
+
+message AskPassResponse {
+    string response = 1;
 }
 
 message GitGetBranches {
@@ -2874,4 +2915,36 @@ message GitChangeBranch {
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
     string branch_name = 4;
+}
+
+message CheckForPushedCommits {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message CheckForPushedCommitsResponse {
+  repeated string pushed_to = 1;
+}
+
+message GitDiff {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    DiffType diff_type = 4;
+
+    enum DiffType {
+        HEAD_TO_WORKTREE = 0;
+        HEAD_TO_INDEX = 1;
+    }
+}
+
+message GitDiffResponse {
+    string diff = 1;
+}
+
+message GitInit {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string fallback_branch_name = 3;
 }
