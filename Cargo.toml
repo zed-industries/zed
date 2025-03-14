@@ -88,6 +88,7 @@ members = [
     "crates/livekit_client",
     "crates/livekit_client_macos",
     "crates/lmstudio",
+    "crates/logger",
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
@@ -291,6 +292,7 @@ livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 livekit_client_macos = { path = "crates/livekit_client_macos" }
 lmstudio = { path = "crates/lmstudio" }
+logger = { path = "crates/logger" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
