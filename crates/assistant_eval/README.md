@@ -71,3 +71,7 @@ cargo run -p assistant_eval -- --all
 ## Evaluation Data Structure
 
 Each evaluation should be placed in the `evaluation_data` directory with the following structure:
+
+* `prompt.txt`: The user's prompt.
+* `original.diff`: The `git diff` of the change anticipated for this prompt.
+* `setup.json`: Information about the repo used for the evaluation.
