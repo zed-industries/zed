@@ -152,30 +152,6 @@ impl EditToolRequest {
         };
 
         let mut messages = messages.to_vec();
-
-        for (i, msg) in messages.iter().enumerate() {
-            println!("Message #{}: role={:?}", i, msg.role);
-            for (j, content) in msg.content.iter().enumerate() {
-                match content {
-                    MessageContent::Text(text) => {
-                        println!("  Content #{}: TEXT = {}", j, text);
-                    }
-                    MessageContent::ToolUse(tool_use) => {
-                        println!("  Content #{}: TOOL_USE = {:?}", j, tool_use);
-                    }
-                    MessageContent::ToolResult(tool_result) => {
-                        println!("  Content #{}: TOOL_RESULT = {:?}", j, tool_result);
-                    }
-                    MessageContent::Image(image) => {
-                        println!("  Content #{}: IMAGE = <image data>", j);
-                    }
-                }
-            }
-        }
-
-        let total_content_count = messages.iter().flat_map(|m| &m.content).count();
-        println!("Total before: {}", total_content_count);
-
         // Remove the last tool use (this run) to prevent an invalid request
         'outer: for message in messages.iter_mut().rev() {
             for (index, content) in message.content.iter().enumerate().rev() {
@@ -367,7 +343,7 @@ impl EditToolRequest {
         let errors = self.parser.errors();
 
         if errors.is_empty() && self.bad_searches.is_empty() {
-            let answer = answer.trim_end().to_string().into();
+            let answer = answer.trim_end().to_string();
             Ok(ToolResult::new(answer).with_buffers(self.changed_buffers))
         } else {
             if !self.bad_searches.is_empty() {
