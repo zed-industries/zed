@@ -92,8 +92,6 @@ extern "C" {
 
 #[ctor]
 unsafe fn build_classes() {
-    let _: () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
-
     WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
     PANEL_CLASS = build_window_class("GPUIPanel", class!(NSPanel));
     VIEW_CLASS = {
@@ -513,6 +511,8 @@ impl MacWindow {
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
+
+            let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
 
             let mut style_mask;
             if let Some(titlebar) = titlebar.as_ref() {

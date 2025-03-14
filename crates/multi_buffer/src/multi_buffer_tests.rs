@@ -29,7 +29,8 @@ fn test_empty_singleton(cx: &mut App) {
             buffer_id: Some(buffer_id),
             buffer_row: Some(0),
             multibuffer_row: Some(MultiBufferRow(0)),
-            diff_status: None
+            diff_status: None,
+            expand_info: None,
         }]
     );
 }
@@ -2118,6 +2119,7 @@ struct ReferenceRegion {
     range: Range<usize>,
     buffer_start: Option<Point>,
     status: Option<DiffHunkStatus>,
+    excerpt_id: Option<ExcerptId>,
 }
 
 impl ReferenceMultibuffer {
@@ -2274,6 +2276,7 @@ impl ReferenceMultibuffer {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: None,
+                        excerpt_id: Some(excerpt.id),
                     });
 
                     // Add the deleted text for the hunk.
@@ -2293,6 +2296,7 @@ impl ReferenceMultibuffer {
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
                             status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
+                            excerpt_id: Some(excerpt.id),
                         });
                     }
 
@@ -2308,6 +2312,7 @@ impl ReferenceMultibuffer {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: Some(DiffHunkStatus::added(hunk.secondary_status)),
+                        excerpt_id: Some(excerpt.id),
                     });
                     offset = hunk_range.end;
                 }
@@ -2322,6 +2327,7 @@ impl ReferenceMultibuffer {
                 range: len..text.len(),
                 buffer_start: Some(buffer.offset_to_point(offset)),
                 status: None,
+                excerpt_id: Some(excerpt.id),
             });
         }
 
@@ -2332,6 +2338,7 @@ impl ReferenceMultibuffer {
                 range: 0..1,
                 buffer_start: Some(Point::new(0, 0)),
                 status: None,
+                excerpt_id: None,
             });
         } else {
             text.pop();
@@ -2345,12 +2352,58 @@ impl ReferenceMultibuffer {
             .map(|line| {
                 let row_info = regions
                     .iter()
-                    .find(|region| region.range.contains(&ix))
-                    .map_or(RowInfo::default(), |region| {
+                    .position(|region| region.range.contains(&ix))
+                    .map_or(RowInfo::default(), |region_ix| {
+                        let region = &regions[region_ix];
                         let buffer_row = region.buffer_start.map(|start_point| {
                             start_point.row
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
+                        let is_excerpt_start = region_ix == 0
+                            || &regions[region_ix - 1].excerpt_id != &region.excerpt_id
+                            || regions[region_ix - 1].range.is_empty();
+                        let mut is_excerpt_end = region_ix == regions.len() - 1
+                            || &regions[region_ix + 1].excerpt_id != &region.excerpt_id;
+                        let is_start = !text[region.range.start..ix].contains('\n');
+                        let mut is_end = if region.range.end > text.len() {
+                            !text[ix..].contains('\n')
+                        } else {
+                            text[ix..region.range.end.min(text.len())]
+                                .matches('\n')
+                                .count()
+                                == 1
+                        };
+                        if region_ix < regions.len() - 1
+                            && !text[ix..].contains("\n")
+                            && region.status == Some(DiffHunkStatus::added_none())
+                            && regions[region_ix + 1].excerpt_id == region.excerpt_id
+                            && regions[region_ix + 1].range.start == text.len()
+                        {
+                            is_end = true;
+                            is_excerpt_end = true;
+                        }
+                        let mut expand_direction = None;
+                        if let Some(buffer) = &self
+                            .excerpts
+                            .iter()
+                            .find(|e| e.id == region.excerpt_id.unwrap())
+                            .map(|e| e.buffer.clone())
+                        {
+                            let needs_expand_up =
+                                is_excerpt_start && is_start && buffer_row.unwrap() > 0;
+                            let needs_expand_down = is_excerpt_end
+                                && is_end
+                                && buffer.read(cx).max_point().row > buffer_row.unwrap();
+                            expand_direction = if needs_expand_up && needs_expand_down {
+                                Some(ExpandExcerptDirection::UpAndDown)
+                            } else if needs_expand_up {
+                                Some(ExpandExcerptDirection::Up)
+                            } else if needs_expand_down {
+                                Some(ExpandExcerptDirection::Down)
+                            } else {
+                                None
+                            };
+                        }
                         RowInfo {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
@@ -2358,6 +2411,12 @@ impl ReferenceMultibuffer {
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
+                            expand_info: expand_direction.zip(region.excerpt_id).map(
+                                |(direction, excerpt_id)| ExpandInfo {
+                                    direction,
+                                    excerpt_id,
+                                },
+                            ),
                         }
                     });
                 ix += line.len() + 1;

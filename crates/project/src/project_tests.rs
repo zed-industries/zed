@@ -2825,7 +2825,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
@@ -2851,7 +2851,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
@@ -2919,7 +2919,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
 }

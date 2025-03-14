@@ -106,7 +106,7 @@ use language::{
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
     Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
     EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -196,7 +196,6 @@ use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
-pub const MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT: u32 = 1;
 pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -1092,7 +1091,6 @@ impl Editor {
             EditorMode::SingleLine { auto_width: false },
             buffer,
             None,
-            false,
             window,
             cx,
         )
@@ -1101,7 +1099,7 @@ impl Editor {
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, None, false, window, cx)
+        Self::new(EditorMode::Full, buffer, None, window, cx)
     }
 
     pub fn auto_width(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -1111,7 +1109,6 @@ impl Editor {
             EditorMode::SingleLine { auto_width: true },
             buffer,
             None,
-            false,
             window,
             cx,
         )
@@ -1124,7 +1121,6 @@ impl Editor {
             EditorMode::AutoHeight { max_lines },
             buffer,
             None,
-            false,
             window,
             cx,
         )
@@ -1137,33 +1133,23 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, project, false, window, cx)
+        Self::new(EditorMode::Full, buffer, project, window, cx)
     }
 
     pub fn for_multibuffer(
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
-        show_excerpt_controls: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(
-            EditorMode::Full,
-            buffer,
-            project,
-            show_excerpt_controls,
-            window,
-            cx,
-        )
+        Self::new(EditorMode::Full, buffer, project, window, cx)
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let show_excerpt_controls = self.display_map.read(cx).show_excerpt_controls();
         let mut clone = Self::new(
             self.mode,
             self.buffer.clone(),
             self.project.clone(),
-            show_excerpt_controls,
             window,
             cx,
         );
@@ -1183,7 +1169,6 @@ impl Editor {
         mode: EditorMode,
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
-        show_excerpt_controls: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1228,10 +1213,8 @@ impl Editor {
                 style.font(),
                 font_size,
                 None,
-                show_excerpt_controls,
                 FILE_HEADER_HEIGHT,
                 MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-                MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT,
                 fold_placeholder,
                 cx,
             )
@@ -3994,20 +3977,34 @@ impl Editor {
         }))
     }
 
+    pub fn show_word_completions(
+        &mut self,
+        _: &ShowWordCompletions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_completions_menu(true, None, window, cx);
+    }
+
     pub fn show_completions(
         &mut self,
         options: &ShowCompletions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_completions_menu(false, options.trigger.as_deref(), window, cx);
+    }
+
+    fn open_completions_menu(
+        &mut self,
+        ignore_completion_provider: bool,
+        trigger: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending_rename.is_some() {
             return;
         }
-
-        let Some(provider) = self.completion_provider.as_ref() else {
-            return;
-        };
-
         if !self.snippet_stack.is_empty() && self.context_menu.borrow().as_ref().is_some() {
             return;
         }
@@ -4029,14 +4026,14 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
 
-        let trigger_kind = match &options.trigger {
+        let trigger_kind = match trigger {
             Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
                 CompletionTriggerKind::TRIGGER_CHARACTER
             }
             _ => CompletionTriggerKind::INVOKED,
         };
         let completion_context = CompletionContext {
-            trigger_character: options.trigger.as_ref().and_then(|trigger| {
+            trigger_character: trigger.and_then(|trigger| {
                 if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
                     Some(String::from(trigger))
                 } else {
@@ -4045,8 +4042,7 @@ impl Editor {
             }),
             trigger_kind,
         };
-        let completions =
-            provider.completions(&buffer, buffer_position, completion_context, window, cx);
+
         let (old_range, word_kind) = buffer_snapshot.surrounding_word(buffer_position);
         let (old_range, word_to_exclude) = if word_kind == Some(CharKind::Word) {
             let word_to_exclude = buffer_snapshot
@@ -4084,15 +4080,49 @@ impl Editor {
         );
         let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
             ..buffer_snapshot.point_to_offset(max_word_search);
-        let words = match completion_settings.words {
-            WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
-            WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => {
-                cx.background_spawn(async move {
-                    buffer_snapshot.words_in_range(None, word_search_range)
-                })
+
+        let provider = self
+            .completion_provider
+            .as_ref()
+            .filter(|_| !ignore_completion_provider);
+        let skip_digits = query
+            .as_ref()
+            .map_or(true, |query| !query.chars().any(|c| c.is_digit(10)));
+
+        let (mut words, provided_completions) = match provider {
+            Some(provider) => {
+                let completions =
+                    provider.completions(&buffer, buffer_position, completion_context, window, cx);
+
+                let words = match completion_settings.words {
+                    WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
+                    WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => cx
+                        .background_spawn(async move {
+                            buffer_snapshot.words_in_range(WordsQuery {
+                                fuzzy_contents: None,
+                                range: word_search_range,
+                                skip_digits,
+                            })
+                        }),
+                };
+
+                (words, completions)
             }
+            None => (
+                cx.background_spawn(async move {
+                    buffer_snapshot.words_in_range(WordsQuery {
+                        fuzzy_contents: None,
+                        range: word_search_range,
+                        skip_digits,
+                    })
+                }),
+                Task::ready(Ok(None)),
+            ),
         };
-        let sort_completions = provider.sort_completions();
+
+        let sort_completions = provider
+            .as_ref()
+            .map_or(true, |provider| provider.sort_completions());
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_in(window, |editor, mut cx| {
@@ -4100,54 +4130,33 @@ impl Editor {
                 editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
-                let mut completions = completions.await.log_err().unwrap_or_default();
 
-                match completion_settings.words {
-                    WordsCompletionMode::Enabled => {
-                        let mut words = words.await;
-                        if let Some(word_to_exclude) = &word_to_exclude {
-                            words.remove(word_to_exclude);
-                        }
-                        for lsp_completion in &completions {
-                            words.remove(&lsp_completion.new_text);
-                        }
-                        completions.extend(words.into_iter().map(|(word, word_range)| {
-                            Completion {
-                                old_range: old_range.clone(),
-                                new_text: word.clone(),
-                                label: CodeLabel::plain(word, None),
-                                documentation: None,
-                                source: CompletionSource::BufferWord {
-                                    word_range,
-                                    resolved: false,
-                                },
-                                confirm: None,
-                            }
-                        }));
+                let mut completions = Vec::new();
+                if let Some(provided_completions) = provided_completions.await.log_err().flatten() {
+                    completions.extend(provided_completions);
+                    if completion_settings.words == WordsCompletionMode::Fallback {
+                        words = Task::ready(HashMap::default());
                     }
-                    WordsCompletionMode::Fallback => {
-                        if completions.is_empty() {
-                            completions.extend(
-                                words
-                                    .await
-                                    .into_iter()
-                                    .filter(|(word, _)| word_to_exclude.as_ref() != Some(word))
-                                    .map(|(word, word_range)| Completion {
-                                        old_range: old_range.clone(),
-                                        new_text: word.clone(),
-                                        label: CodeLabel::plain(word, None),
-                                        documentation: None,
-                                        source: CompletionSource::BufferWord {
-                                            word_range,
-                                            resolved: false,
-                                        },
-                                        confirm: None,
-                                    }),
-                            );
-                        }
-                    }
-                    WordsCompletionMode::Disabled => {}
                 }
+
+                let mut words = words.await;
+                if let Some(word_to_exclude) = &word_to_exclude {
+                    words.remove(word_to_exclude);
+                }
+                for lsp_completion in &completions {
+                    words.remove(&lsp_completion.new_text);
+                }
+                completions.extend(words.into_iter().map(|(word, word_range)| Completion {
+                    old_range: old_range.clone(),
+                    new_text: word.clone(),
+                    label: CodeLabel::plain(word, None),
+                    documentation: None,
+                    source: CompletionSource::BufferWord {
+                        word_range,
+                        resolved: false,
+                    },
+                    confirm: None,
+                }));
 
                 let menu = if completions.is_empty() {
                     None
@@ -4205,7 +4214,7 @@ impl Editor {
                     }
                 })?;
 
-                Ok::<_, anyhow::Error>(())
+                anyhow::Ok(())
             }
             .log_err()
         });
@@ -4693,8 +4702,8 @@ impl Editor {
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let project = workspace.project().clone();
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), true, window, cx));
+            let editor =
+                cx.new(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), window, cx));
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
@@ -12381,7 +12390,6 @@ impl Editor {
             Editor::for_multibuffer(
                 excerpt_buffer,
                 Some(workspace.project().clone()),
-                true,
                 window,
                 cx,
             )
@@ -12812,11 +12820,11 @@ impl Editor {
 
         cx.spawn_in(window, |_, mut cx| async move {
             let transaction = futures::select_biased! {
+                transaction = format.log_err().fuse() => transaction,
                 () = timeout => {
                     log::warn!("timed out waiting for formatting");
                     None
                 }
-                transaction = format.log_err().fuse() => transaction,
             };
 
             buffer
@@ -16931,7 +16939,7 @@ pub trait CompletionProvider {
         trigger: CompletionContext,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Vec<Completion>>>;
+    ) -> Task<Result<Option<Vec<Completion>>>>;
 
     fn resolve_completions(
         &self,
@@ -17171,15 +17179,25 @@ impl CompletionProvider for Entity<Project> {
         options: CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         self.update(cx, |project, cx| {
             let snippets = snippet_completions(project, buffer, buffer_position, cx);
             let project_completions = project.completions(buffer, buffer_position, options, cx);
             cx.background_spawn(async move {
-                let mut completions = project_completions.await?;
                 let snippets_completions = snippets.await?;
-                completions.extend(snippets_completions);
-                Ok(completions)
+                match project_completions.await? {
+                    Some(mut completions) => {
+                        completions.extend(snippets_completions);
+                        Ok(Some(completions))
+                    }
+                    None => {
+                        if snippets_completions.is_empty() {
+                            Ok(None)
+                        } else {
+                            Ok(Some(snippets_completions))
+                        }
+                    }
+                }
             })
         })
     }
