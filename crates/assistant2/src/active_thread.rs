@@ -1,6 +1,7 @@
-use std::sync::Arc;
-use std::time::Duration;
-
+use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
+use crate::thread_store::ThreadStore;
+use crate::tool_use::{ToolUse, ToolUseStatus};
+use crate::ui::ContextPill;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -14,14 +15,12 @@ use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use scripting_tool::{ScriptingTool, ScriptingToolInput};
 use settings::Settings as _;
+use std::sync::Arc;
+use std::time::Duration;
 use theme::ThemeSettings;
+use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
-
-use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
-use crate::thread_store::ThreadStore;
-use crate::tool_use::{ToolUse, ToolUseStatus};
-use crate::ui::ContextPill;
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
@@ -499,7 +498,7 @@ impl ActiveThread {
         };
 
         let thread = self.thread.read(cx);
-
+        // Get all the data we need from thread before we start using it in closures
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
         let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
@@ -654,28 +653,27 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => v_flex()
-                .id(("message-container", ix))
-                .child(message_content)
-                .map(|parent| {
-                    if tool_uses.is_empty() && scripting_tool_uses.is_empty() {
-                        return parent;
-                    }
-
-                    parent.child(
-                        v_flex()
-                            .children(
-                                tool_uses
-                                    .into_iter()
-                                    .map(|tool_use| self.render_tool_use(tool_use, cx)),
+            Role::Assistant => {
+                v_flex()
+                    .id(("message-container", ix))
+                    .child(message_content)
+                    .when(
+                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                        |parent| {
+                            parent.child(
+                                v_flex()
+                                    .children(
+                                        tool_uses
+                                            .into_iter()
+                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                    )
+                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                        self.render_scripting_tool_use(tool_use, cx)
+                                    })),
                             )
-                            .children(
-                                scripting_tool_uses
-                                    .into_iter()
-                                    .map(|tool_use| self.render_scripting_tool_use(tool_use, cx)),
-                            ),
+                        },
                     )
-                }),
+            }
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -694,12 +692,13 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
+        let lighter_border = cx.theme().colors().border.opacity(0.5);
+
         div().px_2p5().child(
             v_flex()
-                .gap_1()
                 .rounded_lg()
                 .border_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(lighter_border)
                 .child(
                     h_flex()
                         .justify_between()
@@ -714,7 +713,7 @@ impl ActiveThread {
                                 element.rounded_md()
                             }
                         })
-                        .border_color(cx.theme().colors().border)
+                        .border_color(lighter_border)
                         .child(
                             h_flex()
                                 .gap_1()
@@ -731,7 +730,11 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(Label::new(tool_use.name)),
+                                .child(
+                                    Label::new(tool_use.name)
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx),
+                                ),
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
@@ -768,39 +771,88 @@ impl ActiveThread {
                         return parent;
                     }
 
+                    let content_container = || v_flex().py_1().gap_0p5().px_2p5();
+
                     parent.child(
                         v_flex()
+                            .gap_1()
+                            .bg(cx.theme().colors().editor_background)
+                            .rounded_b_lg()
                             .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .py_1()
-                                    .px_2p5()
+                                content_container()
                                     .border_b_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .child(Label::new("Input:"))
-                                    .child(Label::new(
-                                        serde_json::to_string_pretty(&tool_use.input)
-                                            .unwrap_or_default(),
-                                    )),
+                                    .border_color(lighter_border)
+                                    .child(
+                                        Label::new("Input")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx),
+                                    )
+                                    .child(
+                                        Label::new(
+                                            serde_json::to_string_pretty(&tool_use.input)
+                                                .unwrap_or_default(),
+                                        )
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx),
+                                    ),
                             )
-                            .map(|parent| match tool_use.status {
-                                ToolUseStatus::Finished(output) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Result:"))
-                                        .child(Label::new(output)),
+                            .map(|container| match tool_use.status {
+                                ToolUseStatus::Finished(output) => container.child(
+                                    content_container()
+                                        .child(
+                                            Label::new("Result")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new(output)
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx),
+                                        ),
                                 ),
-                                ToolUseStatus::Error(err) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Error:"))
-                                        .child(Label::new(err)),
+                                ToolUseStatus::Running => container.child(
+                                    content_container().child(
+                                        h_flex()
+                                            .gap_1()
+                                            .pb_1()
+                                            .child(
+                                                Icon::new(IconName::ArrowCircle)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Accent)
+                                                    .with_animation(
+                                                        "arrow-circle",
+                                                        Animation::new(Duration::from_secs(2))
+                                                            .repeat(),
+                                                        |icon, delta| {
+                                                            icon.transform(Transformation::rotate(
+                                                                percentage(delta),
+                                                            ))
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                Label::new("Running…")
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Muted)
+                                                    .buffer_font(cx),
+                                            ),
+                                    ),
                                 ),
-                                ToolUseStatus::Pending | ToolUseStatus::Running => parent,
+                                ToolUseStatus::Error(err) => container.child(
+                                    content_container()
+                                        .child(
+                                            Label::new("Error")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new(err).size(LabelSize::Small).buffer_font(cx),
+                                        ),
+                                ),
+                                ToolUseStatus::Pending => container,
                             }),
                     )
                 }),

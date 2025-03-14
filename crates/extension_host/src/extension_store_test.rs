@@ -714,6 +714,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
+        .unwrap()
         .into_iter()
         .map(|c| c.label.text)
         .collect::<Vec<_>>();
