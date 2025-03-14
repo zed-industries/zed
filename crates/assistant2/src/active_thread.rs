@@ -811,6 +811,34 @@ impl ActiveThread {
                                                 .buffer_font(cx),
                                         ),
                                 ),
+                                ToolUseStatus::Running => container.child(
+                                    content_container().child(
+                                        h_flex()
+                                            .gap_1()
+                                            .pb_1()
+                                            .child(
+                                                Icon::new(IconName::ArrowCircle)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Accent)
+                                                    .with_animation(
+                                                        "arrow-circle",
+                                                        Animation::new(Duration::from_secs(2))
+                                                            .repeat(),
+                                                        |icon, delta| {
+                                                            icon.transform(Transformation::rotate(
+                                                                percentage(delta),
+                                                            ))
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                Label::new("Running…")
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Muted)
+                                                    .buffer_font(cx),
+                                            ),
+                                    ),
+                                ),
                                 ToolUseStatus::Error(err) => container.child(
                                     content_container()
                                         .child(
@@ -823,7 +851,7 @@ impl ActiveThread {
                                             Label::new(err).size(LabelSize::Small).buffer_font(cx),
                                         ),
                                 ),
-                                ToolUseStatus::Pending | ToolUseStatus::Running => container,
+                                ToolUseStatus::Pending => container,
                             }),
                     )
                 }),
