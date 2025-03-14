@@ -7299,14 +7299,6 @@ impl Iterator for MultiBufferRows<'_> {
 
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
-        // dbg!(
-        //     buffer_point.row,
-        //     region.range.end.column,
-        //     self.point.row,
-        //     region.range.end.row,
-        //     self.cursor.is_at_end_of_excerpt(),
-        //     region.buffer.max_point().row
-        // );
         let expand_info = if self.is_singleton {
             None
         } else {
