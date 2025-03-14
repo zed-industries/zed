@@ -195,7 +195,9 @@ impl CopilotCodeVerification {
                     .full_width()
                     .on_click(cx.listener(|this, _, _, cx| {
                         cx.emit(DismissEvent);
-                        this.copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
+                        this.copilot
+                            .update(cx, |copilot, cx| copilot.sign_out(cx))
+                            .detach_and_log_err(cx);
                     })),
             )
     }
