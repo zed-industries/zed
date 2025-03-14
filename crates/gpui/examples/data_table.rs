@@ -474,7 +474,6 @@ fn main() {
         )
         .unwrap();
 
-
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
                 cx.quit();
