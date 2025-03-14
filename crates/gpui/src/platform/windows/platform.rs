@@ -312,7 +312,9 @@ impl Platform for WindowsPlatform {
     }
 
     fn keyboard_layout(&self) -> String {
-        "unknown".into()
+        get_keyboard_layout_name()
+            .log_err()
+            .unwrap_or("unknown".to_string())
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
@@ -836,6 +838,13 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn get_keyboard_layout_name() -> Result<String> {
+    let mut buffer = [0u16; KL_NAMELENGTH as usize];
+    unsafe { GetKeyboardLayoutNameW(&mut buffer) }?;
+    let kbd_layout_name = HSTRING::from_wide(&buffer);
+    Ok(kbd_layout_name.to_string())
 }
 
 #[cfg(test)]
