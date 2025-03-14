@@ -1,6 +1,5 @@
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
@@ -13,10 +12,6 @@ use ui::{prelude::*, ListItem, ListItemSpacing};
 
 pub struct RepositorySelector {
     picker: Entity<Picker<RepositorySelectorDelegate>>,
-    /// The task used to update the picker's matches when there is a change to
-    /// the repository list.
-    update_matches_task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl RepositorySelector {
@@ -25,12 +20,14 @@ impl RepositorySelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let git_store = project_handle.read(cx).git_store().clone();
+        let repository_entries = git_store.update(cx, |git_store, cx| {
+            filtered_repository_entries(git_store, cx)
+        });
         let project = project_handle.read(cx);
-        let git_store = project.git_store().clone();
-        let all_repositories = git_store.read(cx).all_repositories();
-        let filtered_repositories = all_repositories.clone();
+        let filtered_repositories = repository_entries.clone();
 
-        let widest_item_ix = all_repositories.iter().position_max_by(|a, b| {
+        let widest_item_ix = repository_entries.iter().position_max_by(|a, b| {
             a.read(cx)
                 .display_name(project, cx)
                 .len()
@@ -40,7 +37,7 @@ impl RepositorySelector {
         let delegate = RepositorySelectorDelegate {
             project: project_handle.downgrade(),
             repository_selector: cx.entity().downgrade(),
-            repository_entries: all_repositories.clone(),
+            repository_entries,
             filtered_repositories,
             selected_index: 0,
         };
@@ -51,31 +48,37 @@ impl RepositorySelector {
                 .max_height(Some(rems(20.).into()))
         });
 
-        let _subscriptions =
-            vec![cx.subscribe_in(&git_store, window, Self::handle_project_git_event)];
-
-        RepositorySelector {
-            picker,
-            update_matches_task: None,
-            _subscriptions,
-        }
+        RepositorySelector { picker }
     }
+}
 
-    fn handle_project_git_event(
-        &mut self,
-        git_store: &Entity<GitStore>,
-        _event: &project::git::GitEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // TODO handle events individually
-        let task = self.picker.update(cx, |this, cx| {
-            let query = this.query(cx);
-            this.delegate.repository_entries = git_store.read(cx).all_repositories();
-            this.delegate.update_matches(query, window, cx)
-        });
-        self.update_matches_task = Some(task);
-    }
+pub(crate) fn filtered_repository_entries(
+    git_store: &GitStore,
+    cx: &App,
+) -> Vec<Entity<Repository>> {
+    let mut repository_entries = git_store.all_repositories();
+    repository_entries.sort_by_key(|repo| {
+        let repo = repo.read(cx);
+        (
+            repo.dot_git_abs_path.clone(),
+            repo.worktree_abs_path.clone(),
+        )
+    });
+    // Remove any entry that comes from a single file worktree and represents a repository that is also represented by a non-single-file worktree.
+    repository_entries
+        .chunk_by(|a, b| a.read(cx).dot_git_abs_path == b.read(cx).dot_git_abs_path)
+        .flat_map(|chunk| {
+            let has_non_single_file_worktree = chunk
+                .iter()
+                .any(|repo| !repo.read(cx).is_from_single_file_worktree);
+            chunk
+                .iter()
+                .filter(move |repo| {
+                    !repo.read(cx).is_from_single_file_worktree || !has_non_single_file_worktree
+                })
+                .cloned()
+        })
+        .collect()
 }
 
 impl EventEmitter<DismissEvent> for RepositorySelector {}

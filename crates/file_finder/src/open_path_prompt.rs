@@ -1,5 +1,5 @@
 use futures::channel::oneshot;
-use fuzzy::StringMatchCandidate;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use std::{
@@ -9,7 +9,7 @@ use std::{
         Arc,
     },
 };
-use ui::{prelude::*, LabelLike, ListItemSpacing};
+use ui::{prelude::*, HighlightedLabel, ListItemSpacing};
 use ui::{Context, ListItem, Window};
 use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
@@ -22,6 +22,7 @@ pub struct OpenPathDelegate {
     selected_index: usize,
     directory_state: Option<DirectoryState>,
     matches: Vec<usize>,
+    string_matches: Vec<StringMatch>,
     cancel_flag: Arc<AtomicBool>,
     should_dismiss: bool,
 }
@@ -34,6 +35,7 @@ impl OpenPathDelegate {
             selected_index: 0,
             directory_state: None,
             matches: Vec::new(),
+            string_matches: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             should_dismiss: true,
         }
@@ -223,6 +225,7 @@ impl PickerDelegate for OpenPathDelegate {
             if suffix == "" {
                 this.update(&mut cx, |this, cx| {
                     this.delegate.matches.clear();
+                    this.delegate.string_matches.clear();
                     this.delegate
                         .matches
                         .extend(match_candidates.iter().map(|m| m.path.id));
@@ -249,6 +252,7 @@ impl PickerDelegate for OpenPathDelegate {
 
             this.update(&mut cx, |this, cx| {
                 this.delegate.matches.clear();
+                this.delegate.string_matches = matches.clone();
                 this.delegate
                     .matches
                     .extend(matches.into_iter().map(|m| m.candidate_id));
@@ -337,22 +341,33 @@ impl PickerDelegate for OpenPathDelegate {
         let m = self.matches.get(ix)?;
         let directory_state = self.directory_state.as_ref()?;
         let candidate = directory_state.match_candidates.get(*m)?;
+        let highlight_positions = self
+            .string_matches
+            .iter()
+            .find(|string_match| string_match.candidate_id == *m)
+            .map(|string_match| string_match.positions.clone())
+            .unwrap_or_default();
 
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .child(LabelLike::new().child(candidate.path.string.clone())),
+                .child(HighlightedLabel::new(
+                    candidate.path.string.clone(),
+                    highlight_positions,
+                )),
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone()) {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone())
+        {
             error
         } else {
             "No such file or directory".into()
-        }
+        };
+        Some(text)
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {

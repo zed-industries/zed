@@ -1,0 +1,1 @@
+Deletes all files and directories in the project which match the given glob, and returns a list of the paths that were deleted.

@@ -24,7 +24,7 @@ async function main() {
 
   const owner = "zed-industries";
   const repo = "zed";
-  const teams = ["staff", "triagers"];
+  const teams = ["staff"];
   const githubHandleSet = new Set();
 
   for (const team of teams) {

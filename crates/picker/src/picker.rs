@@ -96,8 +96,8 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str>;
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "No matches".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No matches".into())
     }
     fn update_matches(
         &mut self,
@@ -844,18 +844,17 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
-                el.child(
-                    v_flex().flex_grow().py_2().child(
-                        ListItem::new("empty_state")
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
-                            .disabled(true)
-                            .child(
-                                Label::new(self.delegate.no_matches_text(window, cx))
-                                    .color(Color::Muted),
-                            ),
-                    ),
-                )
+                el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
+                    el.child(
+                        v_flex().flex_grow().py_2().child(
+                            ListItem::new("empty_state")
+                                .inset(true)
+                                .spacing(ListItemSpacing::Sparse)
+                                .disabled(true)
+                                .child(Label::new(text).color(Color::Muted)),
+                        ),
+                    )
+                })
             })
             .children(self.delegate.render_footer(window, cx))
             .children(match &self.head {

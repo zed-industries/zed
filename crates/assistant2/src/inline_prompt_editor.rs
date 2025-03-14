@@ -816,7 +816,6 @@ impl InlineAssistId {
 }
 
 impl PromptEditor<BufferCodegen> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new_buffer(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -844,7 +843,6 @@ impl PromptEditor<BufferCodegen> {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );
@@ -976,7 +974,6 @@ impl TerminalInlineAssistId {
 }
 
 impl PromptEditor<TerminalCodegen> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
@@ -1003,7 +1000,6 @@ impl PromptEditor<TerminalCodegen> {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );

@@ -10,9 +10,9 @@ use gpui::{
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
-    LanguageServerId, ToOffset,
+    ToOffset,
 };
-use project::{search::SearchQuery, Completion};
+use project::{search::SearchQuery, Completion, CompletionSource};
 use settings::Settings;
 use std::{
     cell::RefCell,
@@ -61,9 +61,9 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _: editor::CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let Some(handle) = self.0.upgrade() else {
-            return Task::ready(Ok(Vec::new()));
+            return Task::ready(Ok(None));
         };
         handle.update(cx, |message_editor, cx| {
             message_editor.completions(buffer, buffer_position, cx)
@@ -246,20 +246,22 @@ impl MessageEditor {
         buffer: &Entity<Buffer>,
         end_anchor: Anchor,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         if let Some((start_anchor, query, candidates)) =
             self.collect_mention_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
                 return cx.spawn(|_, cx| async move {
-                    Ok(Self::resolve_completions_for_candidates(
-                        &cx,
-                        query.as_str(),
-                        &candidates,
-                        start_anchor..end_anchor,
-                        Self::completion_for_mention,
-                    )
-                    .await)
+                    Ok(Some(
+                        Self::resolve_completions_for_candidates(
+                            &cx,
+                            query.as_str(),
+                            &candidates,
+                            start_anchor..end_anchor,
+                            Self::completion_for_mention,
+                        )
+                        .await,
+                    ))
                 });
             }
         }
@@ -269,19 +271,21 @@ impl MessageEditor {
         {
             if !candidates.is_empty() {
                 return cx.spawn(|_, cx| async move {
-                    Ok(Self::resolve_completions_for_candidates(
-                        &cx,
-                        query.as_str(),
-                        candidates,
-                        start_anchor..end_anchor,
-                        Self::completion_for_emoji,
-                    )
-                    .await)
+                    Ok(Some(
+                        Self::resolve_completions_for_candidates(
+                            &cx,
+                            query.as_str(),
+                            candidates,
+                            start_anchor..end_anchor,
+                            Self::completion_for_emoji,
+                        )
+                        .await,
+                    ))
                 });
             }
         }
 
-        Task::ready(Ok(vec![]))
+        Task::ready(Ok(Some(Vec::new())))
     }
 
     async fn resolve_completions_for_candidates(
@@ -309,11 +313,9 @@ impl MessageEditor {
                     old_range: range.clone(),
                     new_text,
                     label,
-                    documentation: None,
-                    server_id: LanguageServerId(0), // TODO: Make this optional or something?
-                    lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
-                    resolved: true,
+                    documentation: None,
+                    source: CompletionSource::Custom,
                 }
             })
             .collect()
@@ -531,7 +533,7 @@ impl Render for MessageEditor {
             .px_2()
             .py_1()
             .bg(cx.theme().colors().editor_background)
-            .rounded_md()
+            .rounded_sm()
             .child(EditorElement::new(
                 &self.editor,
                 EditorStyle {
