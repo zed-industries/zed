@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use util::paths::PathMatcher;
+use worktree::Snapshot;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct PathSearchToolInput {
@@ -47,35 +48,37 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
+        let glob = match serde_json::from_value::<PathSearchToolInput>(input) {
+            Ok(input) => input.glob,
+            Err(err) => return Task::ready(Err(anyhow!(err))),
+        };
+        let path_matcher = match PathMatcher::new(&[glob.clone()]) {
+            Ok(matcher) => matcher,
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {}", err))),
+        };
+        let snapshots: Vec<Snapshot> = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).snapshot())
+            .collect();
 
-        cx.spawn(|cx| async move {
-            let glob = match serde_json::from_value::<PathSearchToolInput>(input) {
-                Ok(input) => input.glob,
-                Err(err) => return Err(anyhow!(err)),
-            };
-            let path_matcher = match PathMatcher::new(&[glob.clone()]) {
-                Ok(matcher) => matcher,
-                Err(err) => return Err(anyhow!("Invalid glob: {}", err)),
-            };
+        cx.background_spawn(async move {
             let mut matches = Vec::new();
 
-            for worktree in worktrees {
-                cx.read_entity(&worktree, |worktree, _cx| {
-                    let root_name = worktree.root_name();
+            for worktree in snapshots {
+                let root_name = worktree.root_name();
 
-                    // Don't consider ignored entries.
-                    for entry in worktree.entries(false, 0) {
-                        if path_matcher.is_match(&entry.path) {
-                            matches.push(
-                                PathBuf::from(root_name)
-                                    .join(&entry.path)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            );
-                        }
+                // Don't consider ignored entries.
+                for entry in worktree.entries(false, 0) {
+                    if path_matcher.is_match(&entry.path) {
+                        matches.push(
+                            PathBuf::from(root_name)
+                                .join(&entry.path)
+                                .to_string_lossy()
+                                .to_string(),
+                        );
                     }
-                })?
+                }
             }
 
             if matches.is_empty() {
