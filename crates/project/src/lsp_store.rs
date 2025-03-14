@@ -4495,13 +4495,14 @@ impl LspStore {
                         ).fuse();
                         let new_task = cx.background_spawn(async move {
                             select_biased! {
-                                response = lsp_request => response,
+                                response = lsp_request => anyhow::Ok(Some(response?)),
                                 timeout_happened = timeout => {
                                     if timeout_happened {
                                         log::warn!("Fetching completions from server {server_id} timed out, timeout ms: {}", completion_settings.lsp_fetch_timeout_ms);
-                                        return anyhow::Ok(Vec::new())
+                                        Ok(None)
                                     } else {
-                                        lsp_request.await
+                                        let completions = lsp_request.await?;
+                                        Ok(Some(completions))
                                     }
                                 },
                             }
@@ -4510,9 +4511,11 @@ impl LspStore {
                     }
                 })?;
 
+                let mut has_completions_returned = false;
                 let mut completions = Vec::new();
                 for (lsp_adapter, task) in tasks {
-                    if let Ok(new_completions) = task.await {
+                    if let Ok(Some(new_completions)) = task.await {
+                        has_completions_returned = true;
                         populate_labels_for_completions(
                             new_completions,
                             language.clone(),
@@ -4522,8 +4525,11 @@ impl LspStore {
                         .await;
                     }
                 }
-
-                Ok(Some(completions))
+                if has_completions_returned {
+                    Ok(Some(completions))
+                } else {
+                    Ok(None)
+                }
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
