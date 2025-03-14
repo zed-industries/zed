@@ -30,8 +30,10 @@ pub struct HeadlessAppState {
 }
 
 pub struct HeadlessAssistant {
-    pub project: Entity<Project>,
     pub thread: Entity<Thread>,
+    pub project: Entity<Project>,
+    #[allow(dead_code)]
+    pub thread_store: Entity<ThreadStore>,
     pub tool_use_counts: HashMap<Arc<str>, u32>,
     pub done_tx: channel::Sender<anyhow::Result<()>>,
     _subscription: Subscription,
@@ -65,6 +67,7 @@ impl HeadlessAssistant {
             _subscription: cx.subscribe(&thread, Self::handle_thread_event),
             thread,
             project,
+            thread_store,
             tool_use_counts: HashMap::default(),
             done_tx,
         });
