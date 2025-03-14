@@ -61,7 +61,7 @@ use std::{
     path::{Component, Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{self, AtomicU32, AtomicUsize, Ordering::SeqCst},
+        atomic::{self, AtomicI32, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::{Duration, Instant},
@@ -1525,7 +1525,7 @@ impl LocalWorktree {
                     fs,
                     fs_case_sensitive,
                     status_updates_tx: scan_states_tx,
-                    scans_running: Arc::new(AtomicU32::new(0)),
+                    scans_running: Arc::new(AtomicI32::new(0)),
                     executor: background,
                     scan_requests_rx,
                     path_prefixes_to_scan_rx,
@@ -4318,7 +4318,7 @@ struct BackgroundScanner {
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
     status_updates_tx: UnboundedSender<ScanState>,
-    scans_running: Arc<AtomicU32>,
+    scans_running: Arc<AtomicI32>,
     executor: BackgroundExecutor,
     scan_requests_rx: channel::Receiver<ScanRequest>,
     path_prefixes_to_scan_rx: channel::Receiver<PathPrefixScanRequest>,
@@ -4337,6 +4337,17 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
+    fn inc_scans_running(&self) {
+        let old = self.scans_running.fetch_add(1, atomic::Ordering::SeqCst);
+        log::trace!("inc scans running old={} new={}", old, old + 1);
+    }
+
+    fn dec_scans_running(&self, by: i32) {
+        let old = self.scans_running.fetch_sub(by, atomic::Ordering::SeqCst);
+        assert!(old >= by);
+        log::trace!("dec scans running old={} new={}", old, old - by);
+    }
+
     async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
         // If the worktree root does not contain a git repository, then find
         // the git repository in an ancestor directory. Find any gitignore files
@@ -4432,7 +4443,7 @@ impl BackgroundScanner {
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        let scanning = self.scans_running.load(atomic::Ordering::Acquire) > 0;
+        let scanning = self.scans_running.load(atomic::Ordering::SeqCst) > 0;
         log::trace!("new");
         self.send_status_update(scanning, SmallVec::new());
 
@@ -4460,7 +4471,7 @@ impl BackgroundScanner {
                 // these before handling changes reported by the filesystem.
                 request = self.next_scan_request().fuse() => {
                     let Ok(request) = request else { break };
-                    let scanning = self.scans_running.load(atomic::Ordering::Acquire) > 0;
+                    let scanning = self.scans_running.load(atomic::Ordering::SeqCst) > 0;
                     if !self.process_scan_request(request, scanning).await {
                         return;
                     }
@@ -4483,7 +4494,7 @@ impl BackgroundScanner {
                             self.process_events(vec![abs_path]).await;
                         }
                     }
-                    let scanning = self.scans_running.load(atomic::Ordering::Acquire) > 0;
+                    let scanning = self.scans_running.load(atomic::Ordering::SeqCst) > 0;
                     log::trace!("path prefix request");
                     self.send_status_update(scanning, request.done);
                 }
@@ -4706,7 +4717,7 @@ impl BackgroundScanner {
                     #[cfg(test)]
                     state.snapshot.check_git_invariants();
                 }
-                let scanning = scans_running.load(atomic::Ordering::Acquire) > 0;
+                let scanning = scans_running.load(atomic::Ordering::SeqCst) > 0;
                 log::trace!("process events");
                 send_status_update_inner(phase, state, status_update_tx, scanning, SmallVec::new());
             })
@@ -4752,7 +4763,8 @@ impl BackgroundScanner {
             return;
         }
 
-        self.scans_running.fetch_add(1, atomic::Ordering::Release);
+        log::trace!("start fs scan scans_running += 1");
+        self.inc_scans_running();
         let progress_update_count = AtomicUsize::new(0);
         self.executor
             .scoped(|scope| {
@@ -4812,7 +4824,7 @@ impl BackgroundScanner {
             .await;
 
         log::trace!("fs scanned: {:p} scans_running -= 1", self.scans_running);
-        self.scans_running.fetch_sub(1, atomic::Ordering::Release);
+        self.dec_scans_running(1);
     }
 
     fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
@@ -4886,14 +4898,14 @@ impl BackgroundScanner {
                             "schedule {:p} scans_running += 1",
                             Arc::as_ptr(&self.scans_running)
                         );
-                        self.scans_running.fetch_add(1, atomic::Ordering::Release);
+                        self.inc_scans_running();
                         let (old, rx) = self.schedule_git_statuses_update(&mut state, local_repo);
                         if old.is_some() {
                             log::trace!(
                                 "schedule {:p} scans_running -= 1",
                                 Arc::as_ptr(&self.scans_running)
                             );
-                            self.scans_running.fetch_sub(1, atomic::Ordering::Release);
+                            self.dec_scans_running(1);
                         }
                         git_status_update_jobs.insert(path_key, rx);
                     }
@@ -5028,9 +5040,14 @@ impl BackgroundScanner {
                         "status updates: {scans_running:p} scans_running -= {}",
                         status_updates.len()
                     );
-                    scans_running.fetch_sub(status_updates.len() as u32, atomic::Ordering::Release);
+                    {
+                        let by = status_updates.len() as i32;
+                        let old = scans_running.fetch_sub(by, atomic::Ordering::SeqCst);
+                        assert!(old >= by);
+                        log::trace!("dec scans running old={} new={}", old, old - by);
+                    };
                     if status_updated {
-                        let scanning = scans_running.load(atomic::Ordering::Acquire) > 0;
+                        let scanning = scans_running.load(atomic::Ordering::SeqCst) > 0;
                         log::trace!("scan dir");
                         send_status_update_inner(
                             phase,
