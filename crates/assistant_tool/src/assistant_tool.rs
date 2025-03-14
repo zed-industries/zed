@@ -55,7 +55,7 @@ pub trait Tool: 'static + Send + Sync {
     ) -> Task<Result<String>>;
 }
 
-/// Tracks buffer changes that need processing or refreshing.
+/// Tracks actions performed by tools in a thread
 #[derive(Debug)]
 pub struct ActionLog {
     changed_buffers: HashSet<Entity<Buffer>>,
