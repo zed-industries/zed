@@ -273,6 +273,10 @@ impl GitStore {
         client.add_entity_message_handler(Self::handle_update_diff_bases);
     }
 
+    pub fn is_local(&self) -> bool {
+        matches!(self.state, GitStoreState::Local { .. })
+    }
+
     pub fn shared(&mut self, remote_id: u64, client: AnyProtoClient, _cx: &mut App) {
         match &mut self.state {
             GitStoreState::Local {
@@ -653,20 +657,28 @@ impl GitStore {
         self.active_index = new_active_index;
 
         match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => {
-                cx.subscribe(worktree, |this, worktree, event, cx| {
-                    if let worktree::Event::UpdatedGitRepositories(changed_repos) = event {
-                        this.local_worktree_git_repos_changed(worktree, changed_repos, cx);
-                    }
-                })
-                .detach();
-            }
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_) => {
                 cx.emit(GitEvent::GitStateUpdated);
+            }
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                if self.is_local() {
+                    cx.subscribe(worktree, Self::on_worktree_event).detach();
+                }
             }
             _ => {
                 cx.emit(GitEvent::FileSystemUpdated);
             }
+        }
+    }
+
+    fn on_worktree_event(
+        &mut self,
+        worktree: Entity<Worktree>,
+        event: &worktree::Event,
+        cx: &mut Context<Self>,
+    ) {
+        if let worktree::Event::UpdatedGitRepositories(changed_repos) = event {
+            self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
         }
     }
 
@@ -770,11 +782,11 @@ impl GitStore {
         debug_assert!(worktree.read(cx).is_local());
 
         let mut diff_state_updates = Vec::new();
-        for buffer in self.buffer_store.read(cx).buffers() {
-            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+        for (buffer_id, diff_state) in &self.diffs {
+            let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
                 continue;
             };
-            let Some(diff_state) = self.diffs.get(&buffer.read(cx).remote_id()) else {
+            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
                 continue;
             };
             if file.worktree != worktree
@@ -867,14 +879,14 @@ impl GitStore {
 
             this.update(&mut cx, |this, cx| {
                 for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
-                    let downstream_client = this.downstream_client();
-                    let Some(diff_state) = this.diffs.get_mut(&buffer.read(cx).remote_id()) else {
+                    let Some(diff_state) = this.diffs.get(&buffer.read(cx).remote_id()) else {
                         continue;
                     };
                     let Some(diff_bases_change) = diff_bases_change else {
                         continue;
                     };
 
+                    let downstream_client = this.downstream_client();
                     diff_state.update(cx, |diff_state, cx| {
                         use proto::update_diff_bases::Mode;
 
