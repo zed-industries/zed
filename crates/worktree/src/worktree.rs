@@ -4251,11 +4251,6 @@ struct PathEntry {
     scan_id: usize,
 }
 
-#[derive(Debug, Default)]
-struct FsScanned {
-    status_scans: Arc<AtomicU32>,
-}
-
 impl sum_tree::Item for PathEntry {
     type Summary = PathEntrySummary;
 
@@ -4684,7 +4679,7 @@ impl BackgroundScanner {
         .await;
 
         self.update_ignore_statuses(scan_job_tx).await;
-        let scans_running = self.scan_dirs(false, scan_job_rx).await;
+        self.scan_dirs(false, scan_job_rx).await;
 
         let status_update = if !dot_git_abs_paths.is_empty() {
             Some(self.update_git_repositories(dot_git_abs_paths))
@@ -4737,7 +4732,6 @@ impl BackgroundScanner {
             }
             drop(scan_job_tx);
         }
-        let scans_running = Arc::new(AtomicU32::new(0));
         while let Ok(job) = scan_job_rx.recv().await {
             self.scan_dir(&job).await.log_err();
         }
