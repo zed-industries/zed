@@ -12,11 +12,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use util::command::new_smol_command;
 
 pub struct Eval {
     pub repo_path: PathBuf,
     pub system_prompt: Option<String>,
-    pub user_query: String,
+    pub user_prompt: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,22 +39,24 @@ struct EvalSetup {
 impl Eval {
     /// Loads the eval from a path (typically in `evaluation_data`). Clones and checks out the repo
     /// if necessary.
-    pub fn load(
+    pub async fn load(
         eval_path: &Path,
         repos_dir: &Path,
         system_prompt: Option<String>,
     ) -> anyhow::Result<Self> {
-        let user_query = std::fs::read_to_string(eval_path.join("prompt.txt"))?;
-        let setup_contents = std::fs::read_to_string(eval_path.join("setup.json"))?;
+        let prompt_path = eval_path.join("prompt.txt");
+        let user_prompt = smol::unblock(|| std::fs::read_to_string(prompt_path)).await?;
+        let setup_path = eval_path.join("setup.json");
+        let setup_contents = smol::unblock(|| std::fs::read_to_string(setup_path)).await?;
         let setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
 
         let repo_path = repos_dir.join(repo_dir_name(&setup.url));
-        checkout_repo(&setup, &repo_path)?;
+        checkout_repo(&setup, &repo_path).await?;
 
         Ok(Eval {
             repo_path,
             system_prompt,
-            user_query,
+            user_prompt,
         })
     }
 
@@ -65,7 +68,7 @@ impl Eval {
     ) -> Task<anyhow::Result<EvalOutput>> {
         let repo_path = self.repo_path.clone();
         let system_prompt = self.system_prompt.clone();
-        let user_query = self.user_query.clone();
+        let user_prompt = self.user_prompt.clone();
 
         cx.spawn(move |mut cx| async move {
             let (assistant, done_rx) =
@@ -91,7 +94,7 @@ impl Eval {
                             cx,
                         );
                     }
-                    thread.insert_user_message(user_query.clone(), context, cx);
+                    thread.insert_user_message(user_prompt.clone(), context, cx);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });
             })?;
@@ -100,7 +103,7 @@ impl Eval {
 
             let elapsed_time = start_time.elapsed()?;
 
-            let diff = repo_diff(&repo_path)?;
+            let diff = query_git(&repo_path, vec!["diff"]).await?;
 
             assistant.update(&mut cx, |assistant, cx| {
                 let thread = assistant.thread.read(cx);
@@ -193,13 +196,17 @@ fn repo_dir_name(url: &str) -> String {
         .replace(|c: char| !c.is_alphanumeric(), "_")
 }
 
-fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Result<()> {
+async fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Result<()> {
     if !repo_path.exists() {
-        std::fs::create_dir_all(repo_path)?;
-        run_git(repo_path, vec!["init"])?;
-        run_git(repo_path, vec!["remote", "add", "origin", &eval_setup.url])?;
+        smol::unblock({
+            let repo_path = repo_path.to_path_buf();
+            || std::fs::create_dir_all(repo_path)
+        })
+        .await?;
+        run_git(repo_path, vec!["init"]).await?;
+        run_git(repo_path, vec!["remote", "add", "origin", &eval_setup.url]).await?;
     } else {
-        let actual_origin = query_git(repo_path, vec!["remote", "get-url", "origin"])?;
+        let actual_origin = query_git(repo_path, vec!["remote", "get-url", "origin"]).await?;
         if actual_origin != eval_setup.url {
             return Err(anyhow!(
                 "remote origin {} does not match expected origin {}",
@@ -210,25 +217,26 @@ fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Result<()>
 
         // TODO: consider including "-x" to remove ignored files. The downside of this is that it will
         // also remove build artifacts, and so prevent incremental reuse there.
-        run_git(repo_path, vec!["clean", "--force", "-d"])?;
-        run_git(repo_path, vec!["reset", "--hard", "HEAD"])?;
+        run_git(repo_path, vec!["clean", "--force", "-d"]).await?;
+        run_git(repo_path, vec!["reset", "--hard", "HEAD"]).await?;
     }
 
     run_git(
         repo_path,
         vec!["fetch", "--depth", "1", "origin", &eval_setup.base_sha],
-    )?;
-    run_git(repo_path, vec!["checkout", &eval_setup.base_sha])?;
+    )
+    .await?;
+    run_git(repo_path, vec!["checkout", &eval_setup.base_sha]).await?;
 
     Ok(())
 }
 
-fn run_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<()> {
-    let mut child = std::process::Command::new("git")
+async fn run_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<()> {
+    let exit_status = new_smol_command("git")
         .current_dir(repo_path)
         .args(args.clone())
-        .spawn()?;
-    let exit_status = child.wait()?;
+        .status()
+        .await?;
     if exit_status.success() {
         Ok(())
     } else {
@@ -240,11 +248,12 @@ fn run_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<()> {
     }
 }
 
-fn query_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<String> {
-    let output = std::process::Command::new("git")
+async fn query_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<String> {
+    let output = new_smol_command("git")
         .current_dir(repo_path)
         .args(args.clone())
-        .output()?;
+        .output()
+        .await?;
     if output.status.success() {
         Ok(String::from_utf8(output.stdout)?.trim().to_string())
     } else {
@@ -254,20 +263,4 @@ fn query_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<String> {
             output.status
         ))
     }
-}
-
-fn repo_diff(repo_path: &Path) -> anyhow::Result<String> {
-    // Run git diff in repo_path
-    let output = std::process::Command::new("git")
-        .arg("diff")
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "`git diff` exited with failure status {}",
-            output.status
-        ));
-    }
-    let stdout = String::from_utf8(output.stdout)?;
-    Ok(stdout)
 }

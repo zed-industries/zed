@@ -14,24 +14,28 @@ pub struct Judge {
 }
 
 impl Judge {
-    pub fn load(eval_path: &Path, model: Arc<dyn LanguageModel>) -> anyhow::Result<Judge> {
+    pub async fn load(eval_path: &Path, model: Arc<dyn LanguageModel>) -> anyhow::Result<Judge> {
         let original_diff_path = eval_path.join("original.diff");
-        let original_diff = if std::fs::exists(&original_diff_path)? {
-            Some(std::fs::read_to_string(&original_diff_path)?)
-        } else {
-            None
-        };
+        let original_diff = smol::unblock(move || {
+            if std::fs::exists(&original_diff_path)? {
+                anyhow::Ok(Some(std::fs::read_to_string(&original_diff_path)?))
+            } else {
+                anyhow::Ok(None)
+            }
+        });
 
         let original_message_path = eval_path.join("original_message.txt");
-        let _original_message = if std::fs::exists(&original_message_path)? {
-            Some(std::fs::read_to_string(&original_message_path)?)
-        } else {
-            None
-        };
+        let original_message = smol::unblock(move || {
+            if std::fs::exists(&original_message_path)? {
+                anyhow::Ok(Some(std::fs::read_to_string(&original_message_path)?))
+            } else {
+                anyhow::Ok(None)
+            }
+        });
 
         Ok(Self {
-            original_diff,
-            _original_message,
+            original_diff: original_diff.await?,
+            _original_message: original_message.await?,
             model,
         })
     }
