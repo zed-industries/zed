@@ -518,33 +518,22 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Rating type as string
         let rating = if is_positive { "positive" } else { "negative" };
-
-        // Capture the thread entity for use in the async operation
         let thread = self.thread.clone();
-
-        // Get workspace reference for toast notifications
         let workspace_handle = window.root::<workspace::Workspace>().flatten();
-
-        // Take project snapshot
         let project_snapshot_task =
             thread.update(cx, |thread, cx| thread.take_project_snapshot(cx));
 
-        // Spawn the async operation to collect data and send telemetry
         let telemetry_task = cx.spawn(|_, mut cx| {
             let workspace_handle = workspace_handle.clone();
 
             async move {
-                // Collect thread data and snapshots asynchronously
                 let (thread_data, initial_snapshot) = thread
                     .update(&mut cx, |thread, _cx| {
-                        // Use the static version since we're in a closure where 'self' is not available
                         let serializable_thread = Self::create_serializable_thread_static(thread);
                         let thread_data = serde_json::to_value(serializable_thread)
                             .unwrap_or_else(|_| serde_json::Value::Null);
 
-                        // Get the initial project snapshot
                         let initial_snapshot = thread
                             .initial_project_snapshot()
                             .cloned()
@@ -558,10 +547,7 @@ impl ActiveThread {
                     })
                     .unwrap_or_default();
 
-                // Get the final project snapshot
                 let project_snapshot_result = project_snapshot_task.await;
-
-                // Convert to JSON, handling possible errors
                 let final_snapshot = match serde_json::to_value(project_snapshot_result) {
                     Ok(snapshot) => snapshot,
                     Err(err) => {
@@ -570,8 +556,6 @@ impl ActiveThread {
                     }
                 };
 
-                // Send the telemetry event with full serialized data
-                use telemetry;
                 telemetry::event!(
                     "Assistant Feedback",
                     rating,
@@ -581,10 +565,6 @@ impl ActiveThread {
                     final_snapshot
                 );
 
-                // In async context we can't easily flush telemetry
-                // The events will be flushed automatically
-
-                // Display toast notification after successfully sending data
                 if let Some(workspace) = workspace_handle {
                     let success = match workspace.update(&mut cx, |workspace, cx| {
                         let message = if rating == "positive" {
@@ -604,18 +584,13 @@ impl ActiveThread {
                             false
                         }
                     };
-
-                    // If we failed to show the toast, no need to report an error
-                    // as it probably means the workspace is closed
                     success
                 } else {
-                    // Workspace not available, but telemetry was sent
                     true
                 }
             }
         });
 
-        // We'll detach the telemetry task and let it handle everything
         telemetry_task.detach();
     }
 
@@ -873,9 +848,8 @@ impl ActiveThread {
                                 .gap_2()
                                 .justify_end()
                                 .child(
-                                    Button::new("feedback-thumbs-up", "")
+                                    IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
                                         .style(ButtonStyle::Subtle)
-                                        .icon(IconName::ThumbsUp)
                                         .tooltip(Tooltip::text("Helpful"))
                                         .on_click(cx.listener({
                                             let thread_id = thread_id.clone();
@@ -890,9 +864,8 @@ impl ActiveThread {
                                         })),
                                 )
                                 .child(
-                                    Button::new("feedback-thumbs-down", "")
+                                    IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
                                         .style(ButtonStyle::Subtle)
-                                        .icon(IconName::ThumbsDown)
                                         .tooltip(Tooltip::text("Not Helpful"))
                                         .on_click(cx.listener({
                                             let thread_id = thread_id.clone();
