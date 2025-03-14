@@ -298,6 +298,7 @@ impl ActiveThread {
             ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
+            ThreadEvent::DoneStreaming => {}
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {

@@ -284,6 +284,10 @@ impl Thread {
         self.tool_use.tool_results_for_message(id)
     }
 
+    pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
+        self.tool_use.tool_result(id)
+    }
+
     pub fn scripting_tool_results_for_message(
         &self,
         id: MessageId,
@@ -652,32 +656,37 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |thread, cx| match result.as_ref() {
-                    Ok(stop_reason) => match stop_reason {
-                        StopReason::ToolUse => {
-                            cx.emit(ThreadEvent::UsePendingTools);
-                        }
-                        StopReason::EndTurn => {}
-                        StopReason::MaxTokens => {}
-                    },
-                    Err(error) => {
-                        if error.is::<PaymentRequiredError>() {
-                            cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
-                        } else if error.is::<MaxMonthlySpendReachedError>() {
-                            cx.emit(ThreadEvent::ShowError(ThreadError::MaxMonthlySpendReached));
-                        } else {
-                            let error_message = error
-                                .chain()
-                                .map(|err| err.to_string())
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            cx.emit(ThreadEvent::ShowError(ThreadError::Message(
-                                SharedString::from(error_message.clone()),
-                            )));
-                        }
+                .update(&mut cx, |thread, cx| {
+                    match result.as_ref() {
+                        Ok(stop_reason) => match stop_reason {
+                            StopReason::ToolUse => {
+                                cx.emit(ThreadEvent::UsePendingTools);
+                            }
+                            StopReason::EndTurn => {}
+                            StopReason::MaxTokens => {}
+                        },
+                        Err(error) => {
+                            if error.is::<PaymentRequiredError>() {
+                                cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
+                            } else if error.is::<MaxMonthlySpendReachedError>() {
+                                cx.emit(ThreadEvent::ShowError(
+                                    ThreadError::MaxMonthlySpendReached,
+                                ));
+                            } else {
+                                let error_message = error
+                                    .chain()
+                                    .map(|err| err.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                cx.emit(ThreadEvent::ShowError(ThreadError::Message(
+                                    SharedString::from(error_message.clone()),
+                                )));
+                            }
 
-                        thread.cancel_last_completion();
+                            thread.cancel_last_completion();
+                        }
                     }
+                    cx.emit(ThreadEvent::DoneStreaming);
                 })
                 .ok();
         });
@@ -1094,6 +1103,7 @@ pub enum ThreadEvent {
     ShowError(ThreadError),
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
+    DoneStreaming,
     MessageAdded(MessageId),
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
