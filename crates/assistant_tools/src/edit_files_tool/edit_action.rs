@@ -185,7 +185,7 @@ impl EditActionParser {
         let action_source = std::mem::take(&mut self.action_source);
         let mut file_path_bytes = action_source[..self.file_path_len].to_vec();
 
-        if action_source.ends_with(b"\n") {
+        if file_path_bytes.ends_with(b"\n") {
             file_path_bytes.pop();
             pop_carriage_return(&mut file_path_bytes);
         }
@@ -689,7 +689,10 @@ fn replacement() {}"#;
 
         // Check parser is in the correct state
         assert_eq!(parser.state, State::SearchBlock);
-        assert_eq!(parser.action_source, b"src/main.rs\n");
+        assert_eq!(
+            parser.action_source,
+            b"src/main.rs\n```rust\n<<<<<<< SEARCH\n"
+        );
         assert_eq!(parser.errors().len(), 0);
 
         // Continue parsing
