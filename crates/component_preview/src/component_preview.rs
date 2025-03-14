@@ -203,7 +203,10 @@ impl ComponentPreview {
                 if !components.is_empty() {
                     entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
 
-                    for component in components {
+                    let mut sorted_components = components;
+                    sorted_components.sort_by(|a, b| a.sort_name().cmp(&b.sort_name()));
+
+                    for component in sorted_components {
                         entries.push(PreviewEntry::Component(component));
                     }
                 }
@@ -215,7 +218,10 @@ impl ComponentPreview {
                 if !components.is_empty() {
                     entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
 
-                    for component in components {
+                    let mut sorted_components = components.clone();
+                    sorted_components.sort_by(|a, b| a.sort_name().cmp(&b.sort_name()));
+
+                    for component in sorted_components {
                         entries.push(PreviewEntry::Component(component.clone()));
                     }
                 }
@@ -227,7 +233,10 @@ impl ComponentPreview {
                 entries.push(PreviewEntry::Separator);
                 entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
 
-                for component in components {
+                let mut sorted_components = components.clone();
+                sorted_components.sort_by(|a, b| a.sort_name().cmp(&b.sort_name()));
+
+                for component in sorted_components {
                     entries.push(PreviewEntry::Component(component.clone()));
                 }
             }

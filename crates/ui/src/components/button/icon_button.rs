@@ -13,10 +13,7 @@ pub enum IconButtonShape {
     Wide,
 }
 
-#[derive(
-    IntoElement,
-    // RegisterComponent
-)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct IconButton {
     base: ButtonLike,
     shape: IconButtonShape,
@@ -206,6 +203,10 @@ impl RenderOnce for IconButton {
 impl Component for IconButton {
     fn scope() -> ComponentScope {
         ComponentScope::Input
+    }
+
+    fn sort_name() -> &'static str {
+        "ButtonB"
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

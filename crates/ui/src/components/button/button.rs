@@ -470,6 +470,10 @@ impl Component for Button {
         ComponentScope::Input
     }
 
+    fn sort_name() -> &'static str {
+        "ButtonA"
+    }
+
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()

@@ -15,10 +15,26 @@ pub trait Component {
     fn name() -> &'static str {
         std::any::type_name::<Self>()
     }
+    /// Returns a name that the component should be sorted by.
+    ///
+    /// Implement this if the component should be sorted in an alternate order than its name.
+    ///
+    /// Example:
+    ///
+    /// For example, to group related components together when sorted:
+    ///
+    /// - Button      -> ButtonA
+    /// - IconButton  -> ButtonBIcon
+    /// - ToggleButton -> ButtonCToggle
+    ///
+    /// This naming scheme keeps these components together and allows them to /// be sorted in a logical order.
+    fn sort_name() -> &'static str {
+        Self::name()
+    }
     fn description() -> Option<&'static str> {
         None
     }
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         None
     }
 }
@@ -30,7 +46,15 @@ pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
     LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
 
 pub struct ComponentRegistry {
-    components: Vec<(ComponentScope, &'static str, Option<&'static str>)>,
+    components: Vec<(
+        ComponentScope,
+        // name
+        &'static str,
+        // sort name
+        &'static str,
+        // description
+        Option<&'static str>,
+    )>,
     previews: HashMap<&'static str, fn(&mut Window, &mut App) -> Option<AnyElement>>,
 }
 
@@ -51,7 +75,7 @@ pub fn init() {
 }
 
 pub fn register_component<T: Component>() {
-    let component_data = (T::scope(), T::name(), T::description());
+    let component_data = (T::scope(), T::name(), T::sort_name(), T::description());
     let mut data = COMPONENT_DATA.write();
     data.components.push(component_data);
     data.previews.insert(T::name(), T::preview);
@@ -64,6 +88,7 @@ pub struct ComponentId(pub &'static str);
 pub struct ComponentMetadata {
     id: ComponentId,
     name: SharedString,
+    sort_name: SharedString,
     scope: ComponentScope,
     description: Option<SharedString>,
     preview: Option<fn(&mut Window, &mut App) -> Option<AnyElement>>,
@@ -75,6 +100,10 @@ impl ComponentMetadata {
     }
     pub fn name(&self) -> SharedString {
         self.name.clone()
+    }
+
+    pub fn sort_name(&self) -> SharedString {
+        self.sort_name.clone()
     }
 
     pub fn scopeless_name(&self) -> SharedString {
@@ -139,15 +168,17 @@ impl DerefMut for AllComponents {
 pub fn components() -> AllComponents {
     let data = COMPONENT_DATA.read();
     let mut all_components = AllComponents::new();
-    for (ref scope, name, description) in &data.components {
+    for (ref scope, name, sort_name, description) in &data.components {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
+        let sort_name = SharedString::new_static(sort_name);
         let id = ComponentId(name);
         all_components.insert(
             id.clone(),
             ComponentMetadata {
                 id,
                 name: component_name,
+                sort_name,
                 scope: scope.clone(),
                 description: description.map(Into::into),
                 preview,

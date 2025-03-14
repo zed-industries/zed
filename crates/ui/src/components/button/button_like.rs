@@ -551,6 +551,11 @@ impl Component for ButtonLike {
         ComponentScope::Input
     }
 
+    fn sort_name() -> &'static str {
+        // ButtonLike should be at the bottom of the button list
+        "ButtonZ"
+    }
+
     fn description() -> Option<&'static str> {
         Some(ButtonLike::DOCS)
     }
