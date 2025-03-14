@@ -1251,6 +1251,7 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
+    // Is that ok we just compare `cx.keyboard_layout()` instead of the content?
     let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
     let mut current_keyboard_layout = cx.keyboard_layout().clone();
     cx.on_keyboard_layout_change(move |cx| {
