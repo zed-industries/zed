@@ -41,7 +41,7 @@ The evaluation flow:
 
 ### Environment Variables
 
-Ensure you have the required API keys set:
+Ensure you have the required API keys set, either from a dev run of Zed or via these environment variables:
 - `ZED_ANTHROPIC_API_KEY` for Claude models
 - `ZED_OPENAI_API_KEY` for OpenAI models
 - `ZED_GITHUB_API_KEY` for GitHub API (or similar)
