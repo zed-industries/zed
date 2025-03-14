@@ -413,7 +413,7 @@ impl ComponentPreview {
                 .w_full()
                 .flex_initial()
                 .min_h_full()
-                .child(self.render_preview(component, window, cx))
+                .child(ComponentPreviewPage::new(component.clone()))
                 .into_any_element()
         } else {
             v_flex()
@@ -606,5 +606,78 @@ impl SerializableItem for ComponentPreview {
 
     fn should_serialize(&self, _event: &Self::Event) -> bool {
         false
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ComponentPreviewPage {
+    // languages: Arc<LanguageRegistry>,
+    component: ComponentMetadata,
+}
+
+impl ComponentPreviewPage {
+    pub fn new(
+        component: ComponentMetadata,
+        // languages: Arc<LanguageRegistry>
+    ) -> Self {
+        Self {
+            // languages,
+            component,
+        }
+    }
+
+    fn render_header(&self, _: &Window, cx: &App) -> impl IntoElement {
+        v_flex()
+            .px_12()
+            .pt_16()
+            .pb_12()
+            .gap_4()
+            .bg(cx.theme().colors().surface_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        Label::new(self.component.scope().to_string())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Headline::new(self.component.scopeless_name()).size(HeadlineSize::XLarge),
+                    ),
+            )
+            .when_some(self.component.description(), |this, description| {
+                this.child(div().text_sm().child(description))
+            })
+    }
+
+    fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .flex_1()
+            .px_8()
+            .py_6()
+            .bg(cx.theme().colors().editor_background)
+            .child(if let Some(preview) = self.component.preview() {
+                preview(window, cx).unwrap_or_else(|| {
+                    div()
+                        .child("Failed to load preview. This path should be unreachable")
+                        .into_any_element()
+                })
+            } else {
+                div().child("No preview available").into_any_element()
+            })
+    }
+}
+
+impl RenderOnce for ComponentPreviewPage {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .flex_1()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
+            .child(self.render_header(window, cx))
+            .child(self.render_preview(window, cx))
     }
 }
