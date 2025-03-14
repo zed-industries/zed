@@ -4937,6 +4937,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            return;
+        }
         self.selection_highlight_task.take();
         if !EditorSettings::get_global(cx).selection_highlight {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
