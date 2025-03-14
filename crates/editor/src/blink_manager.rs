@@ -7,7 +7,6 @@ use std::time::Duration;
 
 pub struct BlinkManager {
     blink_interval: Duration,
-
     blink_epoch: usize,
     blinking_paused: bool,
     visible: bool,
@@ -24,7 +23,6 @@ impl BlinkManager {
 
         Self {
             blink_interval,
-
             blink_epoch: 0,
             blinking_paused: false,
             visible: true,

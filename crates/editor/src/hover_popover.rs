@@ -25,7 +25,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, theme_is_transparent, Scrollbar, ScrollbarState};
 use url::Url;
 use util::TryFutureExt;
-use workspace::Workspace;
+use workspace::{OpenOptions, OpenVisible, Workspace};
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -618,12 +618,12 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         syntax: cx.theme().syntax().clone(),
         selection_background_color: { cx.theme().players().local().selection },
-
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()
             .mt(rems(1.))
             .mb_0(),
+        ..Default::default()
     }
 }
 
@@ -632,8 +632,15 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
         if uri.scheme() == "file" {
             if let Some(workspace) = window.root::<Workspace>().flatten() {
                 workspace.update(cx, |workspace, cx| {
-                    let task =
-                        workspace.open_abs_path(PathBuf::from(uri.path()), false, window, cx);
+                    let task = workspace.open_abs_path(
+                        PathBuf::from(uri.path()),
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    );
 
                     cx.spawn_in(window, |_, mut cx| async move {
                         let item = task.await?;

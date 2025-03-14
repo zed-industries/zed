@@ -7,7 +7,7 @@ use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
 use crate::history_store::{HistoryEntry, HistoryStore};
-use crate::thread_store::SavedThreadMetadata;
+use crate::thread_store::SerializedThreadMetadata;
 use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
@@ -33,9 +33,9 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_prev(
+    pub fn select_previous(
         &mut self,
-        _: &menu::SelectPrev,
+        _: &menu::SelectPrevious,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -166,7 +166,7 @@ impl Render for ThreadHistory {
             .overflow_y_scroll()
             .size_full()
             .p_1()
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
@@ -221,14 +221,14 @@ impl Render for ThreadHistory {
 
 #[derive(IntoElement)]
 pub struct PastThread {
-    thread: SavedThreadMetadata,
+    thread: SerializedThreadMetadata,
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
 }
 
 impl PastThread {
     pub fn new(
-        thread: SavedThreadMetadata,
+        thread: SerializedThreadMetadata,
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
     ) -> Self {
@@ -260,7 +260,7 @@ impl RenderOnce for PastThread {
             .start_slot(
                 div()
                     .max_w_4_5()
-                    .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+                    .child(Label::new(summary).size(LabelSize::Small).truncate()),
             )
             .end_slot(
                 h_flex()
@@ -356,7 +356,7 @@ impl RenderOnce for PastContext {
         .start_slot(
             div()
                 .max_w_4_5()
-                .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+                .child(Label::new(summary).size(LabelSize::Small).truncate()),
         )
         .end_slot(
             h_flex()

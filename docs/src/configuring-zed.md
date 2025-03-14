@@ -784,7 +784,7 @@ List of `string` values
   "file_icons": false,
   "git_status": false,
   "activate_on_close": "history",
-  "always_show_close_button": false
+  "show_close_button": "hover"
 },
 ```
 
@@ -856,11 +856,37 @@ List of `string` values
 }
 ```
 
-### Always show the close button
+### Show close button
 
-- Description: Whether to always show the close button on tabs.
-- Setting: `always_show_close_button`
-- Default: `false`
+- Description: Controls the appearance behavior of the tab's close button.
+- Setting: `show_close_button`
+- Default: `hover`
+
+**Options**
+
+1.  Show it just upon hovering the tab:
+
+```json
+{
+  "show_close_button": "hover"
+}
+```
+
+2. Show it persistently:
+
+```json
+{
+  "show_close_button": "always"
+}
+```
+
+3. Never show it, even if hovering it:
+
+```json
+{
+  "show_close_button": "hidden"
+}
+```
 
 ## Editor Toolbar
 
@@ -891,7 +917,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ## Ensure Final Newline On Save
 
-- Description: Whether or not to ensure there's a single newline at the end of a buffer when saving it.
+- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
 
@@ -943,6 +969,16 @@ While other options may be changed at a runtime and should be placed under `sett
   }
 }
 ```
+
+## LSP Highlight Debounce
+
+- Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
+**Options**
+
+`integer` values representing milliseconds
 
 ## Format On Save
 
@@ -1778,6 +1814,18 @@ Or to set a `socks5` proxy:
   "regex": false
 },
 ```
+
+## Seed Search Query From Cursor
+
+- Description: When to populate a new search's query based on the text under the cursor.
+- Setting: `seed_search_query_from_cursor`
+- Default: `always`
+
+**Options**
+
+1. `always` always populate the search query with the word under the cursor
+2. `selection` only populate the search query when there is text selected
+3. `never` never populate the search query
 
 ## Use Smartcase Search
 
