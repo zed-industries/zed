@@ -1,4 +1,4 @@
-use crate::{PlatformDispatcher, TaskLabel};
+use crate::{platform::ForegroundContext, PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
@@ -26,9 +26,13 @@ pub struct TestDispatcher {
     unparker: Unparker,
 }
 
+// SAFETY: The test dispatcher is only ever run single threaded
+unsafe impl Send for TestDispatcher {}
+unsafe impl Sync for TestDispatcher {}
+
 struct TestDispatcherState {
     random: StdRng,
-    foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
+    foreground: HashMap<TestDispatcherId, VecDeque<Runnable<ForegroundContext>>>,
     background: Vec<Runnable>,
     deprioritized_background: Vec<Runnable>,
     delayed: Vec<(Duration, Runnable)>,
@@ -135,7 +139,8 @@ impl TestDispatcher {
         };
         let background_len = state.background.len();
 
-        let runnable;
+        let mut background_runnable = None;
+        let mut foreground_runnable = None;
         let main_thread;
         if foreground_len == 0 && background_len == 0 {
             let deprioritized_background_len = state.deprioritized_background.len();
@@ -144,7 +149,7 @@ impl TestDispatcher {
             }
             let ix = state.random.gen_range(0..deprioritized_background_len);
             main_thread = false;
-            runnable = state.deprioritized_background.swap_remove(ix);
+            background_runnable = Some(state.deprioritized_background.swap_remove(ix));
         } else {
             main_thread = state.random.gen_ratio(
                 foreground_len as u32,
@@ -152,24 +157,36 @@ impl TestDispatcher {
             );
             if main_thread {
                 let state = &mut *state;
-                runnable = state
-                    .foreground
-                    .values_mut()
-                    .filter(|runnables| !runnables.is_empty())
-                    .choose(&mut state.random)
-                    .unwrap()
-                    .pop_front()
-                    .unwrap();
+                foreground_runnable = Some(
+                    state
+                        .foreground
+                        .values_mut()
+                        .filter(|runnables| !runnables.is_empty())
+                        .choose(&mut state.random)
+                        .unwrap()
+                        .pop_front()
+                        .unwrap(),
+                );
             } else {
                 let ix = state.random.gen_range(0..background_len);
-                runnable = state.background.swap_remove(ix);
+                background_runnable = Some(state.background.swap_remove(ix));
             };
         };
 
         let was_main_thread = state.is_main_thread;
         state.is_main_thread = main_thread;
         drop(state);
-        runnable.run();
+
+        if let Some(background_runnable) = background_runnable {
+            background_runnable.run();
+        } else if let Some(foreground_runnable) = foreground_runnable {
+            if foreground_runnable.metadata().context_is_valid() {
+                foreground_runnable.run();
+            } else {
+                drop(foreground_runnable);
+            }
+        }
+
         self.state.lock().is_main_thread = was_main_thread;
 
         true
@@ -272,7 +289,7 @@ impl PlatformDispatcher for TestDispatcher {
         self.unparker.unpark();
     }
 
-    fn dispatch_on_main_thread(&self, runnable: Runnable) {
+    fn dispatch_on_main_thread(&self, runnable: Runnable<ForegroundContext>) {
         self.state
             .lock()
             .foreground

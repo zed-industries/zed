@@ -161,19 +161,13 @@ use taffy::TaffyLayoutEngine;
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
 pub trait AppContext {
-    /// The result type for this context, used for async contexts that
-    /// can't hold a direct reference to the application context.
-    type Result<T>;
-
     /// Create a new entity in the app context.
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>>;
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<'_, T>) -> T)
+        -> Entity<T>;
 
     /// Reserve a slot for a entity to be inserted later.
     /// The returned [Reservation] allows you to obtain the [EntityId] for the future entity.
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T>;
 
     /// Insert a new entity in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
     ///
@@ -182,23 +176,19 @@ pub trait AppContext {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>>;
+    ) -> Entity<T>;
 
     /// Update a entity in the app context.
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
-    ) -> Self::Result<R>
+    ) -> R
     where
         T: 'static;
 
     /// Read a entity from the app context.
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static;
 
@@ -222,7 +212,7 @@ pub trait AppContext {
         R: Send + 'static;
 
     /// Read a global from this app context
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global;
 }
@@ -249,24 +239,24 @@ pub trait VisualContext: AppContext {
         &mut self,
         entity: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
-    ) -> Self::Result<R>;
+    ) -> R;
 
     /// Update a view with the given callback
     fn new_window_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>>;
+    ) -> Entity<T>;
 
     /// Replace the root view of a window with a new view.
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> Self::Result<Entity<V>>
+    ) -> Entity<V>
     where
         V: 'static + Render;
 
     /// Focus a entity in the window, if it implements the [`Focusable`] trait.
-    fn focus<V>(&mut self, entity: &Entity<V>) -> Self::Result<()>
+    fn focus<V>(&mut self, entity: &Entity<V>)
     where
         V: Focusable;
 }

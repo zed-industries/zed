@@ -679,9 +679,7 @@ impl<T> Context<'_, T> {
     }
 }
 
-impl<T> AppContext for Context<'_, T> {
-    type Result<U> = U;
-
+impl<T> AppContext for Context<T> {
     fn new<U: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
@@ -697,7 +695,7 @@ impl<T> AppContext for Context<'_, T> {
         &mut self,
         reservation: Reservation<U>,
         build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
-    ) -> Self::Result<Entity<U>> {
+    ) -> Entity<U> {
         self.app.insert_entity(reservation, build_entity)
     }
 
@@ -709,11 +707,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.update_entity(handle, update)
     }
 
-    fn read_entity<U, R>(
-        &self,
-        handle: &Entity<U>,
-        read: impl FnOnce(&U, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<U, R>(&self, handle: &Entity<U>, read: impl FnOnce(&U, &App) -> R) -> R
     where
         U: 'static,
     {
@@ -745,7 +739,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {

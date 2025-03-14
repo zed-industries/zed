@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::{PlatformDispatcher, TaskLabel};
+use crate::{ForegroundContext, PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use objc::{
     class, msg_send,
@@ -63,12 +63,12 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: Runnable) {
+    fn dispatch_on_main_thread(&self, runnable: Runnable<ForegroundContext>) {
         unsafe {
             dispatch_async_f(
                 dispatch_get_main_queue(),
                 runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline),
+                Some(context_trampoline),
             );
         }
     }
@@ -104,4 +104,15 @@ impl PlatformDispatcher for MacDispatcher {
 extern "C" fn trampoline(runnable: *mut c_void) {
     let task = unsafe { Runnable::<()>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
     task.run();
+}
+
+extern "C" fn context_trampoline(runnable: *mut c_void) {
+    let task = unsafe {
+        Runnable::<ForegroundContext>::from_raw(NonNull::new_unchecked(runnable as *mut ()))
+    };
+    if task.metadata().context_is_valid() {
+        task.run();
+    } else {
+        drop(task);
+    }
 }

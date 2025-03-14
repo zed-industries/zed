@@ -32,12 +32,12 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
     AnyWindowHandle, AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundContext,
+    ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle,
+    PromptLevel, Render, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
 };
 
 mod async_context;
@@ -1054,7 +1054,9 @@ impl App {
         Fut: Future<Output = R> + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.to_async()))
+        let async_app = self.to_async();
+        self.foreground_executor
+            .spawn_with_context(ForegroundContext::app(&async_app.app), f(async_app))
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1596,8 +1598,6 @@ impl App {
 }
 
 impl AppContext for App {
-    type Result<T> = T;
-
     /// Build an entity that is owned by the application. The given function will be invoked with
     /// a `Context` and must return an object representing the entity. A `Entity` handle will be returned,
     /// which can be used to access the entity in a context.
@@ -1621,7 +1621,7 @@ impl AppContext for App {
         })
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
         Reservation(self.entities.reserve())
     }
 
@@ -1629,7 +1629,7 @@ impl AppContext for App {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.update(|cx| {
             let slot = reservation.0;
             let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
@@ -1655,11 +1655,7 @@ impl AppContext for App {
         })
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -1704,7 +1700,7 @@ impl AppContext for App {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {

@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, DrawPhase, Drawable, Element,
-    Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
+    Empty, EventEmitter, ForegroundContext, ForegroundExecutor, Global, InputEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions,
 };
@@ -30,17 +30,15 @@ pub struct TestAppContext {
 }
 
 impl AppContext for TestAppContext {
-    type Result<T> = T;
-
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> crate::Reservation<T> {
         let mut app = self.app.borrow_mut();
         app.reserve_entity()
     }
@@ -49,7 +47,7 @@ impl AppContext for TestAppContext {
         &mut self,
         reservation: crate::Reservation<T>,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.insert_entity(reservation, build_entity)
     }
@@ -58,16 +56,12 @@ impl AppContext for TestAppContext {
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
-    ) -> Self::Result<R> {
+    ) -> R {
         let mut app = self.app.borrow_mut();
         app.update_entity(handle, update)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -102,7 +96,7 @@ impl AppContext for TestAppContext {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {
@@ -329,7 +323,10 @@ impl TestAppContext {
         Fut: Future<Output = R> + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.to_async()))
+        self.foreground_executor.spawn_with_context(
+            ForegroundContext::app(&Rc::downgrade(&self.app)),
+            f(self.to_async()),
+        )
     }
 
     /// true if the given global is defined
@@ -868,16 +865,14 @@ impl VisualTestContext {
 }
 
 impl AppContext for VisualTestContext {
-    type Result<T> = <TestAppContext as AppContext>::Result<T>;
-
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.cx.new(build_entity)
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> crate::Reservation<T> {
         self.cx.reserve_entity()
     }
 
@@ -885,7 +880,7 @@ impl AppContext for VisualTestContext {
         &mut self,
         reservation: crate::Reservation<T>,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.cx.insert_entity(reservation, build_entity)
     }
 
@@ -893,18 +888,14 @@ impl AppContext for VisualTestContext {
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
-    ) -> Self::Result<R>
+    ) -> R
     where
         T: 'static,
     {
         self.cx.update_entity(handle, update)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -936,7 +927,7 @@ impl AppContext for VisualTestContext {
         self.cx.background_spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {
@@ -953,7 +944,7 @@ impl VisualContext for VisualTestContext {
     fn new_window_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
                 cx.new(|cx| build_entity(window, cx))
@@ -965,7 +956,7 @@ impl VisualContext for VisualTestContext {
         &mut self,
         view: &Entity<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
-    ) -> Self::Result<R> {
+    ) -> R {
         self.window
             .update(&mut self.cx, |_, window, cx| {
                 view.update(cx, |v, cx| update(v, window, cx))
@@ -976,7 +967,7 @@ impl VisualContext for VisualTestContext {
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> Self::Result<Entity<V>>
+    ) -> Entity<V>
     where
         V: 'static + Render,
     {
@@ -987,7 +978,7 @@ impl VisualContext for VisualTestContext {
             .unwrap()
     }
 
-    fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) -> Self::Result<()> {
+    fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) {
         self.window
             .update(&mut self.cx, |_, window, cx| {
                 view.read(cx).focus_handle(cx).clone().focus(window)

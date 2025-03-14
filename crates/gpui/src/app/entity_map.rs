@@ -418,11 +418,7 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Read the entity referenced by this handle with the given function.
-    pub fn read_with<R, C: AppContext>(
-        &self,
-        cx: &C,
-        f: impl FnOnce(&T, &App) -> R,
-    ) -> C::Result<R> {
+    pub fn read_with<R, C: AppContext>(&self, cx: &C, f: impl FnOnce(&T, &App) -> R) -> R {
         cx.read_entity(self, f)
     }
 
@@ -435,7 +431,7 @@ impl<T: 'static> Entity<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
-    ) -> C::Result<R>
+    ) -> R
     where
         C: AppContext,
     {
@@ -449,7 +445,7 @@ impl<T: 'static> Entity<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
-    ) -> C::Result<R>
+    ) -> R
     where
         C: VisualContext,
     {
@@ -646,13 +642,10 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .ok_or_else(|| anyhow!("entity released"))
-                .map(|this| cx.update_entity(&this, update)),
-        )
+        self.upgrade()
+            .ok_or_else(|| anyhow!("entity released"))
+            .map(|this| cx.update_entity(&this, update))
     }
 
     /// Updates the entity referenced by this handle with the given function if
@@ -665,14 +658,13 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: VisualContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
         let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
 
-        crate::Flatten::flatten(window.update(cx, |_, window, cx| {
+        window.update(cx, |_, window, cx| {
             this.update(cx, |entity, cx| update(entity, window, cx))
-        }))
+        })
     }
 
     /// Reads the entity referenced by this handle with the given function if
@@ -681,13 +673,10 @@ impl<T: 'static> WeakEntity<T> {
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
-                .map(|this| cx.read_entity(&this, read)),
-        )
+        self.upgrade()
+            .ok_or_else(|| anyhow!("entity release"))
+            .map(|this| cx.read_entity(&this, read))
     }
 }
 

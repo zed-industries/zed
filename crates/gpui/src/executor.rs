@@ -1,10 +1,7 @@
-use crate::{App, PlatformDispatcher};
-use async_task::Runnable;
+use crate::{App, ForegroundContext, PlatformDispatcher};
+use async_task::Builder;
 use futures::channel::mpsc;
 use smol::prelude::*;
-use std::mem::ManuallyDrop;
-use std::panic::Location;
-use std::thread::{self, ThreadId};
 use std::{
     fmt::Debug,
     marker::PhantomData,
@@ -17,6 +14,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
+    thread::ThreadId,
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
@@ -44,6 +42,7 @@ pub struct BackgroundExecutor {
 pub struct ForegroundExecutor {
     #[doc(hidden)]
     pub dispatcher: Arc<dyn PlatformDispatcher>,
+
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -64,6 +63,9 @@ enum TaskState<T> {
 
     /// A task that is currently running.
     Spawned(async_task::Task<T>),
+
+    /// A task that is currently running on the foreground
+    SpawnedOnForeground(async_task::Task<T, ForegroundContext>),
 }
 
 impl<T> Task<T> {
@@ -77,6 +79,7 @@ impl<T> Task<T> {
         match self {
             Task(TaskState::Ready(_)) => {}
             Task(TaskState::Spawned(task)) => task.detach(),
+            Task(TaskState::SpawnedOnForeground(task)) => task.detach(),
         }
     }
 }
@@ -92,7 +95,7 @@ where
     pub fn detach_and_log_err(self, cx: &App) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
-            .spawn(self.log_tracked_err(*location))
+            .spawn_with_context(ForegroundContext::none(), self.log_tracked_err(*location))
             .detach();
     }
 }
@@ -104,6 +107,7 @@ impl<T> Future for Task<T> {
         match unsafe { self.get_unchecked_mut() } {
             Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
             Task(TaskState::Spawned(task)) => task.poll(cx),
+            Task(TaskState::SpawnedOnForeground(task)) => task.poll(cx),
         }
     }
 }
@@ -126,8 +130,6 @@ impl TaskLabel {
         Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
     }
 }
-
-type AnyLocalFuture<R> = Pin<Box<dyn 'static + Future<Output = R>>>;
 
 type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 
@@ -441,6 +443,17 @@ impl BackgroundExecutor {
     }
 }
 
+/// std::thread::current() doesn't always reliably return the same ID.
+/// This does.
+#[inline]
+pub(crate) fn thread_id() -> ThreadId {
+    std::thread_local! {
+        static ID: ThreadId = std::thread::current().id();
+    }
+    ID.try_with(|id| *id)
+        .unwrap_or_else(|_| std::thread::current().id())
+}
+
 /// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
     /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
@@ -457,86 +470,29 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
+        self.spawn_with_context(ForegroundContext::none(), future)
+    }
+
+    /// Enqueues the given Task to run on the main thread at some point in the future,
+    /// with a context parameter that will be checked before each turn
+    pub fn spawn_with_context<R>(
+        &self,
+        mut context: ForegroundContext,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        context.spawning_thread = Some(thread_id());
         let dispatcher = self.dispatcher.clone();
 
-        #[track_caller]
-        fn inner<R: 'static>(
-            dispatcher: Arc<dyn PlatformDispatcher>,
-            future: AnyLocalFuture<R>,
-        ) -> Task<R> {
-            let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
-                dispatcher.dispatch_on_main_thread(runnable)
-            });
-            runnable.schedule();
-            Task(TaskState::Spawned(task))
-        }
-        inner::<R>(dispatcher, Box::pin(future))
+        let (runnable, task) = Builder::new().metadata(context).spawn_local(
+            |_| future,
+            move |runnable| dispatcher.dispatch_on_main_thread(runnable),
+        );
+        runnable.schedule();
+        Task(TaskState::SpawnedOnForeground(task))
     }
-}
-
-/// Variant of `async_task::spawn_local` that includes the source location of the spawn in panics.
-///
-/// Copy-modified from:
-/// https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405
-#[track_caller]
-fn spawn_local_with_source_location<Fut, S>(
-    future: Fut,
-    schedule: S,
-) -> (Runnable<()>, async_task::Task<Fut::Output, ()>)
-where
-    Fut: Future + 'static,
-    Fut::Output: 'static,
-    S: async_task::Schedule<()> + Send + Sync + 'static,
-{
-    #[inline]
-    fn thread_id() -> ThreadId {
-        std::thread_local! {
-            static ID: ThreadId = thread::current().id();
-        }
-        ID.try_with(|id| *id)
-            .unwrap_or_else(|_| thread::current().id())
-    }
-
-    struct Checked<F> {
-        id: ThreadId,
-        inner: ManuallyDrop<F>,
-        location: &'static Location<'static>,
-    }
-
-    impl<F> Drop for Checked<F> {
-        fn drop(&mut self) {
-            assert!(
-                self.id == thread_id(),
-                "local task dropped by a thread that didn't spawn it. Task spawned at {}",
-                self.location
-            );
-            unsafe {
-                ManuallyDrop::drop(&mut self.inner);
-            }
-        }
-    }
-
-    impl<F: Future> Future for Checked<F> {
-        type Output = F::Output;
-
-        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            assert!(
-                self.id == thread_id(),
-                "local task polled by a thread that didn't spawn it. Task spawned at {}",
-                self.location
-            );
-            unsafe { self.map_unchecked_mut(|c| &mut *c.inner).poll(cx) }
-        }
-    }
-
-    // Wrap the future into one that checks which thread it's on.
-    let future = Checked {
-        id: thread_id(),
-        inner: ManuallyDrop::new(future),
-        location: Location::caller(),
-    };
-
-    unsafe { async_task::spawn_unchecked(future, schedule) }
 }
 
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
