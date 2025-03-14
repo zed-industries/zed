@@ -21,7 +21,9 @@ use util::{post_inc, ResultExt, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
-use crate::thread_store::SavedThread;
+use crate::thread_store::{
+    SerializedMessage, SerializedThread, SerializedToolResult, SerializedToolUse,
+};
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
 
 #[derive(Debug, Clone, Copy)]
@@ -372,33 +374,36 @@ impl Thread {
         thread
     }
 
-    pub fn from_saved(
+    pub fn deserialize(
         id: ThreadId,
-        saved: SavedThread,
+        serialized: SerializedThread,
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
-            saved
+            serialized
                 .messages
                 .last()
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use =
-            ToolUseState::from_saved_messages(&saved.messages, |name| name != ScriptingTool::NAME);
+        let tool_use = ToolUseState::from_serialized_messages(&serialized.messages, |name| {
+            name != ScriptingTool::NAME
+        });
         let scripting_tool_use =
-            ToolUseState::from_saved_messages(&saved.messages, |name| name == ScriptingTool::NAME);
+            ToolUseState::from_serialized_messages(&serialized.messages, |name| {
+                name == ScriptingTool::NAME
+            });
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
 
         Self {
             id,
-            updated_at: saved.updated_at,
-            summary: Some(saved.summary),
+            updated_at: serialized.updated_at,
+            summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
-            messages: saved
+            messages: serialized
                 .messages
                 .into_iter()
                 .map(|message| Message {
@@ -613,6 +618,42 @@ impl Thread {
         }
 
         text
+    }
+
+    /// Serializes this thread into a SavedThread format for storage or telemetry
+    pub fn serialize(&self) -> SerializedThread {
+        SerializedThread {
+            summary: self.summary_or_default(),
+            updated_at: self.updated_at(),
+            messages: self
+                .messages()
+                .map(|message| SerializedMessage {
+                    id: message.id,
+                    role: message.role,
+                    text: message.text.clone(),
+                    tool_uses: self
+                        .tool_uses_for_message(message.id)
+                        .into_iter()
+                        .chain(self.scripting_tool_uses_for_message(message.id))
+                        .map(|tool_use| SerializedToolUse {
+                            id: tool_use.id,
+                            name: tool_use.name,
+                            input: tool_use.input,
+                        })
+                        .collect(),
+                    tool_results: self
+                        .tool_results_for_message(message.id)
+                        .into_iter()
+                        .chain(self.scripting_tool_results_for_message(message.id))
+                        .map(|tool_result| SerializedToolResult {
+                            tool_use_id: tool_result.tool_use_id.clone(),
+                            is_error: tool_result.is_error,
+                            content: tool_result.content.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
     }
 
     pub fn send_to_model(

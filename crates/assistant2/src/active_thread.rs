@@ -14,7 +14,6 @@ use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use scripting_tool::{ScriptingTool, ScriptingToolInput};
-use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,28 +40,6 @@ pub struct ActiveThread {
 
 struct EditMessageState {
     editor: Entity<Editor>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SerializableThread {
-    id: String,
-    messages: Vec<SerializableMessage>,
-    tool_uses: Vec<SerializableToolUse>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SerializableMessage {
-    id: usize,
-    role: String,
-    text: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SerializableToolUse {
-    name: String,
-    input: serde_json::Value,
-    status: String,
-    result: Option<String>,
 }
 
 impl ActiveThread {
@@ -530,8 +507,8 @@ impl ActiveThread {
             async move {
                 let (thread_data, initial_snapshot) = thread
                     .update(&mut cx, |thread, _cx| {
-                        let serializable_thread = Self::create_serializable_thread_static(thread);
-                        let thread_data = serde_json::to_value(serializable_thread)
+                        let serialized_thread = thread.serialize();
+                        let thread_data = serde_json::to_value(serialized_thread)
                             .unwrap_or_else(|_| serde_json::Value::Null);
 
                         let initial_snapshot = thread
@@ -592,75 +569,6 @@ impl ActiveThread {
         });
 
         telemetry_task.detach();
-    }
-
-    // Static version of create_serializable_thread that can be used from async contexts
-    fn create_serializable_thread_static(thread: &Thread) -> SerializableThread {
-        let mut serializable_messages = Vec::new();
-        let mut serializable_tool_uses = Vec::new();
-
-        // Convert messages
-        for message in thread.messages() {
-            serializable_messages.push(SerializableMessage {
-                id: message.id.0,
-                role: format!("{:?}", message.role),
-                text: message.text.clone(),
-            });
-
-            // Process tool uses for this message
-            let tool_uses = thread.tool_uses_for_message(message.id);
-            for tool_use in tool_uses {
-                let status_str = match &tool_use.status {
-                    ToolUseStatus::Pending => "pending",
-                    ToolUseStatus::Running => "running",
-                    ToolUseStatus::Finished(_) => "finished",
-                    ToolUseStatus::Error(_) => "error",
-                };
-
-                let result = match &tool_use.status {
-                    ToolUseStatus::Finished(output) => Some(output.clone()),
-                    ToolUseStatus::Error(err) => Some(err.clone()),
-                    _ => None,
-                };
-
-                serializable_tool_uses.push(SerializableToolUse {
-                    name: tool_use.name.to_string(),
-                    input: tool_use.input.clone(),
-                    status: status_str.to_string(),
-                    result: result.as_ref().map(ToString::to_string),
-                });
-            }
-
-            // Process scripting tool uses for this message
-            let scripting_tool_uses = thread.scripting_tool_uses_for_message(message.id);
-            for tool_use in scripting_tool_uses {
-                let status_str = match &tool_use.status {
-                    ToolUseStatus::Pending => "pending",
-                    ToolUseStatus::Running => "running",
-                    ToolUseStatus::Finished(_) => "finished",
-                    ToolUseStatus::Error(_) => "error",
-                };
-
-                let result = match &tool_use.status {
-                    ToolUseStatus::Finished(output) => Some(output.clone()),
-                    ToolUseStatus::Error(err) => Some(err.clone()),
-                    _ => None,
-                };
-
-                serializable_tool_uses.push(SerializableToolUse {
-                    name: tool_use.name.to_string(),
-                    input: tool_use.input.clone(),
-                    status: status_str.to_string(),
-                    result: result.as_ref().map(ToString::to_string),
-                });
-            }
-        }
-
-        SerializableThread {
-            id: thread.id().to_string(),
-            messages: serializable_messages,
-            tool_uses: serializable_tool_uses,
-        }
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
