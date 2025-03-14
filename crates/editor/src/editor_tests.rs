@@ -6357,12 +6357,29 @@ async fn test_autoclose_and_auto_surround_pairs(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| editor.handle_input("{", window, cx));
     cx.assert_editor_state("{«aˇ»} b");
 
-    // Autclose pair where the start and end characters are the same
+    // Autoclose when not immediately after a word character
+    cx.set_state("a ˇ");
+    cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
+    cx.assert_editor_state("a \"ˇ\"");
+
+    // Autoclose pair where the start and end characters are the same
+    cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
+    cx.assert_editor_state("a \"\"ˇ");
+
+    // Don't autoclose when immediately after a word character
     cx.set_state("aˇ");
     cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
-    cx.assert_editor_state("a\"ˇ\"");
+    cx.assert_editor_state("a\"ˇ");
+
+    // Do autoclose when after a non-word character
+    cx.set_state("{ˇ");
     cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
-    cx.assert_editor_state("a\"\"ˇ");
+    cx.assert_editor_state("{\"ˇ\"");
+
+    // Non identical pairs autoclose regardless of preceding character
+    cx.set_state("aˇ");
+    cx.update_editor(|editor, window, cx| editor.handle_input("{", window, cx));
+    cx.assert_editor_state("a{ˇ}");
 
     // Don't autoclose pair if autoclose is disabled
     cx.set_state("ˇ");
