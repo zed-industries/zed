@@ -4189,10 +4189,14 @@ impl BufferSnapshot {
                 } else if let Some(word_start) = current_word_start_ix.take() {
                     if query_ix == query_len {
                         let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
-                        words.insert(
-                            self.text_for_range(word_start..ix).collect::<String>(),
-                            word_range,
-                        );
+                        let mut word_text = self.text_for_range(word_start..ix).peekable();
+                        let first_char = word_text
+                            .peek()
+                            .and_then(|first_chunk| first_chunk.chars().next());
+                        // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
+                        if !first_char.map_or(true, |first_char| first_char.is_digit(10)) {
+                            words.insert(word_text.collect(), word_range);
+                        }
                     }
                 }
                 query_ix = 0;

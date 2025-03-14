@@ -3145,7 +3145,11 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
 fn test_words_in_range(cx: &mut gpui::App) {
     init_settings(cx, |_| {});
 
-    let contents = r#"let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word"#;
+    // The first line are words excluded from the results with heuristics, we do not expect them in the test assertions.
+    let contents = r#"
+0_isize 123 3.4 4  
+let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
+    "#;
 
     let buffer = cx.new(|cx| {
         let buffer = Buffer::local(contents, cx).with_language(Arc::new(rust_lang()), cx);
