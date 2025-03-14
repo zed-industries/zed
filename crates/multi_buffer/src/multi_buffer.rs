@@ -167,17 +167,27 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    namespace: &'static str,
+    namespace: usize,
     path: Arc<Path>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
+    pub fn namespaced(namespace: usize, path: Arc<Path>) -> Self {
         Self { namespace, path }
     }
 
-    pub fn path(&self) -> &Arc<Path> {
-        &self.path
+    pub fn for_buffer(buffer: &Buffer, cx: &App) -> Self {
+        if let Some(file) = buffer.file() {
+            Self {
+                namespace: 1 + file.worktree_id(cx).to_usize(),
+                path: file.path().clone(),
+            }
+        } else {
+            Self {
+                namespace: 0,
+                path: Arc::from(Path::new(&format!("Untitled/{}", buffer.remote_id()))),
+            }
+        }
     }
 }
 
@@ -1442,45 +1452,6 @@ impl MultiBuffer {
         self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
     }
 
-    pub fn push_excerpts_with_context_lines<O>(
-        &mut self,
-        buffer: Entity<Buffer>,
-        ranges: Vec<Range<O>>,
-        context_line_count: u32,
-        cx: &mut Context<Self>,
-    ) -> Vec<Range<Anchor>>
-    where
-        O: text::ToPoint + text::ToOffset,
-    {
-        let buffer_id = buffer.read(cx).remote_id();
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let (excerpt_ranges, range_counts) =
-            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-
-        let excerpt_ids = self.push_excerpts(buffer, excerpt_ranges, cx);
-
-        let mut anchor_ranges = Vec::new();
-        let mut ranges = ranges.into_iter();
-        for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.into_iter()) {
-            anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
-                let start = Anchor {
-                    buffer_id: Some(buffer_id),
-                    excerpt_id,
-                    text_anchor: buffer_snapshot.anchor_after(range.start),
-                    diff_base_anchor: None,
-                };
-                let end = Anchor {
-                    buffer_id: Some(buffer_id),
-                    excerpt_id,
-                    text_anchor: buffer_snapshot.anchor_after(range.end),
-                    diff_base_anchor: None,
-                };
-                start..end
-            }))
-        }
-        anchor_ranges
-    }
-
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
         let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
         let snapshot = self.snapshot(cx);
@@ -1554,7 +1525,7 @@ impl MultiBuffer {
             let mut merged_ranges: Vec<ExcerptRange<Point>> = Vec::new();
             for range in expanded_ranges {
                 if let Some(last_range) = merged_ranges.last_mut() {
-                    if last_range.context.end >= range.context.start {
+                    if last_range.context.end + Point::new(1, 0) >= range.context.start {
                         last_range.context.end = range.context.end;
                         continue;
                     }
@@ -2013,6 +1984,19 @@ impl MultiBuffer {
         }
 
         excerpts
+    }
+
+    pub fn primary_excerpt_ranges(&self, cx: &App) -> Vec<Range<Anchor>> {
+        self.read(cx)
+            .excerpts()
+            .flat_map(|(excerpt_id, buffer, range)| {
+                Some(Anchor::range_in_buffer(
+                    excerpt_id,
+                    buffer.remote_id(),
+                    range.primary?,
+                ))
+            })
+            .collect()
     }
 
     pub fn excerpt_ranges_for_buffer(&self, buffer_id: BufferId, cx: &App) -> Vec<Range<Point>> {
