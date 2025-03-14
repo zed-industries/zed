@@ -332,7 +332,7 @@ impl EditToolRequest {
     }
 
     const SUCCESS_OUTPUT_HEADER: &str = "Successfully applied. Here's a list of changes:";
-    const ERROR_OUTPUT_HEADER_NO_EDITS: &str = "I couldn't apply any edits!.\n\n";
+    const ERROR_OUTPUT_HEADER_NO_EDITS: &str = "I couldn't apply any edits!";
     const ERROR_OUTPUT_HEADER_WITH_EDITS: &str =
         "Errors occurred. First, here's a list of the edits we managed to apply:";
 
@@ -380,7 +380,7 @@ impl EditToolRequest {
             if !self.bad_searches.is_empty() {
                 writeln!(
                     &mut output,
-                    "These searches failed because they didn't match any strings:"
+                    "\n\nThese searches failed because they didn't match any strings:"
                 )?;
 
                 for replace in self.bad_searches {
@@ -392,15 +392,14 @@ impl EditToolRequest {
                     )?;
                 }
 
-                writeln!(&mut output, "Make sure to use exact searches.")?;
-
-                if !errors.is_empty() {
-                    output.push_str("\n\n");
-                }
+                write!(&mut output, "Make sure to use exact searches.")?;
             }
 
             if !errors.is_empty() {
-                writeln!(&mut output, "These SEARCH/REPLACE blocks failed to parse:")?;
+                writeln!(
+                    &mut output,
+                    "\n\nThese SEARCH/REPLACE blocks failed to parse:"
+                )?;
 
                 for error in errors {
                     writeln!(&mut output, "- {}", error)?;
