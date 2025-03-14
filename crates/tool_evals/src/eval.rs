@@ -195,70 +195,65 @@ fn repo_dir_name(url: &str) -> String {
 
 fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Result<()> {
     if !repo_path.exists() {
-        if let Some(parent) = repo_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut child = std::process::Command::new("git")
-            .arg("clone")
-            .arg(&eval_setup.url)
-            .arg(repo_path)
-            .spawn()?;
-        let exit_status = child.wait()?;
-        if !exit_status.success() {
+        std::fs::create_dir_all(repo_path)?;
+        run_git(repo_path, vec!["init"])?;
+        run_git(repo_path, vec!["remote", "add", "origin", &eval_setup.url])?;
+    } else {
+        let actual_origin = query_git(repo_path, vec!["remote", "get-url", "origin"])?;
+        if actual_origin != eval_setup.url {
             return Err(anyhow!(
-                "git clone exited with failure status {exit_status}"
+                "remote origin {} does not match expected origin {}",
+                actual_origin,
+                eval_setup.url
             ));
         }
+
+        // TODO: consider including "-x" to remove ignored files. The downside of this is that it will
+        // also remove build artifacts, and so prevent incremental reuse there.
+        run_git(repo_path, vec!["clean", "--force", "-d"])?;
+        run_git(repo_path, vec!["reset", "--hard", "HEAD"])?;
     }
 
-    let output = std::process::Command::new("git")
-        .arg("remote")
-        .arg("get-url")
-        .arg("origin")
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "`git remote get-url origin` exited with failure status {}",
-            output.status
-        ));
-    }
-    let stdout = String::from_utf8(output.stdout)?;
-    let actual_origin = stdout.trim();
-    if actual_origin != eval_setup.url {
-        return Err(anyhow!(
-            "remote origin {} does not match expected origin {}",
-            actual_origin,
-            eval_setup.url
-        ));
-    }
-
-    let mut child = std::process::Command::new("git")
-        .arg("reset")
-        .arg("--hard")
-        .arg("HEAD")
-        .current_dir(repo_path)
-        .spawn()?;
-    let exit_status = child.wait()?;
-    if !exit_status.success() {
-        return Err(anyhow!(
-            "`git reset --hard` exited with failure status {exit_status}"
-        ));
-    }
-
-    let mut child = std::process::Command::new("git")
-        .arg("checkout")
-        .arg(&eval_setup.base_sha)
-        .current_dir(repo_path)
-        .spawn()?;
-    let exit_status = child.wait()?;
-    if !exit_status.success() {
-        return Err(anyhow!(
-            "`git checkout` exited with failure status {exit_status}"
-        ));
-    }
+    run_git(
+        repo_path,
+        vec!["fetch", "--depth", "1", "origin", &eval_setup.base_sha],
+    )?;
+    run_git(repo_path, vec!["checkout", &eval_setup.base_sha])?;
 
     Ok(())
+}
+
+fn run_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<()> {
+    let mut child = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(args.clone())
+        .spawn()?;
+    let exit_status = child.wait()?;
+    if exit_status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "`git {}` failed with {}",
+            args.join(" "),
+            exit_status,
+        ))
+    }
+}
+
+fn query_git(repo_path: &Path, args: Vec<&str>) -> anyhow::Result<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(args.clone())
+        .output()?;
+    if output.status.success() {
+        Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    } else {
+        Err(anyhow!(
+            "`git {}` failed with {}",
+            args.join(" "),
+            output.status
+        ))
+    }
 }
 
 fn repo_diff(repo_path: &Path) -> anyhow::Result<String> {
