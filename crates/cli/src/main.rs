@@ -316,7 +316,8 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         unix::fs::FileTypeExt,
     };
 
-    if cfg!(any(target_os = "linux")) {
+    #[cfg(target_os = "linux")]
+    {
         let fd_str = path.strip_prefix("/proc/self/fd/")?;
 
         let link = fs::read_link(path).ok()?;
@@ -327,7 +328,9 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
         return Some(file);
-    } else if cfg!(target_os = "macos") {
+    }
+    #[cfg(target_os = "macos")]
+    {
         let fd_str = path.strip_prefix("/dev/fd/")?;
 
         let metadata = fs::metadata(path).ok()?;
