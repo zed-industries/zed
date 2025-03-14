@@ -4880,8 +4880,11 @@ impl BackgroundScanner {
                     );
                     if let Some(local_repo) = repo {
                         scans_running.fetch_add(1, atomic::Ordering::Release);
-                        git_status_update_jobs
-                            .push(self.schedule_git_statuses_update(&mut state, local_repo));
+                        let (old, rx) = self.schedule_git_statuses_update(&mut state, local_repo);
+                        if old.is_some() {
+                            scans_running.fetch_sub(1, atomic::Ordering::Release);
+                        }
+                        git_status_update_jobs.push(rx);
                     }
                 }
             } else if child_name == *GITIGNORE {
@@ -5470,8 +5473,10 @@ impl BackgroundScanner {
                     }
                 };
 
-                status_updates
-                    .push(self.schedule_git_statuses_update(&mut state, local_repository));
+                status_updates.push(
+                    self.schedule_git_statuses_update(&mut state, local_repository)
+                        .1,
+                );
             }
 
             // Remove any git repositories whose .git entry no longer exists.
@@ -5512,108 +5517,17 @@ impl BackgroundScanner {
     fn schedule_git_statuses_update(
         &self,
         state: &mut BackgroundScannerState,
-        mut local_repository: LocalRepositoryEntry,
-    ) -> oneshot::Receiver<()> {
-        let repository_name = local_repository.work_directory.display_name();
-        let path_key = local_repository.work_directory.path_key();
-
+        local_repository: LocalRepositoryEntry,
+    ) -> (Option<Task<()>>, oneshot::Receiver<()>) {
         let job_state = self.state.clone();
         let (tx, rx) = oneshot::channel();
 
-        state.repository_scans.insert(
-            path_key.clone(),
-            self.executor.spawn(async move {
-                update_branches(&job_state, &mut local_repository)
-                    .await
-                    .log_err();
-                log::trace!("updating git statuses for repo {repository_name}",);
-                let t0 = Instant::now();
-
-                let Some(statuses) = local_repository
-                    .repo()
-                    .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
-                    .log_err()
-                else {
-                    return;
-                };
-                log::trace!(
-                    "computed git statuses for repo {repository_name} in {:?}",
-                    t0.elapsed()
-                );
-
-                let t0 = Instant::now();
-                let mut changed_paths = Vec::new();
-                let snapshot = job_state.lock().snapshot.snapshot.clone();
-
-                let Some(mut repository) = snapshot
-                    .repository(path_key)
-                    .context(
-                        "Tried to update git statuses for a repository that isn't in the snapshot",
-                    )
-                    .log_err()
-                else {
-                    return;
-                };
-
-                let merge_head_shas = local_repository.repo().merge_head_shas();
-                if merge_head_shas != local_repository.current_merge_head_shas {
-                    mem::take(&mut repository.current_merge_conflicts);
-                }
-
-                let mut new_entries_by_path = SumTree::new(&());
-                for (repo_path, status) in statuses.entries.iter() {
-                    let project_path = repository.work_directory.try_unrelativize(repo_path);
-
-                    new_entries_by_path.insert_or_replace(
-                        StatusEntry {
-                            repo_path: repo_path.clone(),
-                            status: *status,
-                        },
-                        &(),
-                    );
-                    if status.is_conflicted() {
-                        repository.current_merge_conflicts.insert(repo_path.clone());
-                    }
-
-                    if let Some(path) = project_path {
-                        changed_paths.push(path);
-                    }
-                }
-
-                repository.statuses_by_path = new_entries_by_path;
-                let mut state = job_state.lock();
-                state
-                    .snapshot
-                    .repositories
-                    .insert_or_replace(repository, &());
-                state.snapshot.git_repositories.update(
-                    &local_repository.work_directory_id,
-                    |entry| {
-                        entry.current_merge_head_shas = merge_head_shas;
-                        entry.merge_message = std::fs::read_to_string(
-                            local_repository.dot_git_dir_abs_path.join("MERGE_MSG"),
-                        )
-                        .ok()
-                        .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
-                        entry.status_scan_id += 1;
-                    },
-                );
-
-                util::extend_sorted(
-                    &mut state.changed_paths,
-                    changed_paths,
-                    usize::MAX,
-                    Ord::cmp,
-                );
-
-                log::trace!(
-                    "applied git status updates for repo {repository_name} in {:?}",
-                    t0.elapsed(),
-                );
-                tx.send(()).ok();
-            }),
+        let old = state.repository_scans.insert(
+            local_repository.work_directory.path_key(),
+            self.executor
+                .spawn(do_git_status_update(job_state, local_repository, tx)),
         );
-        rx
+        (old, rx)
     }
 
     async fn progress_timer(&self, running: bool) {
@@ -5688,6 +5602,100 @@ async fn update_branches(
         .insert_or_replace(repository, &());
 
     Ok(())
+}
+
+async fn do_git_status_update(
+    job_state: Arc<Mutex<BackgroundScannerState>>,
+    mut local_repository: LocalRepositoryEntry,
+    tx: oneshot::Sender<()>,
+) {
+    let repository_name = local_repository.work_directory.display_name();
+    log::trace!("updating git branches for repo {repository_name}");
+    update_branches(&job_state, &mut local_repository)
+        .await
+        .log_err();
+    let t0 = Instant::now();
+
+    log::trace!("updating git statuses for repo {repository_name}");
+    let Some(statuses) = local_repository
+        .repo()
+        .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
+        .log_err()
+    else {
+        return;
+    };
+    log::trace!(
+        "computed git statuses for repo {repository_name} in {:?}",
+        t0.elapsed()
+    );
+
+    let t0 = Instant::now();
+    let mut changed_paths = Vec::new();
+    let snapshot = job_state.lock().snapshot.snapshot.clone();
+
+    let Some(mut repository) = snapshot
+        .repository(local_repository.work_directory.path_key())
+        .context("Tried to update git statuses for a repository that isn't in the snapshot")
+        .log_err()
+    else {
+        return;
+    };
+
+    let merge_head_shas = local_repository.repo().merge_head_shas();
+    if merge_head_shas != local_repository.current_merge_head_shas {
+        mem::take(&mut repository.current_merge_conflicts);
+    }
+
+    let mut new_entries_by_path = SumTree::new(&());
+    for (repo_path, status) in statuses.entries.iter() {
+        let project_path = repository.work_directory.try_unrelativize(repo_path);
+
+        new_entries_by_path.insert_or_replace(
+            StatusEntry {
+                repo_path: repo_path.clone(),
+                status: *status,
+            },
+            &(),
+        );
+        if status.is_conflicted() {
+            repository.current_merge_conflicts.insert(repo_path.clone());
+        }
+
+        if let Some(path) = project_path {
+            changed_paths.push(path);
+        }
+    }
+
+    repository.statuses_by_path = new_entries_by_path;
+    let mut state = job_state.lock();
+    state
+        .snapshot
+        .repositories
+        .insert_or_replace(repository, &());
+    state
+        .snapshot
+        .git_repositories
+        .update(&local_repository.work_directory_id, |entry| {
+            entry.current_merge_head_shas = merge_head_shas;
+            entry.merge_message =
+                std::fs::read_to_string(local_repository.dot_git_dir_abs_path.join("MERGE_MSG"))
+                    .ok()
+                    .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
+            entry.status_scan_id += 1;
+        });
+
+    util::extend_sorted(
+        &mut state.changed_paths,
+        changed_paths,
+        usize::MAX,
+        Ord::cmp,
+    );
+
+    log::trace!(
+        "applied git status updates for repo {repository_name} in {:?}",
+        t0.elapsed(),
+    );
+    tx.send(()).ok();
 }
 
 fn build_diff(
