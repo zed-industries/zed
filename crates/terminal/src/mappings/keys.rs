@@ -41,6 +41,8 @@ impl AlacModifiers {
     }
 }
 
+// TODO:
+// These keystokes are not keyboard layouts aware, so they will not work for all users
 pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> Option<String> {
     let modifiers = AlacModifiers::new(keystroke);
 
@@ -333,13 +335,13 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         (KeyCodes::Y, AlacModifiers::CtrlShift) => Some("\x19".to_string()), //25
         (KeyCodes::Z, AlacModifiers::Ctrl) => Some("\x1a".to_string()), //26
         (KeyCodes::Z, AlacModifiers::CtrlShift) => Some("\x1a".to_string()), //26
-        // ("@"KeyCodes::A, AlacModifiers::Ctrl) => Some("\x00".to_string()), //0
-        // ("["KeyCodes::A, AlacModifiers::Ctrl) => Some("\x1b".to_string()), //27
-        // ("\\"KeyCodes::A, AlacModifiers::Ctrl) => Some("\x1c".to_string()), //28
-        // ("]"KeyCodes::A, AlacModifiers::Ctrl) => Some("\x1d".to_string()), //29
-        // ("^"KeyCodes::A, AlacModifiers::Ctrl) => Some("\x1e".to_string()), //30
-        // ("_"KeyCodes::A, AlacModifiers::Ctrl) => Some("\x1f".to_string()), //31
-        // ("?"KeyCodes::A, AlacModifiers::Ctrl) => Some("\x7f".to_string()), //127
+        (KeyCodes::Digital2, AlacModifiers::CtrlShift) => Some("\x00".to_string()), //0 "@"
+        (KeyCodes::LeftBracket, AlacModifiers::Ctrl) => Some("\x1b".to_string()), //27 "["
+        (KeyCodes::Backslash, AlacModifiers::Ctrl) => Some("\x1c".to_string()), //28 "\\"
+        (KeyCodes::RightBracket, AlacModifiers::Ctrl) => Some("\x1d".to_string()), //29 "]"
+        (KeyCodes::Digital6, AlacModifiers::CtrlShift) => Some("\x1e".to_string()), //30 "^"
+        (KeyCodes::Minus, AlacModifiers::CtrlShift) => Some("\x1f".to_string()), //31 "_"
+        (KeyCodes::Slash, AlacModifiers::CtrlShift) => Some("\x7f".to_string()), //127 "?"
         _ => None,
     };
     if manual_esc_str.is_some() {
