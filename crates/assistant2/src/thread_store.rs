@@ -20,7 +20,7 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
-use crate::thread::{MessageId, Thread, ThreadId};
+use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadId};
 
 pub fn init(cx: &mut App) {
     ThreadsDatabase::init(cx);
@@ -122,10 +122,11 @@ impl ThreadStore {
 
     pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let (metadata, serialized_thread) =
-            thread.read_with(cx, |thread, _cx| (thread.id().clone(), thread.serialize()));
+            thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
 
         let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(|this, mut cx| async move {
+            let serialized_thread = serialized_thread.await?;
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.save_thread(metadata, serialized_thread).await?;
 
@@ -241,6 +242,8 @@ pub struct SerializedThread {
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<SerializedMessage>,
+    #[serde(default)]
+    pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

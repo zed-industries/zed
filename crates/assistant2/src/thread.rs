@@ -105,7 +105,7 @@ pub struct Thread {
     tool_use: ToolUseState,
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
-    initial_project_snapshot: Shared<Task<Arc<ProjectSnapshot>>>,
+    initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
 }
 
 impl Thread {
@@ -132,7 +132,12 @@ impl Thread {
             tool_use: ToolUseState::new(),
             scripting_session: cx.new(|cx| ScriptingSession::new(project.clone(), cx)),
             scripting_tool_use: ToolUseState::new(),
-            initial_project_snapshot: Self::snapshot_project(project, cx).shared(),
+            initial_project_snapshot: {
+                let project_snapshot = Self::project_snapshot(project, cx);
+                cx.foreground_executor()
+                    .spawn(async move { Some(project_snapshot.await) })
+                    .shared()
+            },
         }
     }
 
@@ -185,8 +190,7 @@ impl Thread {
             tool_use,
             scripting_session,
             scripting_tool_use,
-            initial_project_snapshot: None,
-            initial_project_snapshot_task: None,
+            initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
         }
     }
 
@@ -234,14 +238,6 @@ impl Thread {
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
         &self.tools
-    }
-
-    pub fn initial_project_snapshot(&self) -> Option<&ProjectSnapshot> {
-        self.initial_project_snapshot.as_ref()
-    }
-
-    pub fn take_project_snapshot(&self, cx: &mut Context<Self>) -> Task<ProjectSnapshot> {
-        Self::snapshot_project(self.project.clone(), cx)
     }
 
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
@@ -382,40 +378,45 @@ impl Thread {
         text
     }
 
-    /// Serializes this thread into a SavedThread format for storage or telemetry
-    pub fn serialize(&self) -> SerializedThread {
-        SerializedThread {
-            summary: self.summary_or_default(),
-            updated_at: self.updated_at(),
-            messages: self
-                .messages()
-                .map(|message| SerializedMessage {
-                    id: message.id,
-                    role: message.role,
-                    text: message.text.clone(),
-                    tool_uses: self
-                        .tool_uses_for_message(message.id)
-                        .into_iter()
-                        .chain(self.scripting_tool_uses_for_message(message.id))
-                        .map(|tool_use| SerializedToolUse {
-                            id: tool_use.id,
-                            name: tool_use.name,
-                            input: tool_use.input,
-                        })
-                        .collect(),
-                    tool_results: self
-                        .tool_results_for_message(message.id)
-                        .into_iter()
-                        .chain(self.scripting_tool_results_for_message(message.id))
-                        .map(|tool_result| SerializedToolResult {
-                            tool_use_id: tool_result.tool_use_id.clone(),
-                            is_error: tool_result.is_error,
-                            content: tool_result.content.clone(),
-                        })
-                        .collect(),
-                })
-                .collect(),
-        }
+    /// Serializes this thread into a format for storage or telemetry.
+    pub fn serialize(&self, cx: &mut Context<Self>) -> Task<Result<SerializedThread>> {
+        let initial_project_snapshot = self.initial_project_snapshot.clone();
+        cx.spawn(|this, cx| async move {
+            let initial_project_snapshot = initial_project_snapshot.await;
+            this.read_with(&cx, |this, _| SerializedThread {
+                summary: this.summary_or_default(),
+                updated_at: this.updated_at(),
+                messages: this
+                    .messages()
+                    .map(|message| SerializedMessage {
+                        id: message.id,
+                        role: message.role,
+                        text: message.text.clone(),
+                        tool_uses: this
+                            .tool_uses_for_message(message.id)
+                            .into_iter()
+                            .chain(this.scripting_tool_uses_for_message(message.id))
+                            .map(|tool_use| SerializedToolUse {
+                                id: tool_use.id,
+                                name: tool_use.name,
+                                input: tool_use.input,
+                            })
+                            .collect(),
+                        tool_results: this
+                            .tool_results_for_message(message.id)
+                            .into_iter()
+                            .chain(this.scripting_tool_results_for_message(message.id))
+                            .map(|tool_result| SerializedToolResult {
+                                tool_use_id: tool_result.tool_use_id.clone(),
+                                is_error: tool_result.is_error,
+                                content: tool_result.content.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                initial_project_snapshot,
+            })
+        })
     }
 
     pub fn send_to_model(
@@ -869,8 +870,33 @@ impl Thread {
         }
     }
 
+    /// Reports feedback about the thread and stores it in our telemetry backend.
+    pub fn report_feedback(&self, is_positive: bool, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
+        let serialized_thread = self.serialize(cx);
+        let thread_id = self.id().clone();
+
+        cx.background_spawn(async move {
+            let final_project_snapshot = final_project_snapshot.await;
+            let serialized_thread = serialized_thread.await?;
+            let thread_data =
+                serde_json::to_value(serialized_thread).unwrap_or_else(|_| serde_json::Value::Null);
+
+            let rating = if is_positive { "positive" } else { "negative" };
+            telemetry::event!(
+                "Assistant Thread Rated",
+                rating,
+                thread_id,
+                thread_data,
+                final_project_snapshot
+            );
+
+            Ok(())
+        })
+    }
+
     /// Create a snapshot of the current project state including git information and unsaved buffers.
-    fn snapshot_project(
+    fn project_snapshot(
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Arc<ProjectSnapshot>> {
@@ -960,7 +986,7 @@ impl Thread {
                                     None
                                 }
                             }
-                        };
+                        }
 
                         WorktreeSnapshot {
                             worktree_path,

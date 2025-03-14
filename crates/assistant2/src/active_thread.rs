@@ -21,6 +21,7 @@ use theme::ThemeSettings;
 use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
 use util::ResultExt as _;
+use workspace::notifications::NotifyTaskExt;
 use workspace::{notifications::NotificationId, Toast};
 
 pub struct ActiveThread {
@@ -491,84 +492,31 @@ impl ActiveThread {
     fn handle_feedback_click(
         &mut self,
         is_positive: bool,
-        thread_id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let rating = if is_positive { "positive" } else { "negative" };
-        let thread = self.thread.clone();
-        let workspace_handle = window.root::<workspace::Workspace>().flatten();
-        let project_snapshot_task =
-            thread.update(cx, |thread, cx| thread.take_project_snapshot(cx));
+        let Some(workspace) = window.root::<workspace::Workspace>().flatten() else {
+            return;
+        };
+        let report = self
+            .thread
+            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
 
-        let telemetry_task = cx.spawn(|_, mut cx| {
-            let workspace_handle = workspace_handle.clone();
-
-            async move {
-                let (thread_data, initial_snapshot) = thread
-                    .update(&mut cx, |thread, _cx| {
-                        let serialized_thread = thread.serialize();
-                        let thread_data = serde_json::to_value(serialized_thread)
-                            .unwrap_or_else(|_| serde_json::Value::Null);
-
-                        let initial_snapshot = thread
-                            .initial_project_snapshot()
-                            .cloned()
-                            .map(|snapshot| {
-                                serde_json::to_value(snapshot)
-                                    .unwrap_or_else(|_| serde_json::Value::Null)
-                            })
-                            .unwrap_or(serde_json::Value::Null);
-
-                        (thread_data, initial_snapshot)
-                    })
-                    .unwrap_or_default();
-
-                let project_snapshot_result = project_snapshot_task.await;
-                let final_snapshot = match serde_json::to_value(project_snapshot_result) {
-                    Ok(snapshot) => snapshot,
-                    Err(err) => {
-                        log::error!("Failed to serialize project snapshot: {}", err);
-                        serde_json::Value::Null
-                    }
+        cx.spawn(|_, mut cx| async move {
+            report.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                let message = if is_positive {
+                    "Positive feedback recorded. Thank you!"
+                } else {
+                    "Negative feedback recorded. Thank you for helping us improve!"
                 };
 
-                telemetry::event!(
-                    "Assistant Feedback",
-                    rating,
-                    thread_id,
-                    thread_data,
-                    initial_snapshot,
-                    final_snapshot
-                );
-
-                if let Some(workspace) = workspace_handle {
-                    let success = match workspace.update(&mut cx, |workspace, cx| {
-                        let message = if rating == "positive" {
-                            "Positive feedback recorded. Thank you!"
-                        } else {
-                            "Negative feedback recorded. Thank you for helping us improve!"
-                        };
-
-                        struct ThreadFeedback;
-                        let id = NotificationId::unique::<ThreadFeedback>();
-                        workspace.show_toast(Toast::new(id, message).autohide(), cx);
-                        true
-                    }) {
-                        Ok(_) => true,
-                        Err(err) => {
-                            log::error!("Failed to show toast: {}", err);
-                            false
-                        }
-                    };
-                    success
-                } else {
-                    true
-                }
-            }
-        });
-
-        telemetry_task.detach();
+                struct ThreadFeedback;
+                let id = NotificationId::unique::<ThreadFeedback>();
+                workspace.show_toast(Toast::new(id, message).autohide(), cx)
+            })
+        })
+        .detach_and_notify_err(window, cx);
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -583,7 +531,6 @@ impl ActiveThread {
 
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
-        let thread_id = thread.id().to_string();
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
         let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
@@ -760,14 +707,8 @@ impl ActiveThread {
                                         .style(ButtonStyle::Subtle)
                                         .tooltip(Tooltip::text("Helpful"))
                                         .on_click(cx.listener({
-                                            let thread_id = thread_id.clone();
                                             move |this, _, window, cx| {
-                                                this.handle_feedback_click(
-                                                    true,
-                                                    thread_id.clone(),
-                                                    window,
-                                                    cx,
-                                                );
+                                                this.handle_feedback_click(true, window, cx);
                                             }
                                         })),
                                 )
@@ -776,14 +717,8 @@ impl ActiveThread {
                                         .style(ButtonStyle::Subtle)
                                         .tooltip(Tooltip::text("Not Helpful"))
                                         .on_click(cx.listener({
-                                            let thread_id = thread_id.clone();
                                             move |this, _, window, cx| {
-                                                this.handle_feedback_click(
-                                                    false,
-                                                    thread_id.clone(),
-                                                    window,
-                                                    cx,
-                                                );
+                                                this.handle_feedback_click(false, window, cx);
                                             }
                                         })),
                                 ),
