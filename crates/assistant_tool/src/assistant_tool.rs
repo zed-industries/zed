@@ -4,7 +4,10 @@ mod tool_working_set;
 use std::sync::Arc;
 
 use anyhow::Result;
+use collections::HashSet;
+use gpui::Context;
 use gpui::{App, Entity, SharedString, Task};
+use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 
@@ -47,6 +50,39 @@ pub trait Tool: 'static + Send + Sync {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>>;
+}
+
+/// Tracks actions performed by tools in a thread
+#[derive(Debug)]
+pub struct ActionLog {
+    changed_buffers: HashSet<Entity<Buffer>>,
+    pending_refresh: HashSet<Entity<Buffer>>,
+}
+
+impl ActionLog {
+    /// Creates a new, empty action log.
+    pub fn new() -> Self {
+        Self {
+            changed_buffers: HashSet::default(),
+            pending_refresh: HashSet::default(),
+        }
+    }
+
+    /// Registers buffers that have changed and need refreshing.
+    pub fn notify_buffers_changed(
+        &mut self,
+        buffers: HashSet<Entity<Buffer>>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.changed_buffers.extend(buffers.clone());
+        self.pending_refresh.extend(buffers);
+    }
+
+    /// Takes and returns the set of buffers pending refresh, clearing internal state.
+    pub fn take_pending_refresh_buffers(&mut self) -> HashSet<Entity<Buffer>> {
+        std::mem::take(&mut self.pending_refresh)
+    }
 }

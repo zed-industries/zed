@@ -12823,11 +12823,11 @@ impl Editor {
 
         cx.spawn_in(window, |_, mut cx| async move {
             let transaction = futures::select_biased! {
+                transaction = format.log_err().fuse() => transaction,
                 () = timeout => {
                     log::warn!("timed out waiting for formatting");
                     None
                 }
-                transaction = format.log_err().fuse() => transaction,
             };
 
             buffer

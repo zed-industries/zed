@@ -660,6 +660,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "language",
  "language_model",
  "parking_lot",
  "project",

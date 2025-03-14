@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use file_icons::FileIcons;
@@ -51,13 +52,13 @@ impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
+        context_store: Entity<ContextStore>,
         thread_store: WeakEntity<ThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let tools = thread.read(cx).tools().clone();
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -200,7 +201,8 @@ impl MessageEditor {
             text
         });
 
-        let refresh_task = refresh_context_store_text(self.context_store.clone(), cx);
+        let refresh_task =
+            refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();

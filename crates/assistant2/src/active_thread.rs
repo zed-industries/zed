@@ -22,10 +22,13 @@ use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
 
+use crate::context_store::{refresh_context_store_text, ContextStore};
+
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
+    context_store: Entity<ContextStore>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -46,6 +49,7 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
+        context_store: Entity<ContextStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -58,6 +62,7 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
+            context_store,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
@@ -350,11 +355,51 @@ impl ActiveThread {
                 }
 
                 if self.thread.read(cx).all_tools_finished() {
+                    let pending_refresh_buffers = self.thread.update(cx, |thread, cx| {
+                        thread.action_log().update(cx, |action_log, _cx| {
+                            action_log.take_pending_refresh_buffers()
+                        })
+                    });
+
+                    let context_update_task = if !pending_refresh_buffers.is_empty() {
+                        let refresh_task = refresh_context_store_text(
+                            self.context_store.clone(),
+                            &pending_refresh_buffers,
+                            cx,
+                        );
+
+                        cx.spawn(|this, mut cx| async move {
+                            let updated_context_ids = refresh_task.await;
+
+                            this.update(&mut cx, |this, cx| {
+                                this.context_store.read_with(cx, |context_store, cx| {
+                                    context_store
+                                        .context()
+                                        .iter()
+                                        .filter(|context| {
+                                            updated_context_ids.contains(&context.id())
+                                        })
+                                        .flat_map(|context| context.snapshot(cx))
+                                        .collect()
+                                })
+                            })
+                        })
+                    } else {
+                        Task::ready(anyhow::Ok(Vec::new()))
+                    };
+
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
-                        self.thread.update(cx, |thread, cx| {
-                            thread.send_tool_results_to_model(model, cx);
-                        });
+                        cx.spawn(|this, mut cx| async move {
+                            let updated_context = context_update_task.await?;
+
+                            this.update(&mut cx, |this, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread.send_tool_results_to_model(model, updated_context, cx);
+                                });
+                            })
+                        })
+                        .detach();
                     }
                 }
             }
