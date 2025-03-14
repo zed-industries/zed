@@ -403,8 +403,8 @@ impl ComponentPreview {
     fn render_component_page(
         &mut self,
         component_id: &ComponentId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let component = self.component_map.get(&component_id);
 
