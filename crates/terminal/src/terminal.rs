@@ -1205,6 +1205,8 @@ impl Terminal {
             return;
         }
 
+        // todo(windows)
+        // match key instead of string
         let mut key = keystroke.key.unparse().to_string();
         if keystroke.modifiers.shift {
             key = key.to_uppercase();
