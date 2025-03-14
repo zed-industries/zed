@@ -2,6 +2,7 @@
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use anyhow::{anyhow, Result};
+use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
@@ -19,17 +20,48 @@ use text::PointUtf16;
 
 use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, Project, ProjectPath};
 
+mod breakpoints_in_file {
+    use language::BufferEvent;
+
+    use super::*;
+
+    #[derive(Clone)]
+    pub(super) struct BreakpointsInFile {
+        pub(super) buffer: Entity<Buffer>,
+        // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
+        pub(super) breakpoints: Vec<(text::Anchor, Breakpoint)>,
+        /// This is to prevent this struct being created without called `new`
+        _unused: (),
+    }
+
+    impl BreakpointsInFile {
+        pub(super) fn new(buffer: Entity<Buffer>, cx: &mut Context<BreakpointStore>) -> Self {
+            cx.subscribe(&buffer, |_, buffer, event, cx| match event {
+                BufferEvent::Saved => {
+                    if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
+                        cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
+                            abs_path,
+                            BreakpointUpdatedReason::FileSaved,
+                        ));
+                    }
+                }
+                _ => {}
+            })
+            .detach();
+
+            BreakpointsInFile {
+                buffer,
+                breakpoints: Vec::new(),
+                _unused: (),
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct RemoteBreakpointStore {
     upstream_client: AnyProtoClient,
     _upstream_project_id: u64,
-}
-
-#[derive(Clone)]
-struct BreakpointsInFile {
-    buffer: Entity<Buffer>,
-    // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
-    breakpoints: Vec<(text::Anchor, Breakpoint)>,
 }
 
 #[derive(Clone)]
@@ -111,10 +143,7 @@ impl BreakpointStore {
             let bps = this
                 .breakpoints
                 .entry(Arc::<Path>::from(message.payload.path.as_ref()))
-                .or_insert_with(move || BreakpointsInFile {
-                    buffer,
-                    breakpoints: vec![],
-                });
+                .or_insert_with(|| BreakpointsInFile::new(buffer, cx));
 
             bps.breakpoints = message
                 .payload
@@ -205,13 +234,10 @@ impl BreakpointStore {
             return;
         };
 
-        let breakpoint_set =
-            self.breakpoints
-                .entry(abs_path.clone())
-                .or_insert_with(|| BreakpointsInFile {
-                    breakpoints: Default::default(),
-                    buffer,
-                });
+        let breakpoint_set = self
+            .breakpoints
+            .entry(abs_path.clone())
+            .or_insert_with(|| BreakpointsInFile::new(buffer, cx));
 
         match edit_action {
             BreakpointEditAction::Toggle => {
@@ -280,7 +306,10 @@ impl BreakpointStore {
             self.breakpoints.remove(&abs_path);
         }
 
-        cx.emit(BreakpointStoreEvent::BreakpointsUpdated(abs_path));
+        cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
+            abs_path,
+            BreakpointUpdatedReason::Toggled,
+        ));
         cx.notify();
     }
 
@@ -336,6 +365,26 @@ impl BreakpointStore {
         self.active_stack_frame = position;
         cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
         cx.notify();
+    }
+
+    pub fn breakpoints_from_path(&self, path: &Arc<Path>, cx: &App) -> Vec<SerializedBreakpoint> {
+        self.breakpoints
+            .get(path)
+            .map(|bp| {
+                let snapshot = bp.buffer.read(cx).snapshot();
+                bp.breakpoints
+                    .iter()
+                    .map(|(position, breakpoint)| {
+                        let position = snapshot.summary_for_anchor::<PointUtf16>(position).row;
+                        SerializedBreakpoint {
+                            position,
+                            path: path.clone(),
+                            kind: breakpoint.kind.clone(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn all_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
@@ -395,10 +444,10 @@ impl BreakpointStore {
                         continue;
                     };
                     let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-                    let mut breakpoints_for_file = BreakpointsInFile {
-                        buffer,
-                        breakpoints: vec![],
-                    };
+
+                    let mut breakpoints_for_file =
+                        this.update(&mut cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
+
                     for bp in bps {
                         let position = snapshot.anchor_before(PointUtf16::new(bp.position, 0));
                         breakpoints_for_file
@@ -420,9 +469,15 @@ impl BreakpointStore {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum BreakpointUpdatedReason {
+    Toggled,
+    FileSaved,
+}
+
 pub enum BreakpointStoreEvent {
     ActiveDebugLineChanged,
-    BreakpointsUpdated(Arc<Path>),
+    BreakpointsUpdated(Arc<Path>, BreakpointUpdatedReason),
 }
 
 impl EventEmitter<BreakpointStoreEvent> for BreakpointStore {}
@@ -510,4 +565,17 @@ pub struct SerializedBreakpoint {
     pub position: u32,
     pub path: Arc<Path>,
     pub kind: BreakpointKind,
+}
+
+impl From<SerializedBreakpoint> for dap::SourceBreakpoint {
+    fn from(bp: SerializedBreakpoint) -> Self {
+        Self {
+            line: bp.position as u64 + 1,
+            column: None,
+            condition: None,
+            hit_condition: None,
+            log_message: bp.kind.log_message().as_deref().map(Into::into),
+            mode: None,
+        }
+    }
 }

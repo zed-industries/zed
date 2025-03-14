@@ -1,6 +1,6 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent};
+use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason};
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
@@ -266,41 +266,50 @@ impl LocalMode {
         ))
     }
 
-    fn send_breakpoints(
-        &mut self,
-        ignore_breakpoints: bool,
-        last_updated_path: Option<Arc<Path>>,
+    fn send_breakpoints_from_path(
+        &self,
+        abs_path: Arc<Path>,
+        reason: BreakpointUpdatedReason,
         cx: &mut App,
+    ) -> Task<Result<Vec<dap::Breakpoint>>> {
+        let breakpoints = self
+            .breakpoint_store
+            .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
+            .into_iter()
+            .map(Into::into)
+            .collect();
+
+        self.request(
+            dap_command::SetBreakpoints {
+                source: client_source(&abs_path),
+                source_modified: Some(matches!(reason, BreakpointUpdatedReason::FileSaved)),
+                breakpoints,
+            },
+            cx.background_executor().clone(),
+        )
+    }
+
+    fn send_all_breakpoints(
+        &self,
+        ignore_breakpoints: bool,
+        cx: &App,
     ) -> Task<std::vec::Vec<Result<std::vec::Vec<dap::Breakpoint>>>> {
         let mut breakpoint_tasks = Vec::new();
-        let mut breakpoints = self
+        let breakpoints = self
             .breakpoint_store
-            .update(cx, |store, cx| store.all_breakpoints(cx));
-
-        if let Some(last_updated_path) = last_updated_path {
-            breakpoints.entry(last_updated_path).or_default();
-        }
+            .read_with(cx, |store, cx| store.all_breakpoints(cx));
 
         for (path, breakpoints) in breakpoints {
             let breakpoints = if ignore_breakpoints {
                 vec![]
             } else {
-                breakpoints
-                    .into_iter()
-                    .map(|bp| SourceBreakpoint {
-                        line: bp.position as u64 + 1,
-                        column: None,
-                        condition: None,
-                        hit_condition: None,
-                        log_message: bp.kind.log_message().as_deref().map(Into::into),
-                        mode: None,
-                    })
-                    .collect()
+                breakpoints.into_iter().map(Into::into).collect()
             };
 
             breakpoint_tasks.push(self.request(
                 dap_command::SetBreakpoints {
                     source: client_source(&path),
+                    source_modified: Some(false),
                     breakpoints,
                 },
                 cx.background_executor().clone(),
@@ -391,7 +400,7 @@ impl LocalMode {
         let configuration_sequence = async move {
             let _ = initialized_rx.await?;
 
-            cx.update(|cx| that.clone().send_breakpoints(false, None, cx))?
+            cx.update(|cx| that.clone().send_all_breakpoints(false, cx))?
                 .await;
 
             if configuration_done_supported {
@@ -676,11 +685,13 @@ impl Session {
                     })];
 
                 cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
-                    BreakpointStoreEvent::BreakpointsUpdated(path) => {
-                        let ignore = this.ignore_breakpoints;
-                        if let Some(local) = this.as_local_mut() {
+                    BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
+                        if let Some(local) = (!this.ignore_breakpoints)
+                            .then(|| this.as_local_mut())
+                            .flatten()
+                        {
                             local
-                                .send_breakpoints(ignore, Some(path.clone()), cx)
+                                .send_breakpoints_from_path(path.clone(), *reason, cx)
                                 .detach();
                         };
                     }

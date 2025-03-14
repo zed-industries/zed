@@ -1683,6 +1683,7 @@ impl LocalDapCommand for Attach {
 pub(super) struct SetBreakpoints {
     pub(super) source: dap::Source,
     pub(super) breakpoints: Vec<SourceBreakpoint>,
+    pub(super) source_modified: Option<bool>,
 }
 
 impl LocalDapCommand for SetBreakpoints {
@@ -1692,7 +1693,7 @@ impl LocalDapCommand for SetBreakpoints {
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::SetBreakpointsArguments {
             lines: None,
-            source_modified: None,
+            source_modified: self.source_modified,
             source: self.source.clone(),
             breakpoints: Some(self.breakpoints.clone()),
         }

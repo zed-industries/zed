@@ -367,291 +367,292 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
         .unwrap();
 }
 
-// TODO(debugger): enable this when run in terminal is implemented again
-// #[gpui::test]
-// async fn test_handle_successful_run_in_terminal_reverse_request(
-//     executor: BackgroundExecutor,
-//     cx: &mut TestAppContext,
-// ) {
-//     init_test(cx);
+#[gpui::test]
+async fn test_handle_successful_run_in_terminal_reverse_request(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    unimplemented!("todo(debugger): enable this when run in terminal is implemented again")
+    //     init_test(cx);
 
-//     let send_response = Arc::new(AtomicBool::new(false));
+    //     let send_response = Arc::new(AtomicBool::new(false));
 
-//     let fs = FakeFs::new(executor.clone());
+    //     let fs = FakeFs::new(executor.clone());
 
-//     fs.insert_tree(
-//         "/project",
-//         json!({
-//             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-//         }),
-//     )
-//     .await;
+    //     fs.insert_tree(
+    //         "/project",
+    //         json!({
+    //             "main.rs": "First line\nSecond line\nThird line\nFourth line",
+    //         }),
+    //     )
+    //     .await;
 
-//     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-//     let workspace = init_test_workspace(&project, cx).await;
-//     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    //     let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    //     let workspace = init_test_workspace(&project, cx).await;
+    //     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-//     let task = project.update(cx, |project, cx| {
-//         project.start_debug_session(dap::test_config(None), cx)
-//     });
+    //     let task = project.update(cx, |project, cx| {
+    //         project.start_debug_session(dap::test_config(None), cx)
+    //     });
 
-//     let (session, client) = task.await.unwrap();
+    //     let (session, client) = task.await.unwrap();
 
-//     client
-//         .on_request::<Initialize, _>(move |_, _| {
-//             Ok(dap::Capabilities {
-//                 supports_step_back: Some(false),
-//                 ..Default::default()
-//             })
-//         })
-//         .await;
+    //     client
+    //         .on_request::<Initialize, _>(move |_, _| {
+    //             Ok(dap::Capabilities {
+    //                 supports_step_back: Some(false),
+    //                 ..Default::default()
+    //             })
+    //         })
+    //         .await;
 
-//     client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    //     client.on_request::<Launch, _>(move |_, _| Ok(())).await;
 
-//     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    //     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-//     client
-//         .on_response::<RunInTerminal, _>({
-//             let send_response = send_response.clone();
-//             move |response| {
-//                 send_response.store(true, Ordering::SeqCst);
+    //     client
+    //         .on_response::<RunInTerminal, _>({
+    //             let send_response = send_response.clone();
+    //             move |response| {
+    //                 send_response.store(true, Ordering::SeqCst);
 
-//                 assert!(response.success);
-//                 assert!(response.body.is_some());
-//             }
-//         })
-//         .await;
+    //                 assert!(response.success);
+    //                 assert!(response.body.is_some());
+    //             }
+    //         })
+    //         .await;
 
-//     client
-//         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
-//             kind: None,
-//             title: None,
-//             cwd: std::env::temp_dir().to_string_lossy().to_string(),
-//             args: vec![],
-//             env: None,
-//             args_can_be_interpreted_by_shell: None,
-//         })
-//         .await;
+    //     client
+    //         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
+    //             kind: None,
+    //             title: None,
+    //             cwd: std::env::temp_dir().to_string_lossy().to_string(),
+    //             args: vec![],
+    //             env: None,
+    //             args_can_be_interpreted_by_shell: None,
+    //         })
+    //         .await;
 
-//     cx.run_until_parked();
+    //     cx.run_until_parked();
 
-//     assert!(
-//         send_response.load(std::sync::atomic::Ordering::SeqCst),
-//         "Expected to receive response from reverse request"
-//     );
+    //     assert!(
+    //         send_response.load(std::sync::atomic::Ordering::SeqCst),
+    //         "Expected to receive response from reverse request"
+    //     );
 
-//     workspace
-//         .update(cx, |workspace, _window, cx| {
-//             let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
+    //     workspace
+    //         .update(cx, |workspace, _window, cx| {
+    //             let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
 
-//             let panel = terminal_panel.read(cx).pane().unwrap().read(cx);
+    //             let panel = terminal_panel.read(cx).pane().unwrap().read(cx);
 
-//             assert_eq!(1, panel.items_len());
-//             assert!(panel
-//                 .active_item()
-//                 .unwrap()
-//                 .downcast::<TerminalView>()
-//                 .unwrap()
-//                 .read(cx)
-//                 .terminal()
-//                 .read(cx)
-//                 .debug_terminal());
-//         })
-//         .unwrap();
+    //             assert_eq!(1, panel.items_len());
+    //             assert!(panel
+    //                 .active_item()
+    //                 .unwrap()
+    //                 .downcast::<TerminalView>()
+    //                 .unwrap()
+    //                 .read(cx)
+    //                 .terminal()
+    //                 .read(cx)
+    //                 .debug_terminal());
+    //         })
+    //         .unwrap();
 
-//     let shutdown_session = project.update(cx, |project, cx| {
-//         project.dap_store().update(cx, |dap_store, cx| {
-//             dap_store.shutdown_session(&session.read(cx).id(), cx)
-//         })
-//     });
+    //     let shutdown_session = project.update(cx, |project, cx| {
+    //         project.dap_store().update(cx, |dap_store, cx| {
+    //             dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+    //         })
+    //     });
 
-//     shutdown_session.await.unwrap();
-// }
+    //     shutdown_session.await.unwrap();
+}
 
-// TODO(debugger): enable this when run in terminal is implemented again
 // // covers that we always send a response back, if something when wrong,
 // // while spawning the terminal
-// #[gpui::test]
-// async fn test_handle_error_run_in_terminal_reverse_request(
-//     executor: BackgroundExecutor,
-//     cx: &mut TestAppContext,
-// ) {
-//     init_test(cx);
+#[gpui::test]
+async fn test_handle_error_run_in_terminal_reverse_request(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    unimplemented!("todo(debugger): enable this when run in terminal is implemented again")
+    //     init_test(cx);
 
-//     let send_response = Arc::new(AtomicBool::new(false));
+    //     let send_response = Arc::new(AtomicBool::new(false));
 
-//     let fs = FakeFs::new(executor.clone());
+    //     let fs = FakeFs::new(executor.clone());
 
-//     fs.insert_tree(
-//         "/project",
-//         json!({
-//             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-//         }),
-//     )
-//     .await;
+    //     fs.insert_tree(
+    //         "/project",
+    //         json!({
+    //             "main.rs": "First line\nSecond line\nThird line\nFourth line",
+    //         }),
+    //     )
+    //     .await;
 
-//     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-//     let workspace = init_test_workspace(&project, cx).await;
-//     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    //     let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    //     let workspace = init_test_workspace(&project, cx).await;
+    //     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-//     let task = project.update(cx, |project, cx| {
-//         project.start_debug_session(dap::test_config(None), cx)
-//     });
+    //     let task = project.update(cx, |project, cx| {
+    //         project.start_debug_session(dap::test_config(None), cx)
+    //     });
 
-//     let (session, client) = task.await.unwrap();
+    //     let (session, client) = task.await.unwrap();
 
-//     client
-//         .on_request::<Initialize, _>(move |_, _| {
-//             Ok(dap::Capabilities {
-//                 supports_step_back: Some(false),
-//                 ..Default::default()
-//             })
-//         })
-//         .await;
+    //     client
+    //         .on_request::<Initialize, _>(move |_, _| {
+    //             Ok(dap::Capabilities {
+    //                 supports_step_back: Some(false),
+    //                 ..Default::default()
+    //             })
+    //         })
+    //         .await;
 
-//     client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    //     client.on_request::<Launch, _>(move |_, _| Ok(())).await;
 
-//     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    //     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-//     client
-//         .on_response::<RunInTerminal, _>({
-//             let send_response = send_response.clone();
-//             move |response| {
-//                 send_response.store(true, Ordering::SeqCst);
+    //     client
+    //         .on_response::<RunInTerminal, _>({
+    //             let send_response = send_response.clone();
+    //             move |response| {
+    //                 send_response.store(true, Ordering::SeqCst);
 
-//                 assert!(!response.success);
-//                 assert!(response.body.is_some());
-//             }
-//         })
-//         .await;
+    //                 assert!(!response.success);
+    //                 assert!(response.body.is_some());
+    //             }
+    //         })
+    //         .await;
 
-//     client
-//         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
-//             kind: None,
-//             title: None,
-//             cwd: "/non-existing/path".into(), // invalid/non-existing path will cause the terminal spawn to fail
-//             args: vec![],
-//             env: None,
-//             args_can_be_interpreted_by_shell: None,
-//         })
-//         .await;
+    //     client
+    //         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
+    //             kind: None,
+    //             title: None,
+    //             cwd: "/non-existing/path".into(), // invalid/non-existing path will cause the terminal spawn to fail
+    //             args: vec![],
+    //             env: None,
+    //             args_can_be_interpreted_by_shell: None,
+    //         })
+    //         .await;
 
-//     cx.run_until_parked();
+    //     cx.run_until_parked();
 
-//     assert!(
-//         send_response.load(std::sync::atomic::Ordering::SeqCst),
-//         "Expected to receive response from reverse request"
-//     );
+    //     assert!(
+    //         send_response.load(std::sync::atomic::Ordering::SeqCst),
+    //         "Expected to receive response from reverse request"
+    //     );
 
-//     workspace
-//         .update(cx, |workspace, _window, cx| {
-//             let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
+    //     workspace
+    //         .update(cx, |workspace, _window, cx| {
+    //             let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
 
-//             assert_eq!(
-//                 0,
-//                 terminal_panel.read(cx).pane().unwrap().read(cx).items_len()
-//             );
-//         })
-//         .unwrap();
+    //             assert_eq!(
+    //                 0,
+    //                 terminal_panel.read(cx).pane().unwrap().read(cx).items_len()
+    //             );
+    //         })
+    //         .unwrap();
 
-//     let shutdown_session = project.update(cx, |project, cx| {
-//         project.dap_store().update(cx, |dap_store, cx| {
-//             dap_store.shutdown_session(&session.read(cx).id(), cx)
-//         })
-//     });
+    //     let shutdown_session = project.update(cx, |project, cx| {
+    //         project.dap_store().update(cx, |dap_store, cx| {
+    //             dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+    //         })
+    //     });
 
-//     shutdown_session.await.unwrap();
-// }
+    //     shutdown_session.await.unwrap();
+}
 
-// #[gpui::test]
-// async fn test_handle_start_debugging_reverse_request(
-//     executor: BackgroundExecutor,
-//     cx: &mut TestAppContext,
-// ) {
-//     init_test(cx);
+#[gpui::test]
+async fn test_handle_start_debugging_reverse_request(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    unimplemented!("todo(debugger): Implement this once reverse request is handled again");
+    //     init_test(cx);
 
-//     let send_response = Arc::new(AtomicBool::new(false));
+    //     let send_response = Arc::new(AtomicBool::new(false));
 
-//     let fs = FakeFs::new(executor.clone());
+    //     let fs = FakeFs::new(executor.clone());
 
-//     fs.insert_tree(
-//         "/project",
-//         json!({
-//             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-//         }),
-//     )
-//     .await;
+    //     fs.insert_tree(
+    //         "/project",
+    //         json!({
+    //             "main.rs": "First line\nSecond line\nThird line\nFourth line",
+    //         }),
+    //     )
+    //     .await;
 
-//     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-//     let workspace = init_test_workspace(&project, cx).await;
-//     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    //     let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    //     let workspace = init_test_workspace(&project, cx).await;
+    //     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-//     let task = project.update(cx, |project, cx| {
-//         project.start_debug_session(dap::test_config(None), cx)
-//     });
+    //     let task = project.update(cx, |project, cx| {
+    //         project.start_debug_session(dap::test_config(None), cx)
+    //     });
 
-//     let session = task.await.unwrap();
-//     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    //     let session = task.await.unwrap();
+    //     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-//     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    //     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-//     client
-//         .on_response::<StartDebugging, _>({
-//             let send_response = send_response.clone();
-//             move |response| {
-//                 send_response.store(true, Ordering::SeqCst);
+    //     client
+    //         .on_response::<StartDebugging, _>({
+    //             let send_response = send_response.clone();
+    //             move |response| {
+    //                 send_response.store(true, Ordering::SeqCst);
 
-//                 assert!(response.success);
-//                 assert!(response.body.is_some());
-//             }
-//         })
-//         .await;
+    //                 assert!(response.success);
+    //                 assert!(response.body.is_some());
+    //             }
+    //         })
+    //         .await;
 
-//     client
-//         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
-//             configuration: json!({}),
-//             request: StartDebuggingRequestArgumentsRequest::Launch,
-//         })
-//         .await;
+    //     client
+    //         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+    //             configuration: json!({}),
+    //             request: StartDebuggingRequestArgumentsRequest::Launch,
+    //         })
+    //         .await;
 
-//     cx.run_until_parked();
+    //     cx.run_until_parked();
 
-//     let child_session = project.update(cx, |project, cx| {
-//         project
-//             .dap_store()
-//             .read(cx)
-//             .session_by_id(SessionId(1))
-//             .unwrap()
-//     });
-//     let client = child_session.update(cx, |session, _| session.adapter_client().unwrap());
+    //     let child_session = project.update(cx, |project, cx| {
+    //         project
+    //             .dap_store()
+    //             .read(cx)
+    //             .session_by_id(SessionId(1))
+    //             .unwrap()
+    //     });
+    //     let client = child_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-//     client
-//         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-//             reason: dap::StoppedEventReason::Pause,
-//             description: None,
-//             thread_id: Some(2),
-//             preserve_focus_hint: None,
-//             text: None,
-//             all_threads_stopped: None,
-//             hit_breakpoint_ids: None,
-//         }))
-//         .await;
+    //     client
+    //         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+    //             reason: dap::StoppedEventReason::Pause,
+    //             description: None,
+    //             thread_id: Some(2),
+    //             preserve_focus_hint: None,
+    //             text: None,
+    //             all_threads_stopped: None,
+    //             hit_breakpoint_ids: None,
+    //         }))
+    //         .await;
 
-//     cx.run_until_parked();
+    //     cx.run_until_parked();
 
-//     assert!(
-//         send_response.load(std::sync::atomic::Ordering::SeqCst),
-//         "Expected to receive response from reverse request"
-//     );
+    //     assert!(
+    //         send_response.load(std::sync::atomic::Ordering::SeqCst),
+    //         "Expected to receive response from reverse request"
+    //     );
 
-//     let shutdown_session = project.update(cx, |project, cx| {
-//         project.dap_store().update(cx, |dap_store, cx| {
-//             dap_store.shutdown_session(&child_session.read(cx).session_id(), cx)
-//         })
-//     });
+    //     let shutdown_session = project.update(cx, |project, cx| {
+    //         project.dap_store().update(cx, |dap_store, cx| {
+    //             dap_store.shutdown_session(&child_session.read(cx).session_id(), cx)
+    //         })
+    //     });
 
-//     shutdown_session.await.unwrap();
-// }
+    //     shutdown_session.await.unwrap();
+}
 
 #[gpui::test]
 async fn test_debug_panel_item_thread_status_reset_on_failure(
@@ -874,256 +875,254 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     shutdown_session.await.unwrap();
 }
 
-// #[gpui::test]
-// async fn test_send_breakpoints_when_editor_has_been_saved(
-//     executor: BackgroundExecutor,
-//     cx: &mut TestAppContext,
-// ) {
-//     init_test(cx);
+#[gpui::test]
+async fn test_send_breakpoints_when_editor_has_been_saved(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
 
-//     let fs = FakeFs::new(executor.clone());
+    let fs = FakeFs::new(executor.clone());
 
-//     fs.insert_tree(
-//         "/project",
-//         json!({
-//             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-//         }),
-//     )
-//     .await;
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
 
-//     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-//     let workspace = init_test_workspace(&project, cx).await;
-//     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-//     let worktree = worktree_from_project(&project, cx);
-//     let worktree_id = workspace
-//         .update(cx, |_, _, cx| worktree.read(cx).id())
-//         .unwrap();
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project_path = Path::new("/project");
+    let worktree = project
+        .update(cx, |project, cx| project.find_worktree(project_path, cx))
+        .expect("This worktree should exist in project")
+        .0;
 
-//     let task = project.update(cx, |project, cx| {
-//         project.start_debug_session(dap::test_config(None), cx)
-//     });
+    let worktree_id = workspace
+        .update(cx, |_, _, cx| worktree.read(cx).id())
+        .unwrap();
 
-//     let (session, client) = task.await.unwrap();
+    let task = project.update(cx, |project, cx| {
+        project.start_debug_session(dap::test_config(None), cx)
+    });
 
-//     let buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_buffer((worktree_id, "main.rs"), cx)
-//         })
-//         .await
-//         .unwrap();
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-//     let (editor, cx) = cx.add_window_view(|window, cx| {
-//         Editor::new(
-//             EditorMode::Full,
-//             MultiBuffer::build_from_buffer(buffer, cx),
-//             Some(project.clone()),
-//             true,
-//             window,
-//             cx,
-//         )
-//     });
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
 
-//     client
-//         .on_request::<Initialize, _>(move |_, _| {
-//             Ok(dap::Capabilities {
-//                 supports_step_back: Some(true),
-//                 ..Default::default()
-//             })
-//         })
-//         .await;
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            true,
+            window,
+            cx,
+        )
+    });
 
-//     client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
 
-//     client
-//         .on_request::<StackTrace, _>(move |_, _| {
-//             Ok(dap::StackTraceResponse {
-//                 stack_frames: Vec::default(),
-//                 total_frames: None,
-//             })
-//         })
-//         .await;
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
 
-//     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-//     client
-//         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-//             reason: dap::StoppedEventReason::Pause,
-//             description: None,
-//             thread_id: Some(1),
-//             preserve_focus_hint: None,
-//             text: None,
-//             all_threads_stopped: None,
-//             hit_breakpoint_ids: None,
-//         }))
-//         .await;
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
 
-//     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
-//     client
-//         .on_request::<SetBreakpoints, _>({
-//             let called_set_breakpoints = called_set_breakpoints.clone();
-//             move |_, args| {
-//                 assert_eq!("/project/main.rs", args.source.path.unwrap());
-//                 assert_eq!(
-//                     vec![SourceBreakpoint {
-//                         line: 2,
-//                         column: None,
-//                         condition: None,
-//                         hit_condition: None,
-//                         log_message: None,
-//                         mode: None
-//                     }],
-//                     args.breakpoints.unwrap()
-//                 );
-//                 assert!(!args.source_modified.unwrap());
+    let called_set_breakpoints = Arc::new(AtomicBool::new(false));
+    client
+        .on_request::<SetBreakpoints, _>({
+            let called_set_breakpoints = called_set_breakpoints.clone();
+            move |_, args| {
+                assert_eq!("/project/main.rs", args.source.path.unwrap());
+                assert_eq!(
+                    vec![SourceBreakpoint {
+                        line: 2,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: None,
+                        mode: None
+                    }],
+                    args.breakpoints.unwrap()
+                );
+                assert!(!args.source_modified.unwrap());
 
-//                 called_set_breakpoints.store(true, Ordering::SeqCst);
+                called_set_breakpoints.store(true, Ordering::SeqCst);
 
-//                 Ok(dap::SetBreakpointsResponse {
-//                     breakpoints: Vec::default(),
-//                 })
-//             }
-//         })
-//         .await;
+                Ok(dap::SetBreakpointsResponse {
+                    breakpoints: Vec::default(),
+                })
+            }
+        })
+        .await;
 
-//     editor.update_in(cx, |editor, window, cx| {
-//         editor.move_down(&actions::MoveDown, window, cx);
-//         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-//     });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
 
-//     cx.run_until_parked();
+    cx.run_until_parked();
 
-//     assert!(
-//         called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
-//         "SetBreakpoint request must be called"
-//     );
+    assert!(
+        called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
+        "SetBreakpoint request must be called"
+    );
 
-//     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
-//     client
-//         .on_request::<SetBreakpoints, _>({
-//             let called_set_breakpoints = called_set_breakpoints.clone();
-//             move |_, args| {
-//                 assert_eq!("/project/main.rs", args.source.path.unwrap());
-//                 assert_eq!(
-//                     vec![SourceBreakpoint {
-//                         line: 3,
-//                         column: None,
-//                         condition: None,
-//                         hit_condition: None,
-//                         log_message: None,
-//                         mode: None
-//                     }],
-//                     args.breakpoints.unwrap()
-//                 );
-//                 assert!(args.source_modified.unwrap());
+    let called_set_breakpoints = Arc::new(AtomicBool::new(false));
+    client
+        .on_request::<SetBreakpoints, _>({
+            let called_set_breakpoints = called_set_breakpoints.clone();
+            move |_, args| {
+                assert_eq!("/project/main.rs", args.source.path.unwrap());
+                assert_eq!(
+                    vec![SourceBreakpoint {
+                        line: 3,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: None,
+                        mode: None
+                    }],
+                    args.breakpoints.unwrap()
+                );
+                assert!(args.source_modified.unwrap());
 
-//                 called_set_breakpoints.store(true, Ordering::SeqCst);
+                called_set_breakpoints.store(true, Ordering::SeqCst);
 
-//                 Ok(dap::SetBreakpointsResponse {
-//                     breakpoints: Vec::default(),
-//                 })
-//             }
-//         })
-//         .await;
+                Ok(dap::SetBreakpointsResponse {
+                    breakpoints: Vec::default(),
+                })
+            }
+        })
+        .await;
 
-//     editor.update_in(cx, |editor, window, cx| {
-//         editor.move_up(&actions::MoveUp, window, cx);
-//         editor.insert("new text\n", window, cx);
-//     });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_up(&actions::MoveUp, window, cx);
+        editor.insert("new text\n", window, cx);
+    });
 
-//     editor
-//         .update_in(cx, |editor, window, cx| {
-//             editor.save(true, project.clone(), window, cx)
-//         })
-//         .await
-//         .unwrap();
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(true, project.clone(), window, cx)
+        })
+        .await
+        .unwrap();
 
-//     cx.run_until_parked();
+    cx.run_until_parked();
 
-//     assert!(
-//         called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
-//         "SetBreakpoint request must be called after editor is saved"
-//     );
+    assert!(
+        called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
+        "SetBreakpoint request must be called after editor is saved"
+    );
 
-//     let shutdown_session = project.update(cx, |project, cx| {
-//         project.dap_store().update(cx, |dap_store, cx| {
-//             dap_store.shutdown_session(&session.read(cx).id(), cx)
-//         })
-//     });
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+        })
+    });
 
-//     shutdown_session.await.unwrap();
-// }
+    shutdown_session.await.unwrap();
+}
 
-// #[gpui::test]
-// async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
-//     executor: BackgroundExecutor,
-//     cx: &mut TestAppContext,
-// ) {
-//     init_test(cx);
+#[gpui::test]
+async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    unimplemented!();
+    //     init_test(cx);
 
-//     let fs = FakeFs::new(executor.clone());
+    //     let fs = FakeFs::new(executor.clone());
 
-//     fs.insert_tree(
-//         "/project",
-//         json!({
-//             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-//         }),
-//     )
-//     .await;
+    //     fs.insert_tree(
+    //         "/project",
+    //         json!({
+    //             "main.rs": "First line\nSecond line\nThird line\nFourth line",
+    //         }),
+    //     )
+    //     .await;
 
-//     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-//     let workspace = init_test_workspace(&project, cx).await;
-//     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    //     let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    //     let workspace = init_test_workspace(&project, cx).await;
+    //     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-//     let task = project.update(cx, |project, cx| {
-//         project.start_debug_session(dap::test_config(None), cx)
-//     });
+    //     let task = project.update(cx, |project, cx| {
+    //         project.start_debug_session(dap::test_config(None), cx)
+    //     });
 
-//     let (session, client) = task.await.unwrap();
-//     let session_id = cx.update(|_window, cx| session.read(cx).id());
+    //     let (session, client) = task.await.unwrap();
+    //     let session_id = cx.update(|_window, cx| session.read(cx).session_id());
 
-//     client
-//         .on_request::<Initialize, _>(move |_, _| {
-//             Ok(dap::Capabilities {
-//                 supports_step_back: Some(false),
-//                 ..Default::default()
-//             })
-//         })
-//         .await;
+    //     client
+    //         .on_request::<Initialize, _>(move |_, _| {
+    //             Ok(dap::Capabilities {
+    //                 supports_step_back: Some(false),
+    //                 ..Default::default()
+    //             })
+    //         })
+    //         .await;
 
-//     client
-//         .on_request::<Launch, _>(move |_, _| {
-//             Err(ErrorResponse {
-//                 error: Some(dap::Message {
-//                     id: 1,
-//                     format: "error".into(),
-//                     variables: None,
-//                     send_telemetry: None,
-//                     show_user: None,
-//                     url: None,
-//                     url_label: None,
-//                 }),
-//             })
-//         })
-//         .await;
+    //     client
+    //         .on_request::<Launch, _>(move |_, _| {
+    //             Err(ErrorResponse {
+    //                 error: Some(dap::Message {
+    //                     id: 1,
+    //                     format: "error".into(),
+    //                     variables: None,
+    //                     send_telemetry: None,
+    //                     show_user: None,
+    //                     url: None,
+    //                     url_label: None,
+    //                 }),
+    //             })
+    //         })
+    //         .await;
 
-//     client
-//         .on_request::<StackTrace, _>(move |_, _| {
-//             Ok(dap::StackTraceResponse {
-//                 stack_frames: Vec::default(),
-//                 total_frames: None,
-//             })
-//         })
-//         .await;
+    //     client
+    //         .on_request::<StackTrace, _>(move |_, _| {
+    //             Ok(dap::StackTraceResponse {
+    //                 stack_frames: Vec::default(),
+    //                 total_frames: None,
+    //             })
+    //         })
+    //         .await;
 
-//     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    //     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-//     cx.run_until_parked();
+    //     cx.run_until_parked();
 
-//     project.update(cx, |project, cx| {
-//         assert!(project
-//             .dap_store()
-//             .read(cx)
-//             .session_by_id(&session_id)
-//             .is_none());
-//     });
-// }
+    //     project.update(cx, |project, cx| {
+    //         assert!(project
+    //             .dap_store()
+    //             .read(cx)
+    //             .session_by_id(&session_id)
+    //             .is_none());
+    //     });
+}
