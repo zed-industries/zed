@@ -40,7 +40,7 @@ impl Tool for ThinkingTool {
     ) -> Task<Result<String>> {
         // This tool just "thinks out loud" and doesn't perform any actions.
         Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
-            Ok(input) => Ok(input.content),
+            Ok(input) => Ok("Finished thinking.".to_string()),
             Err(err) => Err(anyhow!(err)),
         })
     }
