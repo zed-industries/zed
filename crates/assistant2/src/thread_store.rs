@@ -20,7 +20,7 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
-use crate::thread::{MessageId, Thread, ThreadId};
+use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadId};
 
 pub fn init(cx: &mut App) {
     ThreadsDatabase::init(cx);
@@ -32,7 +32,7 @@ pub struct ThreadStore {
     prompt_builder: Arc<PromptBuilder>,
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
-    threads: Vec<SavedThreadMetadata>,
+    threads: Vec<SerializedThreadMetadata>,
 }
 
 impl ThreadStore {
@@ -70,13 +70,13 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn threads(&self) -> Vec<SavedThreadMetadata> {
+    pub fn threads(&self) -> Vec<SerializedThreadMetadata> {
         let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
         threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
     }
 
-    pub fn recent_threads(&self, limit: usize) -> Vec<SavedThreadMetadata> {
+    pub fn recent_threads(&self, limit: usize) -> Vec<SerializedThreadMetadata> {
         self.threads().into_iter().take(limit).collect()
     }
 
@@ -107,7 +107,7 @@ impl ThreadStore {
 
             this.update(&mut cx, |this, cx| {
                 cx.new(|cx| {
-                    Thread::from_saved(
+                    Thread::deserialize(
                         id.clone(),
                         thread,
                         this.project.clone(),
@@ -121,53 +121,14 @@ impl ThreadStore {
     }
 
     pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let (metadata, thread) = thread.update(cx, |thread, _cx| {
-            let id = thread.id().clone();
-            let thread = SavedThread {
-                summary: thread.summary_or_default(),
-                updated_at: thread.updated_at(),
-                messages: thread
-                    .messages()
-                    .map(|message| {
-                        let all_tool_uses = thread
-                            .tool_uses_for_message(message.id)
-                            .into_iter()
-                            .chain(thread.scripting_tool_uses_for_message(message.id))
-                            .map(|tool_use| SavedToolUse {
-                                id: tool_use.id,
-                                name: tool_use.name,
-                                input: tool_use.input,
-                            })
-                            .collect();
-                        let all_tool_results = thread
-                            .tool_results_for_message(message.id)
-                            .into_iter()
-                            .chain(thread.scripting_tool_results_for_message(message.id))
-                            .map(|tool_result| SavedToolResult {
-                                tool_use_id: tool_result.tool_use_id.clone(),
-                                is_error: tool_result.is_error,
-                                content: tool_result.content.clone(),
-                            })
-                            .collect();
-
-                        SavedMessage {
-                            id: message.id,
-                            role: message.role,
-                            text: message.text.clone(),
-                            tool_uses: all_tool_uses,
-                            tool_results: all_tool_results,
-                        }
-                    })
-                    .collect(),
-            };
-
-            (id, thread)
-        });
+        let (metadata, serialized_thread) =
+            thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
 
         let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(|this, mut cx| async move {
+            let serialized_thread = serialized_thread.await?;
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(metadata, thread).await?;
+            database.save_thread(metadata, serialized_thread).await?;
 
             this.update(&mut cx, |this, cx| this.reload(cx))?.await
         })
@@ -270,39 +231,41 @@ impl ThreadStore {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedThreadMetadata {
+pub struct SerializedThreadMetadata {
     pub id: ThreadId,
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SavedThread {
+pub struct SerializedThread {
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
-    pub messages: Vec<SavedMessage>,
+    pub messages: Vec<SerializedMessage>,
+    #[serde(default)]
+    pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SavedMessage {
+pub struct SerializedMessage {
     pub id: MessageId,
     pub role: Role,
     pub text: String,
     #[serde(default)]
-    pub tool_uses: Vec<SavedToolUse>,
+    pub tool_uses: Vec<SerializedToolUse>,
     #[serde(default)]
-    pub tool_results: Vec<SavedToolResult>,
+    pub tool_results: Vec<SerializedToolResult>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SavedToolUse {
+pub struct SerializedToolUse {
     pub id: LanguageModelToolUseId,
     pub name: SharedString,
     pub input: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SavedToolResult {
+pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
     pub content: Arc<str>,
@@ -317,7 +280,7 @@ impl Global for GlobalThreadsDatabase {}
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerdeJson<SavedThread>>,
+    threads: Database<SerdeBincode<ThreadId>, SerdeJson<SerializedThread>>,
 }
 
 impl ThreadsDatabase {
@@ -364,7 +327,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn list_threads(&self) -> Task<Result<Vec<SavedThreadMetadata>>> {
+    pub fn list_threads(&self) -> Task<Result<Vec<SerializedThreadMetadata>>> {
         let env = self.env.clone();
         let threads = self.threads;
 
@@ -373,7 +336,7 @@ impl ThreadsDatabase {
             let mut iter = threads.iter(&txn)?;
             let mut threads = Vec::new();
             while let Some((key, value)) = iter.next().transpose()? {
-                threads.push(SavedThreadMetadata {
+                threads.push(SerializedThreadMetadata {
                     id: key,
                     summary: value.summary,
                     updated_at: value.updated_at,
@@ -384,7 +347,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SavedThread>>> {
+    pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SerializedThread>>> {
         let env = self.env.clone();
         let threads = self.threads;
 
@@ -395,7 +358,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: ThreadId, thread: SavedThread) -> Task<Result<()>> {
+    pub fn save_thread(&self, id: ThreadId, thread: SerializedThread) -> Task<Result<()>> {
         let env = self.env.clone();
         let threads = self.threads;
 

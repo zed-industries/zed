@@ -17,7 +17,6 @@ client.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
-extension.workspace = true
 extension_host.workspace = true
 feature_flags.workspace = true
 fs.workspace = true

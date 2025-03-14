@@ -3017,6 +3017,15 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
+        if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
+            cx.subscribe(
+                extension_events,
+                Self::reload_zed_json_schemas_on_extensions_changed,
+            )
+            .detach();
+        } else {
+            log::info!("No extension events global found. Skipping JSON schema auto-reload setup");
+        }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
 
@@ -3275,6 +3284,109 @@ impl LspStore {
         }
 
         Ok(())
+    }
+
+    pub fn reload_zed_json_schemas_on_extensions_changed(
+        &mut self,
+        _: Entity<extension::ExtensionEvents>,
+        evt: &extension::Event,
+        cx: &mut Context<Self>,
+    ) {
+        #[expect(
+            irrefutable_let_patterns,
+            reason = "Make sure to handle new event types in extension properly"
+        )]
+        let extension::Event::ExtensionsInstalledChanged = evt
+        else {
+            return;
+        };
+        if self.as_local().is_none() {
+            return;
+        }
+        cx.spawn(async move |this, mut cx| {
+            let weak_ref = this.clone();
+            let servers = this
+                .update(&mut cx, |this, cx| {
+                    let local = this.as_local()?;
+
+                    let mut servers = Vec::new();
+                    for ((worktree_id, _), server_ids) in &local.language_server_ids {
+                        for server_id in server_ids {
+                            let Some(states) = local.language_servers.get(server_id) else {
+                                continue;
+                            };
+                            let (json_adapter, json_server) = match states {
+                                LanguageServerState::Running {
+                                    adapter, server, ..
+                                } if adapter.adapter.is_primary_zed_json_schema_adapter() => {
+                                    (adapter.adapter.clone(), server.clone())
+                                }
+                                _ => continue,
+                            };
+
+                            let Some(worktree) = this
+                                .worktree_store
+                                .read(cx)
+                                .worktree_for_id(*worktree_id, cx)
+                            else {
+                                continue;
+                            };
+                            let json_delegate: Arc<dyn LspAdapterDelegate> =
+                                LocalLspAdapterDelegate::new(
+                                    local.languages.clone(),
+                                    &local.environment,
+                                    weak_ref.clone(),
+                                    &worktree,
+                                    local.http_client.clone(),
+                                    local.fs.clone(),
+                                    cx,
+                                );
+
+                            servers.push((json_adapter, json_server, json_delegate));
+                        }
+                    }
+                    return Some(servers);
+                })
+                .ok()
+                .flatten();
+
+            let Some(servers) = servers else {
+                return;
+            };
+
+            let Ok(Some((fs, toolchain_store))) = this.read_with(&cx, |this, cx| {
+                let local = this.as_local()?;
+                let toolchain_store = this.toolchain_store(cx);
+                return Some((local.fs.clone(), toolchain_store));
+            }) else {
+                return;
+            };
+            for (adapter, server, delegate) in servers {
+                adapter.clear_zed_json_schema_cache().await;
+
+                let Some(json_workspace_config) = adapter
+                    .workspace_configuration(
+                        fs.as_ref(),
+                        &delegate,
+                        toolchain_store.clone(),
+                        &mut cx,
+                    )
+                    .await
+                    .context("generate new workspace configuration for JSON language server while trying to refresh JSON Schemas")
+                    .ok()
+                else {
+                    continue;
+                };
+                server
+                    .notify::<lsp::notification::DidChangeConfiguration>(
+                        &lsp::DidChangeConfigurationParams {
+                            settings: json_workspace_config,
+                        },
+                    )
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -4290,7 +4402,7 @@ impl LspStore {
         position: PointUtf16,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let language_registry = self.languages.clone();
 
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -4318,7 +4430,7 @@ impl LspStore {
                 let mut result = Vec::new();
                 populate_labels_for_completions(completions, language, lsp_adapter, &mut result)
                     .await;
-                Ok(result)
+                Ok(Some(result))
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
@@ -4332,7 +4444,7 @@ impl LspStore {
             )
             .completions;
             if !completion_settings.lsp {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
 
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
@@ -4383,13 +4495,14 @@ impl LspStore {
                         ).fuse();
                         let new_task = cx.background_spawn(async move {
                             select_biased! {
-                                response = lsp_request => response,
+                                response = lsp_request => anyhow::Ok(Some(response?)),
                                 timeout_happened = timeout => {
                                     if timeout_happened {
                                         log::warn!("Fetching completions from server {server_id} timed out, timeout ms: {}", completion_settings.lsp_fetch_timeout_ms);
-                                        return anyhow::Ok(Vec::new())
+                                        Ok(None)
                                     } else {
-                                        lsp_request.await
+                                        let completions = lsp_request.await?;
+                                        Ok(Some(completions))
                                     }
                                 },
                             }
@@ -4398,9 +4511,11 @@ impl LspStore {
                     }
                 })?;
 
+                let mut has_completions_returned = false;
                 let mut completions = Vec::new();
                 for (lsp_adapter, task) in tasks {
-                    if let Ok(new_completions) = task.await {
+                    if let Ok(Some(new_completions)) = task.await {
+                        has_completions_returned = true;
                         populate_labels_for_completions(
                             new_completions,
                             language.clone(),
@@ -4410,8 +4525,11 @@ impl LspStore {
                         .await;
                     }
                 }
-
-                Ok(completions)
+                if has_completions_returned {
+                    Ok(Some(completions))
+                } else {
+                    Ok(None)
+                }
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))

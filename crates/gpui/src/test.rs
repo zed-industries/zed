@@ -39,23 +39,18 @@ use std::{
 /// This is intended for use with the `gpui::test` macro
 /// and generally should not be used directly.
 pub fn run_test(
-    mut num_iterations: u64,
+    num_iterations: usize,
+    explicit_seeds: &[u64],
     max_retries: usize,
     test_fn: &mut (dyn RefUnwindSafe + Fn(TestDispatcher, u64)),
     on_fail_fn: Option<fn()>,
 ) {
-    let starting_seed = env::var("SEED")
-        .map(|seed| seed.parse().expect("invalid SEED variable"))
-        .unwrap_or(0);
-    if let Ok(iterations) = env::var("ITERATIONS") {
-        num_iterations = iterations.parse().expect("invalid ITERATIONS variable");
-    }
-    let is_randomized = num_iterations > 1;
+    let (seeds, is_multiple_runs) = calculate_seeds(num_iterations as u64, explicit_seeds);
 
-    for seed in starting_seed..starting_seed + num_iterations {
-        let mut retry = 0;
+    for seed in seeds {
+        let mut attempt = 0;
         loop {
-            if is_randomized {
+            if is_multiple_runs {
                 eprintln!("seed = {seed}");
             }
             let result = panic::catch_unwind(|| {
@@ -66,15 +61,15 @@ pub fn run_test(
             match result {
                 Ok(_) => break,
                 Err(error) => {
-                    if retry < max_retries {
-                        println!("retrying: attempt {}", retry);
-                        retry += 1;
+                    if attempt < max_retries {
+                        println!("attempt {} failed, retrying", attempt);
+                        attempt += 1;
                     } else {
-                        if is_randomized {
+                        if is_multiple_runs {
                             eprintln!("failing seed: {}", seed);
                         }
-                        if let Some(f) = on_fail_fn {
-                            f()
+                        if let Some(on_fail_fn) = on_fail_fn {
+                            on_fail_fn()
                         }
                         panic::resume_unwind(error);
                     }
@@ -82,6 +77,54 @@ pub fn run_test(
             }
         }
     }
+}
+
+fn calculate_seeds(
+    iterations: u64,
+    explicit_seeds: &[u64],
+) -> (impl Iterator<Item = u64> + '_, bool) {
+    let iterations = env::var("ITERATIONS")
+        .ok()
+        .map(|var| var.parse().expect("invalid ITERATIONS variable"))
+        .unwrap_or(iterations);
+
+    let env_num = env::var("SEED")
+        .map(|seed| seed.parse().expect("invalid SEED variable as integer"))
+        .ok();
+
+    let empty_range = || 0..0;
+
+    let iter = {
+        let env_range = if let Some(env_num) = env_num {
+            env_num..env_num + 1
+        } else {
+            empty_range()
+        };
+
+        // if `iterations` is 1 and !(`explicit_seeds` is non-empty || `SEED` is set), then add     the run `0`
+        // if `iterations` is 1 and  (`explicit_seeds` is non-empty || `SEED` is set), then discard the run `0`
+        // if `iterations` isn't 1 and `SEED` is set, do `SEED..SEED+iterations`
+        // otherwise, do `0..iterations`
+        let iterations_range = match (iterations, env_num) {
+            (1, None) if explicit_seeds.is_empty() => 0..1,
+            (1, None) | (1, Some(_)) => empty_range(),
+            (iterations, Some(env)) => env..env + iterations,
+            (iterations, None) => 0..iterations,
+        };
+
+        // if `SEED` is set, ignore `explicit_seeds`
+        let explicit_seeds = if env_num.is_some() {
+            &[]
+        } else {
+            explicit_seeds
+        };
+
+        env_range
+            .chain(iterations_range)
+            .chain(explicit_seeds.iter().copied())
+    };
+    let is_multiple_runs = iter.clone().nth(1).is_some();
+    (iter, is_multiple_runs)
 }
 
 /// A test struct for converting an observation callback into a stream.

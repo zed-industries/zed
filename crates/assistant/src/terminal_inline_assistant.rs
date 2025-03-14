@@ -720,7 +720,6 @@ impl PromptEditor {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );
