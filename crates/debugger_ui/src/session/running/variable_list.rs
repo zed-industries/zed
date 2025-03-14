@@ -289,13 +289,11 @@ impl VariableList {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
                 self.selected_stack_frame_id = Some(*stack_frame_id);
-                self.build_entries(cx);
+                cx.notify();
             }
         }
     }
 
-    // debugger(todo): This only returns visible variables will need to change it to show all variables
-    // within a stack frame scope
     pub fn completion_variables(&self, _cx: &mut Context<Self>) -> Vec<dap::Variable> {
         self.entries
             .iter()
@@ -334,7 +332,7 @@ impl VariableList {
         };
 
         entry.is_expanded = !entry.is_expanded;
-        self.build_entries(cx);
+        cx.notify();
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
@@ -444,7 +442,7 @@ impl VariableList {
             };
 
             entry_state.is_expanded = false;
-            self.build_entries(cx);
+            cx.notify();
         }
     }
 
@@ -461,7 +459,7 @@ impl VariableList {
             };
 
             entry_state.is_expanded = true;
-            self.build_entries(cx);
+            cx.notify();
         }
     }
 
