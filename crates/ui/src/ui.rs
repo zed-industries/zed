@@ -7,6 +7,7 @@
 //! - [`ui_macros`] - proc_macros support for this crate
 //! - `ui_input` - the single line input component
 
+pub mod component_prelude;
 mod components;
 pub mod prelude;
 mod styles;

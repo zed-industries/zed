@@ -1,4 +1,4 @@
-use component::{example_group_with_title, single_example, Component};
+use crate::component_prelude::*;
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::RegisterComponent;
 
@@ -77,7 +77,7 @@ use super::button_icon::ButtonIcon;
 ///     });
 /// ```
 ///
-#[derive(IntoElement, RegisterComponent)]
+#[derive(IntoElement, Documented, RegisterComponent)]
 pub struct Button {
     base: ButtonLike,
     label: SharedString,
@@ -472,6 +472,10 @@ impl Component for Button {
 
     fn sort_name() -> &'static str {
         "ButtonA"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(Button::DOCS)
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
