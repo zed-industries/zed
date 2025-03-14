@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::LanguageModelRequestMessage;
@@ -52,7 +52,7 @@ impl Tool for DiagnosticsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<ToolResult>> {
         let input = match serde_json::from_value::<DiagnosticsToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -88,9 +88,9 @@ impl Tool for DiagnosticsTool {
                 }
 
                 if output.is_empty() {
-                    Ok("File doesn't have errors or warnings!".to_string())
+                    Ok("File doesn't have errors or warnings!".to_string().into())
                 } else {
-                    Ok(output)
+                    Ok(output.into())
                 }
             })
         } else {
@@ -118,9 +118,11 @@ impl Tool for DiagnosticsTool {
             }
 
             if has_diagnostics {
-                Task::ready(Ok(output))
+                Task::ready(Ok(output.into()))
             } else {
-                Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                Task::ready(Ok("No errors or warnings found in the project."
+                    .to_string()
+                    .into()))
             }
         }
     }

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -46,7 +46,7 @@ impl Tool for DeletePathTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<ToolResult>> {
         let glob = match serde_json::from_value::<DeletePathToolInput>(input) {
             Ok(input) => input.glob,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -81,7 +81,9 @@ impl Tool for DeletePathTool {
         }
 
         if matches.is_empty() {
-            return Task::ready(Ok(format!("No paths in the project matched {glob:?}")));
+            return Task::ready(Ok(
+                format!("No paths in the project matched {glob:?}").into()
+            ));
         }
 
         let paths_matched = matches.len();
@@ -133,7 +135,7 @@ impl Tool for DeletePathTool {
                 buf
             };
 
-            Task::ready(Ok(answer))
+            Task::ready(Ok(answer.into()))
         } else {
             if deleted_paths.is_empty() {
                 Task::ready(Err(anyhow!(
@@ -158,7 +160,8 @@ impl Tool for DeletePathTool {
                     deleted_paths.len(),
                     deleted_paths.join("\n"),
                     errors.join("\n")
-                )))
+                )
+                .into()))
             }
         }
     }

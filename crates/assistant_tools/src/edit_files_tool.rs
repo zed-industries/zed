@@ -2,7 +2,7 @@ mod edit_action;
 pub mod log;
 
 use anyhow::{anyhow, Context, Result};
-use assistant_tool::Tool;
+use assistant_tool::{Tool, ToolResult};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
@@ -81,7 +81,7 @@ impl Tool for EditFilesTool {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<ToolResult>> {
         let input = match serde_json::from_value::<EditFilesToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -100,7 +100,7 @@ impl Tool for EditFilesTool {
                     let result = task.await;
 
                     let str_result = match &result {
-                        Ok(out) => Ok(out.clone()),
+                        Ok(out) => Ok(out.output.clone()),
                         Err(err) => Err(err.to_string()),
                     };
 
@@ -145,13 +145,36 @@ impl EditToolRequest {
         project: Entity<Project>,
         log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<ToolResult>> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.editor_model() else {
             return Task::ready(Err(anyhow!("No editor model configured")));
         };
 
         let mut messages = messages.to_vec();
+
+        for (i, msg) in messages.iter().enumerate() {
+            println!("Message #{}: role={:?}", i, msg.role);
+            for (j, content) in msg.content.iter().enumerate() {
+                match content {
+                    MessageContent::Text(text) => {
+                        println!("  Content #{}: TEXT = {}", j, text);
+                    }
+                    MessageContent::ToolUse(tool_use) => {
+                        println!("  Content #{}: TOOL_USE = {:?}", j, tool_use);
+                    }
+                    MessageContent::ToolResult(tool_result) => {
+                        println!("  Content #{}: TOOL_RESULT = {:?}", j, tool_result);
+                    }
+                    MessageContent::Image(image) => {
+                        println!("  Content #{}: IMAGE = <image data>", j);
+                    }
+                }
+            }
+        }
+
+        let total_content_count = messages.iter().flat_map(|m| &m.content).count();
+        println!("Total before: {}", total_content_count);
 
         // Remove the last tool use (this run) to prevent an invalid request
         'outer: for message in messages.iter_mut().rev() {
@@ -314,7 +337,7 @@ impl EditToolRequest {
         anyhow::Ok(DiffResult::Diff(diff))
     }
 
-    async fn finalize(self, cx: &mut AsyncApp) -> Result<String> {
+    async fn finalize(self, cx: &mut AsyncApp) -> Result<ToolResult> {
         let mut answer = match self.changed_buffers.len() {
             0 => "No files were edited.".to_string(),
             1 => "Successfully edited ".to_string(),
@@ -322,7 +345,7 @@ impl EditToolRequest {
         };
 
         // Save each buffer once at the end
-        for buffer in self.changed_buffers {
+        for buffer in &self.changed_buffers {
             let (path, save_task) = self.project.update(cx, |project, cx| {
                 let path = buffer
                     .read(cx)
@@ -344,7 +367,8 @@ impl EditToolRequest {
         let errors = self.parser.errors();
 
         if errors.is_empty() && self.bad_searches.is_empty() {
-            Ok(answer.trim_end().to_string())
+            let answer = answer.trim_end().to_string().into();
+            Ok(ToolResult::new(answer).with_buffers(self.changed_buffers))
         } else {
             if !self.bad_searches.is_empty() {
                 writeln!(
@@ -381,7 +405,7 @@ impl EditToolRequest {
                 but errors are part of the conversation so you don't need to repeat them."
             )?;
 
-            Err(anyhow!(answer))
+            Err(anyhow!(answer.trim_end().to_string()))
         }
     }
 }

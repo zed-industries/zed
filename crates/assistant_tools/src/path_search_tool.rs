@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -46,7 +46,7 @@ impl Tool for PathSearchTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<ToolResult>> {
         let glob = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => input.glob,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -78,11 +78,12 @@ impl Tool for PathSearchTool {
         if matches.is_empty() {
             Task::ready(Ok(format!(
                 "No paths in the project matched the glob {glob:?}"
-            )))
+            )
+            .into()))
         } else {
             // Sort to group entries in the same directory together.
             matches.sort();
-            Task::ready(Ok(matches.join("\n")))
+            Task::ready(Ok(matches.join("\n").into()))
         }
     }
 }

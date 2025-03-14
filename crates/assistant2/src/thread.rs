@@ -2,11 +2,12 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_tool::ToolWorkingSet;
+use assistant_tool::{ToolResult, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::StreamExt as _;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use language::Buffer;
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -701,7 +702,7 @@ impl Thread {
                                 .expect("Script shouldn't still be running")
                         })?;
 
-                        Ok(message)
+                        Ok(message.into())
                     })
                 }
             };
@@ -713,7 +714,7 @@ impl Thread {
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        output: Task<Result<String>>,
+        output: Task<Result<ToolResult>>,
         cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn(|thread, mut cx| {
@@ -722,6 +723,11 @@ impl Thread {
                 let output = output.await;
                 thread
                     .update(&mut cx, |thread, cx| {
+                        let affected_buffers = output
+                            .as_ref()
+                            .map(|output| output.affected_buffers.clone())
+                            .unwrap_or_default();
+
                         let pending_tool_use = thread
                             .tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -729,6 +735,7 @@ impl Thread {
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
                             pending_tool_use,
+                            affected_buffers,
                         });
                     })
                     .ok();
@@ -742,7 +749,7 @@ impl Thread {
     pub fn insert_scripting_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        output: Task<Result<String>>,
+        output: Task<Result<ToolResult>>,
         cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn(|thread, mut cx| {
@@ -751,6 +758,11 @@ impl Thread {
                 let output = output.await;
                 thread
                     .update(&mut cx, |thread, cx| {
+                        let affected_buffers = output
+                            .as_ref()
+                            .map(|output| output.affected_buffers.clone())
+                            .unwrap_or_default();
+
                         let pending_tool_use = thread
                             .scripting_tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -758,6 +770,7 @@ impl Thread {
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
                             pending_tool_use,
+                            affected_buffers,
                         });
                     })
                     .ok();
@@ -771,8 +784,15 @@ impl Thread {
     pub fn send_tool_results_to_model(
         &mut self,
         model: Arc<dyn LanguageModel>,
+        updated_context: Vec<ContextSnapshot>,
         cx: &mut Context<Self>,
     ) {
+        self.context.extend(
+            updated_context
+                .into_iter()
+                .map(|context| (context.id, context)),
+        );
+
         // Insert a user message to contain the tool results.
         self.insert_user_message(
             // TODO: Sending up a user message without any content results in the model sending back
@@ -867,6 +887,8 @@ pub enum ThreadEvent {
         tool_use_id: LanguageModelToolUseId,
         /// The pending tool use that corresponds to this tool.
         pending_tool_use: Option<PendingToolUse>,
+        /// The buffers that were affected by this tool call.
+        affected_buffers: HashSet<Entity<Buffer>>,
     },
 }
 

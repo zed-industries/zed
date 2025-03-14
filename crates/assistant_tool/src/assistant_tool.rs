@@ -4,7 +4,9 @@ mod tool_working_set;
 use std::sync::Arc;
 
 use anyhow::Result;
+use collections::HashSet;
 use gpui::{App, Entity, SharedString, Task};
+use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 
@@ -48,5 +50,35 @@ pub trait Tool: 'static + Send + Sync {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<String>>;
+    ) -> Task<Result<ToolResult>>;
+}
+
+/// Represents the result of a tool execution, including the output text and any buffers affected.
+pub struct ToolResult {
+    /// The textual output produced by the tool
+    pub output: String,
+    /// Set of buffers that were modified during tool execution
+    pub affected_buffers: HashSet<Entity<Buffer>>,
+}
+
+impl ToolResult {
+    /// Creates a new tool result with the given output
+    pub fn new(output: String) -> Self {
+        Self {
+            output,
+            affected_buffers: HashSet::default(),
+        }
+    }
+
+    /// Adds a set of affected buffers to this result
+    pub fn with_buffers(mut self, buffers: HashSet<Entity<Buffer>>) -> Self {
+        self.affected_buffers = buffers;
+        self
+    }
+}
+
+impl From<String> for ToolResult {
+    fn from(output: String) -> Self {
+        Self::new(output)
+    }
 }

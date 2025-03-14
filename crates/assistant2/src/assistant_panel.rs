@@ -155,10 +155,14 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(workspace.clone()));
+
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                message_editor_context_store.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
                 window,
@@ -174,6 +178,7 @@ impl AssistantPanel {
                 thread.clone(),
                 thread_store.clone(),
                 language_registry.clone(),
+                message_editor_context_store.clone(),
                 window,
                 cx,
             )
@@ -242,11 +247,16 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.create_thread(cx));
 
         self.active_view = ActiveView::Thread;
+
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(self.workspace.clone()));
+
         self.thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
                 self.language_registry.clone(),
+                message_editor_context_store.clone(),
                 window,
                 cx,
             )
@@ -255,6 +265,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                message_editor_context_store,
                 self.thread_store.downgrade(),
                 thread,
                 window,
@@ -375,11 +386,14 @@ impl AssistantPanel {
             let thread = open_thread_task.await?;
             this.update_in(&mut cx, |this, window, cx| {
                 this.active_view = ActiveView::Thread;
+                let message_editor_context_store =
+                    cx.new(|_cx| crate::context_store::ContextStore::new(this.workspace.clone()));
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),
+                        message_editor_context_store.clone(),
                         window,
                         cx,
                     )
@@ -388,6 +402,7 @@ impl AssistantPanel {
                     MessageEditor::new(
                         this.fs.clone(),
                         this.workspace.clone(),
+                        message_editor_context_store,
                         this.thread_store.downgrade(),
                         thread,
                         window,

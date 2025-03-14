@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use collections::HashMap;
+use assistant_tool::{self, ToolResult};
+use collections::{HashMap, HashSet};
 use futures::future::Shared;
 use futures::FutureExt as _;
-use gpui::{SharedString, Task};
+use gpui::{Entity, SharedString, Task};
+use language::Buffer;
 use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
@@ -34,6 +36,7 @@ pub struct ToolUseState {
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
+    affected_buffers: HashSet<Entity<Buffer>>,
 }
 
 impl ToolUseState {
@@ -43,6 +46,7 @@ impl ToolUseState {
             tool_uses_by_user_message: HashMap::default(),
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
+            affected_buffers: HashSet::default(),
         }
     }
 
@@ -223,18 +227,19 @@ impl ToolUseState {
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        output: Result<String>,
+        output: Result<ToolResult>,
     ) -> Option<PendingToolUse> {
         match output {
-            Ok(output) => {
+            Ok(tool_result) => {
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        content: output.into(),
+                        content: tool_result.output.into(),
                         is_error: false,
                     },
                 );
+                self.affected_buffers.extend(tool_result.affected_buffers);
                 self.pending_tool_uses_by_id.remove(&tool_use_id)
             }
             Err(err) => {
