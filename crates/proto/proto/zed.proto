@@ -346,7 +346,12 @@ message Envelope {
         GitDiff git_diff = 319;
         GitDiffResponse git_diff_response = 320;
 
-        GitInit git_init = 321; // current max
+        GitInit git_init = 321;
+
+        CodeLens code_lens = 322;
+        GetCodeLens get_code_lens = 323;
+        GetCodeLensResponse get_code_lens_response = 324;
+        RefreshCodeLens refresh_code_lens = 325;  // current max
     }
 
     reserved 87 to 88;
@@ -1263,6 +1268,25 @@ message RefreshInlayHints {
     uint64 project_id = 1;
 }
 
+message CodeLens {
+    bytes lsp_lens = 1;
+}
+
+message GetCodeLens {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetCodeLensResponse {
+    repeated CodeAction lens_actions = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message RefreshCodeLens {
+    uint64 project_id = 1;
+}
+
 message MarkupContent {
     bool is_markdown = 1;
     string value = 2;
@@ -1298,9 +1322,11 @@ message CodeAction {
     Anchor end = 3;
     bytes lsp_action = 4;
     Kind kind = 5;
+    bool resolved = 6;
     enum Kind {
         Action = 0;
         Command = 1;
+        CodeLens = 2;
     }
 }
 
@@ -2346,6 +2372,7 @@ message MultiLspQuery {
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
         GetSignatureHelp get_signature_help = 7;
+        GetCodeLens get_code_lens = 8;
     }
 }
 
@@ -2365,6 +2392,7 @@ message LspResponse {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
         GetSignatureHelpResponse get_signature_help_response = 3;
+        GetCodeLensResponse get_code_lens_response = 4;
     }
 }
 
