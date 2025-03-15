@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
@@ -6,8 +6,9 @@ use editor::{
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint, Editor, MultiBuffer,
 };
-use gpui::{Context, Entity, UpdateGlobal, Window};
+use gpui::{Context, Entity, EntityId, UpdateGlobal, Window};
 use language::SelectionGoal;
+use text::Point;
 use ui::App;
 use workspace::OpenOptions;
 
@@ -70,6 +71,114 @@ impl Vim {
         self.stored_visual_mode.replace((mode, reversed));
     }
 
+    fn open_buffer_mark(
+        &mut self,
+        line: bool,
+        entity_id: EntityId,
+        anchors: Vec<Anchor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            let item = workspace.items(cx).find(|item| {
+                item.act_as::<Editor>(cx)
+                    .is_some_and(|editor| editor.read(cx).buffer().entity_id() == entity_id)
+            });
+            let Some(item) = item.cloned() else {
+                return;
+            };
+            if let Some(pane) = workspace.pane_for(item.as_ref()) {
+                pane.update(cx, |pane, cx| {
+                    if let Some(index) = pane.index_for_item(item.as_ref()) {
+                        pane.activate_item(index, true, true, window, cx);
+                    }
+                });
+            };
+
+            item.act_as::<Editor>(cx).unwrap().update(cx, |editor, cx| {
+                let map = editor.snapshot(window, cx);
+                let mut ranges: Vec<Range<Anchor>> = Vec::new();
+                for mut anchor in anchors {
+                    if line {
+                        let mut point = anchor.to_display_point(&map.display_snapshot);
+                        point = motion::first_non_whitespace(&map.display_snapshot, false, point);
+                        anchor = map
+                            .display_snapshot
+                            .buffer_snapshot
+                            .anchor_before(point.to_point(&map.display_snapshot));
+                    }
+
+                    if ranges.last() != Some(&(anchor..anchor)) {
+                        ranges.push(anchor..anchor);
+                    }
+                }
+
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_anchor_ranges(ranges)
+                });
+            })
+        });
+        return;
+    }
+
+    fn open_path_mark(
+        &mut self,
+        line: bool,
+        path: Arc<Path>,
+        points: Vec<Point>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.open_abs_path(
+                path.to_path_buf(),
+                OpenOptions {
+                    visible: Some(workspace::OpenVisible::All),
+                    focus: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+        cx.spawn_in(window, |this, mut cx| async move {
+            let editor = task.await?;
+            this.update_in(&mut cx, |_, window, cx| {
+                if let Some(editor) = editor.act_as::<Editor>(cx) {
+                    editor.update(cx, |editor, cx| {
+                        let map = editor.snapshot(window, cx);
+                        let points: Vec<_> = points
+                            .into_iter()
+                            .map(|p| {
+                                if line {
+                                    let point = p.to_display_point(&map.display_snapshot);
+                                    motion::first_non_whitespace(
+                                        &map.display_snapshot,
+                                        false,
+                                        point,
+                                    )
+                                    .to_point(&map.display_snapshot)
+                                } else {
+                                    p
+                                }
+                            })
+                            .collect();
+                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            s.select_ranges(points.into_iter().map(|p| p..p))
+                        })
+                    })
+                }
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn jump(
         &mut self,
         text: Arc<str>,
@@ -103,177 +212,12 @@ impl Vim {
                 match mark {
                     None => None,
                     Some(Mark::Local(anchors)) => Some(anchors),
-                    Some(Mark::MultiBuffer(entity_id, anchors)) => {
-                        let Some(workspace) = self.workspace(window) else {
-                            return;
-                        };
-                        workspace.update(cx, |workspace, cx| {
-                            let item = workspace.items(cx).find(|item| {
-                                item.act_as::<Editor>(cx).is_some_and(|editor| {
-                                    editor.read(cx).buffer().entity_id() == entity_id
-                                })
-                            });
-                            if let Some(item) = item {
-                                item.act_as::<Editor>(cx).unwrap().update(cx, |editor, cx| {
-                                    editor.change_selections(
-                                        Some(Autoscroll::fit()),
-                                        window,
-                                        cx,
-                                        |s| {
-                                            s.select_anchor_ranges(
-                                                anchors.into_iter().map(|a| a..a),
-                                            )
-                                        },
-                                    )
-                                })
-                            }
-                        });
-                        return;
-                    }
-                    Some(Mark::Buffer(buffer_id, text_anchors)) => {
-                        let Some(workspace) = self.workspace(window) else {
-                            return;
-                        };
-                        workspace.update(cx, |workspace, cx| {
-                            let mut panes = workspace.panes().to_vec();
-                            panes.insert(0, workspace.active_pane().clone());
-                            for pane in panes {
-                                let mut found = false;
-                                let text_anchors = text_anchors.clone();
-                                pane.update(cx, |pane, cx| {
-                                    let Some(item_handle) =
-                                        pane.items().find(|&item_handle| -> bool {
-                                            let Some(editor) = item_handle.act_as::<Editor>(cx)
-                                            else {
-                                                return false;
-                                            };
-                                            let Some(buffer) =
-                                                editor.read(cx).buffer().read(cx).as_singleton()
-                                            else {
-                                                return false;
-                                            };
-                                            buffer_id == buffer.read(cx).remote_id()
-                                        })
-                                    else {
-                                        return;
-                                    };
-                                    found = true;
-                                    let Some(editor) = item_handle.act_as::<Editor>(cx) else {
-                                        return;
-                                    };
-
-                                    let Some(index) = pane.index_for_item(&editor) else {
-                                        return;
-                                    };
-                                    pane.activate_item(index, true, true, window, cx);
-
-                                    cx.spawn_in(window, |_, mut cx| async move {
-                                        editor.update_in(&mut cx, |editor, window, cx| {
-                                            let multi_buffer = editor.buffer().read(cx);
-                                            let excerpt_id =
-                                                *multi_buffer.excerpt_ids().first().unwrap();
-                                            let Some(buffer) =
-                                                editor.buffer().read(cx).as_singleton()
-                                            else {
-                                                return;
-                                            };
-                                            let buffer_id = buffer.read(cx).remote_id();
-                                            let anchors = text_anchors.into_iter().map(|a| {
-                                                Anchor::in_buffer(excerpt_id, buffer_id, a)
-                                            });
-                                            let map = editor.snapshot(window, cx);
-                                            let mut ranges: Vec<Range<Anchor>> = Vec::new();
-                                            for mut anchor in anchors {
-                                                if line {
-                                                    let mut point = anchor
-                                                        .to_display_point(&map.display_snapshot);
-                                                    point = motion::first_non_whitespace(
-                                                        &map.display_snapshot,
-                                                        false,
-                                                        point,
-                                                    );
-                                                    anchor = map
-                                                        .display_snapshot
-                                                        .buffer_snapshot
-                                                        .anchor_before(
-                                                            point.to_point(&map.display_snapshot),
-                                                        );
-                                                }
-
-                                                if ranges.last() != Some(&(anchor..anchor)) {
-                                                    ranges.push(anchor..anchor);
-                                                }
-                                            }
-                                            editor.change_selections(
-                                                Some(Autoscroll::fit()),
-                                                window,
-                                                cx,
-                                                |s| {
-                                                    s.select_anchor_ranges(ranges);
-                                                },
-                                            )
-                                        })?;
-                                        anyhow::Ok(())
-                                    })
-                                    .detach_and_log_err(cx);
-                                });
-                                if found {
-                                    break;
-                                }
-                            }
-                        });
+                    Some(Mark::Buffer(entity_id, anchors)) => {
+                        self.open_buffer_mark(line, entity_id, anchors, window, cx);
                         return;
                     }
                     Some(Mark::Path(path, points)) => {
-                        let Some(workspace) = self.workspace(window) else {
-                            return;
-                        };
-                        let task = workspace.update(cx, |workspace, cx| {
-                            workspace.open_abs_path(
-                                path.to_path_buf(),
-                                OpenOptions {
-                                    visible: Some(workspace::OpenVisible::All),
-                                    focus: Some(true),
-                                    ..Default::default()
-                                },
-                                window,
-                                cx,
-                            )
-                        });
-                        cx.spawn_in(window, |this, mut cx| async move {
-                            let editor = task.await?;
-                            this.update_in(&mut cx, |_, window, cx| {
-                                if let Some(editor) = editor.act_as::<Editor>(cx) {
-                                    editor.update(cx, |editor, cx| {
-                                        let map = editor.snapshot(window, cx);
-                                        let points: Vec<_> = points
-                                            .into_iter()
-                                            .map(|p| {
-                                                if line {
-                                                    let point =
-                                                        p.to_display_point(&map.display_snapshot);
-                                                    motion::first_non_whitespace(
-                                                        &map.display_snapshot,
-                                                        false,
-                                                        point,
-                                                    )
-                                                    .to_point(&map.display_snapshot)
-                                                } else {
-                                                    p
-                                                }
-                                            })
-                                            .collect();
-                                        editor.change_selections(
-                                            Some(Autoscroll::fit()),
-                                            window,
-                                            cx,
-                                            |s| s.select_ranges(points.into_iter().map(|p| p..p)),
-                                        )
-                                    })
-                                }
-                            })
-                        })
-                        .detach_and_log_err(cx);
+                        self.open_path_mark(line, path, points, window, cx);
                         return;
                     }
                 }

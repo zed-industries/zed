@@ -224,7 +224,7 @@ pub struct MarksState {
 
     multibuffer_marks: HashMap<EntityId, HashMap<String, Vec<Anchor>>>,
     buffer_marks: HashMap<BufferId, HashMap<String, Vec<text::Anchor>>>,
-    watched_buffers: HashMap<BufferId, (Option<Arc<Path>>, Subscription, Subscription)>,
+    watched_buffers: HashMap<BufferId, (MarkLocation, Subscription, Subscription)>,
 
     serialized_marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
     global_marks: HashMap<String, MarkLocation>,
@@ -232,17 +232,15 @@ pub struct MarksState {
     _subscription: Subscription,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum MarkLocation {
-    MultiBuffer(EntityId),
-    Buffer(BufferId),
+    Buffer(EntityId),
     Path(Arc<Path>),
 }
 
 pub enum Mark {
     Local(Vec<Anchor>),
-    MultiBuffer(EntityId, Vec<Anchor>),
-    Buffer(BufferId, Vec<text::Anchor>), // for singleton buffers with no file
+    Buffer(EntityId, Vec<Anchor>),
     Path(Arc<Path>, Vec<Point>),
 }
 
@@ -374,7 +372,7 @@ impl MarksState {
             );
         }
         self.buffer_marks.insert(buffer.remote_id(), loaded_marks);
-        self.watch_buffer(Some(abs_path), buffer_handle, cx)
+        self.watch_buffer(MarkLocation::Path(abs_path), buffer_handle, cx)
     }
 
     fn serialize_buffer_marks(
@@ -446,16 +444,22 @@ impl MarksState {
 
     fn rename_buffer(
         &mut self,
-        old_path: Option<Arc<Path>>,
+        old_path: MarkLocation,
         new_path: Arc<Path>,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(old_path) = old_path {
-            self.serialized_marks.remove(&old_path);
+        if let MarkLocation::Buffer(entity_id) = old_path {
+            if let Some(old_marks) = self.multibuffer_marks.remove(&entity_id) {
+                let buffer_marks = old_marks
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
+                    .collect();
+                self.buffer_marks
+                    .insert(buffer.read(cx).remote_id(), buffer_marks);
+            }
         }
-        // if there is no old path we assume that
-        // we are giving a previously unnamed buffer a name
+        self.watch_buffer(MarkLocation::Path(new_path.clone()), buffer, cx);
         self.serialize_buffer_marks(new_path, buffer, cx);
     }
 
@@ -473,13 +477,7 @@ impl MarksState {
         cx: &App,
     ) -> bool {
         match location {
-            MarkLocation::MultiBuffer(entity_id) => entity_id == &multi_buffer.entity_id(),
-            MarkLocation::Buffer(buffer_id) => {
-                let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
-                    return false;
-                };
-                buffer_id == &buffer.read(cx).remote_id()
-            }
+            MarkLocation::Buffer(entity_id) => entity_id == &multi_buffer.entity_id(),
             MarkLocation::Path(path) => {
                 let Some(singleton) = multi_buffer.read(cx).as_singleton() else {
                     return false;
@@ -491,7 +489,7 @@ impl MarksState {
 
     pub fn watch_buffer(
         &mut self,
-        abs_path: Option<Arc<Path>>,
+        mark_location: MarkLocation,
         buffer_handle: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
@@ -523,32 +521,40 @@ impl MarksState {
 
         self.watched_buffers.insert(
             buffer_handle.read(cx).remote_id(),
-            (abs_path, on_change, on_release),
+            (mark_location, on_change, on_release),
         );
     }
 
     pub fn set_mark(
         &mut self,
         name: String,
-        buffer_handle: &Entity<MultiBuffer>,
+        multibuffer: &Entity<MultiBuffer>,
         anchors: Vec<Anchor>,
         cx: &mut Context<Self>,
     ) {
-        let Some(buffer_handle) = buffer_handle.read(cx).as_singleton() else {
+        let buffer = multibuffer.read(cx).as_singleton();
+        let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(&b, cx));
+
+        let Some(abs_path) = abs_path else {
             self.multibuffer_marks
-                .entry(buffer_handle.entity_id())
+                .entry(multibuffer.entity_id())
                 .or_default()
                 .insert(name.clone(), anchors);
             if self.is_global_mark(&name) {
-                self.global_marks.insert(
-                    name.clone(),
-                    MarkLocation::MultiBuffer(buffer_handle.entity_id()),
-                );
+                self.global_marks
+                    .insert(name.clone(), MarkLocation::Buffer(multibuffer.entity_id()));
+            }
+            if let Some(buffer) = buffer {
+                let buffer_id = buffer.read(cx).remote_id();
+                if !self.watched_buffers.contains_key(&buffer_id) {
+                    self.watch_buffer(MarkLocation::Buffer(multibuffer.entity_id()), &buffer, cx)
+                }
             }
             return;
         };
+        let buffer = buffer.unwrap();
 
-        let buffer_id = buffer_handle.read(cx).remote_id();
+        let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
             name.clone(),
             anchors
@@ -556,18 +562,10 @@ impl MarksState {
                 .map(|anchor| anchor.text_anchor)
                 .collect(),
         );
-        self.global_marks.insert(
-            // this will be overwritten by serialize if there is an associated file
-            name.clone(),
-            MarkLocation::Buffer(buffer_id),
-        );
-        let abs_path = self.path_for_buffer(&buffer_handle, cx);
         if !self.watched_buffers.contains_key(&buffer_id) {
-            self.watch_buffer(abs_path.clone(), &buffer_handle, cx)
+            self.watch_buffer(MarkLocation::Path(abs_path.clone()), &buffer, cx)
         }
-        if let Some(abs_path) = abs_path {
-            self.serialize_buffer_marks(abs_path, &buffer_handle, cx)
-        }
+        self.serialize_buffer_marks(abs_path, &buffer, cx)
     }
 
     pub fn get_mark(
@@ -598,13 +596,9 @@ impl MarksState {
         }
 
         match target? {
-            MarkLocation::MultiBuffer(entity_id) => {
+            MarkLocation::Buffer(entity_id) => {
                 let anchors = self.multibuffer_marks.get(&entity_id)?;
-                return Some(Mark::MultiBuffer(*entity_id, anchors.get(name)?.clone()));
-            }
-            MarkLocation::Buffer(buffer_id) => {
-                let text_anchors = self.buffer_marks.get(&buffer_id)?.get(name)?;
-                return Some(Mark::Buffer(*buffer_id, text_anchors.clone()));
+                return Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()));
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;
