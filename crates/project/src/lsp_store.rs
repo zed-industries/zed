@@ -1651,6 +1651,8 @@ impl LocalLspStore {
             LspAction::Action(lsp_action) => {
                 if !action.resolved
                     && GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+                    && lsp_action.data.is_some()
+                    && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
                     *lsp_action = Box::new(
                         lang_server
