@@ -94,7 +94,6 @@ impl Vim {
                     })
                     .collect::<Vec<Anchor>>()
             }),
-            "." => self.change_list.last().cloned(),
             _ => {
                 let Some(buffer) = self.editor().map(|editor| editor.read(cx).buffer().clone())
                 else {
