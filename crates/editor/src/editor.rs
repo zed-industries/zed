@@ -8513,7 +8513,7 @@ impl Editor {
 
         breakpoint_store.update(cx, |breakpoint_store, cx| {
             breakpoint_store.toggle_breakpoint(
-                buffer.into(),
+                buffer,
                 (breakpoint_position.text_anchor, Breakpoint { kind }),
                 edit_action,
                 cx,

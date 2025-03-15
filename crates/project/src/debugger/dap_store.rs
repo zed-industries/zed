@@ -650,55 +650,6 @@ impl DapStore {
         })
     }
 
-    // async fn _handle_dap_command_2<T: DapCommand + PartialEq + Eq + Hash>(
-    //     this: Entity<Self>,
-    //     envelope: TypedEnvelope<T::ProtoRequest>,
-    //     mut cx: AsyncApp,
-    // ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
-    // where
-    //     <T::DapRequest as dap::requests::Request>::Arguments: Send,
-    //     <T::DapRequest as dap::requests::Request>::Response: Send,
-    // {
-    //     let request = T::from_proto(&envelope.payload);
-    //     let session_id = T::session_id_from_proto(&envelope.payload);
-
-    //     let _state = this
-    //         .update(&mut cx, |this, cx| {
-    //             this.client_by_id(session_id)?
-    //                 .read(cx)
-    //                 ._wait_for_request(request)
-    //         })
-    //         .ok()
-    //         .flatten();
-    //     if let Some(_state) = _state {
-    //         let _ = _state.await;
-    //     }
-
-    //     todo!()
-    // }
-
-    // async fn handle_dap_command<T: DapCommand>(
-    //     this: Entity<Self>,
-    //     envelope: TypedEnvelope<T::ProtoRequest>,
-    //     mut cx: AsyncApp,
-    // ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
-    // where
-    //     <T::DapRequest as dap::requests::Request>::Arguments: Send,
-    //     <T::DapRequest as dap::requests::Request>::Response: Send,
-    // {
-    //     let _sender_id = envelope.original_sender_id().unwrap_or_default();
-    //     let session_id = T::session_id_from_proto(&envelope.payload);
-
-    //     let request = T::from_proto(&envelope.payload);
-    //     let response = this
-    //         .update(&mut cx, |this, cx| {
-    //             this.request_dap::<T>(&session_id, request, cx)
-    //         })?
-    //         .await?;
-
-    //     Ok(T::response_to_proto(&session_id, response))
-    // }
-
     async fn handle_update_debug_adapter(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateDebugAdapter>,
