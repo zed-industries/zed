@@ -16854,6 +16854,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "windows 0.60.0",
  "zed_actions",
 ]
 

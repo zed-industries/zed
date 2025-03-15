@@ -1,4 +1,5 @@
 pub mod dock;
+pub mod history_manager;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -42,6 +43,7 @@ use gpui::{
     Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
     WindowBounds, WindowHandle, WindowId, WindowOptions,
 };
+pub use history_manager::*;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
@@ -384,7 +386,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
     theme_preview::init(cx);
-    toast_layer::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -892,7 +893,9 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
+                    // Set `update` to `true` so that the history is updated.
+                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
+                    this.serialize_workspace(window, cx, true);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1185,6 +1188,7 @@ impl Workspace {
 
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
+            let is_new_workspace = serialized_workspace.is_none();
 
             let workspace_location = serialized_workspace
                 .as_ref()
@@ -1308,7 +1312,15 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, _| window.activate_window())
+                .update(&mut cx, |workspace, window, cx| {
+                    window.activate_window();
+                    if is_new_workspace {
+                        // If opened a new workspace, the workspace will be serialized and notified here.
+                        // If opened an existing workspace, the workspace will be serialized and notified in the
+                        // above `open_items` call.
+                        workspace.serialize_workspace(window, cx, true);
+                    }
+                })
                 .log_err();
             Ok((window, opened_items))
         })
@@ -2503,7 +2515,7 @@ impl Workspace {
         }
 
         cx.notify();
-        self.serialize_workspace(window, cx);
+        self.serialize_workspace(window, cx, false);
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2515,7 +2527,7 @@ impl Workspace {
 
         cx.focus_self(window);
         cx.notify();
-        self.serialize_workspace(window, cx);
+        self.serialize_workspace(window, cx, false);
     }
 
     /// Transfer focus to the panel of the given type.
@@ -2556,7 +2568,7 @@ impl Workspace {
 
         if panel.is_some() {
             cx.notify();
-            self.serialize_workspace(window, cx);
+            self.serialize_workspace(window, cx, false);
         }
 
         panel
@@ -2601,7 +2613,7 @@ impl Workspace {
         }
 
         if serialize {
-            self.serialize_workspace(window, cx);
+            self.serialize_workspace(window, cx, false);
         }
 
         cx.notify();
@@ -3445,7 +3457,7 @@ impl Workspace {
         }
 
         if serialize_workspace {
-            self.serialize_workspace(window, cx);
+            self.serialize_workspace(window, cx, false);
         }
     }
 
@@ -4476,7 +4488,7 @@ impl Workspace {
 
     fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(window, cx)
+        self.serialize_workspace_internal(window, cx, false)
     }
 
     fn force_remove_pane(
@@ -4503,14 +4515,20 @@ impl Workspace {
         cx.notify();
     }
 
-    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Set the parameter `update` to `true` if the action changes the history of the workspace.
+    /// Typically, there are three cases that change the history:
+    /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
+    /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
+    /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
+    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>, update: bool) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, |this, mut cx| async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update_in(&mut cx, |this, window, cx| {
-                    this.serialize_workspace_internal(window, cx).detach();
+                    this.serialize_workspace_internal(window, cx, update)
+                        .detach();
                     this._schedule_serialize.take();
                 })
                 .log_err();
@@ -4518,7 +4536,17 @@ impl Workspace {
         }
     }
 
-    fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
+    /// Set the parameter `update` to `true` if the action changes the history of the workspace.
+    /// Typically, there are three cases that change the history:
+    /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
+    /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
+    /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
+    fn serialize_workspace_internal(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        update: bool,
+    ) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
@@ -4658,6 +4686,16 @@ impl Workspace {
                 session_id: self.session_id.clone(),
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
+            if update {
+                if let Some(manager) = HistoryManager::global(cx) {
+                    return window.spawn(cx, |mut cx| async move {
+                        persistence::DB.save_workspace(serialized_workspace).await;
+                        manager
+                            .update(&mut cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
+                            .log_err();
+                    });
+                }
+            }
             return window.spawn(cx, |_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
@@ -4822,7 +4860,10 @@ impl Workspace {
             workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                    workspace.serialize_workspace_internal(window, cx).detach();
+                    // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
+                    workspace
+                        .serialize_workspace_internal(window, cx, true)
+                        .detach();
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);
@@ -5453,7 +5494,7 @@ impl Render for Workspace {
                                                         );
                                                     }
                                                 };
-                                                workspace.serialize_workspace(window, cx);
+                                                workspace.serialize_workspace(window, cx, false);
                                             }
                                         },
                                     ))
