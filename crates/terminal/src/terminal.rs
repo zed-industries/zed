@@ -1836,6 +1836,10 @@ impl Terminal {
             }
         }
     }
+
+    pub fn vi_mode_enabled(&self) -> bool {
+        self.vi_mode_enabled
+    }
 }
 
 fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
