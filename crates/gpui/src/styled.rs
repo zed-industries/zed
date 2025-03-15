@@ -478,7 +478,7 @@ pub trait Styled: Sized {
     }
 
     /// Sets the font style of the element to normal (not italic).
-    /// [Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
+    /// [Docs](https://tailwindcss.com/docs/font-style#displaying-text-normally)
     fn not_italic(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
