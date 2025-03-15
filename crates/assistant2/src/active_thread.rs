@@ -263,30 +263,59 @@ impl ActiveThread {
                    language.eq_ignore_ascii_case("zsh") {
                     
                     if let Some(workspace) = workspace_weak.upgrade() {
+                        // Toggle the panel focus (opens it if it's not open)
                         workspace.update(cx, |workspace, cx| {
                             workspace.toggle_panel_focus::<terminal_view::terminal_panel::TerminalPanel>(window, cx);
-                            
-                            if let Some(terminal_panel) = workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx) {
-                                let command_with_newline = format!("{}\n", code);
-                                
-                                terminal_panel.update(cx, |panel, cx| {
-                                    if let Some(pane) = panel.pane() {
-                                        if let Some(terminal_view) = pane.read(cx).active_item()
-                                            .and_then(|item| item.downcast::<terminal_view::TerminalView>()) {
-                                            
-                                            let terminal = {
-                                                let view = terminal_view.read(cx);
-                                                view.terminal().clone()
-                                            };
-                                            
-                                            terminal.update(cx, |term, _| {
-                                                term.input(command_with_newline);
-                                            });
-                                        }
-                                    }
-                                });
-                            }
                         });
+                        
+                        // Clone what we need for the async task
+                        let code = code.to_string();
+                        let workspace_weak = workspace_weak.clone();
+                        
+                        // Spawn a task that will try to execute the command multiple times
+                        cx.spawn(|mut cx| async move {
+                            // Try multiple times with increasing delays
+                            for i in 0..=5 {
+                                // Wait with increasing delay (0 for first attempt)
+                                if i > 0 {
+                                    cx.background_executor().timer(std::time::Duration::from_millis(100 * i)).await;
+                                }
+                                
+                                // Try to execute the command
+                                if let Some(workspace) = workspace_weak.upgrade() {
+                                    let success = workspace.update(&mut cx, |workspace, cx| {
+                                        if let Some(terminal_panel) = workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx) {
+                                            terminal_panel.update(cx, |panel, cx| {
+                                                if let Some(pane) = panel.pane() {
+                                                    if let Some(terminal_view) = pane.read(cx).active_item()
+                                                        .and_then(|item| item.downcast::<terminal_view::TerminalView>()) {
+                                                        
+                                                        let terminal = {
+                                                            let view = terminal_view.read(cx);
+                                                            view.terminal().clone()
+                                                        };
+                                                        
+                                                        terminal.update(cx, |term, _| {
+                                                            // Don't add a newline, the terminal will add it
+                                                            term.input(code.clone());
+                                                        });
+                                                        
+                                                        return true;
+                                                    }
+                                                }
+                                                false
+                                            })
+                                        } else {
+                                            false
+                                        }
+                                    });
+                                    
+                                    if let Ok(true) = success {
+                                        break;
+                                    }
+                                }
+                            }
+                        }).detach();
                     }
                 }
             })
