@@ -509,9 +509,9 @@ impl RenderOnce for ButtonLike {
                 this.w(width).justify_center().text_center()
             })
             .when_some(self.rounding, |this, rounding| match rounding {
-                ButtonLikeRounding::All => this.rounded_md(),
-                ButtonLikeRounding::Left => this.rounded_l_md(),
-                ButtonLikeRounding::Right => this.rounded_r_md(),
+                ButtonLikeRounding::All => this.rounded_sm(),
+                ButtonLikeRounding::Left => this.rounded_l_sm(),
+                ButtonLikeRounding::Right => this.rounded_r_sm(),
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {

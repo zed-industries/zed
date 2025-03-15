@@ -179,12 +179,13 @@ impl PickerDelegate for PromptPickerDelegate {
         self.matches.len()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if self.store.prompt_count() == 0 {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.store.prompt_count() == 0 {
             "No prompts.".into()
         } else {
             "No prompts found matching your search.".into()
-        }
+        };
+        Some(text)
     }
 
     fn selected_index(&self) -> usize {
@@ -326,7 +327,7 @@ impl PickerDelegate for PromptPickerDelegate {
     ) -> Div {
         h_flex()
             .bg(cx.theme().colors().editor_background)
-            .rounded_md()
+            .rounded_sm()
             .overflow_hidden()
             .flex_none()
             .py_1()
@@ -992,7 +993,7 @@ impl PromptLibrary {
                                             .on_action(cx.listener(Self::move_down_from_title))
                                             .border_1()
                                             .border_color(transparent_black())
-                                            .rounded_md()
+                                            .rounded_sm()
                                             .group_hover("active-editor-header", |this| {
                                                 this.border_color(
                                                     cx.theme().colors().border_variant,

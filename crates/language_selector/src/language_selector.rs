@@ -139,31 +139,27 @@ impl LanguageSelectorDelegate {
         let mut label = mat.string.clone();
         let buffer_language = self.buffer.read(cx).language();
         let need_icon = FileFinderSettings::get_global(cx).file_icons;
-        if let Some(buffer_language) = buffer_language {
-            let buffer_language_name = buffer_language.name();
-            if buffer_language_name.as_ref() == mat.string.as_str() {
-                label.push_str(" (current)");
-                let icon = need_icon
-                    .then(|| self.language_icon(&buffer_language.config().matcher, cx))
-                    .flatten();
-                return (label, icon);
-            }
-        }
 
-        if need_icon {
-            let language_name = LanguageName::new(mat.string.as_str());
-            match self
-                .language_registry
-                .available_language_for_name(language_name.as_ref())
-            {
-                Some(available_language) => {
-                    let icon = self.language_icon(available_language.matcher(), cx);
-                    (label, icon)
-                }
-                None => (label, None),
-            }
+        if let Some(buffer_language) = buffer_language
+            .filter(|buffer_language| buffer_language.name().as_ref() == mat.string.as_str())
+        {
+            label.push_str(" (current)");
+            let icon = need_icon
+                .then(|| self.language_icon(&buffer_language.config().matcher, cx))
+                .flatten();
+            (label, icon)
         } else {
-            (label, None)
+            let icon = need_icon
+                .then(|| {
+                    let language_name = LanguageName::new(mat.string.as_str());
+                    self.language_registry
+                        .available_language_for_name(language_name.as_ref())
+                        .and_then(|available_language| {
+                            self.language_icon(available_language.matcher(), cx)
+                        })
+                })
+                .flatten();
+            (label, icon)
         }
     }
 
@@ -171,13 +167,7 @@ impl LanguageSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| {
-                if extension.contains('.') {
-                    None
-                } else {
-                    FileIcons::get_icon(Path::new(&format!("file.{extension}")), cx)
-                }
-            })
+            .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))
     }
