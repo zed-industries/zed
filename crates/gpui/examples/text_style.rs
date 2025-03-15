@@ -8,6 +8,7 @@ struct HelloWorld {}
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .font_family(".SystemUIFont")
             .bg(gpui::white())
             .flex()
             .flex_col()
@@ -74,110 +75,21 @@ impl Render for HelloWorld {
             )
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_around()
-                    .gap_3()
-                    .child(
-                        div()
-                            .cursor_pointer()
-                            .text_color(gpui::black())
-                            .hover(|this| this.text_color(gpui::blue()))
-                            .child("Hover Blue"),
-                    )
-                    .child(
-                        div()
-                            .cursor_pointer()
-                            .text_color(gpui::black())
-                            .hover(|this| this.underline())
-                            .child("Hover Underline"),
-                    )
-                    .child(
-                        div()
-                            .cursor_pointer()
-                            .text_color(gpui::black())
-                            .hover(|this| {
-                                this.text_decoration_1()
-                                    .text_decoration_wavy()
-                                    .text_decoration_color(gpui::blue())
-                            })
-                            .child("Hover Wavy"),
-                    )
-                    .child(
-                        div()
-                            .cursor_pointer()
-                            .text_color(gpui::black())
-                            .hover(|this| this.bg(gpui::yellow()))
-                            .child("Hover Background"),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_around()
-                    .gap_3()
-                    .child(
-                        div()
-                            .id("active-0")
-                            .cursor_pointer()
-                            .text_color(gpui::black())
-                            .active(|this| this.text_color(gpui::red()))
-                            .child("Active Red"),
-                    )
-                    .child(
-                        div()
-                            .id("active-1")
-                            .cursor_pointer()
-                            .text_color(gpui::black())
-                            .active(|this| this.underline())
-                            .child("Active Underline"),
-                    )
-                    .child(
-                        div()
-                            .id("active-2")
-                            .cursor_pointer()
-                            .text_color(gpui::black())
-                            .active(|this| {
-                                this.text_decoration_1()
-                                    .text_decoration_wavy()
-                                    .text_decoration_color(gpui::red())
-                            })
-                            .child("Active Wavy"),
-                    )
-                    .child(
-                        div()
-                            .id("active-3")
-                            .text_color(gpui::black())
-                            .active(|this| this.bg(gpui::yellow()))
-                            .child("Active Background"),
-                    ),
-            )
-            .child(
-                div()
-                    .id("btn")
-                    .w_40()
-                    .py_2()
-                    .rounded_md()
+                    .id("Text Link")
                     .text_color(gpui::blue())
-                    .text_center()
-                    .rounded_md()
+                    .cursor_pointer()
                     .active(|this| {
                         this.text_color(gpui::white())
                             .bg(gpui::blue())
-                            .text_center()
                             .text_decoration_1()
                             .text_decoration_wavy()
                     })
                     .hover(|this| {
                         this.text_color(rgb(0x973717))
                             .bg(gpui::yellow())
-                            .text_center()
                             .text_decoration_1()
                     })
-                    .child("Link styles"),
+                    .child("Text with hover, active styles"),
             )
     }
 }
