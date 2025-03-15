@@ -7,7 +7,7 @@ mod lldb;
 mod php;
 mod python;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
@@ -24,6 +24,7 @@ use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{json, Value};
+use sysinfo::{Pid, Process};
 use task::{CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, TCPHost};
 
 pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Arc<dyn DebugAdapter>> {
@@ -45,5 +46,28 @@ pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Arc<dyn DebugAdapt
         #[cfg(not(any(test, feature = "test-support")))]
         #[allow(unreachable_patterns)]
         _ => unreachable!("Fake variant only exists with test-support feature"),
+    }
+}
+
+fn default_attach_processes<'a>(
+    processes: &'a HashMap<Pid, Process>,
+) -> Option<Vec<(&'a Pid, &'a Process)>> {
+    Some(
+        processes
+            .iter()
+            .filter(|(pid, _)| pid.as_u32() == std::process::id())
+            .collect::<Vec<_>>(),
+    )
+}
+
+pub fn attach_processes<'a>(
+    kind: &DebugAdapterKind,
+    processes: &'a HashMap<Pid, Process>,
+) -> Option<Vec<(&'a Pid, &'a Process)>> {
+    match kind {
+        DebugAdapterKind::Custom(_) => CustomDebugAdapter::attach_processes(processes),
+        DebugAdapterKind::Javascript(_) => JsDebugAdapter::attach_processes(processes),
+        DebugAdapterKind::Lldb => LldbDebugAdapter::attach_processes(processes),
+        _ => default_attach_processes(processes),
     }
 }

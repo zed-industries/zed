@@ -16,6 +16,12 @@ impl LldbDebugAdapter {
     pub(crate) fn new() -> Self {
         LldbDebugAdapter {}
     }
+
+    pub fn attach_processes<'a>(
+        processes: &'a HashMap<Pid, Process>,
+    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
+        Some(processes.iter().collect::<Vec<_>>())
+    }
 }
 
 #[async_trait(?Send)]
@@ -96,12 +102,5 @@ impl DebugAdapter for LldbDebugAdapter {
             "pid": pid,
             "cwd": config.cwd,
         })
-    }
-
-    fn attach_processes<'a>(
-        &self,
-        processes: &'a HashMap<Pid, Process>,
-    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
-        Some(processes.iter().collect::<Vec<_>>())
     }
 }

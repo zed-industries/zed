@@ -1,7 +1,8 @@
 use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use serde_json::Value;
-use std::{ffi::OsString, path::PathBuf};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf};
+use sysinfo::{Pid, Process};
 use task::DebugAdapterConfig;
 
 use crate::*;
@@ -15,6 +16,12 @@ impl CustomDebugAdapter {
 
     pub(crate) async fn new(custom_args: CustomArgs) -> Result<Self> {
         Ok(CustomDebugAdapter { custom_args })
+    }
+
+    pub fn attach_processes<'a>(
+        processes: &'a HashMap<Pid, Process>,
+    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
+        Some(processes.iter().collect::<Vec<_>>())
     }
 }
 

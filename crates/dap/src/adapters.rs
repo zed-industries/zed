@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use sysinfo::{Pid, Process};
 use task::DebugAdapterConfig;
 use util::ResultExt;
 
@@ -290,14 +289,6 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     /// Should return base configuration to make the debug adapter work
     fn request_args(&self, config: &DebugAdapterConfig) -> Value;
-
-    /// Filters out the processes that the adapter can attach to for debugging
-    fn attach_processes<'a>(
-        &self,
-        _: &'a HashMap<Pid, Process>,
-    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
-        None
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -375,17 +366,5 @@ impl DebugAdapter for FakeAdapter {
                 None
             },
         })
-    }
-
-    fn attach_processes<'a>(
-        &self,
-        processes: &'a HashMap<Pid, Process>,
-    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
-        Some(
-            processes
-                .iter()
-                .filter(|(pid, _)| pid.as_u32() == std::process::id())
-                .collect::<Vec<_>>(),
-        )
     }
 }

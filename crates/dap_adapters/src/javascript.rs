@@ -25,6 +25,19 @@ impl JsDebugAdapter {
             port: TcpTransport::port(&host).await?,
         })
     }
+
+    pub fn attach_processes<'a>(
+        processes: &'a HashMap<Pid, Process>,
+    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
+        let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
+
+        Some(
+            processes
+                .iter()
+                .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
+                .collect::<Vec<_>>(),
+        )
+    }
 }
 
 #[async_trait(?Send)]
@@ -135,19 +148,5 @@ impl DebugAdapter for JsDebugAdapter {
             "processId": pid,
             "cwd": config.cwd,
         })
-    }
-
-    fn attach_processes<'a>(
-        &self,
-        processes: &'a HashMap<Pid, Process>,
-    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
-        let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
-
-        Some(
-            processes
-                .iter()
-                .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
-                .collect::<Vec<_>>(),
-        )
     }
 }
