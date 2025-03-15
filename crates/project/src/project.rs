@@ -3800,7 +3800,8 @@ impl Project {
     /// # Returns
     ///
     /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
-    pub fn find_project_path(&self, path: &Path, cx: &App) -> Option<ProjectPath> {
+    pub fn find_project_path(&self, path: impl AsRef<Path>, cx: &App) -> Option<ProjectPath> {
+        let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
         for worktree in worktree_store.visible_worktrees(cx) {
