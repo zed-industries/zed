@@ -111,7 +111,7 @@ impl NeovimConnection {
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
     pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let mut keystroke = Keystroke::parse(keystroke_text).unwrap();
+        let mut keystroke = Keystroke::parse(keystroke_text, true, None).unwrap();
 
         if keystroke.key == "<" {
             keystroke.key = "lt".to_string()
@@ -477,7 +477,7 @@ impl NeovimConnection {
     #[cfg(not(feature = "neovim"))]
     fn read_test_data(test_case_id: &str) -> VecDeque<NeovimData> {
         let path = Self::test_data_path(test_case_id);
-        let json = std::fs::read_to_string(path).expect(
+        let json = std::fs::read_to_string(&path).expect(
             "Could not read test data. Is it generated? Try running test with '--features neovim'",
         );
 

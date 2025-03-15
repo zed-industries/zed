@@ -1212,11 +1212,15 @@ impl Terminal {
             return;
         }
 
-        let mut key = keystroke.key.clone();
+        // todo(windows)
+        // match key instead of string
+        let mut key = keystroke.key.unparse().to_string();
         if keystroke.modifiers.shift {
             key = key.to_uppercase();
         }
 
+        // TODO:
+        // What? We are hardcoding this?
         let motion: Option<ViMotion> = match key.as_str() {
             "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),

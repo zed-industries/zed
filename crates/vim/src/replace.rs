@@ -295,7 +295,7 @@ mod test {
             fox jumps over
             the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes("shift-r O n e").await;
+        cx.simulate_shared_keystrokes("shift-r shift-o n e").await;
         cx.shared_state().await.assert_eq(indoc! {"
             Oneˇ quick brown
             fox jumps over
@@ -307,7 +307,7 @@ mod test {
             fox jumps over
             the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes("shift-r O n e").await;
+        cx.simulate_shared_keystrokes("shift-r shift-o n e").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick browOneˇ
             fox jumps over
@@ -320,7 +320,7 @@ mod test {
         fox jumps over
         the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes("shift-r O n e").await;
+        cx.simulate_shared_keystrokes("shift-r shift-o n e").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             Oneˇ
@@ -333,7 +333,8 @@ mod test {
             fox jumps over
             the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes("shift-r enter O n e").await;
+        cx.simulate_shared_keystrokes("shift-r enter shift-o n e")
+            .await;
         cx.shared_state().await.assert_eq(indoc! {"
             The qu
             Oneˇ brown
@@ -348,7 +349,7 @@ mod test {
             the lazy ˇdog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("shift-r O n e");
+        cx.simulate_keystrokes("shift-r shift-o n e");
         cx.assert_state(
             indoc! {"
             Oneˇ quick brown
@@ -356,7 +357,7 @@ mod test {
             the lazy Oneˇ."},
             Mode::Replace,
         );
-        cx.simulate_keystrokes("enter T w o");
+        cx.simulate_keystrokes("enter shift-t w o");
         cx.assert_state(
             indoc! {"
             One
@@ -416,15 +417,18 @@ mod test {
 
         for example in UNDO_REPLACE_EXAMPLES {
             // normal undo
-            cx.simulate("shift-r O n e backspace backspace backspace", example)
+            cx.simulate("shift-r shift-o n e backspace backspace backspace", example)
                 .await
                 .assert_matches();
             // undo with new line
-            cx.simulate("shift-r O enter e backspace backspace backspace", example)
-                .await
-                .assert_matches();
             cx.simulate(
-                "shift-r O enter n enter e backspace backspace backspace backspace backspace",
+                "shift-r shift-o enter e backspace backspace backspace",
+                example,
+            )
+            .await
+            .assert_matches();
+            cx.simulate(
+                "shift-r shift-o enter n enter e backspace backspace backspace backspace backspace",
                 example,
             )
             .await

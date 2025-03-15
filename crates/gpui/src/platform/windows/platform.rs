@@ -65,6 +65,7 @@ struct PlatformCallbacks {
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
 }
 
 impl WindowsPlatformState {
@@ -203,6 +204,19 @@ impl WindowsPlatform {
         }
     }
 
+    fn handle_input_lang_change(&self) {
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.on_keyboard_layout_change.take() {
+            drop(lock);
+            callback();
+            self.state
+                .borrow_mut()
+                .callbacks
+                .on_keyboard_layout_change
+                .get_or_insert(callback);
+        }
+    }
+
     // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
@@ -210,6 +224,7 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
+                    WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
                     WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
@@ -298,11 +313,13 @@ impl Platform for WindowsPlatform {
     }
 
     fn keyboard_layout(&self) -> String {
-        "unknown".into()
+        get_keyboard_layout_name()
+            .log_err()
+            .unwrap_or("unknown".to_string())
     }
 
-    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
-        // todo(windows)
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.state.borrow_mut().callbacks.on_keyboard_layout_change = Some(callback);
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
@@ -822,6 +839,13 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn get_keyboard_layout_name() -> Result<String> {
+    let mut buffer = [0u16; KL_NAMELENGTH as usize];
+    unsafe { GetKeyboardLayoutNameW(&mut buffer) }?;
+    let kbd_layout_name = HSTRING::from_wide(&buffer);
+    Ok(kbd_layout_name.to_string())
 }
 
 #[cfg(test)]
