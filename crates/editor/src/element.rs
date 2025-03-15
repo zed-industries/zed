@@ -4274,7 +4274,7 @@ impl EditorElement {
         let is_singleton = self.editor.read(cx).is_singleton(cx);
 
         let line_height = layout.position_map.line_height;
-        window.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
+        window.set_cursor_style(CursorStyle::Arrow, Some(&layout.gutter_hitbox));
 
         for LineNumberLayout {
             shaped_line,
@@ -4308,9 +4308,9 @@ impl EditorElement {
             // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
             // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
             if is_singleton {
-                window.set_cursor_style(CursorStyle::IBeam, &hitbox);
+                window.set_cursor_style(CursorStyle::IBeam, Some(&hitbox));
             } else {
-                window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
+                window.set_cursor_style(CursorStyle::PointingHand, Some(&hitbox));
             }
         }
     }
@@ -4524,7 +4524,7 @@ impl EditorElement {
                     .read(cx)
                     .all_diff_hunks_expanded()
                 {
-                    window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                    window.set_cursor_style(CursorStyle::PointingHand, Some(hunk_hitbox));
                 }
             }
         }
@@ -4607,7 +4607,7 @@ impl EditorElement {
                 } else {
                     CursorStyle::IBeam
                 };
-                window.set_cursor_style(cursor_style, &layout.position_map.text_hitbox);
+                window.set_cursor_style(cursor_style, Some(&layout.position_map.text_hitbox));
 
                 self.paint_lines_background(layout, window, cx);
                 let invisible_display_ranges = self.paint_highlights(layout, window);
@@ -4781,7 +4781,7 @@ impl EditorElement {
                 })
             }
 
-            window.set_cursor_style(CursorStyle::Arrow, &hitbox);
+            window.set_cursor_style(CursorStyle::Arrow, Some(&hitbox));
 
             window.on_mouse_event({
                 let editor = self.editor.clone();
@@ -4941,7 +4941,7 @@ impl EditorElement {
                 });
             }
 
-            window.set_cursor_style(CursorStyle::Arrow, &hitbox);
+            window.set_cursor_style(CursorStyle::Arrow, Some(&hitbox));
 
             window.on_mouse_event({
                 let editor = self.editor.clone();
