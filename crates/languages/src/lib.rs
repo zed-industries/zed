@@ -72,6 +72,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     ]);
 
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
+    let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
     let eslint_adapter = Arc::new(typescript::EsLintLspAdapter::new(node.clone()));
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
@@ -108,7 +109,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "css",
-            adapters: vec![Arc::new(css::CssLspAdapter::new(node.clone()))],
+            adapters: vec![css_lsp_adapter.clone()],
             ..Default::default()
         },
         LanguageInfo {
