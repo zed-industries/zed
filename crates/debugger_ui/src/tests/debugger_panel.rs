@@ -1078,30 +1078,16 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
         project.start_debug_session(dap::test_config(Some(true), None), cx)
     });
 
-    let session = task.await.unwrap();
-    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
-    let session_id = cx.update(|_window, cx| session.read(cx).session_id());
-
-    client
-        .on_request::<StackTrace, _>(move |_, _| {
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
-            })
-        })
-        .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    assert!(
+        task.await.is_err(),
+        "Session should failed to start if launch request fails"
+    );
 
     cx.run_until_parked();
 
     project.update(cx, |project, cx| {
         assert!(
-            project
-                .dap_store()
-                .read(cx)
-                .session_by_id(&session_id)
-                .is_none(),
+            project.dap_store().read(cx).sessions().count() == 0,
             "Session wouldn't exist if it was shutdown"
         );
     });

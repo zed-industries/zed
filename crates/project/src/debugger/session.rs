@@ -443,7 +443,11 @@ impl LocalMode {
             anyhow::Ok(())
         };
 
-        let _ = futures::future::join(configuration_sequence, launch).await;
+        let (config_result, launch_result) =
+            futures::future::join(configuration_sequence, launch).await;
+
+        config_result?;
+        launch_result?;
 
         Ok((this, capabilities))
     }
