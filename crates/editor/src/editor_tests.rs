@@ -17233,6 +17233,187 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
     "});
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    )));
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["_the/command".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| {
+            p.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let anchor = buffer_snapshot.anchor_at(0, text::Bias::Left);
+    drop(buffer_snapshot);
+    let actions = cx
+        .update_window(*workspace, |_, window, cx| {
+            project.code_actions(&buffer, anchor..anchor, window, cx)
+        })
+        .unwrap();
+
+    fake_server
+        .handle_request::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+            Ok(Some(vec![
+                lsp::CodeLens {
+                    range: lsp::Range::default(),
+                    command: Some(lsp::Command {
+                        title: "Code lens command".to_owned(),
+                        command: "_the/command".to_owned(),
+                        arguments: None,
+                    }),
+                    data: None,
+                },
+                lsp::CodeLens {
+                    range: lsp::Range::default(),
+                    command: Some(lsp::Command {
+                        title: "Command not in capabilities".to_owned(),
+                        command: "not in capabilities".to_owned(),
+                        arguments: None,
+                    }),
+                    data: None,
+                },
+                lsp::CodeLens {
+                    range: lsp::Range {
+                        start: lsp::Position {
+                            line: 1,
+                            character: 1,
+                        },
+                        end: lsp::Position {
+                            line: 1,
+                            character: 1,
+                        },
+                    },
+                    command: Some(lsp::Command {
+                        title: "Command not in range".to_owned(),
+                        command: "_the/command".to_owned(),
+                        arguments: None,
+                    }),
+                    data: None,
+                },
+            ]))
+        })
+        .next()
+        .await;
+
+    let actions = actions.await.unwrap();
+    assert_eq!(
+        actions.len(),
+        1,
+        "Should have only one valid action for the 0..0 range"
+    );
+    let action = actions[0].clone();
+    let apply = project.update(cx, |project, cx| {
+        project.apply_code_action(buffer.clone(), action, true, cx)
+    });
+
+    // Resolving the code action does not populate its edits. In absence of
+    // edits, we must execute the given command.
+    fake_server.handle_request::<lsp::request::CodeLensResolve, _, _>(|mut lens, _| async move {
+        let lens_command = lens.command.as_mut().expect("should have a command");
+        assert_eq!(lens_command.title, "Code lens command");
+        lens_command.arguments = Some(vec![json!("the-argument")]);
+        Ok(lens)
+    });
+
+    // While executing the command, the language server sends the editor
+    // a `workspaceEdit` request.
+    fake_server
+        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+            let fake = fake_server.clone();
+            move |params, _| {
+                assert_eq!(params.command, "_the/command");
+                let fake = fake.clone();
+                async move {
+                    fake.server
+                        .request::<lsp::request::ApplyWorkspaceEdit>(
+                            lsp::ApplyWorkspaceEditParams {
+                                label: None,
+                                edit: lsp::WorkspaceEdit {
+                                    changes: Some(
+                                        [(
+                                            lsp::Url::from_file_path(path!("/dir/a.ts")).unwrap(),
+                                            vec![lsp::TextEdit {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 0),
+                                                ),
+                                                new_text: "X".into(),
+                                            }],
+                                        )]
+                                        .into_iter()
+                                        .collect(),
+                                    ),
+                                    ..Default::default()
+                                },
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    Ok(Some(json!(null)))
+                }
+            }
+        })
+        .next()
+        .await;
+
+    // Applying the code lens command returns a project transaction containing the edits
+    // sent by the language server in its `workspaceEdit` request.
+    let transaction = apply.await.unwrap();
+    assert!(transaction.0.contains_key(&buffer));
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "Xa");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "a");
+    });
+}
+
 mod autoclose_tags {
     use super::*;
     use language::language_settings::JsxTagAutoCloseSettings;
