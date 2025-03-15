@@ -517,6 +517,7 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
+        indent_size_selector::init(cx);
         language_selector::init(cx);
         toolchain_selector::init(cx);
         theme_selector::init(cx);

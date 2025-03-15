@@ -6469,7 +6469,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0263a3d970d5c054ed9312c0057b4f3bde9c0b33836d3637361d4a9e6e7a408"
 
 [[package]]
-name = "indentation"
+name = "indent_size_selector"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6480,6 +6480,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "picker",
  "project",
  "rope",
  "schemars",
@@ -16843,7 +16844,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "image_viewer",
- "indentation",
+ "indent_size_selector",
  "inline_completion_button",
  "install_cli",
  "journal",
