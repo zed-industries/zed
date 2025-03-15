@@ -354,12 +354,46 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &self.active_editor {
+            self.clear_image_caches(state.editor.clone(), window, cx);
+            
             self.parsing_markdown_task = Some(self.parse_markdown_in_background(
                 wait_for_debounce,
                 state.editor.clone(),
                 window,
                 cx,
             ));
+        }
+    }
+
+    fn clear_image_caches(
+        &self,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let file_location = Self::get_folder_for_active_editor(&editor.read(cx), cx);
+        
+        if let Some(folder_path) = file_location {
+            let content = editor.read(cx).buffer().read(cx).snapshot(cx).text();
+            
+            let image_regex = regex::Regex::new(r"!\[.*?\]\((.*?)\)").unwrap();
+            
+            for cap in image_regex.captures_iter(&content) {
+                if let Some(image_path_match) = cap.get(1) {
+                    let image_path_str = image_path_match.as_str();
+                    
+                    if image_path_str.starts_with("http") {
+                        continue;
+                    }
+                    
+                    let image_path = folder_path.join(image_path_str);
+                    
+                    if image_path.exists() {
+                        let resource = gpui::Resource::Path(Arc::from(image_path.as_path()));
+                        window.remove_asset::<gpui::ImgResourceLoader>(&resource, cx);
+                    }
+                }
+            }
         }
     }
 
