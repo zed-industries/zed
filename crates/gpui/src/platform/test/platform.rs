@@ -64,9 +64,16 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
 
 impl ScreenCaptureStream for TestScreenCaptureStream {}
 
+struct TestPrompt {
+    msg: String,
+    detail: Option<String>,
+    answers: Vec<String>,
+    tx: oneshot::Sender<usize>,
+}
+
 #[derive(Default)]
 pub(crate) struct TestPrompts {
-    multiple_choice: VecDeque<oneshot::Sender<usize>>,
+    multiple_choice: VecDeque<TestPrompt>,
     new_path: VecDeque<(PathBuf, oneshot::Sender<Result<Option<PathBuf>>>)>,
 }
 
@@ -123,33 +130,64 @@ impl TestPlatform {
             .new_path
             .pop_front()
             .expect("no pending new path prompt");
+        self.background_executor().set_waiting_hint(None);
         tx.send(Ok(select_path(&path))).ok();
     }
 
-    pub(crate) fn simulate_prompt_answer(&self, response_ix: usize) {
-        let tx = self
+    #[track_caller]
+    pub(crate) fn simulate_prompt_answer(&self, response: &str) {
+        let prompt = self
             .prompts
             .borrow_mut()
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
         self.background_executor().set_waiting_hint(None);
-        tx.send(response_ix).ok();
+        let Some(ix) = prompt.answers.iter().position(|a| a == response) else {
+            panic!(
+                "PROMPT: {}\n{:?}\n{:?}\nCannot respond with {}",
+                prompt.msg, prompt.detail, prompt.answers, response
+            )
+        };
+        prompt.tx.send(ix).ok();
     }
 
     pub(crate) fn has_pending_prompt(&self) -> bool {
         !self.prompts.borrow().multiple_choice.is_empty()
     }
 
+    pub(crate) fn pending_prompt(&self) -> Option<(String, String)> {
+        let prompts = self.prompts.borrow();
+        let prompt = prompts.multiple_choice.front()?;
+        Some((
+            prompt.msg.clone(),
+            prompt.detail.clone().unwrap_or_default(),
+        ))
+    }
+
     pub(crate) fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
         *self.screen_capture_sources.borrow_mut() = sources;
     }
 
-    pub(crate) fn prompt(&self, msg: &str, detail: Option<&str>) -> oneshot::Receiver<usize> {
+    pub(crate) fn prompt(
+        &self,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
+        let answers: Vec<String> = answers.iter().map(|&s| s.to_string()).collect();
         self.background_executor()
             .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
-        self.prompts.borrow_mut().multiple_choice.push_back(tx);
+        self.prompts
+            .borrow_mut()
+            .multiple_choice
+            .push_back(TestPrompt {
+                msg: msg.to_string(),
+                detail: detail.map(|s| s.to_string()),
+                answers: answers.clone(),
+                tx,
+            });
         rx
     }
 
@@ -292,6 +330,8 @@ impl Platform for TestPlatform {
         directory: &std::path::Path,
     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
+        self.background_executor()
+            .set_waiting_hint(Some(format!("PROMPT FOR PATH: {:?}", directory)));
         self.prompts
             .borrow_mut()
             .new_path

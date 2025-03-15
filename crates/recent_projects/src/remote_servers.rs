@@ -878,6 +878,7 @@ impl RemoteServerProjects {
                     nickname: None,
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,
+                    port_forwards: connection_options.port_forwards,
                 })
         });
     }
@@ -913,7 +914,7 @@ impl RemoteServerProjects {
             .child(
                 h_flex()
                     .bg(theme.colors().editor_background)
-                    .rounded_b_md()
+                    .rounded_b_sm()
                     .w_full()
                     .map(|this| {
                         if let Some(ssh_prompt) = ssh_prompt {

@@ -78,10 +78,9 @@ impl HeadlessExtensionStore {
                 if e.dev {
                     return true;
                 }
-                !self
-                    .loaded_extensions
+                self.loaded_extensions
                     .get(e.id.as_str())
-                    .is_some_and(|loaded| loaded.as_ref() == e.version.as_str())
+                    .is_none_or(|loaded| loaded.as_ref() != e.version.as_str())
             })
             .collect();
 

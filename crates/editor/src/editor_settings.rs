@@ -9,6 +9,8 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
+    pub selection_highlight: bool,
+    pub selection_highlight_debounce: u64,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
@@ -102,6 +104,7 @@ pub struct Toolbar {
 pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
+    pub selected_text: bool,
     pub selected_symbol: bool,
     pub search_results: bool,
     pub diagnostics: ScrollbarDiagnostics,
@@ -174,7 +177,7 @@ impl<'de> Deserialize<'de> for ScrollbarDiagnostics {
     {
         struct Visitor;
 
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = ScrollbarDiagnostics;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -271,6 +274,14 @@ pub struct EditorSettingsContent {
     ///
     /// Default: all
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    /// Whether to highlight all occurrences of the selected text in an editor.
+    ///
+    /// Default: true
+    pub selection_highlight: Option<bool>,
+    /// The debounce delay before querying highlights based on the selected text.
+    ///
+    /// Default: 75
+    pub selection_highlight_debounce: Option<u64>,
     /// The debounce delay before querying highlights from the language
     /// server based on the current cursor location.
     ///
@@ -404,6 +415,10 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub search_results: Option<bool>,
+    /// Whether to show selected text occurrences in the scrollbar.
+    ///
+    /// Default: true
+    pub selected_text: Option<bool>,
     /// Whether to show selected symbol occurrences in the scrollbar.
     ///
     /// Default: true

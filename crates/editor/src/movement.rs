@@ -7,6 +7,7 @@ use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
+use workspace::searchable::Direction;
 
 use std::{ops::Range, sync::Arc};
 
@@ -213,6 +214,7 @@ pub fn indented_line_beginning(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     stop_at_soft_boundaries: bool,
+    stop_at_indent: bool,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
@@ -228,7 +230,7 @@ pub fn indented_line_beginning(
     if stop_at_soft_boundaries && soft_line_start > indent_start && display_point != soft_line_start
     {
         soft_line_start
-    } else if stop_at_soft_boundaries && display_point != indent_start {
+    } else if stop_at_indent && display_point != indent_start {
         indent_start
     } else {
         line_start
@@ -236,7 +238,7 @@ pub fn indented_line_beginning(
 }
 
 /// Returns a position of the end of line.
-
+///
 /// If `stop_at_soft_boundaries` is true, the returned position is that of the
 /// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
 /// Otherwise it's always going to be the end of a logical line.
@@ -401,6 +403,71 @@ pub fn end_of_paragraph(
     }
 
     map.max_point()
+}
+
+pub fn start_of_excerpt(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+        return display_point;
+    };
+    match direction {
+        Direction::Prev => {
+            let mut start = excerpt.start_anchor().to_display_point(&map);
+            if start >= display_point && start.row() > DisplayRow(0) {
+                let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
+                    return display_point;
+                };
+                start = excerpt.start_anchor().to_display_point(&map);
+            }
+            start
+        }
+        Direction::Next => {
+            let mut end = excerpt.end_anchor().to_display_point(&map);
+            *end.row_mut() += 1;
+            map.clip_point(end, Bias::Right)
+        }
+    }
+}
+
+pub fn end_of_excerpt(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+        return display_point;
+    };
+    match direction {
+        Direction::Prev => {
+            let mut start = excerpt.start_anchor().to_display_point(&map);
+            if start.row() > DisplayRow(0) {
+                *start.row_mut() -= 1;
+            }
+            start = map.clip_point(start, Bias::Left);
+            *start.column_mut() = 0;
+            start
+        }
+        Direction::Next => {
+            let mut end = excerpt.end_anchor().to_display_point(&map);
+            *end.column_mut() = 0;
+            if end <= display_point {
+                *end.row_mut() += 1;
+                let point_end = map.display_point_to_point(end, Bias::Right);
+                let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point_end..point_end)
+                else {
+                    return display_point;
+                };
+                end = excerpt.end_anchor().to_display_point(&map);
+                *end.column_mut() = 0;
+            }
+            end
+        }
+    }
 }
 
 /// Scans for a boundary preceding the given start point `from` until a boundary is found,
@@ -826,8 +893,6 @@ mod tests {
                 font,
                 font_size,
                 None,
-                true,
-                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -1043,138 +1108,136 @@ mod tests {
                     font,
                     px(14.0),
                     None,
-                    true,
                     0,
                     2,
-                    0,
                     FoldPlaceholder::test(),
                     cx,
                 )
             });
             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
-            assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
+            assert_eq!(snapshot.text(), "abc\ndefg\nhijkl\nmn");
 
             let col_2_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(2), 2), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(0), 2), &text_layout_details);
 
             // Can't move up into the first excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(2), 2),
+                    DisplayPoint::new(DisplayRow(0), 2),
                     SelectionGoal::HorizontalPosition(col_2_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(2), 0),
+                    DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::HorizontalPosition(col_2_x.0),
                 ),
             );
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(2), 0),
+                    DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::None,
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(2), 0),
+                    DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::HorizontalPosition(0.0),
                 ),
             );
 
             let col_4_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 4), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 4), &text_layout_details);
 
             // Move up and down within first excerpt
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(2), 3),
+                    DisplayPoint::new(DisplayRow(0), 3),
                     SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(2), 3),
+                    DisplayPoint::new(DisplayRow(0), 3),
                     SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
 
             let col_5_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(6), 5), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(2), 5), &text_layout_details);
 
             // Move up and down across second excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(6), 5),
+                    DisplayPoint::new(DisplayRow(2), 5),
                     SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(6), 5),
+                    DisplayPoint::new(DisplayRow(2), 5),
                     SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
 
             let max_point_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(7), 2), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 2), &text_layout_details);
 
             // Can't move down off the end, and attempting to do so leaves the selection goal unchanged
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(7), 0),
+                    DisplayPoint::new(DisplayRow(3), 0),
                     SelectionGoal::HorizontalPosition(0.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(7), 2),
+                    DisplayPoint::new(DisplayRow(3), 2),
                     SelectionGoal::HorizontalPosition(0.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(7), 2),
+                    DisplayPoint::new(DisplayRow(3), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(7), 2),
+                    DisplayPoint::new(DisplayRow(3), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0)
                 ),
             );
@@ -1184,6 +1247,7 @@ mod tests {
     fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         crate::init(cx);

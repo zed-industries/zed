@@ -191,7 +191,6 @@ impl TitleBar {
             )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_collaborator(
         &self,
         user: &Arc<User>,
@@ -220,7 +219,7 @@ impl TitleBar {
                 // When the collaborator is not followed, still draw this wrapper div, but leave
                 // it transparent, so that it does not shift the layout when following.
                 .when_some(leader_selection_color, |div, color| {
-                    div.rounded_md().bg(color)
+                    div.rounded_sm().bg(color)
                 })
                 .child(
                     Facepile::empty()
@@ -386,51 +385,45 @@ impl TitleBar {
                 })
                 .into_any_element(),
             );
-
-            children.push(
-                IconButton::new(
-                    "mute-sound",
-                    if is_deafened {
-                        ui::IconName::AudioOff
-                    } else {
-                        ui::IconName::AudioOn
-                    },
-                )
-                .style(ButtonStyle::Subtle)
-                .selected_style(ButtonStyle::Tinted(TintColor::Error))
-                .icon_size(IconSize::Small)
-                .toggle_state(is_deafened)
-                .tooltip(move |window, cx| {
-                    if is_deafened {
-                        let label = "Unmute Audio";
-
-                        if !muted_by_user {
-                            Tooltip::with_meta(
-                                label,
-                                None,
-                                "Microphone will be unmuted",
-                                window,
-                                cx,
-                            )
-                        } else {
-                            Tooltip::simple(label, cx)
-                        }
-                    } else {
-                        let label = "Mute Audio";
-
-                        if !muted_by_user {
-                            Tooltip::with_meta(label, None, "Microphone will be muted", window, cx)
-                        } else {
-                            Tooltip::simple(label, cx)
-                        }
-                    }
-                })
-                .on_click(move |_, _, cx| toggle_deafen(&Default::default(), cx))
-                .into_any_element(),
-            );
         }
 
-        if screen_sharing_supported {
+        children.push(
+            IconButton::new(
+                "mute-sound",
+                if is_deafened {
+                    ui::IconName::AudioOff
+                } else {
+                    ui::IconName::AudioOn
+                },
+            )
+            .style(ButtonStyle::Subtle)
+            .selected_style(ButtonStyle::Tinted(TintColor::Error))
+            .icon_size(IconSize::Small)
+            .toggle_state(is_deafened)
+            .tooltip(move |window, cx| {
+                if is_deafened {
+                    let label = "Unmute Audio";
+
+                    if !muted_by_user {
+                        Tooltip::with_meta(label, None, "Microphone will be unmuted", window, cx)
+                    } else {
+                        Tooltip::simple(label, cx)
+                    }
+                } else {
+                    let label = "Mute Audio";
+
+                    if !muted_by_user {
+                        Tooltip::with_meta(label, None, "Microphone will be muted", window, cx)
+                    } else {
+                        Tooltip::simple(label, cx)
+                    }
+                }
+            })
+            .on_click(move |_, _, cx| toggle_deafen(&Default::default(), cx))
+            .into_any_element(),
+        );
+
+        if can_use_microphone && screen_sharing_supported {
             children.push(
                 IconButton::new("screen-share", ui::IconName::Screen)
                     .style(ButtonStyle::Subtle)

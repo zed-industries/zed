@@ -5,7 +5,7 @@ use crate::{
 use call::{RemoteVideoTrack, RemoteVideoTrackView};
 use client::{proto::PeerId, User};
 use gpui::{
-    div, AppContext, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    div, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     ParentElement, Render, SharedString, Styled,
 };
 use std::sync::Arc;

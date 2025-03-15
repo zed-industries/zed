@@ -244,18 +244,17 @@ impl TestServer {
                             .await
                             .expect("retrieving user failed")
                             .unwrap();
-                        cx.background_executor()
-                            .spawn(server.handle_connection(
-                                server_conn,
-                                client_name,
-                                Principal::User(user),
-                                ZedVersion(SemanticVersion::new(1, 0, 0)),
-                                None,
-                                None,
-                                Some(connection_id_tx),
-                                Executor::Deterministic(cx.background_executor().clone()),
-                            ))
-                            .detach();
+                        cx.background_spawn(server.handle_connection(
+                            server_conn,
+                            client_name,
+                            Principal::User(user),
+                            ZedVersion(SemanticVersion::new(1, 0, 0)),
+                            None,
+                            None,
+                            Some(connection_id_tx),
+                            Executor::Deterministic(cx.background_executor().clone()),
+                        ))
+                        .detach();
                         let connection_id = connection_id_rx.await.map_err(|e| {
                             EstablishConnectionError::Other(anyhow!(
                                 "{} (is server shutting down?)",
@@ -272,7 +271,7 @@ impl TestServer {
 
         let git_hosting_provider_registry = cx.update(GitHostingProviderRegistry::default_global);
         git_hosting_provider_registry
-            .register_hosting_provider(Arc::new(git_hosting_providers::Github));
+            .register_hosting_provider(Arc::new(git_hosting_providers::Github::new()));
 
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));

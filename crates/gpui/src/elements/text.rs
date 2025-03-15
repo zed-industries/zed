@@ -138,6 +138,7 @@ impl IntoElement for SharedString {
 pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
+    delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     layout: TextLayout,
 }
 
@@ -147,6 +148,7 @@ impl StyledText {
         StyledText {
             text: text.into(),
             runs: None,
+            delayed_highlights: None,
             layout: TextLayout::default(),
         }
     }
@@ -158,11 +160,39 @@ impl StyledText {
 
     /// Set the styling attributes for the given text, as well as
     /// as any ranges of text that have had their style customized.
-    pub fn with_highlights(
+    pub fn with_default_highlights(
         mut self,
         default_style: &TextStyle,
         highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
     ) -> Self {
+        debug_assert!(
+            self.delayed_highlights.is_none(),
+            "Can't use `with_default_highlights` and `with_highlights`"
+        );
+        let runs = Self::compute_runs(&self.text, default_style, highlights);
+        self.runs = Some(runs);
+        self
+    }
+
+    /// Set the styling attributes for the given text, as well as
+    /// as any ranges of text that have had their style customized.
+    pub fn with_highlights(
+        mut self,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> Self {
+        debug_assert!(
+            self.runs.is_none(),
+            "Can't use `with_highlights` and `with_default_highlights`"
+        );
+        self.delayed_highlights = Some(highlights.into_iter().collect::<Vec<_>>());
+        self
+    }
+
+    fn compute_runs(
+        text: &str,
+        default_style: &TextStyle,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> Vec<TextRun> {
         let mut runs = Vec::new();
         let mut ix = 0;
         for (range, highlight) in highlights {
@@ -177,11 +207,10 @@ impl StyledText {
             );
             ix = range.end;
         }
-        if ix < self.text.len() {
-            runs.push(default_style.to_run(self.text.len() - ix));
+        if ix < text.len() {
+            runs.push(default_style.to_run(text.len() - ix));
         }
-        self.runs = Some(runs);
-        self
+        runs
     }
 
     /// Set the text runs for this piece of text.
@@ -201,15 +230,17 @@ impl Element for StyledText {
 
     fn request_layout(
         &mut self,
-
         _id: Option<&GlobalElementId>,
-
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .layout
-            .layout(self.text.clone(), self.runs.take(), window, cx);
+        let runs = self.runs.take().or_else(|| {
+            self.delayed_highlights.take().map(|delayed_highlights| {
+                Self::compute_runs(&self.text, &window.text_style(), delayed_highlights)
+            })
+        });
+
+        let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
         (layout_id, ())
     }
 

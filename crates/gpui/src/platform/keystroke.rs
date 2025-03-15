@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt::{Display, Write},
@@ -75,8 +76,9 @@ impl Keystroke {
     }
 
     /// key syntax is:
-    /// [ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]
+    /// [secondary-][ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]
     /// key_char syntax is only used for generating test events,
+    /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
@@ -94,6 +96,13 @@ impl Keystroke {
                 "alt" => alt = true,
                 "shift" => shift = true,
                 "fn" => function = true,
+                "secondary" => {
+                    if cfg!(target_os = "macos") {
+                        platform = true
+                    } else {
+                        control = true
+                    };
+                }
                 "cmd" | "super" | "win" => platform = true,
                 _ => {
                     if let Some(next) = components.peek() {
@@ -306,24 +315,29 @@ impl std::fmt::Display for Keystroke {
 }
 
 /// The state of the modifier keys at some point in time
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash, JsonSchema)]
 pub struct Modifiers {
     /// The control key
+    #[serde(default)]
     pub control: bool,
 
     /// The alt key
     /// Sometimes also known as the 'meta' key
+    #[serde(default)]
     pub alt: bool,
 
     /// The shift key
+    #[serde(default)]
     pub shift: bool,
 
     /// The command key, on macos
     /// the windows key, on windows
     /// the super key, on linux
+    #[serde(default)]
     pub platform: bool,
 
     /// The function key
+    #[serde(default)]
     pub function: bool,
 }
 
@@ -414,7 +428,7 @@ impl Modifiers {
         }
     }
 
-    /// Returns [`Modifiers`] with just control.
+    /// Returns [`Modifiers`] with just alt.
     pub fn alt() -> Modifiers {
         Modifiers {
             alt: true,

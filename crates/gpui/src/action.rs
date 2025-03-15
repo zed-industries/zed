@@ -399,6 +399,8 @@ macro_rules! action_with_deprecated_aliases {
 /// Registers the action and implements the Action trait for any struct that implements Clone,
 /// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
 ///
+/// Similar to `actions!`, but accepts structs with fields.
+///
 /// Fields and variants that don't make sense for user configuration should be annotated with
 /// #[serde(skip)].
 #[macro_export]

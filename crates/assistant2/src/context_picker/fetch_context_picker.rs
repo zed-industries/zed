@@ -167,8 +167,8 @@ impl PickerDelegate for FetchContextPickerDelegate {
         }
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "Enter the URL that you would like to fetch".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("Enter the URL that you would like to fetch".into())
     }
 
     fn selected_index(&self) -> usize {
@@ -208,8 +208,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let confirm_behavior = self.confirm_behavior;
         cx.spawn_in(window, |this, mut cx| async move {
             let text = cx
-                .background_executor()
-                .spawn(Self::build_message(http_client, url.clone()))
+                .background_spawn(Self::build_message(http_client, url.clone()))
                 .await?;
 
             this.update_in(&mut cx, |this, window, cx| {

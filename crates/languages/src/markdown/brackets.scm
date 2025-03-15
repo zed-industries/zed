@@ -1,0 +1,7 @@
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+("\"" @open "\"" @close)
+("`" @open "`" @close)
+("'" @open "'" @close)
+((fenced_code_block_delimiter) @open (fenced_code_block_delimiter) @close)

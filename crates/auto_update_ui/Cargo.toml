@@ -19,7 +19,6 @@ editor.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 markdown_preview.workspace = true
-menu.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true

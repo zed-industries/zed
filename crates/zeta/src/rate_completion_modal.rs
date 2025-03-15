@@ -82,7 +82,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_index = self.selected_index.saturating_sub(1);
         cx.notify();
     }
@@ -489,6 +494,7 @@ impl RateCompletionModal {
                                             &ThumbsDownActiveCompletion,
                                             focus_handle,
                                             window,
+                                            cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_down_active(
@@ -507,6 +513,7 @@ impl RateCompletionModal {
                                             &ThumbsUpActiveCompletion,
                                             focus_handle,
                                             window,
+                                            cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
@@ -527,7 +534,7 @@ impl Render for RateCompletionModal {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_prev_edit))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_next_edit))

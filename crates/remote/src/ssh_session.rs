@@ -17,7 +17,7 @@ use futures::{
     select, select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
+    App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
     SemanticVersion, Task, WeakEntity,
 };
 use itertools::Itertools;
@@ -29,6 +29,8 @@ use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use smol::{
     fs,
     process::{self, Child, Stdio},
@@ -59,6 +61,16 @@ pub struct SshSocket {
     socket_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
+pub struct SshPortForwardOption {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_host: Option<String>,
+    pub local_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_host: Option<String>,
+    pub remote_port: u16,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SshConnectionOptions {
     pub host: String,
@@ -66,6 +78,7 @@ pub struct SshConnectionOptions {
     pub port: Option<u16>,
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
+    pub port_forwards: Option<Vec<SshPortForwardOption>>,
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
@@ -83,6 +96,42 @@ macro_rules! shell_script {
     }};
 }
 
+fn parse_port_number(port_str: &str) -> Result<u16> {
+    port_str
+        .parse()
+        .map_err(|e| anyhow!("Invalid port number: {}: {}", port_str, e))
+}
+
+fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
+    let parts: Vec<&str> = spec.split(':').collect();
+
+    match parts.len() {
+        4 => {
+            let local_port = parse_port_number(parts[1])?;
+            let remote_port = parse_port_number(parts[3])?;
+
+            Ok(SshPortForwardOption {
+                local_host: Some(parts[0].to_string()),
+                local_port,
+                remote_host: Some(parts[2].to_string()),
+                remote_port,
+            })
+        }
+        3 => {
+            let local_port = parse_port_number(parts[0])?;
+            let remote_port = parse_port_number(parts[2])?;
+
+            Ok(SshPortForwardOption {
+                local_host: None,
+                local_port,
+                remote_host: Some(parts[1].to_string()),
+                remote_port,
+            })
+        }
+        _ => anyhow::bail!("Invalid port forward format"),
+    }
+}
+
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
         let input = input.trim_start_matches("ssh ");
@@ -90,13 +139,14 @@ impl SshConnectionOptions {
         let mut username: Option<String> = None;
         let mut port: Option<u16> = None;
         let mut args = Vec::new();
+        let mut port_forwards: Vec<SshPortForwardOption> = Vec::new();
 
         // disallowed: -E, -e, -F, -f, -G, -g, -M, -N, -n, -O, -q, -S, -s, -T, -t, -V, -v, -W
         const ALLOWED_OPTS: &[&str] = &[
             "-4", "-6", "-A", "-a", "-C", "-K", "-k", "-X", "-x", "-Y", "-y",
         ];
         const ALLOWED_ARGS: &[&str] = &[
-            "-B", "-b", "-c", "-D", "-I", "-i", "-J", "-L", "-l", "-m", "-o", "-P", "-p", "-R",
+            "-B", "-b", "-c", "-D", "-F", "-I", "-i", "-J", "-l", "-m", "-o", "-P", "-p", "-R",
             "-w",
         ];
 
@@ -123,6 +173,20 @@ impl SshConnectionOptions {
                 username = Some(l.to_string());
                 continue;
             }
+            if arg == "-L" || arg.starts_with("-L") {
+                let forward_spec = if arg == "-L" {
+                    tokens.next()
+                } else {
+                    Some(arg.strip_prefix("-L").unwrap().to_string())
+                };
+
+                if let Some(spec) = forward_spec {
+                    port_forwards.push(parse_port_forward_spec(&spec)?);
+                } else {
+                    anyhow::bail!("Missing port forward format");
+                }
+            }
+
             for a in ALLOWED_ARGS {
                 if arg == *a {
                     args.push(arg);
@@ -154,10 +218,16 @@ impl SshConnectionOptions {
             anyhow::bail!("missing hostname");
         };
 
+        let port_forwards = match port_forwards.len() {
+            0 => None,
+            _ => Some(port_forwards),
+        };
+
         Ok(Self {
             host: hostname.to_string(),
             username: username.clone(),
             port,
+            port_forwards,
             args: Some(args),
             password: None,
             nickname: None,
@@ -179,8 +249,28 @@ impl SshConnectionOptions {
         result
     }
 
-    pub fn additional_args(&self) -> Option<&Vec<String>> {
-        self.args.as_ref()
+    pub fn additional_args(&self) -> Vec<String> {
+        let mut args = self.args.iter().flatten().cloned().collect::<Vec<String>>();
+
+        if let Some(forwards) = &self.port_forwards {
+            args.extend(forwards.iter().map(|pf| {
+                let local_host = match &pf.local_host {
+                    Some(host) => host,
+                    None => "localhost",
+                };
+                let remote_host = match &pf.remote_host {
+                    Some(host) => host,
+                    None => "localhost",
+                };
+
+                format!(
+                    "-L{}:{}:{}:{}",
+                    local_host, pf.local_port, remote_host, pf.remote_port
+                )
+            }));
+        }
+
+        args
     }
 
     fn scp_url(&self) -> String {
@@ -226,7 +316,7 @@ impl SshPlatform {
 }
 
 pub trait SshClientDelegate: Send + Sync {
-    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>>;
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp);
     fn get_download_params(
         &self,
         platform: SshPlatform,
@@ -1069,12 +1159,11 @@ impl SshRemoteClient {
                 c.connections.insert(
                     opts.clone(),
                     ConnectionPoolEntry::Connecting(
-                        cx.background_executor()
-                            .spawn({
-                                let connection = connection.clone();
-                                async move { Ok(connection.clone()) }
-                            })
-                            .shared(),
+                        cx.background_spawn({
+                            let connection = connection.clone();
+                            async move { Ok(connection.clone()) }
+                        })
+                        .shared(),
                     ),
                 );
             })
@@ -1191,7 +1280,6 @@ impl From<SshRemoteClient> for AnyProtoClient {
 
 #[async_trait(?Send)]
 trait RemoteConnection: Send + Sync {
-    #[allow(clippy::too_many_arguments)]
     fn start_proxy(
         &self,
         unique_identifier: String,
@@ -1270,7 +1358,7 @@ impl RemoteConnection for SshRemoteConnection {
             ))
             .output();
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let output = output.await?;
 
             if !output.status.success() {
@@ -1365,83 +1453,22 @@ impl SshRemoteConnection {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        use futures::AsyncWriteExt as _;
-        use futures::{io::BufReader, AsyncBufReadExt as _};
-        use smol::net::unix::UnixStream;
-        use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
-        use util::ResultExt as _;
+        use askpass::AskPassResult;
 
         delegate.set_status(Some("Connecting"), cx);
 
         let url = connection_options.ssh_url();
+
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
             .tempdir()?;
-
-        // Create a domain socket listener to handle requests from the askpass program.
-        let askpass_socket = temp_dir.path().join("askpass.sock");
-        let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
-        let listener =
-            UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
-
-        let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
-        let mut kill_tx = Some(askpass_kill_master_tx);
-
-        let askpass_task = cx.spawn({
+        let askpass_delegate = askpass::AskPassDelegate::new(cx, {
             let delegate = delegate.clone();
-            |mut cx| async move {
-                let mut askpass_opened_tx = Some(askpass_opened_tx);
-
-                while let Ok((mut stream, _)) = listener.accept().await {
-                    if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
-                        askpass_opened_tx.send(()).ok();
-                    }
-                    let mut buffer = Vec::new();
-                    let mut reader = BufReader::new(&mut stream);
-                    if reader.read_until(b'\0', &mut buffer).await.is_err() {
-                        buffer.clear();
-                    }
-                    let password_prompt = String::from_utf8_lossy(&buffer);
-                    if let Some(password) = delegate
-                        .ask_password(password_prompt.to_string(), &mut cx)
-                        .await
-                        .context("failed to get ssh password")
-                        .and_then(|p| p)
-                        .log_err()
-                    {
-                        stream.write_all(password.as_bytes()).await.log_err();
-                    } else {
-                        if let Some(kill_tx) = kill_tx.take() {
-                            kill_tx.send(stream).log_err();
-                            break;
-                        }
-                    }
-                }
-            }
+            move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
         });
 
-        anyhow::ensure!(
-            which::which("nc").is_ok(),
-            "Cannot find `nc` command (netcat), which is required to connect over SSH."
-        );
-
-        // Create an askpass script that communicates back to this process.
-        let askpass_script = format!(
-            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
-            // on macOS `brew install netcat` provides the GNU netcat implementation
-            // which does not support -U.
-            nc = if cfg!(target_os = "macos") {
-                "/usr/bin/nc"
-            } else {
-                "nc"
-            },
-            askpass_socket = askpass_socket.display(),
-            print_args = "printf '%s\\0' \"$@\"",
-            shebang = "#!/bin/sh",
-        );
-        let askpass_script_path = temp_dir.path().join("askpass.sh");
-        fs::write(&askpass_script_path, askpass_script).await?;
-        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
+        let mut askpass =
+            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
@@ -1453,8 +1480,8 @@ impl SshRemoteConnection {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("SSH_ASKPASS", &askpass_script_path)
-            .args(connection_options.additional_args().unwrap_or(&Vec::new()))
+            .env("SSH_ASKPASS", &askpass.script_path())
+            .args(connection_options.additional_args())
             .args([
                 "-N",
                 "-o",
@@ -1467,43 +1494,31 @@ impl SshRemoteConnection {
             .arg(&url)
             .kill_on_drop(true)
             .spawn()?;
-
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = Duration::from_secs(10);
 
         let result = select_biased! {
-            _ = askpass_opened_rx.fuse() => {
-                select_biased! {
-                    stream = askpass_kill_master_rx.fuse() => {
+            result = askpass.run().fuse() => {
+                match result {
+                    AskPassResult::CancelledByUser => {
                         master_process.kill().ok();
-                        drop(stream);
-                        Err(anyhow!("SSH connection canceled"))
+                        Err(anyhow!("SSH connection canceled"))?
                     }
-                    // If the askpass script has opened, that means the user is typing
-                    // their password, in which case we don't want to timeout anymore,
-                    // since we know a connection has been established.
-                    result = stdout.read_to_end(&mut output).fuse() => {
-                        result?;
-                        Ok(())
+                    AskPassResult::Timedout => {
+                        Err(anyhow!("connecting to host timed out"))?
                     }
                 }
             }
             _ = stdout.read_to_end(&mut output).fuse() => {
-                Ok(())
-            }
-            _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
-                Err(anyhow!("Exceeded {:?} timeout trying to connect to host", connection_timeout))
+                anyhow::Ok(())
             }
         };
 
         if let Err(e) = result {
             return Err(e.context("Failed to connect to host"));
         }
-
-        drop(askpass_task);
 
         if master_process.try_status()?.is_some() {
             output.clear();
@@ -1516,6 +1531,8 @@ impl SshRemoteConnection {
             );
             Err(anyhow!(error_message))?;
         }
+
+        drop(askpass);
 
         let socket = SshSocket {
             connection_options,
@@ -1545,7 +1562,7 @@ impl SshRemoteConnection {
     }
 
     async fn platform(&self) -> Result<SshPlatform> {
-        let uname = self.socket.run_command("uname", &["-sm"]).await?;
+        let uname = self.socket.run_command("sh", &["-c", "uname -sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             Err(anyhow!("unknown uname: {uname:?}"))?
         };
@@ -1591,14 +1608,14 @@ impl SshRemoteConnection {
         let mut stderr_buffer = Vec::new();
         let mut stderr_offset = 0;
 
-        let stdin_task = cx.background_executor().spawn(async move {
+        let stdin_task = cx.background_spawn(async move {
             while let Some(outgoing) = outgoing_rx.next().await {
                 write_message(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
             }
             anyhow::Ok(())
         });
 
-        let stdout_task = cx.background_executor().spawn({
+        let stdout_task = cx.background_spawn({
             let mut connection_activity_tx = connection_activity_tx.clone();
             async move {
                 loop {
@@ -1623,7 +1640,7 @@ impl SshRemoteConnection {
             }
         });
 
-        let stderr_task: Task<anyhow::Result<()>> = cx.background_executor().spawn(async move {
+        let stderr_task: Task<anyhow::Result<()>> = cx.background_spawn(async move {
             loop {
                 stderr_buffer.resize(stderr_offset + 1024, 0);
 
@@ -1822,7 +1839,6 @@ impl SshRemoteConnection {
                     .run_command(
                         "wget",
                         &[
-                            "--max-redirect=5",
                             "--method=GET",
                             "--header=Content-Type: application/json",
                             "--body-data",
@@ -2361,7 +2377,7 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{App, AsyncApp, SemanticVersion, Task, TestAppContext};
+    use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
@@ -2445,7 +2461,7 @@ mod fake {
                 &self.server_cx.get(cx),
             );
 
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 loop {
                     select_biased! {
                         server_to_client = server_outgoing_rx.next().fuse() => {
@@ -2470,7 +2486,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl SshClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
+        fn ask_password(&self, _: String, _: oneshot::Sender<String>, _: &mut AsyncApp) {
             unreachable!()
         }
 

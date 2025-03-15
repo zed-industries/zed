@@ -1,6 +1,10 @@
-use gpui::{AnyView, DismissEvent, Entity, FocusHandle, Focusable as _, ManagedView, Subscription};
+use gpui::{
+    AnyView, DismissEvent, Entity, FocusHandle, Focusable as _, ManagedView, MouseButton,
+    Subscription,
+};
 use ui::prelude::*;
 
+#[derive(Debug)]
 pub enum DismissDecision {
     Dismiss(bool),
     Pending,
@@ -112,7 +116,7 @@ impl ModalLayer {
         cx.notify();
     }
 
-    fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
             self.dismiss_on_focus_lost = false;
             return false;
@@ -162,6 +166,7 @@ impl Render for ModalLayer {
         };
 
         div()
+            .occlude()
             .absolute()
             .size_full()
             .top_0()
@@ -170,11 +175,13 @@ impl Render for ModalLayer {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
                 el.bg(background)
-                    .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                        this.hide_modal(window, cx);
-                    }))
             })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.hide_modal(window, cx);
+                }),
+            )
             .child(
                 v_flex()
                     .h(px(0.0))
@@ -183,7 +190,14 @@ impl Render for ModalLayer {
                     .flex_col()
                     .items_center()
                     .track_focus(&active_modal.focus_handle)
-                    .child(h_flex().occlude().child(active_modal.modal.view())),
+                    .child(
+                        h_flex()
+                            .occlude()
+                            .child(active_modal.modal.view())
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            }),
+                    ),
             )
     }
 }

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
 
 use crate::{prelude::*, ContextMenu, PopoverMenu};
@@ -111,7 +110,7 @@ impl RenderOnce for DropdownMenuTrigger {
         h_flex()
             .id("dropdown-menu-trigger")
             .justify_between()
-            .rounded_md()
+            .rounded_sm()
             .bg(cx.theme().colors().editor_background)
             .pl_2()
             .pr_1p5()

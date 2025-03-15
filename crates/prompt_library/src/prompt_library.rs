@@ -1,6 +1,3 @@
-mod prompt_store;
-mod prompts;
-
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
@@ -29,8 +26,7 @@ use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
 use zed_actions::assistant::InlineAssist;
 
-pub use crate::prompt_store::*;
-pub use crate::prompts::*;
+use prompt_store::*;
 
 pub fn init(cx: &mut App) {
     prompt_store::init(cx);
@@ -183,12 +179,13 @@ impl PickerDelegate for PromptPickerDelegate {
         self.matches.len()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if self.store.prompt_count() == 0 {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.store.prompt_count() == 0 {
             "No prompts.".into()
         } else {
             "No prompts found matching your search.".into()
-        }
+        };
+        Some(text)
     }
 
     fn selected_index(&self) -> usize {
@@ -218,8 +215,7 @@ impl PickerDelegate for PromptPickerDelegate {
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn_in(window, |this, mut cx| async move {
             let (matches, selected_index) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let matches = search.await;
 
                     let selected_index = prev_prompt_id
@@ -331,7 +327,7 @@ impl PickerDelegate for PromptPickerDelegate {
     ) -> Div {
         h_flex()
             .bg(cx.theme().colors().editor_background)
-            .rounded_md()
+            .rounded_sm()
             .overflow_hidden()
             .flex_none()
             .py_1()
@@ -997,7 +993,7 @@ impl PromptLibrary {
                                             .on_action(cx.listener(Self::move_down_from_title))
                                             .border_1()
                                             .border_color(transparent_black())
-                                            .rounded_md()
+                                            .rounded_sm()
                                             .group_hover("active-editor-header", |this| {
                                                 this.border_color(
                                                     cx.theme().colors().border_variant,
@@ -1268,7 +1264,7 @@ impl Render for PromptLibrary {
                                                 Button::new("create-prompt", "New Prompt")
                                                     .full_width()
                                                     .key_binding(KeyBinding::for_action(
-                                                        &NewPrompt, window,
+                                                        &NewPrompt, window, cx,
                                                     ))
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
