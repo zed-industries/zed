@@ -213,21 +213,6 @@ impl ComponentPreview {
             }
         }
 
-        for (scope, components) in &scope_groups {
-            if let ComponentScope::Unknown(_) = scope {
-                if !components.is_empty() {
-                    entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
-
-                    let mut sorted_components = components.clone();
-                    sorted_components.sort_by(|a, b| a.sort_name().cmp(&b.sort_name()));
-
-                    for component in sorted_components {
-                        entries.push(PreviewEntry::Component(component.clone()));
-                    }
-                }
-            }
-        }
-
         if let Some(components) = scope_groups.get(&ComponentScope::None) {
             if !components.is_empty() {
                 entries.push(PreviewEntry::Separator);
@@ -410,8 +395,10 @@ impl ComponentPreview {
 
         if let Some(component) = component {
             v_flex()
+                .id("render-component-page")
+                .overflow_y_scroll()
+                .overflow_x_hidden()
                 .w_full()
-                .flex_initial()
                 .min_h_full()
                 .child(ComponentPreviewPage::new(component.clone()))
                 .into_any_element()
@@ -453,10 +440,11 @@ impl Render for ComponentPreview {
             .overflow_hidden()
             .size_full()
             .track_focus(&self.focus_handle)
-            .px_2()
             .bg(cx.theme().colors().editor_background)
             .child(
                 v_flex()
+                    .border_r_1()
+                    .border_color(cx.theme().colors().border)
                     .h_full()
                     .child(
                         uniform_list(
@@ -473,6 +461,7 @@ impl Render for ComponentPreview {
                         )
                         .track_scroll(self.nav_scroll_handle.clone())
                         .pt_4()
+                        .px_4()
                         .w(px(240.))
                         .h_full()
                         .flex_1(),
@@ -673,10 +662,8 @@ impl ComponentPreviewPage {
 impl RenderOnce for ComponentPreviewPage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
-            .size_full()
-            .flex_1()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
+            .id("component-preview-page")
+            .w_full()
             .child(self.render_header(window, cx))
             .child(self.render_preview(window, cx))
     }

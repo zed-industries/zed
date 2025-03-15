@@ -190,57 +190,39 @@ pub fn components() -> AllComponents {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComponentScope {
-    Layout,
-    Input,
-    Notification,
-    Editor,
     Collaboration,
-    VersionControl,
-    Unknown(SharedString),
+    DataDisplay,
+    Editor,
+    Images,
+    Input,
+    Layout,
+    Loading,
+    Navigation,
     None,
+    Notification,
+    Overlays,
+    Status,
+    Typography,
+    VersionControl,
 }
 
 impl Display for ComponentScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ComponentScope::Layout => write!(f, "Layout"),
-            ComponentScope::Input => write!(f, "Input"),
-            ComponentScope::Notification => write!(f, "Notification"),
-            ComponentScope::Editor => write!(f, "Editor"),
             ComponentScope::Collaboration => write!(f, "Collaboration"),
+            ComponentScope::DataDisplay => write!(f, "Data Display"),
+            ComponentScope::Editor => write!(f, "Editor"),
+            ComponentScope::Images => write!(f, "Images & Icons"),
+            ComponentScope::Input => write!(f, "Forms & Input"),
+            ComponentScope::Layout => write!(f, "Layout & Structure"),
+            ComponentScope::Loading => write!(f, "Loading & Progress"),
+            ComponentScope::Navigation => write!(f, "Navigation"),
+            ComponentScope::None => write!(f, "Unsorted"),
+            ComponentScope::Notification => write!(f, "Notification"),
+            ComponentScope::Overlays => write!(f, "Overlays & Layering"),
+            ComponentScope::Status => write!(f, "Status"),
+            ComponentScope::Typography => write!(f, "Typography"),
             ComponentScope::VersionControl => write!(f, "Version Control"),
-            ComponentScope::Unknown(name) => write!(f, "Unknown: {}", name),
-            ComponentScope::None => write!(f, "None"),
-        }
-    }
-}
-
-impl From<&str> for ComponentScope {
-    fn from(value: &str) -> Self {
-        match value {
-            "Layout" => ComponentScope::Layout,
-            "Input" => ComponentScope::Input,
-            "Notification" => ComponentScope::Notification,
-            "Editor" => ComponentScope::Editor,
-            "Collaboration" => ComponentScope::Collaboration,
-            "Version Control" | "VersionControl" => ComponentScope::VersionControl,
-            "None" => ComponentScope::None,
-            _ => ComponentScope::Unknown(SharedString::new(value)),
-        }
-    }
-}
-
-impl From<String> for ComponentScope {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "Layout" => ComponentScope::Layout,
-            "Input" => ComponentScope::Input,
-            "Notification" => ComponentScope::Notification,
-            "Editor" => ComponentScope::Editor,
-            "Collaboration" => ComponentScope::Collaboration,
-            "Version Control" | "VersionControl" => ComponentScope::VersionControl,
-            "None" => ComponentScope::None,
-            _ => ComponentScope::Unknown(SharedString::new(value)),
         }
     }
 }

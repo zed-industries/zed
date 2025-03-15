@@ -475,7 +475,7 @@ impl Component for Button {
     }
 
     fn description() -> Option<&'static str> {
-        Some(Button::DOCS)
+        Some("A button triggers an event or action.")
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
