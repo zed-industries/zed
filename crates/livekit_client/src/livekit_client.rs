@@ -489,14 +489,14 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
         let width = CVPixelBufferGetWidth(pixel_buffer);
         let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
         let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-        dbg!(
-            "<<<<<<<<< {}",
-            format,
-            width,
-            height,
-            bytes_per_row,
-            data_size
-        );
+        // dbg!(
+        //     "<<<<<<<<< {}",
+        //     format,
+        //     width,
+        //     height,
+        //     bytes_per_row,
+        //     data_size
+        // );
     }
 
     unsafe { Some(CVImageBuffer::wrap_under_get_rule(pixel_buffer as _)) }
@@ -568,13 +568,13 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
         let width = CVPixelBufferGetWidth(pixel_buffer);
         let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
         let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-        dbg!(
-            ">>>>>>>>>>>>>>>>>>>>>> {}",
-            format,
-            width,
-            height,
-            bytes_per_row
-        );
+        // dbg!(
+        //     ">>>>>>>>>>>>>>>>>>>>>> {}",
+        //     format,
+        //     width,
+        //     height,
+        //     bytes_per_row
+        // );
     }
     std::mem::forget(frame.0);
     unsafe {

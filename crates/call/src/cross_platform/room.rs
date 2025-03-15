@@ -1350,6 +1350,7 @@ impl Room {
                     livekit::track::LocalTrack::Audio(track),
                     TrackPublishOptions {
                         source: TrackSource::Microphone,
+                        video_codec: VideoCodec::H264,
                         ..Default::default()
                     },
                 )

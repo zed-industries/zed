@@ -67,7 +67,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let configuration: id = msg_send![configuration, init];
             let _: id = msg_send![configuration, setScalesToFit: false];
             let _: id = msg_send![configuration, setShowsCursor: false];
-            let _: id = msg_send![configuration, setCaptureResolution: 1];
+            let _: id = msg_send![configuration, setCaptureResolution: 2];
             let delegate: id = msg_send![delegate, init];
             let output: id = msg_send![output, init];
 
