@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::path::Path;
-use std::time::Instant;
 use std::{fmt::Display, ops::Range, sync::Arc};
 use text::Bias;
 use theme::ThemeSettings;
