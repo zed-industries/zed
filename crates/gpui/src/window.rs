@@ -2082,6 +2082,12 @@ impl Window {
             None
         })
     }
+
+    /// Remove asset from GPUIs cache
+    pub fn remove_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) {
+        cx.remove_asset::<A>(source);
+    }
+    
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
