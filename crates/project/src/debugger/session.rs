@@ -12,6 +12,7 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
+use dap::messages::Response;
 use dap::OutputEventCategory;
 use dap::{
     adapters::{DapDelegate, DapStatus},
@@ -849,9 +850,12 @@ impl Session {
         )
     }
 
-    pub(crate) fn respond_to_client(
+    pub fn respond_to_client(
         &self,
-        response: dap::messages::Response,
+        request_seq: u64,
+        success: bool,
+        command: String,
+        body: Option<serde_json::Value>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(local_session) = self.as_local().cloned() else {
@@ -861,7 +865,13 @@ impl Session {
         cx.background_spawn(async move {
             local_session
                 .client
-                .send_message(Message::Response(response))
+                .send_message(Message::Response(Response {
+                    body,
+                    success,
+                    command,
+                    seq: request_seq + 1,
+                    request_seq,
+                }))
                 .await
         })
     }

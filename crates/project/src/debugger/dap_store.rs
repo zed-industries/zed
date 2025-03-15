@@ -15,7 +15,7 @@ use collections::HashMap;
 use dap::{
     adapters::{DapStatus, DebugAdapterName},
     client::SessionId,
-    messages::{Message, Response},
+    messages::Message,
     requests::{
         Completions, Evaluate, Request as _, RunInTerminal, SetExpression, SetVariable,
         StartDebugging,
@@ -35,7 +35,6 @@ use rpc::{
     proto::{self, UpdateDebugAdapter, UpdateThreadStatus},
     AnyProtoClient, TypedEnvelope,
 };
-use serde_json::Value;
 use settings::WorktreeId;
 use smol::{lock::Mutex, stream::StreamExt};
 use std::{
@@ -478,47 +477,13 @@ impl DapStore {
             parent_session
                 .update(&mut cx, |session, cx| {
                     session.respond_to_client(
-                        dap::messages::Response {
-                            seq: request_seq + 1,
-                            request_seq,
-                            success,
-                            command: StartDebugging::COMMAND.to_string(),
-                            body,
-                        },
+                        request_seq,
+                        success,
+                        StartDebugging::COMMAND.to_string(),
+                        body,
                         cx,
                     )
                 })?
-                .await
-        })
-    }
-
-    pub fn respond_to_run_in_terminal(
-        &self,
-        session_id: SessionId,
-        success: bool,
-        seq: u64,
-        body: Option<Value>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!(
-                "Could not find debug client: {:?}",
-                session_id
-            )));
-        };
-
-        cx.background_executor().spawn(async move {
-            client
-                .send_message(Message::Response(Response {
-                    seq,
-                    body,
-                    success,
-                    request_seq: seq,
-                    command: RunInTerminal::COMMAND.to_string(),
-                }))
                 .await
         })
     }

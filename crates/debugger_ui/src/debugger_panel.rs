@@ -3,8 +3,11 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
-    ModuleEvent, OutputEvent, RunInTerminalRequestArguments, StoppedEvent, ThreadEvent,
+    client::SessionId,
+    debugger_settings::DebuggerSettings,
+    requests::{Request, RunInTerminal},
+    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, RunInTerminalRequestArguments,
+    StoppedEvent, ThreadEvent,
 };
 use gpui::{
     actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
@@ -284,6 +287,10 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
+            return;
+        };
+
         let seq = request.seq;
 
         let Some(request_args) = request
@@ -291,12 +298,12 @@ impl DebugPanel {
             .clone()
             .and_then(|args| serde_json::from_value::<RunInTerminalRequestArguments>(args).ok())
         else {
-            dap_store.update(cx, |store, cx| {
-                store
-                    .respond_to_run_in_terminal(
-                        *session_id,
-                        false,
+            session.update(cx, |session, cx| {
+                session
+                    .respond_to_client(
                         seq,
+                        false,
+                        RunInTerminal::COMMAND.to_string(),
                         serde_json::to_value(dap::ErrorResponse {
                             error: Some(dap::Message {
                                 id: seq,
@@ -396,7 +403,7 @@ impl DebugPanel {
             })
         });
 
-        let session_id = *session_id;
+        let session = session.downgrade();
         let dap_store = dap_store.downgrade();
         cx.spawn(|mut cx| async move {
             // Ensure a response is always sent, even in error cases,
@@ -452,11 +459,17 @@ impl DebugPanel {
                 ),
             };
 
-            let respond_task = dap_store.update(&mut cx, |dap_store, cx| {
-                dap_store.respond_to_run_in_terminal(session_id, success, seq, body, cx)
-            });
+            let respond_task = session.update(&mut cx, |session, cx| {
+                session.respond_to_client(
+                    seq,
+                    success,
+                    RunInTerminal::COMMAND.to_string(),
+                    body,
+                    cx,
+                )
+            })?;
 
-            respond_task?.await
+            respond_task.await
         })
         .detach_and_log_err(cx);
     }
