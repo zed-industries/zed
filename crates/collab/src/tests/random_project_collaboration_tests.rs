@@ -1337,7 +1337,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let host_diff_base = host_project.read_with(host_cx, |project, cx| {
                         project
-                            .buffer_store()
+                            .git_store()
                             .read(cx)
                             .get_unstaged_diff(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
@@ -1346,7 +1346,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     });
                     let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
                         project
-                            .buffer_store()
+                            .git_store()
                             .read(cx)
                             .get_unstaged_diff(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()
