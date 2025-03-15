@@ -1729,7 +1729,6 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     title: "Fix with Assistant".into(),
                     ..Default::default()
                 })),
-                resolved: true,
             }]))
         } else {
             Task::ready(Ok(Vec::new()))

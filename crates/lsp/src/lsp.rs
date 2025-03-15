@@ -632,9 +632,6 @@ impl LanguageServer {
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: None,
                     }),
-                    code_lens: Some(CodeLensWorkspaceClientCapabilities {
-                        refresh_support: Some(true),
-                    }),
                     workspace_edit: Some(WorkspaceEditClientCapabilities {
                         resource_operations: Some(vec![
                             ResourceOperationKind::Create,
@@ -765,9 +762,6 @@ impl LanguageServer {
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
-                    }),
-                    code_lens: Some(CodeLensClientCapabilities {
-                        dynamic_registration: Some(false),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
