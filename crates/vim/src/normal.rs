@@ -355,7 +355,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let Some(Mark::Local(marks)) = vim.get_mark("^", editor.buffer(), window, cx) else {
+            let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx) else {
                 return;
             };
 

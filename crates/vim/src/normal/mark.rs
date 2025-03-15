@@ -187,40 +187,21 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.pop_operator(window, cx);
-        let anchors = match &*text {
-            "{" | "}" => self.update_editor(window, cx, |_, editor, _, cx| {
-                let (map, selections) = editor.selections.all_display(cx);
-                selections
-                    .into_iter()
-                    .map(|selection| {
-                        let point = if &*text == "{" {
-                            movement::start_of_paragraph(&map, selection.head(), 1)
-                        } else {
-                            movement::end_of_paragraph(&map, selection.head(), 1)
-                        };
-                        map.buffer_snapshot
-                            .anchor_before(point.to_offset(&map, Bias::Left))
-                    })
-                    .collect::<Vec<Anchor>>()
-            }),
-            _ => {
-                let Some(buffer) = self.editor().map(|editor| editor.read(cx).buffer().clone())
-                else {
-                    return;
-                };
-                let mark = self.get_mark(&text, &buffer, window, cx);
-                match mark {
-                    None => None,
-                    Some(Mark::Local(anchors)) => Some(anchors),
-                    Some(Mark::Buffer(entity_id, anchors)) => {
-                        self.open_buffer_mark(line, entity_id, anchors, window, cx);
-                        return;
-                    }
-                    Some(Mark::Path(path, points)) => {
-                        self.open_path_mark(line, path, points, window, cx);
-                        return;
-                    }
-                }
+        let mark = self
+            .update_editor(window, cx, |vim, editor, window, cx| {
+                vim.get_mark(&text, editor, window, cx)
+            })
+            .flatten();
+        let anchors = match mark {
+            None => None,
+            Some(Mark::Local(anchors)) => Some(anchors),
+            Some(Mark::Buffer(entity_id, anchors)) => {
+                self.open_buffer_mark(line, entity_id, anchors, window, cx);
+                return;
+            }
+            Some(Mark::Path(path, points)) => {
+                self.open_path_mark(line, path, points, window, cx);
+                return;
             }
         };
 
@@ -303,16 +284,34 @@ impl Vim {
     pub fn get_mark(
         &self,
         name: &str,
-        multi_buffer: &Entity<MultiBuffer>,
+        editor: &mut Editor,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Mark> {
+        if matches!(name, "{" | "}" | "(" | ")") {
+            let (map, selections) = editor.selections.all_display(cx);
+            let anchors = selections
+                .into_iter()
+                .map(|selection| {
+                    let point = match name {
+                        "{" => movement::start_of_paragraph(&map, selection.head(), 1),
+                        "}" => movement::end_of_paragraph(&map, selection.head(), 1),
+                        "(" => motion::sentence_backwards(&map, selection.head(), 1),
+                        ")" => motion::sentence_forwards(&map, selection.head(), 1),
+                        _ => unreachable!(),
+                    };
+                    map.buffer_snapshot
+                        .anchor_before(point.to_offset(&map, Bias::Left))
+                })
+                .collect::<Vec<Anchor>>();
+            return Some(Mark::Local(anchors));
+        }
         VimGlobals::update_global(cx, |globals, cx| {
             let workspace_id = self.workspace(window)?.entity_id();
             globals
                 .marks
                 .get_mut(&workspace_id)?
-                .update(cx, |ms, cx| ms.get_mark(name, multi_buffer, cx))
+                .update(cx, |ms, cx| ms.get_mark(name, editor.buffer(), cx))
         })
     }
 }
