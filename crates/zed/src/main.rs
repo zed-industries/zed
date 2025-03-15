@@ -254,10 +254,7 @@ fn main() {
         };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
-    let fs = Arc::new(RealFs::new(
-        git_hosting_provider_registry.clone(),
-        git_binary_path,
-    ));
+    let fs = Arc::new(RealFs::new(git_binary_path));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -476,7 +473,6 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
-        scripting_tool::init(cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,

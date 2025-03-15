@@ -3,7 +3,6 @@ use crate::{
     tests::{rust_lang, TestServer},
 };
 use call::ActiveCall;
-use collections::HashMap;
 use editor::{
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
@@ -1983,7 +1982,6 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             blame_entry("3a3a3a", 2..3),
             blame_entry("4c4c4c", 3..4),
         ],
-        permalinks: HashMap::default(), // This field is deprecrated
         messages: [
             ("1b1b1b", "message for idx-0"),
             ("0d0d0d", "message for idx-1"),
@@ -2040,7 +2038,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     // client_b now requests git blame for the open buffer
     editor_b.update_in(cx_b, |editor_b, window, cx| {
         assert!(editor_b.blame().is_none());
-        editor_b.toggle_git_blame(&editor::actions::ToggleGitBlame {}, window, cx);
+        editor_b.toggle_git_blame(&git::Blame {}, window, cx);
     });
 
     cx_a.executor().run_until_parked();

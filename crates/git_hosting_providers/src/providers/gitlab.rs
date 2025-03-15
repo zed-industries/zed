@@ -1,13 +1,14 @@
 use std::str::FromStr;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use url::Url;
-use util::maybe;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
     RemoteUrl,
 };
+
+use crate::get_host_from_git_remote_url;
 
 #[derive(Debug)]
 pub struct Gitlab {
@@ -24,19 +25,14 @@ impl Gitlab {
     }
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
-        let host = maybe!({
-            if let Some(remote_url) = remote_url.strip_prefix("git@") {
-                if let Some((host, _)) = remote_url.trim_start_matches("git@").split_once(':') {
-                    return Some(host.to_string());
-                }
-            }
+        let host = get_host_from_git_remote_url(remote_url)?;
+        if host == "gitlab.com" {
+            bail!("the GitLab instance is not self-hosted");
+        }
 
-            Url::parse(&remote_url)
-                .ok()
-                .and_then(|remote_url| remote_url.host_str().map(|host| host.to_string()))
-        })
-        .ok_or_else(|| anyhow!("URL has no host"))?;
-
+        // TODO: detecting self hosted instances by checking whether "gitlab" is in the url or not
+        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
+        // information.
         if !host.contains("gitlab") {
             bail!("not a GitLab URL");
         }
@@ -129,6 +125,13 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn test_invalid_self_hosted_remote_url() {
+        let remote_url = "https://gitlab.com/zed-industries/zed.git";
+        let github = Gitlab::from_remote_url(remote_url);
+        assert!(github.is_err());
+    }
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {

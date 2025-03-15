@@ -8,6 +8,7 @@ members = [
     "crates/assistant",
     "crates/assistant2",
     "crates/assistant_context_editor",
+    "crates/assistant_eval",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -174,15 +175,11 @@ members = [
     "extensions/html",
     "extensions/perplexity",
     "extensions/proto",
-    "extensions/purescript",
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
-    "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
-    "extensions/uiua",
-    "extensions/zig",
 
     #
     # Tooling
@@ -210,6 +207,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
+assistant_eval = { path = "crates/assistant_eval" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
@@ -370,7 +368,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", rev = "03c2907b44b4189aac5fdeaea331f5aab5c7072e" }
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -597,12 +595,12 @@ features = [
 ]
 
 [workspace.dependencies.windows]
-version = "0.58"
+version = "0.60"
 features = [
-    "implement",
     "Foundation_Collections",
     "Foundation_Numerics",
-    "Storage",
+    "Storage_Search",
+    "Storage_Streams",
     "System_Threading",
     "UI_StartScreen",
     "UI_ViewManagement",
@@ -623,9 +621,11 @@ features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
     "Win32_System_DataExchange",
+    "Win32_System_IO",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
@@ -750,6 +750,10 @@ new_ret_no_self = { level = "allow" }
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
+
+# in Rust it can be very tedious to reduce argument count without
+# running afoul of the borrow checker.
+too_many_arguments = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme"]
