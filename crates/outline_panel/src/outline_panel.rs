@@ -1075,45 +1075,36 @@ impl OutlinePanel {
                     });
                 } else {
                     let mut offset = Point::default();
-                    let show_excerpt_controls = active_editor
-                        .read(cx)
-                        .display_map
-                        .read(cx)
-                        .show_excerpt_controls();
                     let expand_excerpt_control_height = 1.0;
                     if let Some(buffer_id) = scroll_to_buffer {
                         let current_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
                         if current_folded {
-                            if show_excerpt_controls {
-                                let previous_buffer_id = self
-                                    .fs_entries
-                                    .iter()
-                                    .rev()
-                                    .filter_map(|entry| match entry {
-                                        FsEntry::File(file) => Some(file.buffer_id),
-                                        FsEntry::ExternalFile(external_file) => {
-                                            Some(external_file.buffer_id)
-                                        }
-                                        FsEntry::Directory(..) => None,
-                                    })
-                                    .skip_while(|id| *id != buffer_id)
-                                    .nth(1);
-                                if let Some(previous_buffer_id) = previous_buffer_id {
-                                    if !active_editor
-                                        .read(cx)
-                                        .is_buffer_folded(previous_buffer_id, cx)
-                                    {
-                                        offset.y += expand_excerpt_control_height;
+                            let previous_buffer_id = self
+                                .fs_entries
+                                .iter()
+                                .rev()
+                                .filter_map(|entry| match entry {
+                                    FsEntry::File(file) => Some(file.buffer_id),
+                                    FsEntry::ExternalFile(external_file) => {
+                                        Some(external_file.buffer_id)
                                     }
+                                    FsEntry::Directory(..) => None,
+                                })
+                                .skip_while(|id| *id != buffer_id)
+                                .nth(1);
+                            if let Some(previous_buffer_id) = previous_buffer_id {
+                                if !active_editor
+                                    .read(cx)
+                                    .is_buffer_folded(previous_buffer_id, cx)
+                                {
+                                    offset.y += expand_excerpt_control_height;
                                 }
                             }
                         } else {
                             if multi_buffer_snapshot.as_singleton().is_none() {
                                 offset.y = -(active_editor.read(cx).file_header_size() as f32);
                             }
-                            if show_excerpt_controls {
-                                offset.y -= expand_excerpt_control_height;
-                            }
+                            offset.y -= expand_excerpt_control_height;
                         }
                     }
                     active_editor.update(cx, |editor, cx| {

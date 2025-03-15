@@ -129,7 +129,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             Status::Error(err) => anyhow!(format!("Received the following error while signing into Copilot: {err}")),
             Status::Starting { task: _ } => anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
             Status::Unauthorized => anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
-            Status::SignedOut => anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
+            Status::SignedOut {..} => anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
             Status::SigningIn { prompt: _ } => anyhow!("Still signing into Copilot..."),
         };
 
@@ -366,7 +366,6 @@ impl Render for ConfigurationView {
 
             match &self.copilot_status {
                 Some(status) => match status {
-                    Status::Disabled => v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL)),
                     Status::Starting { task: _ } => {
                         const LABEL: &str = "Starting Copilot...";
                         v_flex()
@@ -376,7 +375,10 @@ impl Render for ConfigurationView {
                             .child(Label::new(LABEL))
                             .child(loading_icon)
                     }
-                    Status::SigningIn { prompt: _ } => {
+                    Status::SigningIn { prompt: _ }
+                    | Status::SignedOut {
+                        awaiting_signing_in: true,
+                    } => {
                         const LABEL: &str = "Signing in to Copilot...";
                         v_flex()
                             .gap_6()

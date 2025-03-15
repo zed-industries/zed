@@ -360,7 +360,10 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             }
         }
         case 2u: {
-            let pattern_height = background.gradient_angle_or_pattern_height;
+            let gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
+            let pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
+            let pattern_interval = (gradient_angle_or_pattern_height % 65535.0f) / 255.0f;
+            let pattern_height = pattern_width + pattern_interval;
             let stripe_angle = M_PI_F / 4.0;
             let pattern_period = pattern_height * sin(stripe_angle);
             let rotation = mat2x2<f32>(
@@ -370,7 +373,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             let relative_position = position - bounds.origin;
             let rotated_point = rotation * relative_position;
             let pattern = rotated_point.x % pattern_period;
-            let distance = min(pattern, pattern_period - pattern) - pattern_period / 4;
+            let distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
             background_color = solid_color;
             background_color.a *= saturate(0.5 - distance);
         }

@@ -273,15 +273,16 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         mut original: InitializeParams,
     ) -> Result<InitializeParams> {
-        // enable clangd's dot-to-arrow feature.
         let experimental = json!({
             "textDocument": {
                 "completion" : {
+                    // enable clangd's dot-to-arrow feature.
                     "editsNearCursor": true
                 },
-                "inactiveRegionsCapabilities": {
-                    "inactiveRegions": true,
-                }
+                // TODO: inactiveRegions support needs an implementation in clangd_ext.rs
+                // "inactiveRegionsCapabilities": {
+                //     "inactiveRegions": true,
+                // }
             }
         });
         if let Some(ref mut original_experimental) = original.capabilities.experimental {

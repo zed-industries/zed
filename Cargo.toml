@@ -8,6 +8,7 @@ members = [
     "crates/assistant",
     "crates/assistant2",
     "crates/assistant_context_editor",
+    "crates/assistant_eval",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -174,14 +175,11 @@ members = [
     "extensions/html",
     "extensions/perplexity",
     "extensions/proto",
-    "extensions/purescript",
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/test-extension",
     "extensions/toml",
-    "extensions/uiua",
-    "extensions/zig",
 
     #
     # Tooling
@@ -209,6 +207,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
+assistant_eval = { path = "crates/assistant_eval" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }

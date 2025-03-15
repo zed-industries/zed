@@ -22,9 +22,38 @@ For more information, see:
 
 ## Edit Predictions {#edit-predictions}
 
-Zed has built-in support for predicting multiple edits at a time via its [Zeta model](https://huggingface.co/zed-industries/zeta). Clicking "Introducing: Edit Prediction" on the top right will open a brief prompt setting up this feature.
-
+Zed has built-in support for predicting multiple edits at a time [via Zeta](https://huggingface.co/zed-industries/zeta), Zed's open-source and open-data model.
 Edit predictions appear as you type, and most of the time, you can accept them by pressing `tab`.
+
+### Configuring Zeta
+
+Zed's Edit Prediction was initially introduced via a banner on the title bar.
+Clicking on it would take you to a modal with a button ("Enable Edit Prediction") that sets `zed` as your `edit_prediction_provider`.
+
+![Onboarding banner and modal](https://zed.dev/img/edit-prediction/docs.webp)
+
+But, if you haven't come across the banner, start using Zed's Edit Prediction by adding this to your settings:
+
+```json
+"features": {
+  "edit_prediction_provider": "zed"
+},
+```
+
+### Switching modes
+
+Zed's Edit Prediction comes with two different display modes:
+
+1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
+2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
+
+Toggle between them via the `mode` key:
+
+```json
+"edit_predictions": {
+  "mode": "eager" | "subtle"
+},
+```
 
 ### Conflict With Other `tab` Actions {#edit-predictions-conflict}
 

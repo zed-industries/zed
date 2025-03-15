@@ -1,10 +1,14 @@
+use std::any::Any;
+
 use ::settings::Settings;
+use command_palette_hooks::CommandPaletteFilter;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{App, Entity, FocusHandle};
+use gpui::{actions, App, Entity, FocusHandle};
+use onboarding::{clear_dismissed, GitOnboardingModal};
 use project::Project;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
@@ -15,10 +19,13 @@ pub mod branch_picker;
 mod commit_modal;
 pub mod git_panel;
 mod git_panel_settings;
+pub mod onboarding;
 pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+
+actions!(git, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
@@ -81,6 +88,21 @@ pub fn init(cx: &mut App) {
             panel.update(cx, |panel, cx| {
                 panel.unstage_all(action, window, cx);
             });
+        });
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.hide_action_types(&[
+                zed_actions::OpenGitIntegrationOnboarding.type_id(),
+                // ResetOnboarding.type_id(),
+            ]);
+        });
+        workspace.register_action(
+            move |workspace, _: &zed_actions::OpenGitIntegrationOnboarding, window, cx| {
+                GitOnboardingModal::toggle(workspace, window, cx)
+            },
+        );
+        workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
+            clear_dismissed(cx);
+            window.refresh();
         });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {

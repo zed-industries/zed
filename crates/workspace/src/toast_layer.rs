@@ -8,7 +8,7 @@ use ui::{animation::DefaultAnimations, prelude::*};
 
 use crate::Workspace;
 
-const DEFAULT_TOAST_DURATION: Duration = Duration::from_millis(2400);
+const DEFAULT_TOAST_DURATION: Duration = Duration::from_secs(10);
 const MINIMUM_RESUME_DURATION: Duration = Duration::from_millis(800);
 
 actions!(toast, [RunAction]);

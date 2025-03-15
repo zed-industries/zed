@@ -11,12 +11,38 @@ impl Render for HelloWorld {
             .bg(gpui::white())
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2()
             .p_4()
             .size_full()
             .child(div().child("Text left"))
             .child(div().text_center().child("Text center"))
             .child(div().text_right().child("Text right"))
+            .child(div().text_decoration_1().child("Text left (underline)"))
+            .child(
+                div()
+                    .text_center()
+                    .text_decoration_1()
+                    .child("Text center (underline)"),
+            )
+            .child(
+                div()
+                    .text_right()
+                    .text_decoration_1()
+                    .child("Text right (underline)"),
+            )
+            .child(div().line_through().child("Text left (line_through)"))
+            .child(
+                div()
+                    .text_center()
+                    .line_through()
+                    .child("Text center (line_through)"),
+            )
+            .child(
+                div()
+                    .text_right()
+                    .line_through()
+                    .child("Text right (line_through)"),
+            )
             .child(
                 div()
                     .flex()

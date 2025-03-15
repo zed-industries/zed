@@ -893,8 +893,6 @@ mod tests {
                 font,
                 font_size,
                 None,
-                true,
-                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -1110,138 +1108,136 @@ mod tests {
                     font,
                     px(14.0),
                     None,
-                    true,
                     0,
                     2,
-                    0,
                     FoldPlaceholder::test(),
                     cx,
                 )
             });
             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
-            assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
+            assert_eq!(snapshot.text(), "abc\ndefg\nhijkl\nmn");
 
             let col_2_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(2), 2), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(0), 2), &text_layout_details);
 
             // Can't move up into the first excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(2), 2),
+                    DisplayPoint::new(DisplayRow(0), 2),
                     SelectionGoal::HorizontalPosition(col_2_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(2), 0),
+                    DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::HorizontalPosition(col_2_x.0),
                 ),
             );
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(2), 0),
+                    DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::None,
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(2), 0),
+                    DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::HorizontalPosition(0.0),
                 ),
             );
 
             let col_4_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 4), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 4), &text_layout_details);
 
             // Move up and down within first excerpt
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(2), 3),
+                    DisplayPoint::new(DisplayRow(0), 3),
                     SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(2), 3),
+                    DisplayPoint::new(DisplayRow(0), 3),
                     SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
 
             let col_5_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(6), 5), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(2), 5), &text_layout_details);
 
             // Move up and down across second excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(6), 5),
+                    DisplayPoint::new(DisplayRow(2), 5),
                     SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(3), 4),
+                    DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(6), 5),
+                    DisplayPoint::new(DisplayRow(2), 5),
                     SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
 
             let max_point_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(7), 2), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 2), &text_layout_details);
 
             // Can't move down off the end, and attempting to do so leaves the selection goal unchanged
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(7), 0),
+                    DisplayPoint::new(DisplayRow(3), 0),
                     SelectionGoal::HorizontalPosition(0.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(7), 2),
+                    DisplayPoint::new(DisplayRow(3), 2),
                     SelectionGoal::HorizontalPosition(0.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(7), 2),
+                    DisplayPoint::new(DisplayRow(3), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(7), 2),
+                    DisplayPoint::new(DisplayRow(3), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0)
                 ),
             );

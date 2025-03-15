@@ -14,7 +14,7 @@ use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 pub use extension::ExtensionManifest;
 use extension::{
-    ExtensionContextServerProxy, ExtensionGrammarProxy, ExtensionHostProxy,
+    ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
     ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
     ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
@@ -1316,6 +1316,12 @@ impl ExtensionStore {
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
+
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionsInstalledChanged, cx)
+                    });
+                }
             })
             .ok();
         })

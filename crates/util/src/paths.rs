@@ -169,7 +169,7 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
-const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
+const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
     ([^\(]+)(?:
         \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
         |
@@ -621,6 +621,24 @@ mod tests {
             PathWithPosition {
                 path: PathBuf::from("test_file.rs"),
                 row: Some(1),
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("ab\ncd"),
+            PathWithPosition {
+                path: PathBuf::from("ab\ncd"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("👋\nab"),
+            PathWithPosition {
+                path: PathBuf::from("👋\nab"),
+                row: None,
                 column: None
             }
         );

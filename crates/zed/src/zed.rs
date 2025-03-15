@@ -1138,7 +1138,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                             .new(|cx| MultiBuffer::singleton(buffer, cx).with_title("Log".into()));
                         let editor = cx.new(|cx| {
                             let mut editor =
-                                Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                                Editor::for_multibuffer(buffer, Some(project), window, cx);
                             editor.set_read_only(true);
                             editor.set_breadcrumb_header(format!(
                                 "Last {} lines in {}",
@@ -1626,7 +1626,7 @@ fn open_telemetry_log_file(
                 });
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
-                        let mut editor = Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                        let mut editor = Editor::for_multibuffer(buffer, Some(project), window, cx);
                         editor.set_read_only(true);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
@@ -1665,13 +1665,8 @@ fn open_bundled_file(
                         cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
                     workspace.add_item_to_active_pane(
                         Box::new(cx.new(|cx| {
-                            let mut editor = Editor::for_multibuffer(
-                                buffer,
-                                Some(project.clone()),
-                                true,
-                                window,
-                                cx,
-                            );
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                             editor.set_read_only(true);
                             editor.set_breadcrumb_header(title.into());
                             editor

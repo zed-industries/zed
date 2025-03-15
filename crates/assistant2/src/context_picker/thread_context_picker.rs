@@ -223,13 +223,18 @@ pub fn render_thread_context_entry(
     h_flex()
         .gap_1p5()
         .w_full()
+        .justify_between()
         .child(
-            Icon::new(IconName::MessageCircle)
-                .size(IconSize::XSmall)
-                .color(Color::Muted),
+            h_flex()
+                .gap_1p5()
+                .max_w_72()
+                .child(
+                    Icon::new(IconName::MessageCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .child(Label::new(thread.summary.clone()).truncate()),
         )
-        .child(Label::new(thread.summary.clone()))
-        .child(div().w_full())
         .when(added, |el| {
             el.child(
                 h_flex()

@@ -60,7 +60,7 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, motion.linewise(), cx);
+                vim.copy_selections_content(editor, motion.linewise(), window, cx);
                 editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion
@@ -148,7 +148,7 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, false, cx);
+                vim.copy_selections_content(editor, false, window, cx);
                 editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion

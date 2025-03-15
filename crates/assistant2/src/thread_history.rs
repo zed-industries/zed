@@ -7,7 +7,7 @@ use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
 use crate::history_store::{HistoryEntry, HistoryStore};
-use crate::thread_store::SavedThreadMetadata;
+use crate::thread_store::SerializedThreadMetadata;
 use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
@@ -221,14 +221,14 @@ impl Render for ThreadHistory {
 
 #[derive(IntoElement)]
 pub struct PastThread {
-    thread: SavedThreadMetadata,
+    thread: SerializedThreadMetadata,
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
 }
 
 impl PastThread {
     pub fn new(
-        thread: SavedThreadMetadata,
+        thread: SerializedThreadMetadata,
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
     ) -> Self {

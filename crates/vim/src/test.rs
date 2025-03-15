@@ -1728,14 +1728,7 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
             ],
             cx,
         );
-        let mut editor = Editor::new(
-            EditorMode::Full,
-            multi_buffer.clone(),
-            None,
-            true,
-            window,
-            cx,
-        );
+        let mut editor = Editor::new(EditorMode::Full, multi_buffer.clone(), None, window, cx);
 
         let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
         // fold all but the second buffer, so that we test navigating between two

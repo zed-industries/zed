@@ -192,6 +192,8 @@ pub enum IconName {
     ExpandVertical,
     Exit,
     ExternalLink,
+    ExpandUp,
+    ExpandDown,
     Eye,
     File,
     FileCode,

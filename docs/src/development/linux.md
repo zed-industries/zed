@@ -63,6 +63,31 @@ You can install a local build on your machine with:
 
 This will build zed and the cli in release mode and make them available at `~/.local/bin/zed`, installing .desktop files to `~/.local/share`.
 
+> **_Note_**: If you encounter linker errors similar to the following:
+>
+> ```bash
+> error: linking with `cc` failed: exit status: 1 ...
+> = note: /usr/bin/ld: /tmp/rustcISMaod/libaws_lc_sys-79f08eb6d32e546e.rlib(f8e4fd781484bd36-bcm.o): in function `aws_lc_0_25_0_handle_cpu_env':
+>           /aws-lc/crypto/fipsmodule/cpucap/cpu_intel.c:(.text.aws_lc_0_25_0_handle_cpu_env+0x63): undefined reference to `__isoc23_sscanf'
+>           /usr/bin/ld: /tmp/rustcISMaod/libaws_lc_sys-79f08eb6d32e546e.rlib(f8e4fd781484bd36-bcm.o): in function `pkey_rsa_ctrl_str':
+>           /aws-lc/crypto/fipsmodule/evp/p_rsa.c:741:(.text.pkey_rsa_ctrl_str+0x20d): undefined reference to `__isoc23_strtol'
+>           /usr/bin/ld: /aws-lc/crypto/fipsmodule/evp/p_rsa.c:752:(.text.pkey_rsa_ctrl_str+0x258): undefined reference to `__isoc23_strtol'
+>           collect2: error: ld returned 1 exit status
+>   = note: some `extern` functions couldn't be found; some native libraries may need to be installed or have their path specified
+>   = note: use the `-l` flag to specify native libraries to link
+>   = note: use the `cargo:rustc-link-lib` directive to specify the native libraries to link with Cargo (see https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-link-lib)
+> error: could not compile `remote_server` (bin "remote_server") due to 1 previous error
+> ```
+>
+> **Cause**:
+> this is caused by known bugs in aws-lc-rs(doesn't support GCC >= 14): [FIPS fails to build with GCC >= 14](https://github.com/aws/aws-lc-rs/issues/569)
+> & [GCC-14 - build failure for FIPS module](https://github.com/aws/aws-lc/issues/2010)
+>
+> You can refer to [linux: Linker error for remote_server when using script/install-linux](https://github.com/zed-industries/zed/issues/24880) for more information.
+>
+> **Workarounds**:
+> Set the remote server target to `x86_64-unknown-linux-gnu` like so `export REMOTE_SERVER_TARGET=x86_64-unknown-linux-gnu; script/install-linux`
+
 ## Wayland & X11
 
 Zed supports both X11 and Wayland. By default, we pick whichever we can find at runtime. If you're on Wayland and want to run in X11 mode, use the environment variable `WAYLAND_DISPLAY=''`.

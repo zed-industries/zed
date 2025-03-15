@@ -62,8 +62,7 @@ impl ProposedChangesEditor {
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
             editor: cx.new(|cx| {
-                let mut editor =
-                    Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
+                let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, window, cx);
                 editor.set_expand_all_diff_hunks(cx);
                 editor.set_completion_provider(None);
                 editor.clear_code_action_providers();

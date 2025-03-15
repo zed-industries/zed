@@ -837,52 +837,63 @@ impl LocalBufferStore {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_changes_by_buffer = cx
-                .background_spawn(async move {
-                    diff_state_updates
-                        .into_iter()
-                        .filter_map(|(buffer, path, current_index_text, current_head_text)| {
-                            let local_repo = snapshot.local_repo_for_path(&path)?;
-                            let relative_path = local_repo.relativize(&path).ok()?;
-                            let index_text = if current_index_text.is_some() {
-                                local_repo.repo().load_index_text(&relative_path)
-                            } else {
-                                None
-                            };
-                            let head_text = if current_head_text.is_some() {
-                                local_repo.repo().load_committed_text(&relative_path)
-                            } else {
-                                None
-                            };
+                .spawn(async move |cx| {
+                    let mut results = Vec::new();
+                    for (buffer, path, current_index_text, current_head_text) in diff_state_updates
+                    {
+                        let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
+                            continue;
+                        };
+                        let Some(relative_path) = local_repo.relativize(&path).ok() else {
+                            continue;
+                        };
+                        let index_text = if current_index_text.is_some() {
+                            local_repo
+                                .repo()
+                                .load_index_text(relative_path.clone(), cx.clone())
+                                .await
+                        } else {
+                            None
+                        };
+                        let head_text = if current_head_text.is_some() {
+                            local_repo
+                                .repo()
+                                .load_committed_text(relative_path, cx.clone())
+                                .await
+                        } else {
+                            None
+                        };
 
-                            // Avoid triggering a diff update if the base text has not changed.
-                            if let Some((current_index, current_head)) =
-                                current_index_text.as_ref().zip(current_head_text.as_ref())
+                        // Avoid triggering a diff update if the base text has not changed.
+                        if let Some((current_index, current_head)) =
+                            current_index_text.as_ref().zip(current_head_text.as_ref())
+                        {
+                            if current_index.as_deref() == index_text.as_ref()
+                                && current_head.as_deref() == head_text.as_ref()
                             {
-                                if current_index.as_deref() == index_text.as_ref()
-                                    && current_head.as_deref() == head_text.as_ref()
-                                {
-                                    return None;
-                                }
+                                continue;
                             }
+                        }
 
-                            let diff_bases_change =
-                                match (current_index_text.is_some(), current_head_text.is_some()) {
-                                    (true, true) => Some(if index_text == head_text {
-                                        DiffBasesChange::SetBoth(head_text)
-                                    } else {
-                                        DiffBasesChange::SetEach {
-                                            index: index_text,
-                                            head: head_text,
-                                        }
-                                    }),
-                                    (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
-                                    (false, true) => Some(DiffBasesChange::SetHead(head_text)),
-                                    (false, false) => None,
-                                };
+                        let diff_bases_change =
+                            match (current_index_text.is_some(), current_head_text.is_some()) {
+                                (true, true) => Some(if index_text == head_text {
+                                    DiffBasesChange::SetBoth(head_text)
+                                } else {
+                                    DiffBasesChange::SetEach {
+                                        index: index_text,
+                                        head: head_text,
+                                    }
+                                }),
+                                (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
+                                (false, true) => Some(DiffBasesChange::SetHead(head_text)),
+                                (false, false) => None,
+                            };
 
-                            Some((buffer, diff_bases_change))
-                        })
-                        .collect::<Vec<_>>()
+                        results.push((buffer, diff_bases_change))
+                    }
+
+                    results
                 })
                 .await;
 
@@ -1620,11 +1631,12 @@ impl BufferStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
-                cx.background_spawn(async move {
+                cx.spawn(|cx| async move {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
-                    repo.blame(&relative_path, content)
+                    repo.blame(relative_path.clone(), content, cx)
+                        .await
                         .with_context(|| format!("Failed to blame {:?}", relative_path.0))
                         .map(Some)
                 })

@@ -169,7 +169,14 @@ h6:target::before {
 }
 .content ol {
   line-height: 1.8;
-  padding-left: 1.8em;
+
+  ::marker {
+    font-size: 1.4rem;
+  }
+
+  li {
+    padding-left: 0;
+  }
 }
 .content ul {
   line-height: 1.8;

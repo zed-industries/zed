@@ -54,3 +54,29 @@ pub fn uri(input: TokenStream) -> TokenStream {
         #uri
     })
 }
+
+/// This macro replaces the line endings `\n` with `\r\n` for Windows.
+/// But if the target OS is not Windows, the line endings are returned as is.
+///
+/// # Example
+/// ```rust
+/// use util_macros::line_endings;
+///
+/// let text = line_endings!("Hello\nWorld");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(text, "Hello\r\nWorld");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(text, "Hello\nWorld");
+/// ```
+#[proc_macro]
+pub fn line_endings(input: TokenStream) -> TokenStream {
+    let text = parse_macro_input!(input as LitStr);
+    let text = text.value();
+
+    #[cfg(target_os = "windows")]
+    let text = text.replace("\n", "\r\n");
+
+    TokenStream::from(quote! {
+        #text
+    })
+}

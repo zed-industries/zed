@@ -97,6 +97,7 @@ pub enum Event {
     InlineCompletionRating(InlineCompletionRatingEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
+    AssistantThreadFeedback(AssistantThreadFeedbackEvent),
     Cpu(CpuEvent),
     Memory(MemoryEvent),
     App(AppEvent),
@@ -228,6 +229,26 @@ pub struct ReplEvent {
     pub kernel_language: String,
     pub kernel_status: String,
     pub repl_session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ThreadFeedbackRating {
+    Positive,
+    Negative,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AssistantThreadFeedbackEvent {
+    /// Unique identifier for the thread
+    pub thread_id: String,
+    /// The feedback rating (thumbs up or thumbs down)
+    pub rating: ThreadFeedbackRating,
+    /// The serialized thread data containing messages, tool calls, etc.
+    pub thread_data: serde_json::Value,
+    /// The initial project snapshot taken when the thread was created
+    pub initial_project_snapshot: serde_json::Value,
+    /// The final project snapshot taken when the thread was first saved
+    pub final_project_snapshot: serde_json::Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
