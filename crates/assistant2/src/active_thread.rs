@@ -5,7 +5,7 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
     Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, UnderlineStyle,
+    Task, TextStyleRefinement, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -15,6 +15,8 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
+use workspace::dock::Panel;
+use workspace::Workspace;
 
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
@@ -25,6 +27,7 @@ pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
+    workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -45,6 +48,7 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -57,6 +61,7 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
+            workspace,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
@@ -242,6 +247,8 @@ impl ActiveThread {
         };
 
         cx.new(|cx| {
+            let workspace_weak = self.workspace.clone();
+            
             Markdown::new(
                 text,
                 markdown_style,
@@ -249,6 +256,40 @@ impl ActiveThread {
                 None,
                 cx,
             )
+            .run_code(move |code, language, window, cx| {
+                if language.eq_ignore_ascii_case("sh") || 
+                   language.eq_ignore_ascii_case("bash") || 
+                   language.eq_ignore_ascii_case("shell") ||
+                   language.eq_ignore_ascii_case("zsh") {
+                    
+                    if let Some(workspace) = workspace_weak.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_panel_focus::<terminal_view::terminal_panel::TerminalPanel>(window, cx);
+                            
+                            if let Some(terminal_panel) = workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx) {
+                                let command_with_newline = format!("{}\n", code);
+                                
+                                terminal_panel.update(cx, |panel, cx| {
+                                    if let Some(pane) = panel.pane() {
+                                        if let Some(terminal_view) = pane.read(cx).active_item()
+                                            .and_then(|item| item.downcast::<terminal_view::TerminalView>()) {
+                                            
+                                            let terminal = {
+                                                let view = terminal_view.read(cx);
+                                                view.terminal().clone()
+                                            };
+                                            
+                                            terminal.update(cx, |term, _| {
+                                                term.input(command_with_newline);
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    }
+                }
+            })
         })
     }
 
