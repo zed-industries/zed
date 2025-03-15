@@ -91,8 +91,13 @@ impl<V: Render> From<Entity<V>> for AnyView {
 
 impl AnyView {
     /// Indicate that this view should be cached when using it as an element.
-    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
-    /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
+    /// When using this method, the view's previous layout and paint will be recycled from the previous frame
+    /// if [Context::notify] has not been called since it was rendered.
+    ///
+    /// The one exception is when [`Window::refresh`] is called, in which case caching is ignored.
+    ///
+    /// If refresh called by [`Window::refresh_at`], the view will be refreshed if the bounds of the view intersect
+    /// with the bounds of the refresh region.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style.into());
         self
@@ -184,11 +189,18 @@ impl Element for AnyView {
                         let text_style = window.text_style();
 
                         if let Some(mut element_state) = element_state {
+                            let is_refreshing_in_bounds =
+                                if let Some(refresh_origin) = &window.refreshing_origin {
+                                    bounds.contains(refresh_origin)
+                                } else {
+                                    window.refreshing
+                                };
+
                             if element_state.cache_key.bounds == bounds
                                 && element_state.cache_key.content_mask == content_mask
                                 && element_state.cache_key.text_style == text_style
                                 && !window.dirty_views.contains(&self.entity_id())
-                                && !window.refreshing
+                                && !is_refreshing_in_bounds
                             {
                                 let prepaint_start = window.prepaint_index();
                                 window.reuse_prepaint(element_state.prepaint_range.clone());
