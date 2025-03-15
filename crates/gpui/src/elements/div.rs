@@ -1662,8 +1662,6 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
-        use crate::TextAlign;
-
         if global_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && hitbox.is_hovered(window)
@@ -1685,7 +1683,7 @@ impl Interactivity {
                     .ok()
                     .and_then(|mut text| text.pop())
                 {
-                    text.paint(hitbox.origin, FONT_SIZE, TextAlign::Left, None, window, cx)
+                    text.paint(hitbox.origin, FONT_SIZE, None, None, window, cx)
                         .ok();
 
                     let text_bounds = crate::Bounds {
