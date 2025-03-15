@@ -1305,6 +1305,9 @@ impl Item for TerminalView {
                     }
                 }
             },
+            None if self.terminal.read(cx).debug_terminal() => {
+                (IconName::Debug, Color::Muted, None)
+            }
             None => (IconName::Terminal, Color::Muted, None),
         };
 
