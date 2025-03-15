@@ -57,6 +57,7 @@ pub enum DapStoreEvent {
         session_id: SessionId,
         message: Message,
     },
+    RunInTerminal((SessionId, dap::messages::Request)),
     Notification(String),
     RemoteHasInitialized,
     UpdateDebugAdapter(UpdateDebugAdapter),
@@ -153,7 +154,9 @@ impl DapStore {
                                     this.handle_start_debugging_request(session_id, request, cx)
                                         .detach_and_log_err(cx);
                                 } else if request.command == RunInTerminal::COMMAND {
-                                    // spawn terminal
+                                    // Dapstore doesn't have access to project or workspace so the debug panel
+                                    // needs to handle the event
+                                    cx.emit(DapStoreEvent::RunInTerminal((session_id, request)));
                                 }
                             })
                             .log_err();

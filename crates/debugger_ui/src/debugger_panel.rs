@@ -1,9 +1,10 @@
 use crate::session::DebugSession;
 use anyhow::Result;
+use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
     client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
-    ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
+    ModuleEvent, OutputEvent, RunInTerminalRequestArguments, StoppedEvent, ThreadEvent,
 };
 use gpui::{
     actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
@@ -11,12 +12,16 @@ use gpui::{
 };
 use project::{
     debugger::dap_store::{self, DapStore},
+    terminals::TerminalKind,
     Project,
 };
 use rpc::proto::{self};
+use serde_json::Value;
 use settings::Settings;
-use std::any::TypeId;
+use std::{any::TypeId, path::PathBuf};
+use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
+use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     pane, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop,
@@ -263,6 +268,154 @@ impl DebugPanel {
                     window.focus(&pane.focus_handle(cx));
                     cx.notify();
                 });
+            }
+            dap_store::DapStoreEvent::RunInTerminal((session_id, request)) => {
+                let seq = request.seq;
+
+                let Some(request_args) = request.arguments.clone().and_then(|args| {
+                    serde_json::from_value::<RunInTerminalRequestArguments>(args).ok()
+                }) else {
+                    dap_store.update(cx, |store, cx| {
+                        store.respond_to_run_in_terminal(*session_id, false, seq,
+                            serde_json::to_value(dap::ErrorResponse {
+                                error: Some(dap::Message {
+                                    id: seq,
+                                    format:
+                                        "Request arguments must be provided when spawnng debug terminal"
+                                            .into(),
+                                    variables: None,
+                                    send_telemetry: None,
+                                    show_user: None,
+                                    url: None,
+                                    url_label: None,
+                                }),
+                            })
+                            .ok(),
+                            cx)
+                    .detach_and_log_err(cx);
+                });
+                    return;
+                };
+
+                let mut envs: HashMap<String, String> = Default::default();
+                if let Some(Value::Object(env)) = request_args.env {
+                    for (key, value) in env {
+                        let value_str = match (key.as_str(), value) {
+                            (_, Value::String(value)) => value,
+                            _ => continue,
+                        };
+
+                        envs.insert(key, value_str);
+                    }
+                }
+
+                let terminal_task = self.workspace.update(cx, |workspace, cx| {
+                    let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
+
+                    terminal_panel.update(cx, |terminal_panel, cx| {
+                        let mut args = request_args.args.clone();
+
+                        // Handle special case for NodeJS debug adapter
+                        // If only the Node binary path is provided, we set the command to None
+                        // This prevents the NodeJS REPL from appearing, which is not the desired behavior
+                        // The expected usage is for users to provide their own Node command, e.g., `node test.js`
+                        // This allows the NodeJS debug client to attach correctly
+                        let command = if args.len() > 1 {
+                            Some(args.remove(0))
+                        } else {
+                            None
+                        };
+
+                        let terminal_task = terminal_panel.add_terminal(
+                            TerminalKind::Debug {
+                                command,
+                                args,
+                                envs,
+                                cwd: PathBuf::from(request_args.cwd),
+                                title: request_args.title,
+                            },
+                            task::RevealStrategy::Always,
+                            window,
+                            cx,
+                        );
+
+                        cx.spawn(|_, mut cx| async move {
+                            let pid_task = async move {
+                                let terminal = terminal_task.await?;
+
+                                terminal.read_with(&mut cx, |terminal, _| terminal.pty_info.pid())
+                            };
+
+                            pid_task.await
+                        })
+                    })
+                });
+
+                let session_id = *session_id;
+                let dap_store = dap_store.downgrade();
+                cx.spawn(|_, mut cx| async move {
+                    // Ensure a response is always sent, even in error cases,
+                    // to maintain proper communication with the debug adapter
+                    let (success, body) = match terminal_task {
+                        Ok(pid_task) => match pid_task.await {
+                            Ok(pid) => (
+                                true,
+                                serde_json::to_value(dap::RunInTerminalResponse {
+                                    process_id: None,
+                                    shell_process_id: pid.map(|pid| pid.as_u32() as u64),
+                                })
+                                .ok(),
+                            ),
+                            Err(error) => {
+                                dap_store
+                                    .update(&mut cx, |_, cx| {
+                                        cx.emit(dap_store::DapStoreEvent::Notification(
+                                            error.to_string(),
+                                        ));
+                                    })
+                                    .log_err();
+
+                                (
+                                    false,
+                                    serde_json::to_value(dap::ErrorResponse {
+                                        error: Some(dap::Message {
+                                            id: seq,
+                                            format: error.to_string(),
+                                            variables: None,
+                                            send_telemetry: None,
+                                            show_user: None,
+                                            url: None,
+                                            url_label: None,
+                                        }),
+                                    })
+                                    .ok(),
+                                )
+                            }
+                        },
+                        Err(error) => (
+                            false,
+                            serde_json::to_value(dap::ErrorResponse {
+                                error: Some(dap::Message {
+                                    id: seq,
+                                    format: error.to_string(),
+                                    variables: None,
+                                    send_telemetry: None,
+                                    show_user: None,
+                                    url: None,
+                                    url_label: None,
+                                }),
+                            })
+                            .ok(),
+                        ),
+                    };
+
+                    let respond_task = dap_store.update(&mut cx, |dap_store, cx| {
+                        dap_store.respond_to_run_in_terminal(session_id, success, seq, body, cx)
+                    });
+
+                    respond_task?.await
+                })
+                .detach_and_log_err(cx);
             }
             _ => {}
         }
