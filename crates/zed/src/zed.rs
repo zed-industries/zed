@@ -18,9 +18,10 @@ use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
@@ -35,7 +36,10 @@ use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationT
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
-use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
+use paths::{
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path,
+};
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
@@ -45,9 +49,9 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, update_settings_file,
-    InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
+    initial_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    update_settings_file, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
+    SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -83,7 +87,9 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
+        OpenProjectDebugTasks,
         OpenTasks,
+        OpenDebugTasks,
         ResetDatabase,
         ShowAll,
         ToggleFullScreen,
@@ -429,6 +435,17 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
+            cx.when_flag_enabled::<Debugger>(window, |_, window, cx| {
+                cx.spawn_in(window, |workspace, mut cx| async move {
+                    let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
+                    workspace.update_in(&mut cx, |workspace, window, cx| {
+                        workspace.add_panel(debug_panel, window, cx);
+                    })?;
+                    Result::<_, anyhow::Error>::Ok(())
+                })
+                .detach()
+            });
+
             let entity = cx.entity();
             let project = workspace.project().clone();
             let app_state = workspace.app_state().clone();
@@ -703,10 +720,7 @@ fn register_actions(
             },
         )
         .register_action(
-            move |_: &mut Workspace,
-                  _: &zed_actions::OpenKeymap,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
+            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
                 open_settings_file(
                     paths::keymap_file(),
                     || settings::initial_keymap_content().as_ref().into(),
@@ -715,47 +729,40 @@ fn register_actions(
                 );
             },
         )
+        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
         .register_action(
-            move |_: &mut Workspace,
-                  _: &OpenSettings,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_settings_file(
-                    paths::settings_file(),
-                    || settings::initial_user_settings_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(
-            |_: &mut Workspace,
-             _: &OpenAccountSettings,
-             _: &mut Window,
-             cx: &mut Context<Workspace>| {
+            |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
                 cx.open_url(&zed_urls::account_url(cx));
             },
         )
-        .register_action(
-            move |_: &mut Workspace,
-                  _: &OpenTasks,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_settings_file(
-                    paths::tasks_file(),
-                    || settings::initial_tasks_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
+        .register_action(move |_: &mut Workspace, _: &OpenTasks, window, cx| {
+            open_settings_file(
+                paths::tasks_file(),
+                || settings::initial_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
+        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
+            open_settings_file(
+                paths::debug_tasks_file(),
+                || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
+        .register_action(open_project_debug_tasks_file)
         .register_action(
-            move |workspace: &mut Workspace,
-                  _: &zed_actions::OpenDefaultKeymap,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
+            move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
                 open_bundled_file(
                     workspace,
                     settings::default_keymap(),
@@ -766,21 +773,16 @@ fn register_actions(
                 );
             },
         )
-        .register_action(
-            move |workspace: &mut Workspace,
-                  _: &OpenDefaultSettings,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_settings(),
-                    "Default Settings",
-                    "JSON",
-                    window,
-                    cx,
-                );
-            },
-        )
+        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        })
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
@@ -928,6 +930,8 @@ fn initialize_pane(
             toolbar.add_item(project_search_bar, window, cx);
             let lsp_log_item = cx.new(|_| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
+            let dap_log_item = cx.new(|_| debugger_tools::DapLogToolbarItemView::new());
+            toolbar.add_item(dap_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
             let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
@@ -1514,6 +1518,21 @@ fn open_project_tasks_file(
         workspace,
         local_tasks_file_relative_path(),
         initial_tasks_content(),
+        window,
+        cx,
+    )
+}
+
+fn open_project_debug_tasks_file(
+    workspace: &mut Workspace,
+    _: &OpenProjectDebugTasks,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    open_local_file(
+        workspace,
+        local_debug_file_relative_path(),
+        initial_debug_tasks_content(),
         window,
         cx,
     )
@@ -4277,6 +4296,11 @@ mod tests {
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
+            project::debugger::breakpoint_store::BreakpointStore::init(
+                &app_state.client.clone().into(),
+            );
+            project::debugger::dap_store::DapStore::init(&app_state.client.clone().into());
+            debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
             app_state

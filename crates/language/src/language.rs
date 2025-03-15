@@ -73,8 +73,8 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use language_registry::{
-    AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
-    LanguageServerBinaryStatus, QUERY_FILENAME_PREFIXES,
+    AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
@@ -304,7 +304,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
-    fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+    fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn npm_package_installed_version(
@@ -382,7 +382,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 } else {
                     delegate.update_status(
                         self.name(),
-                        LanguageServerBinaryStatus::Failed {
+                        BinaryStatus::Failed {
                             error: format!("{error:?}"),
                         },
                     );
@@ -586,7 +586,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
 
     let name = adapter.name();
     log::info!("fetching latest version of language server {:?}", name.0);
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::CheckingForUpdate);
+    delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
         .fetch_latest_server_version(delegate.as_ref())
@@ -597,16 +597,16 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .await
     {
         log::info!("language server {:?} is already installed", name.0);
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
         log::info!("downloading language server {:?}", name.0);
-        delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+        delegate.update_status(adapter.name(), BinaryStatus::Downloading);
         let binary = adapter
             .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
             .await;
 
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         binary
     }
 }

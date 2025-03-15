@@ -2204,7 +2204,7 @@ impl BufferSnapshot {
         })
     }
 
-    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
         D: TextDimension,
     {

@@ -128,6 +128,23 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
+    debugger,
+    [
+        Start,
+        Continue,
+        Disconnect,
+        Pause,
+        Restart,
+        StepInto,
+        StepOver,
+        StepOut,
+        StepBack,
+        Stop,
+        ToggleIgnoreBreakpoints
+    ]
+);
+
+actions!(
     workspace,
     [
         ActivateNextPane,
@@ -155,6 +172,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        ShutdownDebugAdapters,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -1211,6 +1229,7 @@ impl Workspace {
             // Get project paths for all of the abs_paths
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
+
             for path in paths_to_open.into_iter() {
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
@@ -3409,9 +3428,10 @@ impl Workspace {
                 serialize_workspace = false;
             }
             pane::Event::RemoveItem { .. } => {}
-            pane::Event::RemovedItem { item_id } => {
+            pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
-                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+                self.update_window_edited(window, cx);
+                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id()) {
                     if entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
                     }
@@ -4644,6 +4664,10 @@ impl Workspace {
         };
 
         if let Some(location) = location {
+            let breakpoints = self.project.update(cx, |project, cx| {
+                project.breakpoint_store().read(cx).all_breakpoints(cx)
+            });
+
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);
             let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
@@ -4656,6 +4680,7 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
+                breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
             return window.spawn(cx, |_| persistence::DB.save_workspace(serialized_workspace));
@@ -4795,6 +4820,17 @@ impl Workspace {
 
                 cx.notify();
             })?;
+
+            let _ = project
+                .update(&mut cx, |project, cx| {
+                    project
+                        .breakpoint_store()
+                        .update(cx, |breakpoint_store, cx| {
+                            breakpoint_store
+                                .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)
+                        })
+                })?
+                .await;
 
             // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
             // after loading the items, we might have different items and in order to avoid

@@ -4,7 +4,7 @@
 
 When using the Zed Assistant, Zed does not persistently store user content or use user content for training of its models.
 
-When using upstream services through Zed AI, we require similar assurances from our service providers. For example, usage of Anthropic Claude 3.5 via Zed AI in the Asssistant is governed by the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms) which includes the following:
+When using upstream services through Zed AI, we require similar assurances from our service providers. For example, usage of Anthropic Claude 3.5 via Zed AI in the Assistant is governed by the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms) which includes the following:
 
 > "Anthropic may not train models on Customer Content from paid Services."
 

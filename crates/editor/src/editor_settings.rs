@@ -117,6 +117,7 @@ pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
     pub runnables: bool,
+    pub breakpoints: bool,
     pub folds: bool,
 }
 
@@ -464,6 +465,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub runnables: Option<bool>,
+    /// Whether to show breakpoints in the gutter.
+    ///
+    /// Default: true
+    pub breakpoints: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true

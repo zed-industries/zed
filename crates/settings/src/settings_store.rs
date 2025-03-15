@@ -210,8 +210,14 @@ impl FromStr for Editorconfig {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LocalSettingsKind {
     Settings,
-    Tasks,
+    Tasks(TaskKind),
     Editorconfig,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TaskKind {
+    Debug,
+    Script,
 }
 
 impl Global for SettingsStore {}
@@ -604,7 +610,7 @@ impl SettingsStore {
                 .map(|content| content.trim())
                 .filter(|content| !content.is_empty()),
         ) {
-            (LocalSettingsKind::Tasks, _) => {
+            (LocalSettingsKind::Tasks(_), _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                 })
