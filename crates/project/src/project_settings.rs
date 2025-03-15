@@ -168,6 +168,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// How hunks are displayed visually in the editor.
+    ///
+    /// Default: staged_hollow
+    pub hunk_style: Option<GitHunkStyleSetting>,
 }
 
 impl GitSettings {
@@ -200,23 +204,16 @@ impl GitSettings {
     }
 }
 
+// If set to "staged_hollow", unstaged hunks will be filled and staged hunks will be hollow.
+// If set to "unstaged_hollow", unstaged hunks will be hollow and staged hunks will be filled.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHunkStyleSetting {
-    /// Show unstaged hunks with a transparent background
+    /// Show unstaged hunks with a filled background and staged hunks hollow.
     #[default]
-    Transparent,
-    /// Show unstaged hunks with a pattern background
-    Pattern,
-    /// Show unstaged hunks with a border background
-    Border,
-
-    /// Show staged hunks with a pattern background
-    StagedPattern,
-    /// Show staged hunks with a pattern background
-    StagedTransparent,
-    /// Show staged hunks with a pattern background
-    StagedBorder,
+    StagedHollow,
+    /// Show unstaged hunks hollow and staged hunks with a filled background.
+    UnstagedHollow,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]

@@ -850,7 +850,15 @@
       //
       // The minimum column number to show the inline blame information at
       // "min_column": 0
-    }
+    },
+    // How git hunks are displayed visually in the editor.
+    // This setting can take two values:
+    //
+    // 1. Show unstaged hunks filled and staged hunks hollow:
+    //    "hunk_style": "staged_hollow"
+    // 2. Show unstaged hunks hollow and staged hunks filled:
+    //    "hunk_style": "unstaged_hollow"
+    "hunk_style": "staged_hollow"
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
