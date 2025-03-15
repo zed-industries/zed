@@ -2,6 +2,8 @@
 //!
 //! A view for exploring Zed components.
 
+#![allow(unused, dead_code)]
+
 use std::iter::Iterator;
 use std::sync::Arc;
 
@@ -14,7 +16,7 @@ use gpui::{
 
 use collections::HashMap;
 
-use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
+use gpui::{ListState, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
@@ -88,7 +90,6 @@ enum PreviewPage {
 
 struct ComponentPreview {
     focus_handle: FocusHandle,
-    _view_scroll_handle: ScrollHandle,
     nav_scroll_handle: UniformListScrollHandle,
     component_map: HashMap<ComponentId, ComponentMetadata>,
     active_page: PreviewPage,
@@ -130,7 +131,6 @@ impl ComponentPreview {
 
         let mut component_preview = Self {
             focus_handle: cx.focus_handle(),
-            _view_scroll_handle: ScrollHandle::new(),
             nav_scroll_handle: UniformListScrollHandle::new(),
             language_registry,
             user_store,
@@ -401,10 +401,12 @@ impl ComponentPreview {
         let component = self.component_map.get(&component_id);
 
         if let Some(component) = component {
-            v_flex()
-                .w_full()
-                .flex_initial()
-                .min_h_full()
+            div()
+                .id("component-page-container")
+                .flex_1()
+                .size_full()
+                .overflow_x_hidden()
+                .overflow_y_scroll()
                 .child(self.render_preview(component, window, cx))
                 .into_any_element()
         } else {
@@ -412,6 +414,7 @@ impl ComponentPreview {
                 .size_full()
                 .items_center()
                 .justify_center()
+                .text_center()
                 .child("Component not found")
                 .into_any_element()
         }
