@@ -8,12 +8,12 @@ pub mod terminal_settings;
 use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
-    grid::{Dimensions, Scroll as AlacScroll},
+    grid::{Dimensions, Grid, Row, Scroll as AlacScroll},
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
-        cell::Cell,
+        cell::{Cell, Flags},
         search::{Match, RegexIter, RegexSearch},
         Config, RenderableCursor, TermMode,
     },
@@ -1386,26 +1386,57 @@ impl Terminal {
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
         let term = self.term.clone();
         let terminal = term.lock_unfair();
-
+        let grid = terminal.grid();
         let mut lines = Vec::new();
-        let mut current_line = terminal.bottommost_line();
-        while lines.len() < n {
-            let mut line_buffer = String::new();
-            for cell in &terminal.grid()[current_line] {
-                line_buffer.push(cell.c);
-            }
-            let line = line_buffer.trim_end();
-            if !line.is_empty() {
-                lines.push(line.to_string());
+
+        let mut current_line = grid.bottommost_line().0;
+        let topmost_line = grid.topmost_line().0;
+
+        while current_line >= topmost_line && lines.len() < n {
+            let logical_line_start = self.find_logical_line_start(grid, current_line, topmost_line);
+            let logical_line = self.construct_logical_line(grid, logical_line_start, current_line);
+
+            if let Some(line) = self.process_line(logical_line) {
+                lines.push(line);
             }
 
-            if current_line == terminal.topmost_line() {
-                break;
-            }
-            current_line = Line(current_line.0 - 1);
+            // Move to the line above the start of the current logical line
+            current_line = logical_line_start - 1;
         }
+
         lines.reverse();
         lines
+    }
+
+    fn find_logical_line_start(&self, grid: &Grid<Cell>, current: i32, topmost: i32) -> i32 {
+        let mut line_start = current;
+        while line_start > topmost {
+            let prev_line = Line(line_start - 1);
+            let last_cell = &grid[prev_line][Column(grid.columns() - 1)];
+            if !last_cell.flags.contains(Flags::WRAPLINE) {
+                break;
+            }
+            line_start -= 1;
+        }
+        line_start
+    }
+
+    fn construct_logical_line(&self, grid: &Grid<Cell>, start: i32, end: i32) -> String {
+        let mut logical_line = String::new();
+        for row in start..=end {
+            let grid_row = &grid[Line(row)];
+            logical_line.push_str(&row_to_string(grid_row));
+        }
+        logical_line
+    }
+
+    fn process_line(&self, line: String) -> Option<String> {
+        let trimmed = line.trim_end().to_string();
+        if !trimmed.is_empty() {
+            Some(trimmed)
+        } else {
+            None
+        }
     }
 
     pub fn focus_in(&self) {
@@ -1836,6 +1867,14 @@ impl Terminal {
             }
         }
     }
+}
+
+// Helper function to convert a grid row to a string
+pub fn row_to_string(row: &Row<Cell>) -> String {
+    row[..Column(row.len())]
+        .iter()
+        .map(|cell| cell.c)
+        .collect::<String>()
 }
 
 fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
