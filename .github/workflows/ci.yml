@@ -432,6 +432,7 @@ jobs:
     needs:
       - job_spec
       - style
+      - migration_checks
       - linux_tests
       - build_remote_server
       - macos_tests
