@@ -1161,11 +1161,13 @@ mod element {
             for (ix, child) in layout.children.iter_mut().enumerate() {
                 if ix < children_len - 1 {
                     let divider_bounds = Bounds {
-                        origin: child.bounds.origin.apply_along(
-                            self.axis,
-                            |origin| origin + child.bounds.size.along(self.axis)
-                        ),
-                        size: child.bounds.size.apply_along(self.axis, |_| px(DIVIDER_SIZE)),
+                        origin: child.bounds.origin.apply_along(self.axis, |origin| {
+                            origin + child.bounds.size.along(self.axis)
+                        }),
+                        size: child
+                            .bounds
+                            .size
+                            .apply_along(self.axis, |_| px(DIVIDER_SIZE)),
                     };
                     window.paint_quad(gpui::fill(
                         divider_bounds,
