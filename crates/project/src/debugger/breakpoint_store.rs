@@ -31,29 +31,28 @@ mod breakpoints_in_file {
         pub(super) buffer: Entity<Buffer>,
         // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
         pub(super) breakpoints: Vec<(text::Anchor, Breakpoint)>,
-        /// This is to prevent this struct being created without called `new`
-        _unused: (),
+        _subscription: Arc<gpui::Subscription>,
     }
 
     impl BreakpointsInFile {
         pub(super) fn new(buffer: Entity<Buffer>, cx: &mut Context<BreakpointStore>) -> Self {
-            cx.subscribe(&buffer, |_, buffer, event, cx| match event {
-                BufferEvent::Saved => {
-                    if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
-                        cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
-                            abs_path,
-                            BreakpointUpdatedReason::FileSaved,
-                        ));
+            let subscription =
+                Arc::from(cx.subscribe(&buffer, |_, buffer, event, cx| match event {
+                    BufferEvent::Saved => {
+                        if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
+                            cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
+                                abs_path,
+                                BreakpointUpdatedReason::FileSaved,
+                            ));
+                        }
                     }
-                }
-                _ => {}
-            })
-            .detach();
+                    _ => {}
+                }));
 
             BreakpointsInFile {
                 buffer,
                 breakpoints: Vec::new(),
-                _unused: (),
+                _subscription: subscription,
             }
         }
     }

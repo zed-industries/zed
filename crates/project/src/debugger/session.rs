@@ -17,8 +17,8 @@ use dap::{
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SourceBreakpoint,
-    StackFrameId, SteppingGranularity, StoppedEvent, VariableReference,
+    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
+    SteppingGranularity, StoppedEvent, VariableReference,
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
