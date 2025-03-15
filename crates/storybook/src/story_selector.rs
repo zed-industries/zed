@@ -35,7 +35,6 @@ pub enum ComponentStory {
     ToggleButton,
     ViewportUnits,
     WithRemSize,
-    Vector,
 }
 
 impl ComponentStory {
@@ -68,7 +67,6 @@ impl ComponentStory {
             Self::ToggleButton => cx.new(|_| ui::ToggleButtonStory).into(),
             Self::ViewportUnits => cx.new(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new(|_| crate::stories::WithRemSizeStory).into(),
-            Self::Vector => cx.new(|_| ui::VectorStory).into(),
         }
     }
 }

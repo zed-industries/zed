@@ -2,7 +2,7 @@ use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
 
 use crate::{prelude::*, ContextMenu, PopoverMenu};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct DropdownMenu {
     id: ElementId,
     label: SharedString,
@@ -46,6 +46,67 @@ impl RenderOnce for DropdownMenu {
             .menu(move |_window, _cx| Some(self.menu.clone()))
             .trigger(DropdownMenuTrigger::new(self.label).full_width(self.full_width))
             .attach(Corner::BottomLeft)
+    }
+}
+
+impl Component for DropdownMenu {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn name() -> &'static str {
+        "DropdownMenu"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("A dropdown menu component that displays a list of selectable options.")
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let menu = ContextMenu::build(window, cx, |this, window, cx| {
+            this.entry("Option 1", None, |_, _| {})
+                .entry("Option 2", None, |_, _| {})
+                .entry("Option 3", None, |_, _| {})
+                .separator()
+                .entry("Option 4", None, |_, _| {})
+        });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Usage",
+                        vec![
+                            single_example(
+                                "Default",
+                                DropdownMenu::new("default", "Select an option", menu.clone())
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Full Width",
+                                DropdownMenu::new(
+                                    "full-width",
+                                    "Full Width Dropdown",
+                                    menu.clone(),
+                                )
+                                .full_width(true)
+                                .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "States",
+                        vec![single_example(
+                            "Disabled",
+                            DropdownMenu::new("disabled", "Disabled Dropdown", menu.clone())
+                                .disabled(true)
+                                .into_any_element(),
+                        )],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }
 
