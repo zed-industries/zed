@@ -1523,13 +1523,10 @@ impl Terminal {
 
             // Doesn't make sense to scroll the alt screen
             if !self.last_content.mode.contains(TermMode::ALT_SCREEN) {
-                let scroll_delta = match self.drag_line_delta(e, region) {
+                let scroll_lines = match self.drag_line_delta(e, region) {
                     Some(value) => value,
                     None => return,
                 };
-
-                let scroll_lines =
-                    (scroll_delta / self.last_content.terminal_bounds.line_height) as i32;
 
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
@@ -1539,18 +1536,21 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
-        //TODO: Why do these need to be doubled? Probably the same problem that the IME has
-        let top = region.origin.y + (self.last_content.terminal_bounds.line_height * 2.);
-        let bottom = region.bottom_left().y - (self.last_content.terminal_bounds.line_height * 2.);
-        let scroll_delta = if e.position.y < top {
-            (top - e.position.y).pow(1.1)
+    fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<i32> {
+        let top = region.origin.y;
+        let bottom = region.bottom_left().y;
+
+        let scroll_lines = if e.position.y < top {
+            let scroll_delta = (top - e.position.y).pow(1.1);
+            (scroll_delta / self.last_content.terminal_bounds.line_height).ceil() as i32
         } else if e.position.y > bottom {
-            -((e.position.y - bottom).pow(1.1))
+            let scroll_delta = -((e.position.y - bottom).pow(1.1));
+            (scroll_delta / self.last_content.terminal_bounds.line_height).floor() as i32
         } else {
-            return None; //Nothing to do
+            return None;
         };
-        Some(scroll_delta)
+
+        Some(scroll_lines)
     }
 
     pub fn mouse_down(&mut self, e: &MouseDownEvent, _cx: &mut Context<Self>) {
