@@ -96,7 +96,7 @@ impl RichText {
 
         InteractiveText::new(
             id,
-            StyledText::new(self.text.clone()).with_highlights(
+            StyledText::new(self.text.clone()).with_default_highlights(
                 &window.text_style(),
                 self.highlights.iter().map(|(range, highlight)| {
                     (
@@ -175,7 +175,6 @@ impl RichText {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn render_markdown_mut(
     block: &str,
     mut mentions: &[Mention],

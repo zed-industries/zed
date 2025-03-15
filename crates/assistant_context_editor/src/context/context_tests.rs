@@ -20,7 +20,7 @@ use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Rol
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
@@ -671,7 +671,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
-    cx.update(prompt_library::init);
+    cx.update(prompt_store::init);
     let mut settings_store = cx.update(SettingsStore::test);
     cx.update(|cx| {
         settings_store

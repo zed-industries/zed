@@ -311,7 +311,7 @@ fn start_server(
             let mut output_buffer = Vec::new();
 
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
                     if let Err(_) = stdin_msg_tx.send(msg).await {
                         break;
@@ -445,7 +445,7 @@ pub fn execute_run(
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let project = cx.new(|cx| {
-            let fs = Arc::new(RealFs::new(Default::default(), None));
+            let fs = Arc::new(RealFs::new(None));
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
             let proxy_url = read_proxy_settings(cx);
@@ -487,8 +487,7 @@ pub fn execute_run(
 
         handle_panic_requests(&project, &session);
 
-        cx.background_executor()
-            .spawn(async move { cleanup_old_binaries() })
+        cx.background_spawn(async move { cleanup_old_binaries() })
             .detach();
 
         mem::forget(project);

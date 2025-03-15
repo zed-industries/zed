@@ -28,7 +28,7 @@ cpal = "0.15"
 futures.workspace = true
 gpui.workspace = true
 http_2 = { package = "http", version = "0.2.1" }
-livekit_server.workspace = true
+livekit_api.workspace = true
 log.workspace = true
 media.workspace = true
 nanoid = { workspace = true, optional = true }

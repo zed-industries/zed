@@ -119,8 +119,7 @@ impl SlashCommand for SearchSlashCommand {
             let loaded_results = SemanticDb::load_results(results, &fs, &cx).await?;
 
             let output = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let mut text = format!("Search results for {query}:\n");
                     let mut sections = Vec::new();
                     for loaded_result in &loaded_results {

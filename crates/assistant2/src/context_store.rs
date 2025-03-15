@@ -4,11 +4,12 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
-use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
 use rope::Rope;
 use text::BufferId;
+use util::maybe;
 use workspace::Workspace;
 
 use crate::context::{
@@ -208,12 +209,18 @@ impl ContextStore {
             let mut text_tasks = Vec::new();
             this.update(&mut cx, |_, cx| {
                 for (path, buffer_entity) in files.into_iter().zip(buffers) {
-                    let buffer_entity = buffer_entity?;
-                    let buffer = buffer_entity.read(cx);
-                    let (buffer_info, text_task) =
-                        collect_buffer_info_and_text(path, buffer_entity, buffer, cx.to_async());
-                    buffer_infos.push(buffer_info);
-                    text_tasks.push(text_task);
+                    // Skip all binary files and other non-UTF8 files
+                    if let Ok(buffer_entity) = buffer_entity {
+                        let buffer = buffer_entity.read(cx);
+                        let (buffer_info, text_task) = collect_buffer_info_and_text(
+                            path,
+                            buffer_entity,
+                            buffer,
+                            cx.to_async(),
+                        );
+                        buffer_infos.push(buffer_info);
+                        text_tasks.push(text_task);
+                    }
                 }
                 anyhow::Ok(())
             })??;
@@ -456,9 +463,7 @@ fn collect_buffer_info_and_text(
     };
     // Important to collect version at the same time as content so that staleness logic is correct.
     let content = buffer.as_rope().clone();
-    let text_task = cx
-        .background_executor()
-        .spawn(async move { to_fenced_codeblock(&path, content) });
+    let text_task = cx.background_spawn(async move { to_fenced_codeblock(&path, content) });
     (buffer_info, text_task)
 }
 
@@ -527,35 +532,59 @@ fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
 
 pub fn refresh_context_store_text(
     context_store: Entity<ContextStore>,
+    changed_buffers: &HashSet<Entity<Buffer>>,
     cx: &App,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = Vec<ContextId>> {
     let mut tasks = Vec::new();
+
     for context in &context_store.read(cx).context {
-        match context {
-            AssistantContext::File(file_context) => {
-                let context_store = context_store.clone();
-                if let Some(task) = refresh_file_text(context_store, file_context, cx) {
-                    tasks.push(task);
+        let id = context.id();
+
+        let task = maybe!({
+            match context {
+                AssistantContext::File(file_context) => {
+                    if changed_buffers.is_empty()
+                        || changed_buffers.contains(&file_context.context_buffer.buffer)
+                    {
+                        let context_store = context_store.clone();
+                        return refresh_file_text(context_store, file_context, cx);
+                    }
                 }
-            }
-            AssistantContext::Directory(directory_context) => {
-                let context_store = context_store.clone();
-                if let Some(task) = refresh_directory_text(context_store, directory_context, cx) {
-                    tasks.push(task);
+                AssistantContext::Directory(directory_context) => {
+                    let should_refresh = changed_buffers.is_empty()
+                        || changed_buffers.iter().any(|buffer| {
+                            let buffer = buffer.read(cx);
+
+                            buffer_path_log_err(&buffer)
+                                .map_or(false, |path| path.starts_with(&directory_context.path))
+                        });
+
+                    if should_refresh {
+                        let context_store = context_store.clone();
+                        return refresh_directory_text(context_store, directory_context, cx);
+                    }
                 }
+                AssistantContext::Thread(thread_context) => {
+                    if changed_buffers.is_empty() {
+                        let context_store = context_store.clone();
+                        return Some(refresh_thread_text(context_store, thread_context, cx));
+                    }
+                }
+                // Intentionally omit refreshing fetched URLs as it doesn't seem all that useful,
+                // and doing the caching properly could be tricky (unless it's already handled by
+                // the HttpClient?).
+                AssistantContext::FetchedUrl(_) => {}
             }
-            AssistantContext::Thread(thread_context) => {
-                let context_store = context_store.clone();
-                tasks.push(refresh_thread_text(context_store, thread_context, cx));
-            }
-            // Intentionally omit refreshing fetched URLs as it doesn't seem all that useful,
-            // and doing the caching properly could be tricky (unless it's already handled by
-            // the HttpClient?).
-            AssistantContext::FetchedUrl(_) => {}
+
+            None
+        });
+
+        if let Some(task) = task {
+            tasks.push(task.map(move |_| id));
         }
     }
 
-    future::join_all(tasks).map(|_| ())
+    future::join_all(tasks)
 }
 
 fn refresh_file_text(

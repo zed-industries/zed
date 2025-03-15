@@ -87,8 +87,17 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let git_store =
-            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let git_store = cx.new(|cx| {
+            GitStore::local(
+                &worktree_store,
+                buffer_store.clone(),
+                environment.clone(),
+                fs.clone(),
+                session.clone().into(),
+                cx,
+            )
+        });
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
@@ -98,7 +107,6 @@ impl HeadlessProject {
                 cx,
             )
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
@@ -240,8 +248,7 @@ impl HeadlessProject {
                 operation,
                 is_local: true,
             } => cx
-                .background_executor()
-                .spawn(self.session.request(proto::UpdateBuffer {
+                .background_spawn(self.session.request(proto::UpdateBuffer {
                     project_id: SSH_PROJECT_ID,
                     buffer_id: buffer.read(cx).remote_id().to_proto(),
                     operations: vec![serialize_operation(operation)],
@@ -302,15 +309,14 @@ impl HeadlessProject {
                     message: prompt.message.clone(),
                 });
                 let prompt = prompt.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let response = request.await?;
-                        if let Some(action_response) = response.action_response {
-                            prompt.respond(action_response as usize).await;
-                        }
-                        anyhow::Ok(())
-                    })
-                    .detach();
+                cx.background_spawn(async move {
+                    let response = request.await?;
+                    if let Some(action_response) = response.action_response {
+                        prompt.respond(action_response as usize).await;
+                    }
+                    anyhow::Ok(())
+                })
+                .detach();
             }
             _ => {}
         }
@@ -556,15 +562,29 @@ impl HeadlessProject {
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
         let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let check_info = envelope
+            .payload
+            .config
+            .as_ref()
+            .is_some_and(|config| config.is_dir);
 
         let mut entries = Vec::new();
+        let mut entry_info = Vec::new();
         let mut response = fs.read_dir(&expanded).await?;
         while let Some(path) = response.next().await {
-            if let Some(file_name) = path?.file_name() {
+            let path = path?;
+            if let Some(file_name) = path.file_name() {
                 entries.push(file_name.to_string_lossy().to_string());
+                if check_info {
+                    let is_dir = fs.is_dir(&path).await;
+                    entry_info.push(proto::EntryInfo { is_dir });
+                }
             }
         }
-        Ok(proto::ListRemoteDirectoryResponse { entries })
+        Ok(proto::ListRemoteDirectoryResponse {
+            entries,
+            entry_info,
+        })
     }
 
     pub async fn handle_get_path_metadata(

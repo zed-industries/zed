@@ -215,6 +215,8 @@ impl EditorLspTestContext {
                 ("[" @open "]" @close)
                 ("{" @open "}" @close)
                 ("<" @open ">" @close)
+                ("'" @open "'" @close)
+                ("`" @open "`" @close)
                 ("\"" @open "\"" @close)"#})),
             indents: Some(Cow::from(indoc! {r#"
                 [
@@ -252,7 +254,7 @@ impl EditorLspTestContext {
                 word_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_html::language()),
+            Some(tree_sitter_html::LANGUAGE.into()),
         )
         .with_queries(LanguageQueries {
             brackets: Some(Cow::from(indoc! {r#"

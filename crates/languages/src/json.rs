@@ -15,6 +15,7 @@ use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
     fs::{self},
     io::BufReader,
+    lock::RwLock,
 };
 use std::{
     any::Any,
@@ -22,7 +23,7 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
@@ -60,7 +61,7 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 pub struct JsonLspAdapter {
     node: NodeRuntime,
     languages: Arc<LanguageRegistry>,
-    workspace_config: OnceLock<Value>,
+    workspace_config: RwLock<Option<Value>>,
 }
 
 impl JsonLspAdapter {
@@ -140,6 +141,20 @@ impl JsonLspAdapter {
                 ]
             }
         })
+    }
+
+    async fn get_or_init_workspace_config(&self, cx: &mut AsyncApp) -> Result<Value> {
+        {
+            let reader = self.workspace_config.read().await;
+            if let Some(config) = reader.as_ref() {
+                return Ok(config.clone());
+            }
+        }
+        let mut writer = self.workspace_config.write().await;
+        let config =
+            cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
+        writer.replace(config.clone());
+        return Ok(config);
     }
 }
 
@@ -251,11 +266,7 @@ impl LspAdapter for JsonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut config = cx.update(|cx| {
-            self.workspace_config
-                .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
-                .clone()
-        })?;
+        let mut config = self.get_or_init_workspace_config(cx).await?;
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
@@ -276,6 +287,14 @@ impl LspAdapter for JsonLspAdapter {
         ]
         .into_iter()
         .collect()
+    }
+
+    fn is_primary_zed_json_schema_adapter(&self) -> bool {
+        true
+    }
+
+    async fn clear_zed_json_schema_cache(&self) {
+        self.workspace_config.write().await.take();
     }
 }
 
@@ -321,12 +340,17 @@ fn schema_file_match(path: &Path) -> String {
         .replace('\\', "/")
 }
 
-pub(super) struct NodeVersionAdapter;
+pub struct NodeVersionAdapter;
+
+impl NodeVersionAdapter {
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static("package-version-server");
+}
 
 #[async_trait(?Send)]
 impl LspAdapter for NodeVersionAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("package-version-server".into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -351,7 +375,7 @@ impl LspAdapter for NodeVersionAdapter {
         } else {
             ".tar.gz"
         };
-        let asset_name = format!("package-version-server-{}-{os}{suffix}", consts::ARCH);
+        let asset_name = format!("{}-{}-{os}{suffix}", Self::SERVER_NAME, consts::ARCH);
         let asset = release
             .assets
             .iter()
@@ -363,6 +387,20 @@ impl LspAdapter for NodeVersionAdapter {
         }))
     }
 
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            env: None,
+            arguments: Default::default(),
+        })
+    }
+
     async fn fetch_server_binary(
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
@@ -371,12 +409,13 @@ impl LspAdapter for NodeVersionAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!(
-            "package-version-server-{}{}",
+            "{}-{}{}",
+            Self::SERVER_NAME,
             version.name,
             std::env::consts::EXE_SUFFIX
         ));
         let destination_container_path =
-            container_dir.join(format!("package-version-server-{}-tmp", version.name));
+            container_dir.join(format!("{}-{}-tmp", Self::SERVER_NAME, version.name));
         if fs::metadata(&destination_path).await.is_err() {
             let mut response = delegate
                 .http_client()
@@ -397,7 +436,8 @@ impl LspAdapter for NodeVersionAdapter {
 
             fs::copy(
                 destination_container_path.join(format!(
-                    "package-version-server{}",
+                    "{}{}",
+                    Self::SERVER_NAME,
                     std::env::consts::EXE_SUFFIX
                 )),
                 &destination_path,

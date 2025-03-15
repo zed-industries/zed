@@ -1,15 +1,15 @@
 [
   {
     "bindings": {
-      "cmd-shift-[": "pane::ActivatePrevItem",
-      "cmd-shift-]": "pane::ActivateNextItem"
+      "cmd-{": "pane::ActivatePreviousItem",
+      "cmd-}": "pane::ActivateNextItem"
     }
   },
   {
     "context": "Editor",
     "bindings": {
-      "ctrl->": "zed::IncreaseBufferFontSize",
-      "ctrl-<": "zed::DecreaseBufferFontSize",
+      "ctrl->": ["zed::IncreaseBufferFontSize", { "persist": true }],
+      "ctrl-<": ["zed::DecreaseBufferFontSize", { "persist": true }],
       "ctrl-shift-j": "editor::JoinLines",
       "cmd-d": "editor::DuplicateSelection",
       "cmd-backspace": "editor::DeleteLine",
@@ -39,9 +39,9 @@
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
-      "shift-f2": "editor::GoToPrevDiagnostic",
+      "shift-f2": "editor::GoToPreviousDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
-      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "ctrl-alt-shift-up": "editor::GoToPreviousHunk",
       "cmd-home": "editor::MoveToBeginning",
       "cmd-end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
@@ -61,7 +61,7 @@
   {
     "context": "BufferSearchBar > Editor",
     "bindings": {
-      "shift-enter": "search::SelectPrevMatch"
+      "shift-enter": "search::SelectPreviousMatch"
     }
   },
   {
