@@ -2151,17 +2151,17 @@ impl EditorElement {
                 };
 
                 let editor = self.editor.clone();
-                let max_row = self
+                let max_line_number = self
                     .editor
                     .read(cx)
                     .buffer()
                     .read(cx)
                     .snapshot(cx)
                     .widest_line_number();
-                let is_wide = max_row > 999
+                let is_wide = max_line_number > 999
                     && row_info
                         .buffer_row
-                        .is_some_and(|row| row.ilog10() == max_row.ilog10());
+                        .is_some_and(|row| (row + 1).ilog10() == max_line_number.ilog10());
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
