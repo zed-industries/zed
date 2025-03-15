@@ -537,7 +537,7 @@ impl VariableList {
 
             visual_entries.push(format!(
                 "{}{} {}{}",
-                INDENT.repeat(state.depth),
+                INDENT.repeat(state.depth - 1),
                 if state.is_expanded { "v" } else { ">" },
                 entry.dap_kind.name(),
                 if self.selection.as_ref() == Some(&entry.path) {

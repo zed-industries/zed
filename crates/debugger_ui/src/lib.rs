@@ -6,7 +6,7 @@ use session::DebugSession;
 use settings::Settings;
 use workspace::{ShutdownDebugAdapters, Start, Workspace};
 
-pub mod attach_modal;
+// pub mod attach_modal;
 pub mod debugger_panel;
 pub mod session;
 

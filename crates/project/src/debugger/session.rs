@@ -146,6 +146,7 @@ enum Mode {
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
     config: DebugAdapterConfig,
+    adapter: Arc<dyn DebugAdapter>,
     breakpoint_store: Entity<BreakpointStore>,
 }
 
@@ -175,16 +176,39 @@ impl LocalMode {
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
-            let (session, adapter, initialized_rx) = Self::internal_new(
-                session_id,
-                parent_session,
-                breakpoint_store,
+            let (adapter, binary) = Self::get_adapter_binary(&config, &delegate, &mut cx).await?;
+
+            let message_handler = Box::new(move |message| {
+                messages_tx.unbounded_send(message).ok();
+            });
+
+            let client = Arc::new(
+                if let Some(client) = parent_session
+                    .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
+                    .flatten()
+                {
+                    client
+                        .reconnect(session_id, binary, message_handler, cx.clone())
+                        .await?
+                } else {
+                    DebugAdapterClient::start(
+                        session_id,
+                        adapter.name(),
+                        binary,
+                        message_handler,
+                        cx.clone(),
+                    )
+                    .await?
+                },
+            );
+
+            let adapter_id = adapter.name().to_string().to_owned();
+            let session = Self {
+                client,
                 config,
-                delegate,
-                messages_tx,
-                &mut cx,
-            )
-            .await?;
+                adapter,
+                breakpoint_store,
+            };
 
             #[cfg(any(test, feature = "test-support"))]
             {
@@ -225,66 +249,12 @@ impl LocalMode {
                 session.client.fake_event(Events::Initialized(None)).await;
             }
 
-            Self::initialize(session, adapter, initialized_rx, &mut cx).await
+            let capabilities = session
+                .request(Initialize { adapter_id }, cx.background_executor().clone())
+                .await?;
+
+            Ok((session, capabilities))
         })
-    }
-
-    async fn internal_new(
-        session_id: SessionId,
-        parent_session: Option<Entity<Session>>,
-        breakpoint_store: Entity<BreakpointStore>,
-        config: DebugAdapterConfig,
-        delegate: DapAdapterDelegate,
-        messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
-        cx: &mut AsyncApp,
-    ) -> Result<(Self, Arc<dyn DebugAdapter>, oneshot::Receiver<()>)> {
-        let (adapter, binary) = Self::get_adapter_binary(&config, delegate, cx).await?;
-
-        let (initialized_tx, initialized_rx) = oneshot::channel();
-        let mut initialized_tx = Some(initialized_tx);
-        let message_handler = Box::new(move |message| {
-            let Message::Event(event) = &message else {
-                messages_tx.unbounded_send(message).ok();
-                return;
-            };
-            if let Events::Initialized(_) = **event {
-                if let Some(tx) = initialized_tx.take() {
-                    tx.send(()).ok();
-                }
-            } else {
-                messages_tx.unbounded_send(message).ok();
-            }
-        });
-
-        let client = Arc::new(
-            if let Some(client) = parent_session
-                .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-                .flatten()
-            {
-                client
-                    .reconnect(session_id, binary, message_handler, cx.clone())
-                    .await?
-            } else {
-                DebugAdapterClient::start(
-                    session_id,
-                    adapter.name(),
-                    binary,
-                    message_handler,
-                    cx.clone(),
-                )
-                .await?
-            },
-        );
-
-        Ok((
-            Self {
-                client,
-                config,
-                breakpoint_store: breakpoint_store.clone(),
-            },
-            adapter.clone(),
-            initialized_rx,
-        ))
     }
 
     fn send_breakpoints_from_path(
@@ -354,11 +324,11 @@ impl LocalMode {
     }
 
     async fn get_adapter_binary(
-        disposition: &DebugAdapterConfig,
-        delegate: DapAdapterDelegate,
+        config: &DebugAdapterConfig,
+        delegate: &DapAdapterDelegate,
         cx: &mut AsyncApp,
     ) -> Result<(Arc<dyn DebugAdapter>, DebugAdapterBinary)> {
-        let adapter = build_adapter(&disposition.kind).await?;
+        let adapter = build_adapter(&config.kind).await?;
 
         let binary = cx.update(|cx| {
             ProjectSettings::get_global(cx)
@@ -367,10 +337,7 @@ impl LocalMode {
                 .and_then(|s| s.binary.as_ref().map(PathBuf::from))
         })?;
 
-        let binary = match adapter
-            .get_binary(&delegate, &disposition, binary, cx)
-            .await
-        {
+        let binary = match adapter.get_binary(delegate, &config, binary, cx).await {
             Err(error) => {
                 delegate.update_status(
                     adapter.name(),
@@ -396,61 +363,52 @@ impl LocalMode {
         Ok((adapter, binary))
     }
 
-    async fn initialize(
-        this: Self,
-        adapter: Arc<dyn DebugAdapter>,
+    pub fn initialize_sequence(
+        &self,
+        capabilities: &Capabilities,
         initialized_rx: oneshot::Receiver<()>,
-        cx: &mut AsyncApp,
-    ) -> Result<(Self, Capabilities)> {
-        let capabilities = this
-            .request(
-                Initialize {
-                    adapter_id: adapter.name().to_string().to_owned(),
-                },
-                cx.background_executor().clone(),
-            )
-            .await?;
-
-        let mut raw = adapter.request_args(&this.config);
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let mut raw = self.adapter.request_args(&self.config);
         merge_json_value_into(
-            this.config.initialize_args.clone().unwrap_or(json!({})),
+            self.config.initialize_args.clone().unwrap_or(json!({})),
             &mut raw,
         );
 
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
-        let launch = match &this.config.request {
+        let launch = match &self.config.request {
             dap::DebugRequestType::Launch => {
-                this.request(Launch { raw }, cx.background_executor().clone())
+                self.request(Launch { raw }, cx.background_executor().clone())
             }
-            dap::DebugRequestType::Attach(_) => this.request(
+            dap::DebugRequestType::Attach(_) => self.request(
                 super::dap_command::Attach { raw },
                 cx.background_executor().clone(),
             ),
         };
-        let that = this.clone();
 
-        let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
-        let configuration_sequence = async move {
-            let _ = initialized_rx.await?;
+        let breakpoints_task = self.send_all_breakpoints(false, cx);
 
-            cx.update(|cx| that.clone().send_all_breakpoints(false, cx))?
-                .await;
-
-            if configuration_done_supported {
-                that.request(ConfigurationDone, cx.background_executor().clone())
-                    .await?;
-            }
-
-            anyhow::Ok(())
+        let configuration_done_supported = ConfigurationDone::is_supported(capabilities);
+        let configuration_sequence = if configuration_done_supported {
+            self.request(ConfigurationDone, cx.background_executor().clone())
+        } else {
+            Task::ready(Ok(()))
         };
 
-        let (config_result, launch_result) =
-            futures::future::join(configuration_sequence, launch).await;
+        cx.background_spawn(async move {
+            initialized_rx.await?;
 
-        config_result?;
-        launch_result?;
+            breakpoints_task.await; // todo(debugger) figure out if we want to handle an error here
+                                    // todo(debugger) We might be sending breakpoints before configuration is done because tasks start running immediately
 
-        Ok((this, capabilities))
+            let (config_result, launch_result) =
+                futures::future::join(configuration_sequence, launch).await;
+
+            config_result?;
+            launch_result?;
+
+            Ok(())
+        })
     }
 
     fn request<R: LocalDapCommand>(
@@ -685,6 +643,7 @@ impl Session {
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
         start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
+        initialized_tx: oneshot::Sender<()>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
@@ -704,13 +663,20 @@ impl Session {
             cx.new(|cx| {
                 let _background_tasks =
                     vec![cx.spawn(move |this: WeakEntity<Self>, mut cx| async move {
+                        let mut initialized_tx = Some(initialized_tx);
                         while let Some(message) = message_rx.next().await {
                             if let Message::Event(event) = message {
-                                let Ok(_) = this.update(&mut cx, |session, cx| {
-                                    session.handle_dap_event(event, cx);
-                                }) else {
-                                    break;
-                                };
+                                if let Events::Initialized(_) = *event {
+                                    if let Some(tx) = initialized_tx.take() {
+                                        tx.send(()).ok();
+                                    }
+                                } else {
+                                    let Ok(_) = this.update(&mut cx, |session, cx| {
+                                        session.handle_dap_event(event, cx);
+                                    }) else {
+                                        break;
+                                    };
+                                }
                             } else {
                                 let Ok(_) = start_debugging_requests_tx
                                     .unbounded_send((session_id, message))
@@ -829,6 +795,19 @@ impl Session {
         match &self.mode {
             Mode::Local(local_mode) => Some(local_mode),
             Mode::Remote(_) => None,
+        }
+    }
+
+    pub(super) fn initialize_sequence(
+        &mut self,
+        initialize_rx: oneshot::Receiver<()>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        match &self.mode {
+            Mode::Local(local_mode) => {
+                local_mode.initialize_sequence(&self.capabilities, initialize_rx, cx)
+            }
+            Mode::Remote(_) => Task::ready(Err(anyhow!("cannot initialize remote session"))),
         }
     }
 
@@ -1365,7 +1344,7 @@ impl Session {
 
     pub fn adapter_client(&self) -> Option<Arc<DebugAdapterClient>> {
         match self.mode {
-            Mode::Local(ref adapter_client) => Some(adapter_client.client.clone()),
+            Mode::Local(ref local) => Some(local.client.clone()),
             Mode::Remote(_) => None,
         }
     }

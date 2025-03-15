@@ -25,7 +25,7 @@ use dap::{
     Source, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
 };
 use fs::Fs;
-use futures::future::Shared;
+use futures::{channel::oneshot, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
@@ -367,6 +367,8 @@ impl DapStore {
         );
         let session_id = local_store.next_session_id();
 
+        let (initialized_tx, initialized_rx) = oneshot::channel();
+
         let start_client_task = Session::local(
             self.breakpoint_store.clone(),
             session_id,
@@ -374,6 +376,7 @@ impl DapStore {
             delegate,
             config,
             local_store.start_debugging_tx.clone(),
+            initialized_tx,
             cx,
         );
 
@@ -389,6 +392,12 @@ impl DapStore {
                     return Err(error);
                 }
             };
+
+            session
+                .update(&mut cx, |session, cx| {
+                    session.initialize_sequence(initialized_rx, cx)
+                })?
+                .await?;
 
             this.update(&mut cx, |store, cx| {
                 store.sessions.insert(session_id, session.clone());
