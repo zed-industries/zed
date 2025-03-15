@@ -1080,12 +1080,12 @@ impl BufferDiff {
         let complete_on_drop = util::defer(|| {
             tx.send(()).ok();
         });
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             let snapshot = snapshot.await;
             let Some(this) = this.upgrade() else {
                 return;
             };
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.set_state(snapshot, &buffer);
             })
             .log_err();
