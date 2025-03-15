@@ -752,7 +752,7 @@ impl VariableList {
                 )))
                 .disabled(self.disabled)
                 .selectable(false)
-                .indent_level(state.depth + 1 as usize)
+                .indent_level(state.depth + 1_usize)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {

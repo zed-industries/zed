@@ -4,11 +4,8 @@ use super::{
 };
 use anyhow::Result;
 use collections::HashMap;
-use dap::{OutputEvent, OutputEventGroup};
-use editor::{
-    display_map::{Crease, CreaseId},
-    Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,
-};
+use dap::OutputEvent;
+use editor::{CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::StringMatchCandidate;
 use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel};
@@ -20,18 +17,9 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
 use theme::ThemeSettings;
-use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex};
-
-pub struct OutputGroup {
-    pub start: Anchor,
-    pub collapsed: bool,
-    pub end: Option<Anchor>,
-    pub crease_ids: Vec<CreaseId>,
-    pub placeholder: SharedString,
-}
+use ui::prelude::*;
 
 pub struct Console {
-    groups: Vec<OutputGroup>,
     console: Entity<Editor>,
     query_bar: Entity<Editor>,
     session: Entity<Session>,
@@ -94,7 +82,6 @@ impl Console {
             stack_frame_list,
             update_output_task: Task::ready(()),
             last_token: OutputToken(0),
-            groups: Vec::default(),
         }
     }
 

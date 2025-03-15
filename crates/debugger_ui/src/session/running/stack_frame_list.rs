@@ -34,6 +34,7 @@ pub struct StackFrameList {
     current_stack_frame_id: Option<StackFrameId>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum StackFrameEntry {
     Normal(dap::StackFrame),
@@ -95,11 +96,10 @@ impl StackFrameList {
     pub fn flatten_entries(&self) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
-            .map(|frame| match frame {
+            .flat_map(|frame| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
                 StackFrameEntry::Collapsed(frames) => frames.clone(),
             })
-            .flatten()
             .collect::<Vec<_>>()
     }
 

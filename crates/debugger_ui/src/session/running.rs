@@ -540,7 +540,7 @@ impl RunningState {
                     .when(has_indicator, |this| this.child(Indicator::dot())),
             )
             .on_click(cx.listener(move |this, _, _window, cx| {
-                this.active_thread_item = thread_item.clone();
+                this.active_thread_item = thread_item;
 
                 if matches!(this.active_thread_item, ThreadItem::Console) {
                     this.show_console_indicator = false;

@@ -177,8 +177,7 @@ impl DebugSession {
                 cx.new(|cx| RunningState::new(session.clone(), self.workspace.clone(), window, cx));
             self.mode = DebugSessionState::Running(mode);
         } else if let StartingEvent::Failed = event {
-            let mode = cx.new(|cx| FailedState::new(cx));
-            self.mode = DebugSessionState::Failed(mode);
+            self.mode = DebugSessionState::Failed(cx.new(FailedState::new));
         };
         cx.notify();
     }
