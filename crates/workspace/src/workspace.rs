@@ -816,6 +816,7 @@ pub struct Workspace {
     panes: Vec<Entity<Pane>>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
     active_pane: Entity<Pane>,
+    last_active_pane: Option<WeakEntity<Pane>>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
@@ -1112,6 +1113,7 @@ impl Workspace {
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
+            last_active_pane: Some(center_pane.downgrade()),
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
             status_bar,
@@ -1674,6 +1676,7 @@ impl Workspace {
 
     pub fn prompt_for_new_path(
         &mut self,
+        relative_project_path: Option<ProjectPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
@@ -1688,8 +1691,17 @@ impl Workspace {
             let start_abs_path = self
                 .project
                 .update(cx, |project, cx| {
-                    let worktree = project.visible_worktrees(cx).next()?;
-                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    let relative_path = relative_project_path.and_then(|relative_path| {
+                        project
+                            .absolute_path(&relative_path, cx)
+                            .and_then(|p| p.parent().map(PathBuf::from))
+                    });
+                    if relative_path.is_none() {
+                        let worktree = project.visible_worktrees(cx).next()?;
+                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    } else {
+                        relative_path
+                    }
                 })
                 .unwrap_or_else(|| Path::new("").into());
 
@@ -2057,7 +2069,7 @@ impl Workspace {
                 let (singleton, project_entry_ids) =
                     cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
-                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, &mut cx)
+                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, None, &mut cx)
                         .await?
                     {
                         return Ok(false);
@@ -2344,6 +2356,24 @@ impl Workspace {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
+    fn active_nearest_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let p = self
+            .active_pane()
+            .read(cx)
+            .active_nearest_item()
+            .and_then(|item| item.project_path(cx));
+        if p.is_some() {
+            return p;
+        }
+        self.last_active_pane.clone().and_then(|p| {
+            p.upgrade().and_then(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|item| item.project_path(cx))
+            })
+        })
+    }
+
     pub fn save_active_item(
         &mut self,
         save_intent: SaveIntent,
@@ -2354,12 +2384,20 @@ impl Workspace {
         let pane = self.active_pane();
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
+        let relative_project_path = self.active_nearest_project_path(cx);
 
         window.spawn(cx, |mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
-                    .await
-                    .map(|_| ())
+                Pane::save_item(
+                    project,
+                    &pane,
+                    item.as_ref(),
+                    save_intent,
+                    relative_project_path,
+                    &mut cx,
+                )
+                .await
+                .map(|_| ())
             } else {
                 Ok(())
             }
@@ -3338,6 +3376,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.last_active_pane = Some(self.active_pane.downgrade());
         self.active_pane = pane.clone();
         self.active_item_path_changed(window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
@@ -4496,6 +4535,9 @@ impl Workspace {
                     .unwrap()
                     .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
             }
+        }
+        if self.last_active_pane == Some(pane.downgrade()) {
+            self.last_active_pane = None;
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
