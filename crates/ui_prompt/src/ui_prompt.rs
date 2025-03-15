@@ -4,20 +4,33 @@ use gpui::{
     Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window,
 };
 use markdown::{Markdown, MarkdownStyle};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use theme::ThemeSettings;
 use ui::{
     h_flex, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
-    FluentBuilder, LabelSize, TintColor,
+    FluentBuilder, LabelSize, StyledExt, TintColor,
 };
-use workspace::ui::StyledExt;
+use workspace::WorkspaceSettings;
 
 pub fn init(cx: &mut App) {
-    cx.set_prompt_builder(fallback_prompt_renderer)
+    process_settings(cx);
+
+    cx.observe_global::<SettingsStore>(process_settings)
+        .detach();
 }
+
+fn process_settings(cx: &mut App) {
+    let settings = WorkspaceSettings::get_global(cx);
+    if settings.use_system_prompts && cfg!(not(any(target_os = "linux", target_os = "freebsd"))) {
+        cx.reset_prompt_builder();
+    } else {
+        cx.set_prompt_builder(zed_prompt_renderer);
+    }
+}
+
 /// Use this function in conjunction with [App::set_prompt_builder] to force
-/// GPUI to always use the fallback prompt renderer.
-pub fn fallback_prompt_renderer(
+/// GPUI to use the internal prompt system.
+fn zed_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,
@@ -27,7 +40,7 @@ pub fn fallback_prompt_renderer(
     cx: &mut App,
 ) -> RenderablePromptHandle {
     let renderer = cx.new({
-        |cx| FallbackPromptRenderer {
+        |cx| ZedPromptRenderer {
             _level: level,
             message: message.to_string(),
             actions: actions.iter().map(ToString::to_string).collect(),
@@ -57,8 +70,7 @@ pub fn fallback_prompt_renderer(
     handle.with_view(renderer, window, cx)
 }
 
-/// The default GPUI fallback for rendering prompts, when the platform doesn't support it.
-pub struct FallbackPromptRenderer {
+pub struct ZedPromptRenderer {
     _level: PromptLevel,
     message: String,
     actions: Vec<String>,
@@ -67,7 +79,7 @@ pub struct FallbackPromptRenderer {
     detail: Option<Entity<Markdown>>,
 }
 
-impl FallbackPromptRenderer {
+impl ZedPromptRenderer {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(PromptResponse(self.active_action_id));
     }
@@ -113,7 +125,7 @@ impl FallbackPromptRenderer {
     }
 }
 
-impl Render for FallbackPromptRenderer {
+impl Render for ZedPromptRenderer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_family = settings.ui_font.family.clone();
@@ -181,9 +193,9 @@ impl Render for FallbackPromptRenderer {
     }
 }
 
-impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
+impl EventEmitter<PromptResponse> for ZedPromptRenderer {}
 
-impl Focusable for FallbackPromptRenderer {
+impl Focusable for ZedPromptRenderer {
     fn focus_handle(&self, _: &crate::App) -> FocusHandle {
         self.focus.clone()
     }

@@ -73,7 +73,6 @@ language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
-markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
@@ -123,6 +122,7 @@ theme_selector.workspace = true
 time.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
+ui_prompt.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
