@@ -114,7 +114,7 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     blinking_paused: bool,
     blink_epoch: usize,
-    can_navigate_to_selected_word: bool,
+    hover_target_tooltip: Option<String>,
     workspace_id: Option<WorkspaceId>,
     show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
@@ -196,7 +196,7 @@ impl TerminalView {
             blinking_terminal_enabled: false,
             blinking_paused: false,
             blink_epoch: 0,
-            can_navigate_to_selected_word: false,
+            hover_target_tooltip: None,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -869,19 +869,25 @@ fn subscribe_for_terminal_events(
             }
 
             Event::NewNavigationTarget(maybe_navigation_target) => {
-                this.can_navigate_to_selected_word = match maybe_navigation_target {
-                    Some(MaybeNavigationTarget::Url(_)) => true,
-                    Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
-                        let valid_files_to_open_task = possible_open_target(
-                            &workspace,
-                            &path_like_target.terminal_dir,
-                            &path_like_target.maybe_path,
-                            cx,
-                        );
-                        smol::block_on(valid_files_to_open_task).is_some()
-                    }
-                    None => false,
-                };
+                this.hover_target_tooltip =
+                    maybe_navigation_target
+                        .as_ref()
+                        .and_then(|navigation_target| match navigation_target {
+                            MaybeNavigationTarget::Url(url) => Some(url.clone()),
+                            MaybeNavigationTarget::PathLike(path_like_target) => {
+                                let valid_files_to_open_task = possible_open_target(
+                                    &workspace,
+                                    &path_like_target.terminal_dir,
+                                    &path_like_target.maybe_path,
+                                    cx,
+                                );
+                                Some(match smol::block_on(valid_files_to_open_task)? {
+                                    OpenTarget::File(path, _) | OpenTarget::Worktree(path, _) => {
+                                        path.to_string(|path| path.to_string_lossy().to_string())
+                                    }
+                                })
+                            }
+                        });
                 cx.notify()
             }
 
@@ -889,7 +895,7 @@ fn subscribe_for_terminal_events(
                 MaybeNavigationTarget::Url(url) => cx.open_url(url),
 
                 MaybeNavigationTarget::PathLike(path_like_target) => {
-                    if !this.can_navigate_to_selected_word {
+                    if this.hover_target_tooltip.is_none() {
                         return;
                     }
                     let task_workspace = workspace.clone();
@@ -905,7 +911,8 @@ fn subscribe_for_terminal_events(
                                 )
                             })?
                             .await;
-                        if let Some((path_to_open, open_target)) = open_target {
+                        if let Some(open_target) = open_target {
+                            let path_to_open = open_target.path();
                             let opened_items = task_workspace
                                 .update_in(&mut cx, |workspace, window, cx| {
                                     workspace.open_paths(
@@ -980,22 +987,29 @@ fn subscribe_for_terminal_events(
 
 #[derive(Debug, Clone)]
 enum OpenTarget {
-    Worktree(Entry),
-    File(Metadata),
+    Worktree(PathWithPosition, Entry),
+    File(PathWithPosition, Metadata),
 }
 
 impl OpenTarget {
     fn is_file(&self) -> bool {
         match self {
-            OpenTarget::Worktree(entry) => entry.is_file(),
-            OpenTarget::File(metadata) => !metadata.is_dir,
+            OpenTarget::Worktree(_, entry) => entry.is_file(),
+            OpenTarget::File(_, metadata) => !metadata.is_dir,
         }
     }
 
     fn is_dir(&self) -> bool {
         match self {
-            OpenTarget::Worktree(entry) => entry.is_dir(),
-            OpenTarget::File(metadata) => metadata.is_dir,
+            OpenTarget::Worktree(_, entry) => entry.is_dir(),
+            OpenTarget::File(_, metadata) => metadata.is_dir,
+        }
+    }
+
+    fn path(&self) -> &PathWithPosition {
+        match self {
+            OpenTarget::Worktree(path, _) => path,
+            OpenTarget::File(path, _) => path,
         }
     }
 }
@@ -1005,7 +1019,7 @@ fn possible_open_target(
     cwd: &Option<PathBuf>,
     maybe_path: &str,
     cx: &mut Context<TerminalView>,
-) -> Task<Option<(PathWithPosition, OpenTarget)>> {
+) -> Task<Option<OpenTarget>> {
     let Some(workspace) = workspace.upgrade() else {
         return Task::ready(None);
     };
@@ -1014,7 +1028,22 @@ fn possible_open_target(
     let mut potential_paths = Vec::new();
     let original_path = PathWithPosition::from_path(PathBuf::from(maybe_path));
     let path_with_position = PathWithPosition::parse_str(maybe_path);
-    for prefix_str in GIT_DIFF_PATH_PREFIXES {
+    let worktree_candidates = workspace
+        .read(cx)
+        .worktrees(cx)
+        .sorted_by_key(|worktree| {
+            let worktree_root = worktree.read(cx).abs_path();
+            match cwd
+                .as_ref()
+                .and_then(|cwd| worktree_root.strip_prefix(cwd).ok())
+            {
+                Some(cwd_child) => cwd_child.components().count(),
+                None => usize::MAX,
+            }
+        })
+        .collect::<Vec<_>>();
+    // Since we do not check paths via FS and joining, we need to strip off potential `./`, `a/`, `b/` prefixes out of it.
+    for prefix_str in GIT_DIFF_PATH_PREFIXES.iter().chain(std::iter::once(&".")) {
         if let Some(stripped) = original_path.path.strip_prefix(prefix_str).ok() {
             potential_paths.push(PathWithPosition {
                 path: stripped.to_owned(),
@@ -1033,29 +1062,38 @@ fn possible_open_target(
     potential_paths.insert(0, original_path);
     potential_paths.insert(1, path_with_position);
 
-    for worktree in workspace.read(cx).worktrees(cx).sorted_by_key(|worktree| {
+    for worktree in &worktree_candidates {
         let worktree_root = worktree.read(cx).abs_path();
-        match cwd
-            .as_ref()
-            .and_then(|cwd| worktree_root.strip_prefix(cwd).ok())
-        {
-            Some(cwd_child) => cwd_child.components().count(),
-            None => usize::MAX,
+        let mut paths_to_check = Vec::with_capacity(potential_paths.len());
+
+        for path_with_position in &potential_paths {
+            if worktree_root.ends_with(&path_with_position.path) {
+                let root_path_with_posiition = PathWithPosition {
+                    path: worktree_root.to_path_buf(),
+                    row: path_with_position.row,
+                    column: path_with_position.column,
+                };
+                match worktree.read(cx).root_entry() {
+                    Some(root_entry) => {
+                        return Task::ready(Some(OpenTarget::Worktree(
+                            root_path_with_posiition,
+                            root_entry.clone(),
+                        )))
+                    }
+                    None => paths_to_check.push(root_path_with_posiition),
+                }
+            } else {
+                paths_to_check.push(PathWithPosition {
+                    path: path_with_position
+                        .path
+                        .strip_prefix(&worktree_root)
+                        .unwrap_or(&path_with_position.path)
+                        .to_owned(),
+                    row: path_with_position.row,
+                    column: path_with_position.column,
+                });
+            };
         }
-    }) {
-        let worktree_root = worktree.read(cx).abs_path();
-        let paths_to_check = potential_paths
-            .iter()
-            .map(|path_with_position| PathWithPosition {
-                path: path_with_position
-                    .path
-                    .strip_prefix(&worktree_root)
-                    .unwrap_or(&path_with_position.path)
-                    .to_owned(),
-                row: path_with_position.row,
-                column: path_with_position.column,
-            })
-            .collect::<Vec<_>>();
 
         let mut traversal = worktree
             .read(cx)
@@ -1065,13 +1103,13 @@ fn possible_open_target(
                 .iter()
                 .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
             {
-                return Task::ready(Some((
+                return Task::ready(Some(OpenTarget::Worktree(
                     PathWithPosition {
                         path: worktree_root.join(&entry.path),
                         row: path_in_worktree.row,
                         column: path_in_worktree.column,
                     },
-                    OpenTarget::Worktree(entry.clone()),
+                    entry.clone(),
                 )));
             }
         }
@@ -1116,6 +1154,13 @@ fn possible_open_target(
                             column: path_to_check.column,
                         });
                     }
+                    for worktree in &worktree_candidates {
+                        paths_to_check.push(PathWithPosition {
+                            path: worktree.read(cx).abs_path().join(maybe_path),
+                            row: path_to_check.row,
+                            column: path_to_check.column,
+                        });
+                    }
                 }
             }
             paths_to_check
@@ -1125,7 +1170,7 @@ fn possible_open_target(
     cx.background_spawn(async move {
         for path_to_check in paths_to_check {
             if let Some(metadata) = fs.metadata(&path_to_check.path).await.ok().flatten() {
-                return Some((path_to_check, OpenTarget::File(metadata)));
+                return Some(OpenTarget::File(path_to_check, metadata));
             }
         }
         None
@@ -1247,7 +1292,6 @@ impl Render for TerminalView {
                         self.focus_handle.clone(),
                         focused,
                         self.should_show_cursor(focused, cx),
-                        self.can_navigate_to_selected_word,
                         self.block_below_cursor.clone(),
                     ))
                     .when_some(self.render_scrollbar(cx), |div, scrollbar| {

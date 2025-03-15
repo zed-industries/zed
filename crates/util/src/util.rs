@@ -29,7 +29,7 @@ use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use util_macros::{separator, uri};
+pub use util_macros::{line_endings, separator, uri};
 
 #[macro_export]
 macro_rules! debug_panic {

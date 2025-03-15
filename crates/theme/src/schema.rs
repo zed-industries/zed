@@ -566,25 +566,13 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.added")]
     pub version_control_added: Option<String>,
 
-    /// Added version control background color.
-    #[serde(rename = "version_control.added_background")]
-    pub version_control_added_background: Option<String>,
-
     /// Deleted version control color.
     #[serde(rename = "version_control.deleted")]
     pub version_control_deleted: Option<String>,
 
-    /// Deleted version control background color.
-    #[serde(rename = "version_control.deleted_background")]
-    pub version_control_deleted_background: Option<String>,
-
     /// Modified version control color.
     #[serde(rename = "version_control.modified")]
     pub version_control_modified: Option<String>,
-
-    /// Modified version control background color.
-    #[serde(rename = "version_control.modified_background")]
-    pub version_control_modified_background: Option<String>,
 
     /// Renamed version control color.
     #[serde(rename = "version_control.renamed")]
@@ -593,10 +581,6 @@ pub struct ThemeColorsContent {
     /// Conflict version control color.
     #[serde(rename = "version_control.conflict")]
     pub version_control_conflict: Option<String>,
-
-    /// Conflict version control background color.
-    #[serde(rename = "version_control.conflict_background")]
-    pub version_control_conflict_background: Option<String>,
 
     /// Ignored version control color.
     #[serde(rename = "version_control.ignored")]
@@ -1017,24 +1001,12 @@ impl ThemeColorsContent {
                 .version_control_added
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            version_control_added_background: self
-                .version_control_added_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
             version_control_deleted: self
                 .version_control_deleted
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            version_control_deleted_background: self
-                .version_control_deleted_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
             version_control_modified: self
                 .version_control_modified
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_modified_background: self
-                .version_control_modified_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             version_control_renamed: self
@@ -1043,10 +1015,6 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             version_control_conflict: self
                 .version_control_conflict
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_background: self
-                .version_control_conflict_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             version_control_ignored: self

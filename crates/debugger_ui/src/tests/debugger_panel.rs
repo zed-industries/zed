@@ -926,7 +926,6 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
             EditorMode::Full,
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
-            true,
             window,
             cx,
         )

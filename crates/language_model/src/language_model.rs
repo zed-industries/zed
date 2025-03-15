@@ -17,9 +17,11 @@ use proto::Plan;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
+use std::ops::{Add, Sub};
 use std::{future::Future, sync::Arc};
 use thiserror::Error;
 use ui::IconName;
+use util::serde::is_default;
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -59,6 +61,7 @@ pub enum LanguageModelCompletionEvent {
     Text(String),
     ToolUse(LanguageModelToolUse),
     StartMessage { message_id: String },
+    UsageUpdate(TokenUsage),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -67,6 +70,46 @@ pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
+pub struct TokenUsage {
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub input_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub output_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub cache_creation_input_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub cache_read_input_tokens: u32,
+}
+
+impl Add<TokenUsage> for TokenUsage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cache_creation_input_tokens: self.cache_creation_input_tokens
+                + other.cache_creation_input_tokens,
+            cache_read_input_tokens: self.cache_read_input_tokens + other.cache_read_input_tokens,
+        }
+    }
+}
+
+impl Sub<TokenUsage> for TokenUsage {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens - other.input_tokens,
+            output_tokens: self.output_tokens - other.output_tokens,
+            cache_creation_input_tokens: self.cache_creation_input_tokens
+                - other.cache_creation_input_tokens,
+            cache_read_input_tokens: self.cache_read_input_tokens - other.cache_read_input_tokens,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
@@ -176,6 +219,7 @@ pub trait LanguageModel: Send + Sync {
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                         Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
+                        Ok(LanguageModelCompletionEvent::UsageUpdate(_)) => None,
                         Err(err) => Some(Err(err)),
                     }
                 }))

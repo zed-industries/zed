@@ -117,11 +117,12 @@ impl HeadlessProject {
         });
 
         let git_store = cx.new(|cx| {
-            GitStore::new(
+            GitStore::local(
                 &worktree_store,
                 buffer_store.clone(),
+                environment.clone(),
+                fs.clone(),
                 session.clone().into(),
-                None,
                 cx,
             )
         });

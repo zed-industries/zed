@@ -21,7 +21,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
-use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
+use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
@@ -435,13 +435,6 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
-            cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
-                let entity = cx.entity();
-                let project = workspace.project().clone();
-                let app_state = workspace.app_state().clone();
-                let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
-                workspace.add_panel(git_panel, window, cx);
-            });
             cx.when_flag_enabled::<Debugger>(window, |_, window, cx| {
                 cx.spawn_in(window, |workspace, mut cx| async move {
                     let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
@@ -452,6 +445,12 @@ fn initialize_panels(
                 })
                 .detach()
             });
+
+            let entity = cx.entity();
+            let project = workspace.project().clone();
+            let app_state = workspace.app_state().clone();
+            let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
+            workspace.add_panel(git_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = if cfg!(test) {
@@ -1143,7 +1142,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                             .new(|cx| MultiBuffer::singleton(buffer, cx).with_title("Log".into()));
                         let editor = cx.new(|cx| {
                             let mut editor =
-                                Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                                Editor::for_multibuffer(buffer, Some(project), window, cx);
                             editor.set_read_only(true);
                             editor.set_breadcrumb_header(format!(
                                 "Last {} lines in {}",
@@ -1646,7 +1645,7 @@ fn open_telemetry_log_file(
                 });
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
-                        let mut editor = Editor::for_multibuffer(buffer, Some(project), true, window, cx);
+                        let mut editor = Editor::for_multibuffer(buffer, Some(project), window, cx);
                         editor.set_read_only(true);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
@@ -1685,13 +1684,8 @@ fn open_bundled_file(
                         cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
                     workspace.add_item_to_active_pane(
                         Box::new(cx.new(|cx| {
-                            let mut editor = Editor::for_multibuffer(
-                                buffer,
-                                Some(project.clone()),
-                                true,
-                                window,
-                                cx,
-                            );
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                             editor.set_read_only(true);
                             editor.set_breadcrumb_header(title.into());
                             editor

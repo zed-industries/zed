@@ -2,6 +2,7 @@ use super::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };
+use anyhow::Result;
 use collections::HashMap;
 use dap::{OutputEvent, OutputEventGroup};
 use editor::{
@@ -263,9 +264,9 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _trigger: editor::CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let Some(console) = self.0.upgrade() else {
-            return Task::ready(Ok(Vec::new()));
+            return Task::ready(Ok(None));
         };
 
         let support_completions = console
@@ -323,7 +324,7 @@ impl ConsoleQueryBarCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let (variables, string_matches) = console.update(cx, |console, cx| {
             let mut variables = HashMap::default();
             let mut string_matches = Vec::default();
@@ -365,25 +366,27 @@ impl ConsoleQueryBarCompletionProvider {
             )
             .await;
 
-            Ok(matches
-                .iter()
-                .filter_map(|string_match| {
-                    let variable_value = variables.get(&string_match.string)?;
+            Ok(Some(
+                matches
+                    .iter()
+                    .filter_map(|string_match| {
+                        let variable_value = variables.get(&string_match.string)?;
 
-                    Some(project::Completion {
-                        old_range: buffer_position..buffer_position,
-                        new_text: string_match.string.clone(),
-                        label: CodeLabel {
-                            filter_range: 0..string_match.string.len(),
-                            text: format!("{} {}", string_match.string.clone(), variable_value),
-                            runs: Vec::new(),
-                        },
-                        documentation: None,
-                        confirm: None,
-                        source: project::CompletionSource::Custom,
+                        Some(project::Completion {
+                            old_range: buffer_position..buffer_position,
+                            new_text: string_match.string.clone(),
+                            label: CodeLabel {
+                                filter_range: 0..string_match.string.len(),
+                                text: format!("{} {}", string_match.string.clone(), variable_value),
+                                runs: Vec::new(),
+                            },
+                            documentation: None,
+                            confirm: None,
+                            source: project::CompletionSource::Custom,
+                        })
                     })
-                })
-                .collect())
+                    .collect(),
+            ))
         })
     }
 
@@ -393,7 +396,7 @@ impl ConsoleQueryBarCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
                 let frame_id = console.stack_frame_list.read(cx).current_stack_frame_id();
@@ -406,22 +409,24 @@ impl ConsoleQueryBarCompletionProvider {
         });
 
         cx.background_executor().spawn(async move {
-            Ok(completion_task
-                .await?
-                .iter()
-                .map(|completion| project::Completion {
-                    old_range: buffer_position..buffer_position, // TODO(debugger): change this
-                    new_text: completion.text.clone().unwrap_or(completion.label.clone()),
-                    label: CodeLabel {
-                        filter_range: 0..completion.label.len(),
-                        text: completion.label.clone(),
-                        runs: Vec::new(),
-                    },
-                    documentation: None,
-                    confirm: None,
-                    source: project::CompletionSource::Custom,
-                })
-                .collect())
+            Ok(Some(
+                completion_task
+                    .await?
+                    .iter()
+                    .map(|completion| project::Completion {
+                        old_range: buffer_position..buffer_position, // TODO(debugger): change this
+                        new_text: completion.text.clone().unwrap_or(completion.label.clone()),
+                        label: CodeLabel {
+                            filter_range: 0..completion.label.len(),
+                            text: completion.label.clone(),
+                            runs: Vec::new(),
+                        },
+                        documentation: None,
+                        confirm: None,
+                        source: project::CompletionSource::Custom,
+                    })
+                    .collect(),
+            ))
         })
     }
 }

@@ -37,7 +37,7 @@ use crate::{
         JoinLines,
     },
     object::Object,
-    state::Mode,
+    state::{Mark, Mode},
     visual::VisualDeleteLine,
     ToggleRegistersView, Vim,
 };
@@ -284,6 +284,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     true,
                     true,
                     vec![Point::new(range.start.0, 0)..end],
+                    window,
                     cx,
                 )
             }
@@ -594,8 +595,13 @@ impl Position {
                 }
             }
             Position::Mark { name, offset } => {
-                let Some(mark) = vim.marks.get(&name.to_string()).and_then(|vec| vec.last()) else {
+                let Some(Mark::Local(anchors)) =
+                    vim.get_mark(&name.to_string(), editor, window, cx)
+                else {
                     return Err(anyhow!("mark {} not set", name));
+                };
+                let Some(mark) = anchors.last() else {
+                    return Err(anyhow!("mark {} contains empty anchors", name));
                 };
                 mark.to_point(&snapshot.buffer_snapshot)
                     .row

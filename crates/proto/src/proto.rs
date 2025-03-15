@@ -498,8 +498,9 @@ messages!(
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
     (GitDiffResponse, Background),
+    (GitInit, Background),
     (DapLocationsRequest, Background),
-    (DapLocationsResponse, Background)
+    (DapLocationsResponse, Background),
 );
 
 request_messages!(
@@ -669,6 +670,7 @@ request_messages!(
     (GitChangeBranch, Ack),
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
+    (GitInit, Ack),
     (DapLocationsRequest, DapLocationsResponse),
 );
 
@@ -778,6 +780,7 @@ entity_messages!(
     GitCreateBranch,
     CheckForPushedCommits,
     GitDiff,
+    GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
     ShutdownDebugClient,

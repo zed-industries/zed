@@ -1,39 +1,41 @@
-use std::sync::Arc;
-
-use assistant_scripting::{ScriptId, ScriptState};
-use collections::{HashMap, HashSet};
-use editor::{Editor, MultiBuffer};
-use gpui::{
-    list, AbsoluteLength, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, UnderlineStyle, WeakEntity,
-};
-use language::{Buffer, LanguageRegistry};
-use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
-use markdown::{Markdown, MarkdownStyle};
-use settings::Settings as _;
-use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, KeyBinding};
-use util::ResultExt as _;
-use workspace::Workspace;
-
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
+use collections::HashMap;
+use editor::{Editor, MultiBuffer};
+use gpui::{
+    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
+    DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
+    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
+    UnderlineStyle,
+};
+use language::{Buffer, LanguageRegistry};
+use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
+use markdown::{Markdown, MarkdownStyle};
+use scripting_tool::{ScriptingTool, ScriptingToolInput};
+use settings::Settings as _;
+use std::sync::Arc;
+use std::time::Duration;
+use theme::ThemeSettings;
+use ui::Color;
+use ui::{prelude::*, Disclosure, KeyBinding};
+use util::ResultExt as _;
+
+use crate::context_store::{refresh_context_store_text, ContextStore};
 
 pub struct ActiveThread {
-    workspace: WeakEntity<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
+    context_store: Entity<ContextStore>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, Entity<Markdown>>,
+    rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
-    expanded_scripts: HashSet<ScriptId>,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
@@ -44,10 +46,10 @@ struct EditMessageState {
 
 impl ActiveThread {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
+        context_store: Entity<ContextStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -57,15 +59,15 @@ impl ActiveThread {
         ];
 
         let mut this = Self {
-            workspace,
             language_registry,
             thread_store,
             thread: thread.clone(),
+            context_store,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
+            rendered_scripting_tool_uses: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
-            expanded_scripts: HashSet::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.entity().downgrade();
                 move |ix, window: &mut Window, cx: &mut App| {
@@ -80,6 +82,16 @@ impl ActiveThread {
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
             this.push_message(&message.id, message.text.clone(), window, cx);
+
+            for tool_use in thread.read(cx).scripting_tool_uses_for_message(message.id) {
+                this.render_scripting_tool_use_markdown(
+                    tool_use.id.clone(),
+                    tool_use.name.as_ref(),
+                    tool_use.input.clone(),
+                    window,
+                    cx,
+                );
+            }
         }
 
         this
@@ -246,6 +258,32 @@ impl ActiveThread {
         })
     }
 
+    /// Renders the input of a scripting tool use to Markdown.
+    ///
+    /// Does nothing if the tool use does not correspond to the scripting tool.
+    fn render_scripting_tool_use_markdown(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: &str,
+        tool_input: serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if tool_name != ScriptingTool::NAME {
+            return;
+        }
+
+        let lua_script = serde_json::from_value::<ScriptingToolInput>(tool_input)
+            .map(|input| input.lua_script)
+            .unwrap_or_default();
+
+        let lua_script =
+            self.render_markdown(format!("```lua\n{lua_script}\n```").into(), window, cx);
+
+        self.rendered_scripting_tool_uses
+            .insert(tool_use_id, lua_script);
+    }
+
     fn handle_thread_event(
         &mut self,
         _thread: &Entity<Thread>,
@@ -260,6 +298,7 @@ impl ActiveThread {
             ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
+            ThreadEvent::DoneStreaming => {}
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
@@ -303,22 +342,66 @@ impl ActiveThread {
                     thread.use_pending_tools(cx);
                 });
             }
-            ThreadEvent::ToolFinished { .. } => {
+            ThreadEvent::ToolFinished {
+                pending_tool_use, ..
+            } => {
+                if let Some(tool_use) = pending_tool_use {
+                    self.render_scripting_tool_use_markdown(
+                        tool_use.id.clone(),
+                        tool_use.name.as_ref(),
+                        tool_use.input.clone(),
+                        window,
+                        cx,
+                    );
+                }
+
                 if self.thread.read(cx).all_tools_finished() {
+                    let pending_refresh_buffers = self.thread.update(cx, |thread, cx| {
+                        thread.action_log().update(cx, |action_log, _cx| {
+                            action_log.take_pending_refresh_buffers()
+                        })
+                    });
+
+                    let context_update_task = if !pending_refresh_buffers.is_empty() {
+                        let refresh_task = refresh_context_store_text(
+                            self.context_store.clone(),
+                            &pending_refresh_buffers,
+                            cx,
+                        );
+
+                        cx.spawn(|this, mut cx| async move {
+                            let updated_context_ids = refresh_task.await;
+
+                            this.update(&mut cx, |this, cx| {
+                                this.context_store.read_with(cx, |context_store, cx| {
+                                    context_store
+                                        .context()
+                                        .iter()
+                                        .filter(|context| {
+                                            updated_context_ids.contains(&context.id())
+                                        })
+                                        .flat_map(|context| context.snapshot(cx))
+                                        .collect()
+                                })
+                            })
+                        })
+                    } else {
+                        Task::ready(anyhow::Ok(Vec::new()))
+                    };
+
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
-                        self.thread.update(cx, |thread, cx| {
-                            thread.send_tool_results_to_model(model, cx);
-                        });
+                        cx.spawn(|this, mut cx| async move {
+                            let updated_context = context_update_task.await?;
+
+                            this.update(&mut cx, |this, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread.send_tool_results_to_model(model, updated_context, cx);
+                                });
+                            })
+                        })
+                        .detach();
                     }
-                }
-            }
-            ThreadEvent::ScriptFinished => {
-                let model_registry = LanguageModelRegistry::read_global(cx);
-                if let Some(model) = model_registry.active_model() {
-                    self.thread.update(cx, |thread, cx| {
-                        thread.send_to_model(model, RequestKind::Chat, false, cx);
-                    });
                 }
             }
         }
@@ -358,7 +441,6 @@ impl ActiveThread {
                 editor::EditorMode::AutoHeight { max_lines: 8 },
                 buffer,
                 None,
-                false,
                 window,
                 cx,
             );
@@ -411,7 +493,7 @@ impl ActiveThread {
         };
 
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model, RequestKind::Chat, false, cx)
+            thread.send_to_model(model, RequestKind::Chat, cx)
         });
         cx.notify();
     }
@@ -461,14 +543,15 @@ impl ActiveThread {
         };
 
         let thread = self.thread.read(cx);
-
+        // Get all the data we need from thread before we start using it in closures
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
+        let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
 
         // Don't render user messages that are just there for returning tool results.
         if message.role == Role::User
             && (thread.message_has_tool_results(message_id)
-                || thread.message_has_script_output(message_id))
+                || thread.message_has_scripting_tool_results(message_id))
         {
             return Empty.into_any();
         }
@@ -615,23 +698,27 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => div()
-                .id(("message-container", ix))
-                .child(message_content)
-                .children(self.render_script(message_id, cx))
-                .map(|parent| {
-                    if tool_uses.is_empty() {
-                        return parent;
-                    }
-
-                    parent.child(
-                        v_flex().children(
-                            tool_uses
-                                .into_iter()
-                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                        ),
+            Role::Assistant => {
+                v_flex()
+                    .id(("message-container", ix))
+                    .child(message_content)
+                    .when(
+                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                        |parent| {
+                            parent.child(
+                                v_flex()
+                                    .children(
+                                        tool_uses
+                                            .into_iter()
+                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                    )
+                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                        self.render_scripting_tool_use(tool_use, cx)
+                                    })),
+                            )
+                        },
                     )
-                }),
+            }
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -644,6 +731,184 @@ impl ActiveThread {
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_open = self
+            .expanded_tool_uses
+            .get(&tool_use.id)
+            .copied()
+            .unwrap_or_default();
+
+        let lighter_border = cx.theme().colors().border.opacity(0.5);
+
+        div().px_2p5().child(
+            v_flex()
+                .rounded_lg()
+                .border_1()
+                .border_color(lighter_border)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .py_1()
+                        .pl_1()
+                        .pr_2()
+                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                        .map(|element| {
+                            if is_open {
+                                element.border_b_1().rounded_t_md()
+                            } else {
+                                element.rounded_md()
+                            }
+                        })
+                        .border_color(lighter_border)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Disclosure::new("tool-use-disclosure", is_open).on_click(
+                                    cx.listener({
+                                        let tool_use_id = tool_use.id.clone();
+                                        move |this, _event, _window, _cx| {
+                                            let is_open = this
+                                                .expanded_tool_uses
+                                                .entry(tool_use_id.clone())
+                                                .or_insert(false);
+
+                                            *is_open = !*is_open;
+                                        }
+                                    }),
+                                ))
+                                .child(
+                                    Label::new(tool_use.name)
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx),
+                                ),
+                        )
+                        .child({
+                            let (icon_name, color, animated) = match &tool_use.status {
+                                ToolUseStatus::Pending => {
+                                    (IconName::Warning, Color::Warning, false)
+                                }
+                                ToolUseStatus::Running => {
+                                    (IconName::ArrowCircle, Color::Accent, true)
+                                }
+                                ToolUseStatus::Finished(_) => {
+                                    (IconName::Check, Color::Success, false)
+                                }
+                                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
+                            };
+
+                            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
+
+                            if animated {
+                                icon.with_animation(
+                                    "arrow-circle",
+                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                )
+                                .into_any_element()
+                            } else {
+                                icon.into_any_element()
+                            }
+                        }),
+                )
+                .map(|parent| {
+                    if !is_open {
+                        return parent;
+                    }
+
+                    let content_container = || v_flex().py_1().gap_0p5().px_2p5();
+
+                    parent.child(
+                        v_flex()
+                            .gap_1()
+                            .bg(cx.theme().colors().editor_background)
+                            .rounded_b_lg()
+                            .child(
+                                content_container()
+                                    .border_b_1()
+                                    .border_color(lighter_border)
+                                    .child(
+                                        Label::new("Input")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx),
+                                    )
+                                    .child(
+                                        Label::new(
+                                            serde_json::to_string_pretty(&tool_use.input)
+                                                .unwrap_or_default(),
+                                        )
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx),
+                                    ),
+                            )
+                            .map(|container| match tool_use.status {
+                                ToolUseStatus::Finished(output) => container.child(
+                                    content_container()
+                                        .child(
+                                            Label::new("Result")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new(output)
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx),
+                                        ),
+                                ),
+                                ToolUseStatus::Running => container.child(
+                                    content_container().child(
+                                        h_flex()
+                                            .gap_1()
+                                            .pb_1()
+                                            .child(
+                                                Icon::new(IconName::ArrowCircle)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Accent)
+                                                    .with_animation(
+                                                        "arrow-circle",
+                                                        Animation::new(Duration::from_secs(2))
+                                                            .repeat(),
+                                                        |icon, delta| {
+                                                            icon.transform(Transformation::rotate(
+                                                                percentage(delta),
+                                                            ))
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                Label::new("Running…")
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Muted)
+                                                    .buffer_font(cx),
+                                            ),
+                                    ),
+                                ),
+                                ToolUseStatus::Error(err) => container.child(
+                                    content_container()
+                                        .child(
+                                            Label::new("Error")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new(err).size(LabelSize::Small).buffer_font(cx),
+                                        ),
+                                ),
+                                ToolUseStatus::Pending => container,
+                            }),
+                    )
+                }),
+        )
+    }
+
+    fn render_scripting_tool_use(
+        &self,
+        tool_use: ToolUse,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
@@ -663,8 +928,13 @@ impl ActiveThread {
                         .pl_1()
                         .pr_2()
                         .bg(cx.theme().colors().editor_foreground.opacity(0.02))
-                        .when(is_open, |element| element.border_b_1().rounded_t(px(6.)))
-                        .when(!is_open, |element| element.rounded_md())
+                        .map(|element| {
+                            if is_open {
+                                element.border_b_1().rounded_t_md()
+                            } else {
+                                element.rounded_md()
+                            }
+                        })
                         .border_color(cx.theme().colors().border)
                         .child(
                             h_flex()
@@ -700,6 +970,9 @@ impl ActiveThread {
                         return parent;
                     }
 
+                    let lua_script_markdown =
+                        self.rendered_scripting_tool_uses.get(&tool_use.id).cloned();
+
                     parent.child(
                         v_flex()
                             .child(
@@ -710,10 +983,15 @@ impl ActiveThread {
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
                                     .child(Label::new("Input:"))
-                                    .child(Label::new(
-                                        serde_json::to_string_pretty(&tool_use.input)
-                                            .unwrap_or_default(),
-                                    )),
+                                    .map(|parent| {
+                                        if let Some(markdown) = lua_script_markdown {
+                                            parent.child(markdown)
+                                        } else {
+                                            parent.child(Label::new(
+                                                "Failed to render script input to Markdown",
+                                            ))
+                                        }
+                                    }),
                             )
                             .map(|parent| match tool_use.status {
                                 ToolUseStatus::Finished(output) => parent.child(
@@ -737,139 +1015,6 @@ impl ActiveThread {
                     )
                 }),
         )
-    }
-
-    fn render_script(&self, message_id: MessageId, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let script = self.thread.read(cx).script_for_message(message_id, cx)?;
-
-        let is_open = self.expanded_scripts.contains(&script.id);
-        let colors = cx.theme().colors();
-
-        let element = div().px_2p5().child(
-            v_flex()
-                .gap_1()
-                .rounded_lg()
-                .border_1()
-                .border_color(colors.border)
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .py_0p5()
-                        .pl_1()
-                        .pr_2()
-                        .bg(colors.editor_foreground.opacity(0.02))
-                        .when(is_open, |element| element.border_b_1().rounded_t(px(6.)))
-                        .when(!is_open, |element| element.rounded_md())
-                        .border_color(colors.border)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Disclosure::new("script-disclosure", is_open).on_click(
-                                    cx.listener({
-                                        let script_id = script.id;
-                                        move |this, _event, _window, _cx| {
-                                            if this.expanded_scripts.contains(&script_id) {
-                                                this.expanded_scripts.remove(&script_id);
-                                            } else {
-                                                this.expanded_scripts.insert(script_id);
-                                            }
-                                        }
-                                    }),
-                                ))
-                                // TODO: Generate script description
-                                .child(Label::new("Script")),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Label::new(match script.state {
-                                        ScriptState::Generating => "Generating",
-                                        ScriptState::Running { .. } => "Running",
-                                        ScriptState::Succeeded { .. } => "Finished",
-                                        ScriptState::Failed { .. } => "Error",
-                                    })
-                                    .size(LabelSize::XSmall)
-                                    .buffer_font(cx),
-                                )
-                                .child(
-                                    IconButton::new("view-source", IconName::Eye)
-                                        .icon_color(Color::Muted)
-                                        .disabled(matches!(script.state, ScriptState::Generating))
-                                        .on_click(cx.listener({
-                                            let source = script.source.clone();
-                                            move |this, _event, window, cx| {
-                                                this.open_script_source(source.clone(), window, cx);
-                                            }
-                                        })),
-                                ),
-                        ),
-                )
-                .when(is_open, |parent| {
-                    let stdout = script.stdout_snapshot();
-                    let error = script.error();
-
-                    parent.child(
-                        v_flex()
-                            .p_2()
-                            .bg(colors.editor_background)
-                            .gap_2()
-                            .child(if stdout.is_empty() && error.is_none() {
-                                Label::new("No output yet")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                            } else {
-                                Label::new(stdout).size(LabelSize::Small).buffer_font(cx)
-                            })
-                            .children(script.error().map(|err| {
-                                Label::new(err.to_string())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Error)
-                            })),
-                    )
-                }),
-        );
-
-        Some(element.into_any())
-    }
-
-    fn open_script_source(
-        &mut self,
-        source: SharedString,
-        window: &mut Window,
-        cx: &mut Context<'_, ActiveThread>,
-    ) {
-        let language_registry = self.language_registry.clone();
-        let workspace = self.workspace.clone();
-        let source = source.clone();
-
-        cx.spawn_in(window, |_, mut cx| async move {
-            let lua = language_registry.language_for_name("Lua").await.log_err();
-
-            workspace.update_in(&mut cx, |workspace, window, cx| {
-                let project = workspace.project().clone();
-
-                let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&source.trim(), lua, cx)
-                });
-
-                let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx)
-                        // TODO: Generate script description
-                        .with_title("Assistant script".into())
-                });
-
-                let editor = cx.new(|cx| {
-                    let mut editor =
-                        Editor::for_multibuffer(buffer, Some(project), true, window, cx);
-                    editor.set_read_only(true);
-                    editor
-                });
-
-                workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
-            })
-        })
-        .detach_and_log_err(cx);
     }
 }
 

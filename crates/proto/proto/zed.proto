@@ -1,6 +1,5 @@
 syntax = "proto3";
 package zed.messages;
-import "google/protobuf/wrappers.proto";
 
 // Looking for a number? Search "// current max"
 
@@ -348,47 +347,48 @@ message Envelope {
 
         GitDiff git_diff = 319;
         GitDiffResponse git_diff_response = 320;
+        GitInit git_init = 321;
 
-        UpdateDebugAdapter update_debug_adapter = 321;
-        ShutdownDebugClient shutdown_debug_client = 322;
-        SetDebugClientCapabilities set_debug_client_capabilities = 323;
-        DapNextRequest dap_next_request = 324;
-        DapStepInRequest dap_step_in_request = 325;
-        DapStepOutRequest dap_step_out_request = 326;
-        DapStepBackRequest dap_step_back_request = 327;
-        DapContinueRequest dap_continue_request = 328;
-        DapContinueResponse dap_continue_response = 329;
-        DapPauseRequest dap_pause_request = 330;
-        DapDisconnectRequest dap_disconnect_request = 331;
-        DapTerminateThreadsRequest dap_terminate_threads_request = 332;
-        DapTerminateRequest dap_terminate_request = 333;
-        DapRestartRequest dap_restart_request = 334;
-        UpdateThreadStatus update_thread_status = 335;
-        VariablesRequest variables_request = 336;
-        DapVariables dap_variables = 337;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 338;
-        IgnoreBreakpointState ignore_breakpoint_state = 339;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 340;
-        DapModulesRequest dap_modules_request = 341;
-        DapModulesResponse dap_modules_response = 342;
-        DapLoadedSourcesRequest dap_loaded_sources_request = 343;
-        DapLoadedSourcesResponse dap_loaded_sources_response = 344;
-        DapStackTraceRequest dap_stack_trace_request = 345;
-        DapStackTraceResponse dap_stack_trace_response = 346;
-        DapScopesRequest dap_scopes_request = 347;
-        DapScopesResponse dap_scopes_response = 348;
-        DapSetVariableValueRequest dap_set_variable_value_request = 349;
-        DapSetVariableValueResponse dap_set_variable_value_response = 350;
-        DapEvaluateRequest dap_evaluate_request = 351;
-        DapEvaluateResponse dap_evaluate_response = 352;
-        DapCompletionRequest dap_completion_request = 353;
-        DapCompletionResponse dap_completion_response = 354;
-        DapThreadsRequest dap_threads_request = 355;
-        DapThreadsResponse dap_threads_response = 356;
-        ToggleBreakpoint toggle_breakpoint = 357;
-        BreakpointsForFile breakpoints_for_file = 358;
-         DapLocationsRequest dap_locations_request = 359;
-         DapLocationsResponse dap_locations_response = 360; // current max
+        UpdateDebugAdapter update_debug_adapter = 322;
+        ShutdownDebugClient shutdown_debug_client = 323;
+        SetDebugClientCapabilities set_debug_client_capabilities = 324;
+        DapNextRequest dap_next_request = 325;
+        DapStepInRequest dap_step_in_request = 326;
+        DapStepOutRequest dap_step_out_request = 327;
+        DapStepBackRequest dap_step_back_request = 328;
+        DapContinueRequest dap_continue_request = 329;
+        DapContinueResponse dap_continue_response = 330;
+        DapPauseRequest dap_pause_request = 331;
+        DapDisconnectRequest dap_disconnect_request = 332;
+        DapTerminateThreadsRequest dap_terminate_threads_request = 333;
+        DapTerminateRequest dap_terminate_request = 334;
+        DapRestartRequest dap_restart_request = 335;
+        UpdateThreadStatus update_thread_status = 336;
+        VariablesRequest variables_request = 337;
+        DapVariables dap_variables = 338;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 339;
+        IgnoreBreakpointState ignore_breakpoint_state = 340;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 341;
+        DapModulesRequest dap_modules_request = 342;
+        DapModulesResponse dap_modules_response = 343;
+        DapLoadedSourcesRequest dap_loaded_sources_request = 344;
+        DapLoadedSourcesResponse dap_loaded_sources_response = 345;
+        DapStackTraceRequest dap_stack_trace_request = 346;
+        DapStackTraceResponse dap_stack_trace_response = 347;
+        DapScopesRequest dap_scopes_request = 348;
+        DapScopesResponse dap_scopes_response = 349;
+        DapSetVariableValueRequest dap_set_variable_value_request = 350;
+        DapSetVariableValueResponse dap_set_variable_value_response = 351;
+        DapEvaluateRequest dap_evaluate_request = 352;
+        DapEvaluateResponse dap_evaluate_response = 353;
+        DapCompletionRequest dap_completion_request = 354;
+        DapCompletionResponse dap_completion_response = 355;
+        DapThreadsRequest dap_threads_request = 356;
+        DapThreadsResponse dap_threads_response = 357;
+        ToggleBreakpoint toggle_breakpoint = 358;
+        BreakpointsForFile breakpoints_for_file = 359;
+        DapLocationsRequest dap_locations_request = 360;
+        DapLocationsResponse dap_locations_response = 361; // current max
     }
 
     reserved 87 to 88;
@@ -1043,10 +1043,14 @@ message Completion {
     bytes lsp_completion = 5;
     bool resolved = 6;
     Source source = 7;
+    optional bytes lsp_defaults = 8;
+    optional Anchor buffer_word_start = 9;
+    optional Anchor buffer_word_end = 10;
 
     enum Source {
-        Custom = 0;
-        Lsp = 1;
+        Lsp = 0;
+        Custom = 1;
+        BufferWord = 2;
     }
 }
 
@@ -2366,8 +2370,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        repeated CommitPermalink permalinks = 3;
         optional string remote_url = 4;
+        reserved 3;
     }
 
     optional BlameResponse blame_response = 5;
@@ -3577,4 +3581,10 @@ message GitDiff {
 
 message GitDiffResponse {
     string diff = 1;
+}
+
+message GitInit {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string fallback_branch_name = 3;
 }

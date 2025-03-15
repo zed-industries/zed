@@ -526,8 +526,8 @@ impl DerefMut for ChunkRendererContext<'_, '_> {
 /// A set of edits to a given version of a buffer, computed asynchronously.
 #[derive(Debug)]
 pub struct Diff {
-    pub(crate) base_version: clock::Global,
-    line_ending: LineEnding,
+    pub base_version: clock::Global,
+    pub line_ending: LineEnding,
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
@@ -1527,6 +1527,7 @@ impl Buffer {
     }
 
     fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
+        self.was_changed();
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
@@ -1968,7 +1969,12 @@ impl Buffer {
     /// This allows downstream code to check if the buffer's text has changed without
     /// waiting for an effect cycle, which would be required if using eents.
     pub fn record_changes(&mut self, bit: rc::Weak<Cell<bool>>) {
-        self.change_bits.push(bit);
+        if let Err(ix) = self
+            .change_bits
+            .binary_search_by_key(&rc::Weak::as_ptr(&bit), rc::Weak::as_ptr)
+        {
+            self.change_bits.insert(ix, bit);
+        }
     }
 
     fn was_changed(&mut self) {
@@ -2273,12 +2279,13 @@ impl Buffer {
     }
 
     fn did_edit(&mut self, old_version: &clock::Global, was_dirty: bool, cx: &mut Context<Self>) {
+        self.was_changed();
+
         if self.edits_since::<usize>(old_version).next().is_none() {
             return;
         }
 
         self.reparse(cx);
-
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);
@@ -2390,7 +2397,6 @@ impl Buffer {
         }
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
-        self.was_changed();
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
@@ -4139,6 +4145,72 @@ impl BufferSnapshot {
             None
         }
     }
+
+    pub fn words_in_range(&self, query: WordsQuery) -> HashMap<String, Range<Anchor>> {
+        let query_str = query.fuzzy_contents;
+        if query_str.map_or(false, |query| query.is_empty()) {
+            return HashMap::default();
+        }
+
+        let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
+            language,
+            override_id: None,
+        }));
+
+        let mut query_ix = 0;
+        let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
+        let query_len = query_chars.as_ref().map_or(0, |query| query.len());
+
+        let mut words = HashMap::default();
+        let mut current_word_start_ix = None;
+        let mut chunk_ix = query.range.start;
+        for chunk in self.chunks(query.range, false) {
+            for (i, c) in chunk.text.char_indices() {
+                let ix = chunk_ix + i;
+                if classifier.is_word(c) {
+                    if current_word_start_ix.is_none() {
+                        current_word_start_ix = Some(ix);
+                    }
+
+                    if let Some(query_chars) = &query_chars {
+                        if query_ix < query_len {
+                            if c.to_lowercase().eq(query_chars[query_ix].to_lowercase()) {
+                                query_ix += 1;
+                            }
+                        }
+                    }
+                    continue;
+                } else if let Some(word_start) = current_word_start_ix.take() {
+                    if query_ix == query_len {
+                        let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
+                        let mut word_text = self.text_for_range(word_start..ix).peekable();
+                        let first_char = word_text
+                            .peek()
+                            .and_then(|first_chunk| first_chunk.chars().next());
+                        // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
+                        if !query.skip_digits
+                            || first_char.map_or(true, |first_char| !first_char.is_digit(10))
+                        {
+                            words.insert(word_text.collect(), word_range);
+                        }
+                    }
+                }
+                query_ix = 0;
+            }
+            chunk_ix += chunk.text.len();
+        }
+
+        words
+    }
+}
+
+pub struct WordsQuery<'a> {
+    /// Only returns words with all chars from the fuzzy string in them.
+    pub fuzzy_contents: Option<&'a str>,
+    /// Skips words that start with a digit.
+    pub skip_digits: bool,
+    /// Buffer offset range, to look for words.
+    pub range: Range<usize>,
 }
 
 fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {

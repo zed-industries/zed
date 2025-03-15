@@ -480,7 +480,6 @@ impl InlineAssistant {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1342,7 +1341,7 @@ impl InlineAssistant {
                     });
 
                     enum DeletedLines {}
-                    let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
+                    let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
@@ -1451,7 +1450,6 @@ struct InlineAssistScrollLock {
 }
 
 impl EditorInlineAssists {
-    #[allow(clippy::too_many_arguments)]
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
@@ -1563,7 +1561,6 @@ pub struct InlineAssist {
 }
 
 impl InlineAssist {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,

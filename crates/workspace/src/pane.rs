@@ -850,7 +850,6 @@ impl Pane {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
@@ -935,7 +934,6 @@ impl Pane {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn add_item_inner(
         &mut self,
         item: Box<dyn ItemHandle>,
@@ -1890,7 +1888,7 @@ impl Pane {
                     }
                     Ok(1) => {
                         pane.update_in(cx, |pane, window, cx| {
-                            pane.remove_item(item.item_id(), false, false, window, cx)
+                            pane.remove_item(item.item_id(), false, true, window, cx)
                         })?;
                     }
                     _ => return Ok(false),

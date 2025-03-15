@@ -1,13 +1,17 @@
+use std::any::Any;
+
 use ::settings::Settings;
+use command_palette_hooks::CommandPaletteFilter;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
-    status::FileStatus,
+    status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{App, Entity, FocusHandle};
+use gpui::{actions, App, Entity, FocusHandle};
+use onboarding::{clear_dismissed, GitOnboardingModal};
 use project::Project;
 use project_diff::ProjectDiff;
-use ui::{ActiveTheme, Color, Icon, IconName, IntoElement, SharedString};
+use ui::prelude::*;
 use workspace::Workspace;
 
 mod askpass_modal;
@@ -15,10 +19,13 @@ pub mod branch_picker;
 mod commit_modal;
 pub mod git_panel;
 mod git_panel_settings;
+pub mod onboarding;
 pub mod picker_prompt;
 pub mod project_diff;
-mod remote_output_toast;
+pub(crate) mod remote_output;
 pub mod repository_selector;
+
+actions!(git, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
@@ -29,69 +36,88 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         let project = workspace.project().read(cx);
-        if project.is_via_collab() {
+        if project.is_read_only(cx) {
             return;
         }
-        workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
+        if !project.is_via_collab() {
+            workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.fetch(window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::Push, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.push(false, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.push(true, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::Pull, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.pull(window, cx);
+                });
+            });
+        }
+        workspace.register_action(|workspace, action: &git::StageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
             panel.update(cx, |panel, cx| {
-                panel.fetch(window, cx);
+                panel.stage_all(action, window, cx);
             });
         });
-        workspace.register_action(|workspace, _: &git::Push, window, cx| {
+        workspace.register_action(|workspace, action: &git::UnstageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
             panel.update(cx, |panel, cx| {
-                panel.push(false, window, cx);
+                panel.unstage_all(action, window, cx);
             });
         });
-        workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
-            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
-                return;
-            };
-            panel.update(cx, |panel, cx| {
-                panel.push(true, window, cx);
-            });
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.hide_action_types(&[
+                zed_actions::OpenGitIntegrationOnboarding.type_id(),
+                // ResetOnboarding.type_id(),
+            ]);
         });
-        workspace.register_action(|workspace, _: &git::Pull, window, cx| {
+        workspace.register_action(
+            move |workspace, _: &zed_actions::OpenGitIntegrationOnboarding, window, cx| {
+                GitOnboardingModal::toggle(workspace, window, cx)
+            },
+        );
+        workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
+            clear_dismissed(cx);
+            window.refresh();
+        });
+        workspace.register_action(|workspace, _action: &git::Init, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
             panel.update(cx, |panel, cx| {
-                panel.pull(window, cx);
+                panel.git_init(window, cx);
             });
         });
     })
     .detach();
 }
 
-// TODO: Add updated status colors to theme
-pub fn git_status_icon(status: FileStatus, cx: &App) -> impl IntoElement {
-    let (icon_name, color) = if status.is_conflicted() {
-        (
-            IconName::Warning,
-            cx.theme().colors().version_control_conflict,
-        )
-    } else if status.is_deleted() {
-        (
-            IconName::SquareMinus,
-            cx.theme().colors().version_control_deleted,
-        )
-    } else if status.is_modified() {
-        (
-            IconName::SquareDot,
-            cx.theme().colors().version_control_modified,
-        )
-    } else {
-        (
-            IconName::SquarePlus,
-            cx.theme().colors().version_control_added,
-        )
-    };
-    Icon::new(icon_name).color(Color::Custom(color))
+pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
+    GitStatusIcon::new(status)
 }
 
 fn can_push_and_pull(project: &Entity<Project>, cx: &App) -> bool {
@@ -157,6 +183,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ArrowCircle),
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Fetch), cx);
             },
@@ -184,6 +211,7 @@ mod remote_button {
             ahead as usize,
             0,
             None,
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -212,6 +240,7 @@ mod remote_button {
             ahead as usize,
             behind as usize,
             None,
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Pull), cx);
             },
@@ -238,6 +267,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ArrowUpFromLine),
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -264,6 +294,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ArrowUpFromLine),
+            keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -305,7 +336,10 @@ mod remote_button {
         }
     }
 
-    fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
+    fn render_git_action_menu(
+        id: impl Into<ElementId>,
+        keybinding_target: Option<FocusHandle>,
+    ) -> impl IntoElement {
         PopoverMenu::new(id.into())
             .trigger(
                 ui::ButtonLike::new_rounded_right("split-button-right")
@@ -320,6 +354,9 @@ mod remote_button {
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
+                        .when_some(keybinding_target.clone(), |el, keybinding_target| {
+                            el.context(keybinding_target.clone())
+                        })
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
                         .separator()
@@ -337,12 +374,14 @@ mod remote_button {
     }
 
     impl SplitButton {
+        #[allow(clippy::too_many_arguments)]
         fn new(
             id: impl Into<SharedString>,
             left_label: impl Into<SharedString>,
             ahead_count: usize,
             behind_count: usize,
             left_icon: Option<IconName>,
+            keybinding_target: Option<FocusHandle>,
             left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
             tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
         ) -> Self {
@@ -400,9 +439,10 @@ mod remote_button {
             .on_click(left_on_click)
             .tooltip(tooltip);
 
-            let right = render_git_action_menu(ElementId::Name(
-                format!("split-button-right-{}", id).into(),
-            ))
+            let right = render_git_action_menu(
+                ElementId::Name(format!("split-button-right-{}", id).into()),
+                keybinding_target,
+            )
             .into_any_element();
 
             Self { left, right }
@@ -431,5 +471,81 @@ mod remote_button {
                     spread_radius: px(0.),
                 }])
         }
+    }
+}
+
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "Version Control")]
+pub struct GitStatusIcon {
+    status: FileStatus,
+}
+
+impl GitStatusIcon {
+    pub fn new(status: FileStatus) -> Self {
+        Self { status }
+    }
+}
+
+impl RenderOnce for GitStatusIcon {
+    fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
+        let status = self.status;
+
+        let (icon_name, color) = if status.is_conflicted() {
+            (
+                IconName::Warning,
+                cx.theme().colors().version_control_conflict,
+            )
+        } else if status.is_deleted() {
+            (
+                IconName::SquareMinus,
+                cx.theme().colors().version_control_deleted,
+            )
+        } else if status.is_modified() {
+            (
+                IconName::SquareDot,
+                cx.theme().colors().version_control_modified,
+            )
+        } else {
+            (
+                IconName::SquarePlus,
+                cx.theme().colors().version_control_added,
+            )
+        };
+
+        Icon::new(icon_name).color(Color::Custom(color))
+    }
+}
+
+// View this component preview using `workspace: open component-preview`
+impl ComponentPreview for GitStatusIcon {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        fn tracked_file_status(code: StatusCode) -> FileStatus {
+            FileStatus::Tracked(git::status::TrackedStatus {
+                index_status: code,
+                worktree_status: code,
+            })
+        }
+
+        let modified = tracked_file_status(StatusCode::Modified);
+        let added = tracked_file_status(StatusCode::Added);
+        let deleted = tracked_file_status(StatusCode::Deleted);
+        let conflict = UnmergedStatus {
+            first_head: UnmergedStatusCode::Updated,
+            second_head: UnmergedStatusCode::Updated,
+        }
+        .into();
+
+        v_flex()
+            .gap_6()
+            .children(vec![example_group(vec![
+                single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
+                single_example("Added", GitStatusIcon::new(added).into_any_element()),
+                single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
+                single_example(
+                    "Conflicted",
+                    GitStatusIcon::new(conflict).into_any_element(),
+                ),
+            ])])
+            .into_any_element()
     }
 }

@@ -647,7 +647,6 @@ impl AssistantContext {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
@@ -768,7 +767,6 @@ impl AssistantContext {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn deserialize(
         saved_context: SavedContext,
         path: PathBuf,
@@ -2256,6 +2254,7 @@ impl AssistantContext {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) => {}
+                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
 
