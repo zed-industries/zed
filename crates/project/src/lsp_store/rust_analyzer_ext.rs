@@ -6,14 +6,6 @@ use crate::{LanguageServerPromptRequest, LspStore, LspStoreEvent};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 
-pub const EXTRA_SUPPORTED_COMMANDS: &[&str] = &[
-    "rust-analyzer.runSingle",
-    "rust-analyzer.showReferences",
-    "rust-analyzer.gotoLocation",
-    "rust-analyzer.triggerParameterHints",
-    "rust-analyzer.rename",
-];
-
 /// Experimental: Informs the end user about the state of the server
 ///
 /// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
