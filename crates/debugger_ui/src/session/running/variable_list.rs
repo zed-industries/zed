@@ -18,12 +18,13 @@ actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 pub(crate) struct EntryState {
     depth: usize,
     is_expanded: bool,
+    parent_reference: VariableReference,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) struct EntryPath {
     pub leaf_name: Option<SharedString>,
-    pub indices: Arc<[VariableReference]>,
+    pub indices: Arc<[SharedString]>,
 }
 
 impl EntryPath {
@@ -42,23 +43,16 @@ impl EntryPath {
     }
 
     /// Create a new child of this variable path
-    fn with_child(&self, variable_reference: VariableReference) -> Self {
+    fn with_child(&self, name: SharedString) -> Self {
         Self {
             leaf_name: None,
             indices: self
                 .indices
                 .iter()
                 .cloned()
-                .chain(std::iter::once(variable_reference))
+                .chain(std::iter::once(name))
                 .collect(),
         }
-    }
-
-    fn parent_reference_id(&self) -> VariableReference {
-        self.indices
-            .last()
-            .copied()
-            .expect("VariablePath should have at least one variable reference")
     }
 }
 
@@ -113,8 +107,8 @@ impl ListEntry {
             EntryKind::Variable(dap) => format!("variable-{}", dap.name),
             EntryKind::Scope(dap) => format!("scope-{}", dap.name),
         };
-        for index in self.path.indices.iter() {
-            _ = write!(id, "-{}", index);
+        for name in self.path.indices.iter() {
+            _ = write!(id, "-{}", name);
         }
         SharedString::from(id).into()
     }
@@ -125,8 +119,8 @@ impl ListEntry {
             EntryKind::Variable(dap) => format!("variable-{}", dap.name),
             EntryKind::Scope(dap) => format!("scope-{}", dap.name),
         };
-        for index in self.path.indices.iter() {
-            _ = write!(id, "-{}", index);
+        for name in self.path.indices.iter() {
+            _ = write!(id, "-{}", name);
         }
         _ = write!(id, "-value");
         SharedString::from(id).into()
@@ -164,7 +158,6 @@ impl VariableList {
                     this.selection.take();
                     this.edited_path.take();
                     this.selected_stack_frame_id.take();
-                    this.entry_states.clear();
                 }
                 _ => {}
             }),
@@ -232,6 +225,7 @@ impl VariableList {
             .map(|scope| {
                 (
                     scope.variables_reference,
+                    scope.variables_reference,
                     EntryPath::for_scope(&scope.name),
                     EntryKind::Scope(scope),
                 )
@@ -240,22 +234,31 @@ impl VariableList {
 
         let scopes_count = stack.len();
 
-        while let Some((variable_reference, mut path, dap_kind)) = stack.pop() {
-            if let Some(dap) = &dap_kind.as_variable() {
-                path = path.with_name(dap.name.clone().into());
+        while let Some((container_reference, variables_reference, mut path, dap_kind)) = stack.pop()
+        {
+            match &dap_kind {
+                EntryKind::Variable(dap) => path = path.with_name(dap.name.clone().into()),
+                EntryKind::Scope(dap) => path = path.with_child(dap.name.clone().into()),
             }
 
-            let var_state = self.entry_states.entry(path.clone()).or_insert(EntryState {
-                depth: path.indices.len(),
-                is_expanded: dap_kind.as_scope().is_some_and(|scope| {
-                    (scopes_count == 1 && !contains_local_scope)
-                        || scope
-                            .presentation_hint
-                            .as_ref()
-                            .map(|hint| *hint == ScopePresentationHint::Locals)
-                            .unwrap_or(scope.name.to_lowercase().starts_with("local"))
-                }),
-            });
+            let var_state = self
+                .entry_states
+                .entry(path.clone())
+                .and_modify(|state| {
+                    state.parent_reference = container_reference;
+                })
+                .or_insert(EntryState {
+                    depth: path.indices.len(),
+                    is_expanded: dap_kind.as_scope().is_some_and(|scope| {
+                        (scopes_count == 1 && !contains_local_scope)
+                            || scope
+                                .presentation_hint
+                                .as_ref()
+                                .map(|hint| *hint == ScopePresentationHint::Locals)
+                                .unwrap_or(scope.name.to_lowercase().starts_with("local"))
+                    }),
+                    parent_reference: container_reference,
+                });
 
             entries.push(ListEntry {
                 dap_kind,
@@ -265,11 +268,12 @@ impl VariableList {
             if var_state.is_expanded {
                 let children = self
                     .session
-                    .update(cx, |session, cx| session.variables(variable_reference, cx));
+                    .update(cx, |session, cx| session.variables(variables_reference, cx));
                 stack.extend(children.into_iter().rev().map(|child| {
                     (
+                        variables_reference,
                         child.variables_reference,
-                        path.with_child(variable_reference),
+                        path.with_child(child.name.clone().into()),
                         EntryKind::Variable(child),
                     )
                 }));
@@ -414,7 +418,8 @@ impl VariableList {
     ) {
         let res = maybe!({
             let (var_path, editor) = self.edited_path.take()?;
-            let variables_reference = var_path.parent_reference_id();
+            let state = self.entry_states.get(&var_path)?;
+            let variables_reference = state.parent_reference;
             let name = var_path.leaf_name?;
             let value = editor.read(cx).text(cx);
 
@@ -759,7 +764,6 @@ impl VariableList {
                             });
 
                             this.toggle_entry(&var_path, cx);
-                            cx.notify();
                         }
                     }))
                 })
