@@ -684,6 +684,8 @@ impl Session {
                                     break;
                                 };
                             }
+
+                            smol::future::yield_now().await;
                         }
                     })];
 

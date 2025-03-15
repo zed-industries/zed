@@ -126,7 +126,15 @@ impl DebugAdapterClient {
 
                     message_handler(Message::Event(ev))
                 }
-                Message::Request(req) => message_handler(Message::Request(req)),
+                Message::Request(req) => {
+                    log::debug!(
+                        "Client {} received reverse request `{}`",
+                        client_id.0,
+                        &req.command
+                    );
+
+                    message_handler(Message::Request(req))
+                }
                 Message::Response(response) => {
                     log::debug!("Received response after request timeout: {:#?}", response);
                 }

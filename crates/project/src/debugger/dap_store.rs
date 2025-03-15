@@ -393,15 +393,19 @@ impl DapStore {
                 }
             };
 
+            // we have to insert the session early, so we can handle reverse requests
+            // that need the session to be available
+            this.update(&mut cx, |store, _| {
+                store.sessions.insert(session_id, session.clone());
+            })?;
+
             session
                 .update(&mut cx, |session, cx| {
                     session.initialize_sequence(initialized_rx, cx)
                 })?
                 .await?;
 
-            this.update(&mut cx, |store, cx| {
-                store.sessions.insert(session_id, session.clone());
-
+            this.update(&mut cx, |_, cx| {
                 cx.emit(DapStoreEvent::DebugClientStarted(session_id));
                 cx.notify();
 
