@@ -2135,6 +2135,15 @@ impl EditorElement {
 
         let scroll_top = scroll_position.y * line_height;
 
+        let max_line_number_length = 1 + self
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .widest_line_number()
+            .ilog10();
+
         let elements = buffer_rows
             .into_iter()
             .enumerate()
@@ -2151,17 +2160,10 @@ impl EditorElement {
                 };
 
                 let editor = self.editor.clone();
-                let max_line_number = self
-                    .editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
-                    .widest_line_number();
-                let is_wide = max_line_number > 999
+                let is_wide = max_line_number_length > 3
                     && row_info
                         .buffer_row
-                        .is_some_and(|row| (row + 1).ilog10() == max_line_number.ilog10());
+                        .is_some_and(|row| (row + 1).ilog10() + 1 == max_line_number_length);
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
@@ -5596,8 +5598,8 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Pixels {
-        let digit_count = (snapshot.widest_line_number() as f32).log10().floor() as usize + 1;
-        self.column_pixels(digit_count, window, cx)
+        let digit_count = snapshot.widest_line_number().ilog10() + 1;
+        self.column_pixels(digit_count as usize, window, cx)
     }
 
     fn shape_line_number(
