@@ -546,90 +546,115 @@ async fn test_handle_start_debugging_reverse_request(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    unimplemented!("todo(debugger): Implement this once reverse request is handled again");
-    //     init_test(cx);
+    init_test(cx);
 
-    //     let send_response = Arc::new(AtomicBool::new(false));
+    let send_response = Arc::new(AtomicBool::new(false));
 
-    //     let fs = FakeFs::new(executor.clone());
+    let fs = FakeFs::new(executor.clone());
 
-    //     fs.insert_tree(
-    //         "/project",
-    //         json!({
-    //             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-    //         }),
-    //     )
-    //     .await;
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
 
-    //     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-    //     let workspace = init_test_workspace(&project, cx).await;
-    //     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    //     let task = project.update(cx, |project, cx| {
-    //         project.start_debug_session(dap::test_config(None), cx)
-    //     });
+    let task = project.update(cx, |project, cx| {
+        project.start_debug_session(dap::test_config(None), cx)
+    });
 
-    //     let session = task.await.unwrap();
-    //     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    //     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-    //     client
-    //         .on_response::<StartDebugging, _>({
-    //             let send_response = send_response.clone();
-    //             move |response| {
-    //                 send_response.store(true, Ordering::SeqCst);
+    client
+        .on_request::<dap::requests::Threads, _>(move |_, _| {
+            Ok(dap::ThreadsResponse {
+                threads: vec![dap::Thread {
+                    id: 1,
+                    name: "Thread 1".into(),
+                }],
+            })
+        })
+        .await;
 
-    //                 assert!(response.success);
-    //                 assert!(response.body.is_some());
-    //             }
-    //         })
-    //         .await;
+    client
+        .on_response::<StartDebugging, _>({
+            let send_response = send_response.clone();
+            move |response| {
+                send_response.store(true, Ordering::SeqCst);
 
-    //     client
-    //         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
-    //             configuration: json!({}),
-    //             request: StartDebuggingRequestArgumentsRequest::Launch,
-    //         })
-    //         .await;
+                assert!(response.success);
+                assert!(response.body.is_some());
+            }
+        })
+        .await;
 
-    //     cx.run_until_parked();
+    client
+        .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+            configuration: json!({}),
+            request: StartDebuggingRequestArgumentsRequest::Launch,
+        })
+        .await;
 
-    //     let child_session = project.update(cx, |project, cx| {
-    //         project
-    //             .dap_store()
-    //             .read(cx)
-    //             .session_by_id(SessionId(1))
-    //             .unwrap()
-    //     });
-    //     let client = child_session.update(cx, |session, _| session.adapter_client().unwrap());
+    cx.run_until_parked();
 
-    //     client
-    //         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-    //             reason: dap::StoppedEventReason::Pause,
-    //             description: None,
-    //             thread_id: Some(2),
-    //             preserve_focus_hint: None,
-    //             text: None,
-    //             all_threads_stopped: None,
-    //             hit_breakpoint_ids: None,
-    //         }))
-    //         .await;
+    let child_session = project.update(cx, |project, cx| {
+        project
+            .dap_store()
+            .read(cx)
+            .session_by_id(SessionId(1))
+            .unwrap()
+    });
+    let child_client = child_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    //     cx.run_until_parked();
+    client
+        .on_request::<dap::requests::Threads, _>(move |_, _| {
+            Ok(dap::ThreadsResponse {
+                threads: vec![dap::Thread {
+                    id: 1,
+                    name: "Thread 1".into(),
+                }],
+            })
+        })
+        .await;
 
-    //     assert!(
-    //         send_response.load(std::sync::atomic::Ordering::SeqCst),
-    //         "Expected to receive response from reverse request"
-    //     );
+    child_client
+        .on_request::<Disconnect, _>(move |_, _| Ok(()))
+        .await;
 
-    //     let shutdown_session = project.update(cx, |project, cx| {
-    //         project.dap_store().update(cx, |dap_store, cx| {
-    //             dap_store.shutdown_session(&child_session.read(cx).session_id(), cx)
-    //         })
-    //     });
+    child_client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(2),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
 
-    //     shutdown_session.await.unwrap();
+    cx.run_until_parked();
+
+    assert!(
+        send_response.load(std::sync::atomic::Ordering::SeqCst),
+        "Expected to receive response from reverse request"
+    );
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&child_session.read(cx).session_id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -783,13 +808,12 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-    let running_state =
-        active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
-            item.mode()
-                .as_running()
-                .expect("Session should be running by this point")
-                .clone()
-        });
+    let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, _| {
+        item.mode()
+            .as_running()
+            .expect("Session should be running by this point")
+            .clone()
+    });
 
     cx.run_until_parked();
     let thread_id = ThreadId(1);
