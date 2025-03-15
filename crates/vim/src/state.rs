@@ -815,8 +815,15 @@ impl VimGlobals {
         })
         .detach();
 
+        let mut was_enabled = None;
+
         cx.observe_global::<SettingsStore>(move |cx| {
-            if Vim::enabled(cx) {
+            let is_enabled = Vim::enabled(cx);
+            if was_enabled == Some(is_enabled) {
+                return;
+            }
+            was_enabled = Some(is_enabled);
+            if is_enabled {
                 KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
@@ -824,6 +831,17 @@ impl VimGlobals {
                 CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
                     interceptor.set(Box::new(command_interceptor));
                 });
+                for window in cx.windows() {
+                    if let Some(workspace) = window.downcast::<Workspace>() {
+                        workspace
+                            .update(cx, |workspace, _, cx| {
+                                Vim::update_globals(cx, |globals, cx| {
+                                    globals.register_workspace(workspace, cx)
+                                });
+                            })
+                            .ok();
+                    }
+                }
             } else {
                 KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
@@ -837,23 +855,20 @@ impl VimGlobals {
         })
         .detach();
         cx.observe_new(|workspace: &mut Workspace, _, cx| {
-            let entity_id = cx.entity_id();
-            Vim::update_globals(cx, |globals, cx| {
-                globals
-                    .marks
-                    .insert(entity_id, MarksState::new(workspace, cx))
-            });
-            cx.observe_release(
-                &workspace.weak_handle().upgrade().unwrap(),
-                move |_, _, cx| {
-                    Vim::update_globals(cx, |globals, _| {
-                        globals.marks.remove(&entity_id);
-                    })
-                },
-            )
-            .detach();
+            Vim::update_globals(cx, |globals, cx| globals.register_workspace(workspace, cx));
         })
         .detach()
+    }
+
+    fn register_workspace(&mut self, workspace: &Workspace, cx: &mut Context<Workspace>) {
+        let entity_id = cx.entity_id();
+        self.marks.insert(entity_id, MarksState::new(workspace, cx));
+        cx.observe_release(&cx.entity(), move |_, _, cx| {
+            Vim::update_globals(cx, |globals, _| {
+                globals.marks.remove(&entity_id);
+            })
+        })
+        .detach();
     }
 
     pub(crate) fn write_registers(
