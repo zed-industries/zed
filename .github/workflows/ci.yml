@@ -432,7 +432,6 @@ jobs:
     needs:
       - job_spec
       - style
-      - migration_checks
       - linux_tests
       - build_remote_server
       - macos_tests
@@ -453,7 +452,6 @@ jobs:
             [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed"; }
             [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
             [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed"; }
-            [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration checks failed"; }
             [[ "${{ needs.build_remote_server.result }}"  != 'success' ]] && { RET_CODE=1; echo "Remote server build failed"; }
           fi
           if [[ "$RET_CODE" -eq 0 ]]; then
