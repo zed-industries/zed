@@ -673,6 +673,7 @@ pub struct Editor {
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
+    show_breakpoints: Option<bool>,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -808,6 +809,7 @@ pub struct EditorSnapshot {
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
+    show_breakpoints: Option<bool>,
     git_blame_gutter_max_author_length: Option<usize>,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
@@ -1401,6 +1403,7 @@ impl Editor {
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
+            show_breakpoints: None,
             show_wrap_guides: None,
             show_indent_guides,
             placeholder_text: None,
@@ -1820,6 +1823,7 @@ impl Editor {
             show_git_diff_gutter: self.show_git_diff_gutter,
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
+            show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
@@ -14893,6 +14897,11 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_breakpoints(&mut self, show_breakpoints: bool, cx: &mut Context<Self>) {
+        self.show_breakpoints = Some(show_breakpoints);
+        cx.notify();
+    }
+
     pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
         if self.display_map.read(cx).masked != masked {
             self.display_map.update(cx, |map, _| map.masked = masked);
@@ -18041,6 +18050,7 @@ impl EditorSnapshot {
             .unwrap_or(gutter_settings.code_actions);
 
         let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
+        let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
 
         let git_blame_entries_width =
             self.git_blame_gutter_max_author_length
@@ -18060,7 +18070,7 @@ impl EditorSnapshot {
                 });
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if show_code_actions || show_runnables {
+        left_padding += if show_code_actions || show_runnables || show_breakpoints {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0

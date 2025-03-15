@@ -7550,7 +7550,10 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let breakpoints = if cx.has_flag::<Debugger>() {
+                    let show_breakpoints = snapshot
+                        .show_breakpoints
+                        .unwrap_or(gutter_settings.breakpoints);
+                    let breakpoints = if cx.has_flag::<Debugger>() && show_breakpoints {
                         self.layout_breakpoints(
                             line_height,
                             start_row..end_row,
