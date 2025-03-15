@@ -7,8 +7,8 @@ use crate::{
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
-    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
+    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -843,7 +843,6 @@ impl Pane {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
@@ -928,7 +927,6 @@ impl Pane {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn add_item_inner(
         &mut self,
         item: Box<dyn ItemHandle>,
@@ -1880,7 +1878,7 @@ impl Pane {
                     }
                     Ok(1) => {
                         pane.update_in(cx, |pane, window, cx| {
-                            pane.remove_item(item.item_id(), false, false, window, cx)
+                            pane.remove_item(item.item_id(), false, true, window, cx)
                         })?;
                     }
                     _ => return Ok(false),
@@ -2424,14 +2422,10 @@ impl Pane {
                     .child(label),
             );
 
-        let single_entry_to_resolve = {
-            let item_entries = self.items[ix].project_entry_ids(cx);
-            if item_entries.len() == 1 {
-                Some(item_entries[0])
-            } else {
-                None
-            }
-        };
+        let single_entry_to_resolve = self.items[ix]
+            .is_singleton(cx)
+            .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
+            .flatten();
 
         let total_items = self.items.len();
         let has_items_to_left = ix > 0;
@@ -3086,7 +3080,10 @@ impl Pane {
                         }
                         workspace.open_paths(
                             paths,
-                            OpenVisible::OnlyDirectories,
+                            OpenOptions {
+                                visible: Some(OpenVisible::OnlyDirectories),
+                                ..Default::default()
+                            },
                             Some(to_pane.downgrade()),
                             window,
                             cx,

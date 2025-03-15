@@ -325,7 +325,6 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
         python_venv_directory: Option<PathBuf>,
@@ -930,18 +929,58 @@ impl Terminal {
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
-                    let (sanitized_match, sanitized_word) =
+                    let (sanitized_match, sanitized_word) = 'sanitize: {
+                        let mut word_match = word_match;
+                        let mut file_path = file_path;
+
                         if is_path_surrounded_by_common_symbols(&file_path) {
-                            (
-                                Match::new(
-                                    word_match.start().add(term, Boundary::Cursor, 1),
-                                    word_match.end().sub(term, Boundary::Cursor, 1),
-                                ),
-                                file_path[1..file_path.len() - 1].to_owned(),
-                            )
-                        } else {
-                            (word_match, file_path)
-                        };
+                            word_match = Match::new(
+                                word_match.start().add(term, Boundary::Grid, 1),
+                                word_match.end().sub(term, Boundary::Grid, 1),
+                            );
+                            file_path = file_path[1..file_path.len() - 1].to_owned();
+                        }
+
+                        while file_path.ends_with(':') {
+                            file_path.pop();
+                            word_match = Match::new(
+                                *word_match.start(),
+                                word_match.end().sub(term, Boundary::Grid, 1),
+                            );
+                        }
+                        let mut colon_count = 0;
+                        for c in file_path.chars() {
+                            if c == ':' {
+                                colon_count += 1;
+                            }
+                        }
+                        // strip trailing comment after colon in case of
+                        // file/at/path.rs:row:column:description or error message
+                        // so that the file path is `file/at/path.rs:row:column`
+                        if colon_count > 2 {
+                            let last_index = file_path.rfind(':').unwrap();
+                            let prev_is_digit = last_index > 0
+                                && file_path
+                                    .chars()
+                                    .nth(last_index - 1)
+                                    .map_or(false, |c| c.is_ascii_digit());
+                            let next_is_digit = last_index < file_path.len() - 1
+                                && file_path
+                                    .chars()
+                                    .nth(last_index + 1)
+                                    .map_or(true, |c| c.is_ascii_digit());
+                            if prev_is_digit && !next_is_digit {
+                                let stripped_len = file_path.len() - last_index;
+                                word_match = Match::new(
+                                    *word_match.start(),
+                                    word_match.end().sub(term, Boundary::Grid, stripped_len),
+                                );
+                                file_path = file_path[0..last_index].to_owned();
+                            }
+                        }
+
+                        break 'sanitize (word_match, file_path);
+                    };
 
                     Some((sanitized_word, false, sanitized_match))
                 } else {

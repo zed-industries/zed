@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 databases=$(psql --tuples-only --command "
   SELECT
