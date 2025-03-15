@@ -43,6 +43,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                         language_registry,
                         user_store,
                         None,
+                        None,
                         cx,
                     )
                 });
@@ -106,10 +107,12 @@ impl ComponentPreview {
         language_registry: Arc<LanguageRegistry>,
         user_store: Entity<UserStore>,
         selected_index: impl Into<Option<usize>>,
+        active_page: Option<PreviewPage>,
         cx: &mut Context<Self>,
     ) -> Self {
         let sorted_components = components().all_sorted();
         let selected_index = selected_index.into().unwrap_or(0);
+        let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
 
         let component_list = ListState::new(
             sorted_components.len(),
@@ -135,7 +138,7 @@ impl ComponentPreview {
             language_registry,
             user_store,
             workspace,
-            active_page: PreviewPage::AllComponents,
+            active_page,
             component_map: components().0,
             components: sorted_components,
             component_list,
@@ -524,6 +527,7 @@ impl Item for ComponentPreview {
         let user_store = self.user_store.clone();
         let weak_workspace = self.workspace.clone();
         let selected_index = self.cursor_index;
+        let active_page = self.active_page.clone();
 
         Some(cx.new(|cx| {
             Self::new(
@@ -531,6 +535,7 @@ impl Item for ComponentPreview {
                 language_registry,
                 user_store,
                 selected_index,
+                Some(active_page),
                 cx,
             )
         }))
@@ -563,7 +568,14 @@ impl SerializableItem for ComponentPreview {
             let weak_workspace = workspace.clone();
             cx.update(|_, cx| {
                 Ok(cx.new(|cx| {
-                    ComponentPreview::new(weak_workspace, language_registry, user_store, None, cx)
+                    ComponentPreview::new(
+                        weak_workspace,
+                        language_registry,
+                        user_store,
+                        None,
+                        None,
+                        cx,
+                    )
                 }))
             })?
         })
