@@ -204,8 +204,6 @@ impl GitSettings {
     }
 }
 
-// If set to "staged_hollow", unstaged hunks will be filled and staged hunks will be hollow.
-// If set to "unstaged_hollow", unstaged hunks will be hollow and staged hunks will be filled.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHunkStyleSetting {
