@@ -30,7 +30,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .unwrap();
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -197,7 +197,7 @@ async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppConte
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();

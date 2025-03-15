@@ -2,7 +2,7 @@ use crate::*;
 use dap::{
     client::SessionId,
     requests::{
-        Continue, Disconnect, Initialize, Launch, Next, RunInTerminal, SetBreakpoints, StackTrace,
+        Continue, Disconnect, Launch, Next, RunInTerminal, SetBreakpoints, StackTrace,
         StartDebugging, StepBack, StepIn, StepOut, Threads,
     },
     ErrorResponse, RunInTerminalRequestArguments, SourceBreakpoint, StartDebuggingRequestArguments,
@@ -14,10 +14,7 @@ use editor::{
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{
-    debugger::{
-        breakpoint_store::{Breakpoint, BreakpointEditAction, BreakpointKind},
-        session::{ThreadId, ThreadStatus},
-    },
+    debugger::session::{ThreadId, ThreadStatus},
     FakeFs, Project,
 };
 use serde_json::json;
@@ -51,7 +48,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -87,7 +84,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 debug_panel.active_session(cx).unwrap()
             });
 
-            let running_state = active_session.update(cx, |active_session, cx| {
+            let running_state = active_session.update(cx, |active_session, _| {
                 active_session
                     .mode()
                     .as_running()
@@ -125,7 +122,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 .update(cx, |this, cx| this.active_session(cx))
                 .unwrap();
 
-            let running_state = active_session.update(cx, |active_session, cx| {
+            let running_state = active_session.update(cx, |active_session, _| {
                 active_session
                     .mode()
                     .as_running()
@@ -163,7 +160,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 .update(cx, |this, cx| this.active_session(cx))
                 .unwrap();
 
-            let running_state = active_session.update(cx, |active_session, cx| {
+            let running_state = active_session.update(cx, |active_session, _| {
                 active_session
                     .mode()
                     .as_running()
@@ -205,7 +202,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -268,7 +265,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .update(cx, |this, cx| this.active_session(cx))
                 .unwrap();
 
-            let running_state = active_session.update(cx, |active_session, cx| {
+            let running_state = active_session.update(cx, |active_session, _| {
                 active_session
                     .mode()
                     .as_running()
@@ -310,7 +307,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .update(cx, |this, cx| this.active_session(cx))
                 .unwrap();
 
-            let running_state = active_session.update(cx, |active_session, cx| {
+            let running_state = active_session.update(cx, |active_session, _| {
                 active_session
                     .mode()
                     .as_running()
@@ -347,7 +344,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .update(cx, |this, cx| this.active_session(cx))
                 .unwrap();
 
-            let running_state = active_session.update(cx, |active_session, cx| {
+            let running_state = active_session.update(cx, |active_session, _| {
                 active_session
                     .mode()
                     .as_running()
@@ -391,7 +388,7 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -483,7 +480,7 @@ async fn test_handle_error_run_in_terminal_reverse_request(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -565,7 +562,7 @@ async fn test_handle_start_debugging_reverse_request(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -680,10 +677,13 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     let task = project.update(cx, |project, cx| {
         project.start_debug_session(
-            dap::test_config(Some(dap::Capabilities {
-                supports_step_back: Some(true),
-                ..Default::default()
-            })),
+            dap::test_config(
+                None,
+                Some(dap::Capabilities {
+                    supports_step_back: Some(true),
+                    ..Default::default()
+                }),
+            ),
             cx,
         )
     });
@@ -908,7 +908,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         .unwrap();
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -1058,73 +1058,51 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    unimplemented!();
-    //     init_test(cx);
+    init_test(cx);
 
-    //     let fs = FakeFs::new(executor.clone());
+    let fs = FakeFs::new(executor.clone());
 
-    //     fs.insert_tree(
-    //         "/project",
-    //         json!({
-    //             "main.rs": "First line\nSecond line\nThird line\nFourth line",
-    //         }),
-    //     )
-    //     .await;
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
 
-    //     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-    //     let workspace = init_test_workspace(&project, cx).await;
-    //     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    //     let task = project.update(cx, |project, cx| {
-    //         project.start_debug_session(dap::test_config(None), cx)
-    //     });
+    let task = project.update(cx, |project, cx| {
+        project.start_debug_session(dap::test_config(Some(true), None), cx)
+    });
 
-    //     let (session, client) = task.await.unwrap();
-    //     let session_id = cx.update(|_window, cx| session.read(cx).session_id());
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    let session_id = cx.update(|_window, cx| session.read(cx).session_id());
 
-    //     client
-    //         .on_request::<Initialize, _>(move |_, _| {
-    //             Ok(dap::Capabilities {
-    //                 supports_step_back: Some(false),
-    //                 ..Default::default()
-    //             })
-    //         })
-    //         .await;
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
 
-    //     client
-    //         .on_request::<Launch, _>(move |_, _| {
-    //             Err(ErrorResponse {
-    //                 error: Some(dap::Message {
-    //                     id: 1,
-    //                     format: "error".into(),
-    //                     variables: None,
-    //                     send_telemetry: None,
-    //                     show_user: None,
-    //                     url: None,
-    //                     url_label: None,
-    //                 }),
-    //             })
-    //         })
-    //         .await;
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
-    //     client
-    //         .on_request::<StackTrace, _>(move |_, _| {
-    //             Ok(dap::StackTraceResponse {
-    //                 stack_frames: Vec::default(),
-    //                 total_frames: None,
-    //             })
-    //         })
-    //         .await;
+    cx.run_until_parked();
 
-    //     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
-
-    //     cx.run_until_parked();
-
-    //     project.update(cx, |project, cx| {
-    //         assert!(project
-    //             .dap_store()
-    //             .read(cx)
-    //             .session_by_id(&session_id)
-    //             .is_none());
-    //     });
+    project.update(cx, |project, cx| {
+        assert!(
+            project
+                .dap_store()
+                .read(cx)
+                .session_by_id(&session_id)
+                .is_none(),
+            "Session wouldn't exist if it was shutdown"
+        );
+    });
 }

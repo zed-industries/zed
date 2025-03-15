@@ -202,7 +202,7 @@ async fn test_debug_panel_item_opens_on_remote(
     remote_cx.run_until_parked();
 
     let task = host_project.update(host_cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -287,7 +287,7 @@ async fn test_active_debug_panel_item_set_on_join_project(
     host_cx.run_until_parked();
 
     let task = host_project.update(host_cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -865,7 +865,7 @@ async fn test_updated_breakpoints_send_to_dap(
     };
 
     let task = host_project.update(host_cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None), cx)
+        project.start_debug_session(dap::test_config(None, None), cx)
     });
 
     let session = task.await.unwrap();

@@ -79,7 +79,7 @@ pub enum DebugAdapterKind {
     /// Used for integration tests
     #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
-    Fake(dap_types::Capabilities),
+    Fake((bool, dap_types::Capabilities)),
 }
 
 impl DebugAdapterKind {

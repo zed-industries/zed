@@ -31,10 +31,13 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     let task = project.update(cx, |project, cx| {
         project.start_debug_session(
-            dap::test_config(Some(dap::Capabilities {
-                supports_modules_request: Some(true),
-                ..Default::default()
-            })),
+            dap::test_config(
+                None,
+                Some(dap::Capabilities {
+                    supports_modules_request: Some(true),
+                    ..Default::default()
+                }),
+            ),
             cx,
         )
     });

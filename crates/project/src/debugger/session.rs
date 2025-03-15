@@ -187,7 +187,8 @@ impl LocalMode {
 
             #[cfg(any(test, feature = "test-support"))]
             {
-                let dap::DebugAdapterKind::Fake(caps) = session.config.kind.clone() else {
+                let dap::DebugAdapterKind::Fake((fail_launch, caps)) = session.config.kind.clone()
+                else {
                     panic!("Only fake debug adapter configs should be used in tests");
                 };
 
@@ -196,10 +197,29 @@ impl LocalMode {
                     .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
                     .await;
 
-                session
-                    .client
-                    .on_request::<dap::requests::Launch, _>(move |_, _| Ok(()))
-                    .await;
+                if fail_launch {
+                    session
+                        .client
+                        .on_request::<dap::requests::Launch, _>(move |_, _| {
+                            Err(dap::ErrorResponse {
+                                error: Some(dap::Message {
+                                    id: 1,
+                                    format: "error".into(),
+                                    variables: None,
+                                    send_telemetry: None,
+                                    show_user: None,
+                                    url: None,
+                                    url_label: None,
+                                }),
+                            })
+                        })
+                        .await;
+                } else {
+                    session
+                        .client
+                        .on_request::<dap::requests::Launch, _>(move |_, _| Ok(()))
+                        .await;
+                }
 
                 session.client.fake_event(Events::Initialized(None)).await;
             }
