@@ -61,9 +61,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: &'static str = "0";
-const TRACKED_NAMESPACE: &'static str = "1";
-const NEW_NAMESPACE: &'static str = "2";
+const CONFLICT_NAMESPACE: usize = 0;
+const TRACKED_NAMESPACE: usize = 1;
+const NEW_NAMESPACE: usize = 2;
 
 impl ProjectDiff {
     pub(crate) fn register(
