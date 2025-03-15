@@ -143,7 +143,7 @@ impl Component for HighlightedLabel {
         Some("A label with highlighted characters based on specified indices.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

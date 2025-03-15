@@ -94,7 +94,7 @@ impl Component for Indicator {
         Some("Visual indicators used to represent status, notifications, or draw attention to specific elements.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

@@ -50,7 +50,7 @@ impl Component for SettingsGroup {
         Some("A group of settings with a header, used to organize related settings.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

@@ -165,7 +165,7 @@ impl Component for TabBar {
         Some("A horizontal bar containing tabs for navigation between different views or sections.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

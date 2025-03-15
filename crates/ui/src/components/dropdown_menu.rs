@@ -63,11 +63,11 @@ impl Component for DropdownMenu {
     }
 
     fn description() -> Option<&'static str> {
-        Some("A dropdown menu component that displays a list of selectable options.")
+        Some("A dropdown menu displays a list of actions or options. A dropdown menu is always activated by clicking a trigger (or via a keybinding).")
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let menu = ContextMenu::build(window, cx, |this, window, cx| {
+        let menu = ContextMenu::build(window, cx, |this, _, _| {
             this.entry("Option 1", None, |_, _| {})
                 .entry("Option 2", None, |_, _| {})
                 .entry("Option 3", None, |_, _| {})

@@ -49,7 +49,7 @@ impl Component for SettingsContainer {
         Some("A container for organizing and displaying settings in a structured manner.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

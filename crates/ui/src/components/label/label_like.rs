@@ -246,7 +246,7 @@ impl Component for LabelLike {
         Some("A flexible, customizable label-like component that serves as a base for other label types.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

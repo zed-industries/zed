@@ -80,7 +80,7 @@ impl Component for Disclosure {
         Some("An interactive element used to show or hide content, typically used in expandable sections or tree-like structures.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

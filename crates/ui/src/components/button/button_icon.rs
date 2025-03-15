@@ -132,7 +132,7 @@ impl Component for ButtonIcon {
         Some("An icon component specifically designed for use within buttons.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
