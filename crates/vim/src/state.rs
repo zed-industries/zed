@@ -9,7 +9,9 @@ use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::define_connection;
 use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
-use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
+use editor::{
+    Anchor, ClipboardSelection, Editor, MultiBuffer, MultiBufferSnapshot, ToPoint as EditorToPoint,
+};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
@@ -1375,14 +1377,37 @@ impl MarksView {
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned())
             .map(|addon| addon.entity);
+        let snapshots_ids: Vec<_> = workspace
+            .items_of_type::<Editor>(cx)
+            .map(|editor| {
+                let buffer = editor.read(cx).buffer();
+                let entity_id = buffer.entity_id();
+                let snapshot = buffer.read(cx).snapshot(cx).clone();
+                (entity_id, snapshot.clone())
+            })
+            .collect();
+        let worktree_roots: Vec<_> = workspace
+            .worktrees(cx)
+            .filter_map(|worktree| worktree.read(cx).root_dir())
+            .collect();
         workspace.toggle_modal(window, cx, move |window, cx| {
-            MarksView::new(editor, vim, entity_id, window, cx)
+            MarksView::new(
+                editor,
+                vim,
+                snapshots_ids,
+                worktree_roots,
+                entity_id,
+                window,
+                cx,
+            )
         });
     }
 
     fn new(
         editor: Option<Entity<Editor>>,
         vim: Option<Entity<Vim>>,
+        snapshot_ids: Vec<(EntityId, MultiBufferSnapshot)>,
+        worktree_roots: Vec<Arc<Path>>,
         entity_id: EntityId,
         window: &mut Window,
         cx: &mut Context<Picker<MarksViewDelegate>>,
@@ -1413,12 +1438,31 @@ impl MarksView {
                     has_seen.insert(c);
 
                     match mark_location {
-                        MarkLocation::Buffer(_entity_id) => {
-                            matches.push(MarksMatch {
-                                name: c,
-                                position: Point::zero(),
-                                path: None,
-                            });
+                        MarkLocation::Buffer(entity_id) => {
+                            let snapshot: Option<MultiBufferSnapshot> =
+                                snapshot_ids.iter().find_map(|(eid, snapshot)| {
+                                    if entity_id == eid {
+                                        Some(snapshot.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+                            let Some(snapshot) = snapshot else {
+                                return;
+                            };
+
+                            if let Some(&anchor) = ms
+                                .multibuffer_marks
+                                .get(entity_id)
+                                .and_then(|map| map.get(name))
+                                .and_then(|anchors| anchors.first())
+                            {
+                                matches.push(MarksMatch {
+                                    name: c,
+                                    position: anchor.to_point(&snapshot),
+                                    path: None,
+                                });
+                            }
                         }
                         MarkLocation::Path(path) => {
                             if let Some(&position) = ms
@@ -1427,10 +1471,16 @@ impl MarksView {
                                 .and_then(|map| map.get(name))
                                 .and_then(|points| points.first())
                             {
+                                let path_buf = path.to_path_buf();
+                                let stripped = worktree_roots
+                                    .iter()
+                                    .find_map(|root| path_buf.strip_prefix(root).ok())
+                                    .map(|p| Arc::from(p.to_path_buf()))
+                                    .unwrap_or(path.clone());
                                 matches.push(MarksMatch {
                                     name: c,
                                     position,
-                                    path: Some(path.clone()),
+                                    path: Some(stripped),
                                 });
                             }
                         }
