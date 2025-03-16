@@ -3,7 +3,10 @@ use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
 use collections::HashMap;
-use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
+use gpui::{
+    div, pattern_slash, prelude::*, px, rems, AnyElement, App, IntoElement, RenderOnce,
+    SharedString, Window,
+};
 pub use linkme::distributed_slice;
 use parking_lot::RwLock;
 use theme::ActiveTheme;
@@ -227,42 +230,52 @@ impl Display for ComponentScope {
     }
 }
 
-/// Which side of the preview to show labels on
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExampleLabelSide {
-    Left,
-    Right,
-    #[default]
-    Top,
-    Bottom,
-}
-
 /// A single example of a component.
 #[derive(IntoElement)]
 pub struct ComponentExample {
-    variant_name: SharedString,
-    element: AnyElement,
-    label_side: ExampleLabelSide,
-    grow: bool,
+    pub variant_name: SharedString,
+    pub description: Option<SharedString>,
+    pub element: AnyElement,
 }
 
 impl RenderOnce for ComponentExample {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let base = div().flex();
-        let base = match self.label_side {
-            ExampleLabelSide::Right => base.flex_row(),
-            ExampleLabelSide::Left => base.flex_row_reverse(),
-            ExampleLabelSide::Bottom => base.flex_col(),
-            ExampleLabelSide::Top => base.flex_col_reverse(),
-        };
-        base.gap_2()
-            .p_2()
-            .text_size(px(10.))
-            .text_color(cx.theme().colors().text_muted)
-            .when(self.grow, |this| this.flex_1())
-            .when(!self.grow, |this| this.flex_none())
-            .child(self.element)
-            .child(self.variant_name)
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .child(self.variant_name.clone())
+                    .text_size(rems(1.25))
+                    .text_color(cx.theme().colors().text),
+            )
+            .when_some(self.description, |this, description| {
+                this.child(
+                    div()
+                        .text_size(rems(0.9375))
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(description.clone()),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .rounded_xl()
+                    .min_h(px(100.))
+                    .justify_center()
+                    .p_8()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(pattern_slash(
+                        cx.theme().colors().surface_background.opacity(0.5),
+                        24.0,
+                    ))
+                    .shadow_sm()
+                    .child(self.element),
+            )
             .into_any_element()
     }
 }
@@ -272,12 +285,12 @@ impl ComponentExample {
         Self {
             variant_name: variant_name.into(),
             element,
-            label_side: ExampleLabelSide::default(),
-            grow: false,
+            description: None,
         }
     }
-    pub fn grow(mut self) -> Self {
-        self.grow = true;
+
+    pub fn description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
         self
     }
 }
@@ -297,7 +310,7 @@ impl RenderOnce for ComponentExampleGroup {
             .flex_col()
             .text_sm()
             .text_color(cx.theme().colors().text_muted)
-            .when(self.grow, |this| this.w_full().flex_1())
+            .w_full()
             .when_some(self.title, |this, title| {
                 this.gap_4().child(
                     div()
@@ -324,7 +337,7 @@ impl RenderOnce for ComponentExampleGroup {
             .child(
                 div()
                     .flex()
-                    .when(self.vertical, |this| this.flex_col())
+                    .flex_col()
                     .items_start()
                     .w_full()
                     .gap_6()

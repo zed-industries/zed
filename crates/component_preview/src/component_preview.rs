@@ -638,14 +638,14 @@ impl ComponentPreviewPage {
             .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
-                    .gap_1()
-                    .child(
-                        Headline::new(self.component.scopeless_name()).size(HeadlineSize::XLarge),
-                    )
+                    .gap_0p5()
                     .child(
                         Label::new(self.component.scope().to_string())
-                            .size(LabelSize::XSmall)
+                            .size(LabelSize::Small)
                             .color(Color::Muted),
+                    )
+                    .child(
+                        Headline::new(self.component.scopeless_name()).size(HeadlineSize::XLarge),
                     ),
             )
             .when_some(self.component.description(), |this, description| {
@@ -656,7 +656,7 @@ impl ComponentPreviewPage {
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .flex_1()
-            .px_8()
+            .px_12()
             .py_6()
             .bg(cx.theme().colors().editor_background)
             .child(if let Some(preview) = self.component.preview() {

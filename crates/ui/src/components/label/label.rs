@@ -53,9 +53,6 @@ impl Label {
     }
 }
 
-// nate: If we are going to do this, we might as well just
-// impl Styled for Label and not constrain styles
-
 // Style methods.
 impl Label {
     fn style(&mut self) -> &mut StyleRefinement {

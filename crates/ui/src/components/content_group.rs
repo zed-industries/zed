@@ -1,5 +1,6 @@
+use crate::component_prelude::*;
 use crate::prelude::*;
-use component::{example_group, single_example, Component};
+
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
@@ -23,7 +24,7 @@ pub fn h_container() -> ContentGroup {
 }
 
 /// A flexible container component that can hold other elements.
-#[derive(IntoElement, RegisterComponent)]
+#[derive(IntoElement, Documented, RegisterComponent)]
 pub struct ContentGroup {
     base: Div,
     border: bool,
@@ -82,7 +83,6 @@ impl RenderOnce for ContentGroup {
                 this.border_1().border_color(cx.theme().colors().border)
             })
             .rounded_sm()
-            .p_2()
             .children(self.children)
     }
 }
@@ -90,6 +90,10 @@ impl RenderOnce for ContentGroup {
 impl Component for ContentGroup {
     fn scope() -> ComponentScope {
         ComponentScope::Layout
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(ContentGroup::DOCS)
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
@@ -102,10 +106,9 @@ impl Component for ContentGroup {
                         .items_center()
                         .justify_center()
                         .h_48()
-                        .child(Label::new("Default ContentBox"))
+                        .child(Label::new("Default ContentGroup"))
                         .into_any_element(),
-                )
-                .grow(),
+                ).description("A contained style for laying out groups of content. Has a default background and border color."),
                 single_example(
                     "Without Border",
                     ContentGroup::new()
@@ -114,10 +117,9 @@ impl Component for ContentGroup {
                         .justify_center()
                         .h_48()
                         .borderless()
-                        .child(Label::new("Borderless ContentBox"))
+                        .child(Label::new("Borderless ContentGroup"))
                         .into_any_element(),
-                )
-                .grow(),
+                ),
                 single_example(
                     "Without Fill",
                     ContentGroup::new()
@@ -126,10 +128,9 @@ impl Component for ContentGroup {
                         .justify_center()
                         .h_48()
                         .unfilled()
-                        .child(Label::new("Unfilled ContentBox"))
+                        .child(Label::new("Unfilled ContentGroup"))
                         .into_any_element(),
-                )
-                .grow(),
+                ),
             ])
             .into_any_element(),
         )

@@ -4263,8 +4263,7 @@ impl Component for PanelRepoFooter {
                                     None,
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Remote status unknown",
                             div()
@@ -4276,8 +4275,7 @@ impl Component for PanelRepoFooter {
                                     Some(branch(unknown_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "No Remote Upstream",
                             div()
@@ -4289,8 +4287,7 @@ impl Component for PanelRepoFooter {
                                     Some(branch(no_remote_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Not Ahead or Behind",
                             div()
@@ -4302,8 +4299,7 @@ impl Component for PanelRepoFooter {
                                     Some(branch(not_ahead_or_behind_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Behind remote",
                             div()
@@ -4315,8 +4311,7 @@ impl Component for PanelRepoFooter {
                                     Some(branch(behind_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Ahead of remote",
                             div()
@@ -4328,8 +4323,7 @@ impl Component for PanelRepoFooter {
                                     Some(branch(ahead_of_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Ahead and behind remote",
                             div()
@@ -4341,8 +4335,7 @@ impl Component for PanelRepoFooter {
                                     Some(branch(ahead_and_behind_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                     ],
                 )
                 .grow()
@@ -4361,8 +4354,7 @@ impl Component for PanelRepoFooter {
                                     Some(custom("main", behind_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Long Branch",
                             div()
@@ -4377,8 +4369,7 @@ impl Component for PanelRepoFooter {
                                     )),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Long Repo",
                             div()
@@ -4390,8 +4381,7 @@ impl Component for PanelRepoFooter {
                                     Some(custom("gpui", ahead_of_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Long Repo & Branch",
                             div()
@@ -4406,8 +4396,7 @@ impl Component for PanelRepoFooter {
                                     )),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Uppercase Repo",
                             div()
@@ -4419,8 +4408,7 @@ impl Component for PanelRepoFooter {
                                     Some(custom("main", ahead_of_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                         single_example(
                             "Uppercase Branch",
                             div()
@@ -4432,8 +4420,7 @@ impl Component for PanelRepoFooter {
                                     Some(custom("update-README", behind_upstream)),
                                 ))
                                 .into_any_element(),
-                        )
-                        .grow(),
+                        ),
                     ],
                 )
                 .grow()
