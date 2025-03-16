@@ -26,7 +26,7 @@ struct Detect;
 trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
-    fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
+    fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus>;
     fn path(&self) -> PathBuf;
 }
 
@@ -58,6 +58,9 @@ struct Args {
     /// Create a new workspace
     #[arg(short, long, overrides_with = "add")]
     new: bool,
+    /// Sets a custom directory for all user data
+    #[arg(long, value_name = "DIR")]
+    user_data_dir: Option<String>,
     /// The paths to open in Zed (space-separated).
     ///
     /// Use `path:line:column` syntax to open a file at the given line and column.
@@ -134,6 +137,12 @@ fn main() -> Result<()> {
         }
     }
     let args = Args::parse();
+
+    // Set custom data directory before any path operations
+    let user_data_dir = args.user_data_dir.clone();
+    if let Some(dir) = &user_data_dir {
+        paths::set_custom_data_dir(dir);
+    }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let args = flatpak::set_bin_if_no_escape(args);
@@ -246,6 +255,7 @@ fn main() -> Result<()> {
 
     let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
         let exit_status = exit_status.clone();
+        let user_data_dir_for_thread = user_data_dir.clone();
         move || {
             let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
             let (tx, rx) = (handshake.requests, handshake.responses);
@@ -256,6 +266,7 @@ fn main() -> Result<()> {
                 wait: args.wait,
                 open_new_workspace,
                 env,
+                user_data_dir: user_data_dir_for_thread,
             })?;
 
             while let Ok(response) = rx.recv() {
@@ -291,7 +302,7 @@ fn main() -> Result<()> {
         .collect();
 
     if args.foreground {
-        app.run_foreground(url)?;
+        app.run_foreground(url, user_data_dir.as_deref())?;
     } else {
         app.launch(url)?;
         sender.join().unwrap()?;
@@ -447,10 +458,13 @@ mod linux {
             Ok(())
         }
 
-        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
-            std::process::Command::new(self.0.clone())
-                .arg(ipc_url)
-                .status()
+        fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus> {
+            let mut cmd = std::process::Command::new(self.0.clone());
+            cmd.arg(ipc_url);
+            if let Some(dir) = user_data_dir {
+                cmd.arg("--user-data-dir").arg(dir);
+            }
+            cmd.status()
         }
 
         fn path(&self) -> PathBuf {

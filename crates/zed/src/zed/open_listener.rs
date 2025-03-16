@@ -261,7 +261,12 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 env,
+                user_data_dir,
             } => {
+                if let Some(dir) = user_data_dir {
+                    paths::set_custom_data_dir(&dir);
+                }
+                
                 if !urls.is_empty() {
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
