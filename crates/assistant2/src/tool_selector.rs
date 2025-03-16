@@ -3,7 +3,7 @@ use std::sync::Arc;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use gpui::Entity;
 use scripting_tool::ScriptingTool;
-use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
     tools: Arc<ToolWorkingSet>,
@@ -24,22 +24,16 @@ impl ToolSelector {
             let tools_by_source = self.tools.tools_by_source(cx);
 
             let all_tools_enabled = self.tools.are_all_tools_enabled();
-            menu = menu.header("Tools").toggleable_entry(
-                "All Tools",
-                all_tools_enabled,
-                icon_position,
-                None,
-                {
-                    let tools = self.tools.clone();
-                    move |_window, cx| {
-                        if all_tools_enabled {
-                            tools.disable_all_tools(cx);
-                        } else {
-                            tools.enable_all_tools();
-                        }
+            menu = menu.toggleable_entry("All Tools", all_tools_enabled, icon_position, None, {
+                let tools = self.tools.clone();
+                move |_window, cx| {
+                    if all_tools_enabled {
+                        tools.disable_all_tools(cx);
+                    } else {
+                        tools.enable_all_tools();
                     }
-                },
-            );
+                }
+            });
 
             for (source, tools) in tools_by_source {
                 let mut tools = tools
@@ -63,7 +57,7 @@ impl ToolSelector {
                 }
 
                 menu = match &source {
-                    ToolSource::Native => menu.header("Zed"),
+                    ToolSource::Native => menu.separator().header("Zed Tools"),
                     ToolSource::ContextServer { id } => {
                         let all_tools_from_source_enabled =
                             self.tools.are_all_tools_from_source_enabled(&source);
@@ -124,7 +118,6 @@ impl Render for ToolSelector {
             })
             .trigger_with_tooltip(
                 IconButton::new("tool-selector-button", IconName::SettingsAlt)
-                    .shape(IconButtonShape::Square)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted),
                 Tooltip::text("Customize Tools"),

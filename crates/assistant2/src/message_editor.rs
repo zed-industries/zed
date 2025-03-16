@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use file_icons::FileIcons;
@@ -20,7 +21,8 @@ use ui::{
     Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
-use workspace::Workspace;
+use workspace::notifications::{NotificationId, NotifyTaskExt};
+use workspace::{Toast, Workspace};
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -34,6 +36,7 @@ use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 pub struct MessageEditor {
     thread: Entity<Thread>,
     editor: Entity<Editor>,
+    workspace: WeakEntity<Workspace>,
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
@@ -49,13 +52,13 @@ impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
+        context_store: Entity<ContextStore>,
         thread_store: WeakEntity<ThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let tools = thread.read(cx).tools().clone();
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -106,6 +109,7 @@ impl MessageEditor {
         Self {
             thread,
             editor: editor.clone(),
+            workspace,
             context_store,
             context_strip,
             context_picker_menu_handle,
@@ -150,6 +154,14 @@ impl MessageEditor {
     }
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_editor_empty(cx) {
+            return;
+        }
+
+        if self.thread.read(cx).is_streaming() {
+            return;
+        }
+
         self.send_to_model(RequestKind::Chat, window, cx);
     }
 
@@ -189,7 +201,8 @@ impl MessageEditor {
             text
         });
 
-        let refresh_task = refresh_context_store_text(self.context_store.clone(), cx);
+        let refresh_task =
+            refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
@@ -271,6 +284,34 @@ impl MessageEditor {
         } else {
             self.context_strip.focus_handle(cx).focus(window);
         }
+    }
+
+    fn handle_feedback_click(
+        &mut self,
+        is_positive: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let report = self
+            .thread
+            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
+
+        cx.spawn(|_, mut cx| async move {
+            report.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                let message = if is_positive {
+                    "Positive feedback recorded. Thank you!"
+                } else {
+                    "Negative feedback recorded. Thank you for helping us improve!"
+                };
+
+                struct ThreadFeedback;
+                let id = NotificationId::unique::<ThreadFeedback>();
+                workspace.show_toast(Toast::new(id, message).autohide(), cx)
+            })
+        })
+        .detach_and_notify_err(window, cx);
     }
 }
 
@@ -489,7 +530,45 @@ impl Render for MessageEditor {
                     .bg(bg_color)
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .child(self.context_strip.clone())
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(self.context_strip.clone())
+                            .when(!self.thread.read(cx).is_empty(), |this| {
+                                this.child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            IconButton::new(
+                                                "feedback-thumbs-up",
+                                                IconName::ThumbsUp,
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Helpful"))
+                                            .on_click(
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.handle_feedback_click(true, window, cx);
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            IconButton::new(
+                                                "feedback-thumbs-down",
+                                                IconName::ThumbsDown,
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Not Helpful"))
+                                            .on_click(
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.handle_feedback_click(false, window, cx);
+                                                }),
+                                            ),
+                                        ),
+                                )
+                            }),
+                    )
                     .child(
                         v_flex()
                             .gap_5()
