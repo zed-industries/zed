@@ -64,9 +64,9 @@ pub fn config_dir() -> &'static PathBuf {
 }
 
 /// Returns the path to the support directory used by Zed.
-pub fn support_dir() -> &'static PathBuf {
-    static SUPPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPPORT_DIR.get_or_init(|| {
+pub fn data_dir() -> &'static PathBuf {
+    static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DATA_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             return custom_dir.clone();
         }
@@ -130,7 +130,7 @@ pub fn logs_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             home_dir().join("Library/Logs/Zed")
         } else {
-            support_dir().join("logs")
+            data_dir().join("logs")
         }
     })
 }
@@ -138,7 +138,7 @@ pub fn logs_dir() -> &'static PathBuf {
 /// Returns the path to the Zed server directory on this SSH host.
 pub fn remote_server_state_dir() -> &'static PathBuf {
     static REMOTE_SERVER_STATE: OnceLock<PathBuf> = OnceLock::new();
-    REMOTE_SERVER_STATE.get_or_init(|| support_dir().join("server_state"))
+    REMOTE_SERVER_STATE.get_or_init(|| data_dir().join("server_state"))
 }
 
 /// Returns the path to the `Zed.log` file.
@@ -156,7 +156,7 @@ pub fn old_log_file() -> &'static PathBuf {
 /// Returns the path to the database directory.
 pub fn database_dir() -> &'static PathBuf {
     static DATABASE_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DATABASE_DIR.get_or_init(|| support_dir().join("db"))
+    DATABASE_DIR.get_or_init(|| data_dir().join("db"))
 }
 
 /// Returns the path to the crashes directory, if it exists for the current platform.
@@ -214,7 +214,7 @@ pub fn debug_tasks_file() -> &'static PathBuf {
 /// This is where installed extensions are stored.
 pub fn extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    EXTENSIONS_DIR.get_or_init(|| support_dir().join("extensions"))
+    EXTENSIONS_DIR.get_or_init(|| data_dir().join("extensions"))
 }
 
 /// Returns the path to the extensions directory.
@@ -222,7 +222,7 @@ pub fn extensions_dir() -> &'static PathBuf {
 /// This is where installed extensions are stored on a remote.
 pub fn remote_extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    EXTENSIONS_DIR.get_or_init(|| support_dir().join("remote_extensions"))
+    EXTENSIONS_DIR.get_or_init(|| data_dir().join("remote_extensions"))
 }
 
 /// Returns the path to the extensions directory.
@@ -256,7 +256,7 @@ pub fn contexts_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             config_dir().join("conversations")
         } else {
-            support_dir().join("conversations")
+            data_dir().join("conversations")
         }
     })
 }
@@ -270,7 +270,7 @@ pub fn prompts_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             config_dir().join("prompts")
         } else {
-            support_dir().join("prompts")
+            data_dir().join("prompts")
         }
     })
 }
@@ -296,7 +296,7 @@ pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
             if cfg!(target_os = "macos") {
                 config_dir().join("prompt_overrides")
             } else {
-                support_dir().join("prompt_overrides")
+                data_dir().join("prompt_overrides")
             }
         })
         .clone()
@@ -311,7 +311,7 @@ pub fn embeddings_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             config_dir().join("embeddings")
         } else {
-            support_dir().join("embeddings")
+            data_dir().join("embeddings")
         }
     })
 }
@@ -321,7 +321,7 @@ pub fn embeddings_dir() -> &'static PathBuf {
 /// This is where language servers are downloaded to for languages built-in to Zed.
 pub fn languages_dir() -> &'static PathBuf {
     static LANGUAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    LANGUAGES_DIR.get_or_init(|| support_dir().join("languages"))
+    LANGUAGES_DIR.get_or_init(|| data_dir().join("languages"))
 }
 
 /// Returns the path to the debug adapters directory
@@ -335,25 +335,25 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
 /// Returns the path to the Copilot directory.
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
-    COPILOT_DIR.get_or_init(|| support_dir().join("copilot"))
+    COPILOT_DIR.get_or_init(|| data_dir().join("copilot"))
 }
 
 /// Returns the path to the Supermaven directory.
 pub fn supermaven_dir() -> &'static PathBuf {
     static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPERMAVEN_DIR.get_or_init(|| support_dir().join("supermaven"))
+    SUPERMAVEN_DIR.get_or_init(|| data_dir().join("supermaven"))
 }
 
 /// Returns the path to the default Prettier directory.
 pub fn default_prettier_dir() -> &'static PathBuf {
     static DEFAULT_PRETTIER_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DEFAULT_PRETTIER_DIR.get_or_init(|| support_dir().join("prettier"))
+    DEFAULT_PRETTIER_DIR.get_or_init(|| data_dir().join("prettier"))
 }
 
 /// Returns the path to the remote server binaries directory.
 pub fn remote_servers_dir() -> &'static PathBuf {
     static REMOTE_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    REMOTE_SERVERS_DIR.get_or_init(|| support_dir().join("remote_servers"))
+    REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
 }
 
 /// Returns the relative path to a `.zed` folder within a project.
