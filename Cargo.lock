@@ -5438,8 +5438,11 @@ dependencies = [
  "indoc",
  "pretty_assertions",
  "regex",
+ "schemars",
  "serde",
+ "serde_derive",
  "serde_json",
+ "settings",
  "url",
  "util",
 ]

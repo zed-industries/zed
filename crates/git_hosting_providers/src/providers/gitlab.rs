@@ -17,10 +17,14 @@ pub struct Gitlab {
 }
 
 impl Gitlab {
-    pub fn new() -> Self {
+    pub fn new_default() -> Self {
+        Self::new("GitLab", "https://gitlab.com")
+    }
+
+    pub fn new(name: &str, base_url: &str) -> Self {
         Self {
-            name: "GitLab".to_string(),
-            base_url: Url::parse("https://gitlab.com").unwrap(),
+            name: name.to_string(),
+            base_url: Url::parse(&base_url).unwrap(),
         }
     }
 
@@ -37,19 +41,9 @@ impl Gitlab {
             bail!("not a GitLab URL");
         }
 
-        // Call our create_with_domain method for consistency
-        Self::create_with_domain(&host)
-    }
-    
-    /// Create a self-hosted instance with the given domain name
-    pub fn create_with_domain(domain: &str) -> Result<Self> {
-        if domain == "gitlab.com" {
-            bail!("the GitLab instance is not self-hosted");
-        }
-        
         Ok(Self {
             name: "GitLab Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", domain))?,
+            base_url: Url::parse(&format!("https://{}", host))?,
         })
     }
 }
@@ -66,19 +60,9 @@ impl GitHostingProvider for Gitlab {
     fn supports_avatars(&self) -> bool {
         false
     }
-    
+
     fn provider_type(&self) -> &'static str {
         "gitlab"
-    }
-    
-    fn create_self_hosted_instance(&self, domain: &str) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
-        match Gitlab::create_with_domain(domain) {
-            Ok(provider) => Ok(Some(Box::new(provider))),
-            Err(e) => {
-                log::warn!("Failed to create self-hosted GitLab instance: {}", e);
-                Ok(None)
-            }
-        }
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -159,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Gitlab::new()
+        let parsed_remote = Gitlab::new_default()
             .parse_remote_url("git@gitlab.com:zed-industries/zed.git")
             .unwrap();
 
@@ -174,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Gitlab::new()
+        let parsed_remote = Gitlab::new_default()
             .parse_remote_url("https://gitlab.com/zed-industries/zed.git")
             .unwrap();
 
@@ -224,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink() {
-        let permalink = Gitlab::new().build_permalink(
+        let permalink = Gitlab::new_default().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -242,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink_with_single_line_selection() {
-        let permalink = Gitlab::new().build_permalink(
+        let permalink = Gitlab::new_default().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -260,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink_with_multi_line_selection() {
-        let permalink = Gitlab::new().build_permalink(
+        let permalink = Gitlab::new_default().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),

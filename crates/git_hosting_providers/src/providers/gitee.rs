@@ -21,14 +21,9 @@ impl GitHostingProvider for Gitee {
     fn supports_avatars(&self) -> bool {
         false
     }
-    
+
     fn provider_type(&self) -> &'static str {
         "gitee"
-    }
-    
-    fn create_self_hosted_instance(&self, _domain: &str) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
-        // Gitee doesn't currently support self-hosted instances
-        Ok(None)
     }
 
     fn format_line_number(&self, line: u32) -> String {

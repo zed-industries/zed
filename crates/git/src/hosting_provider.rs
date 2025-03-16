@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::BTreeMap;
 use derive_more::{Deref, DerefMut};
-use gpui::{App, AppContext, Global, SharedString};
+use gpui::{App, Global, SharedString};
 use http_client::HttpClient;
 use parking_lot::RwLock;
 use url::Url;
@@ -87,15 +87,6 @@ pub trait GitHostingProvider {
         Ok(None)
     }
 
-    /// Creates a self-hosted instance of this provider with the given domain
-    fn create_self_hosted_instance(
-        &self,
-        _domain: &str,
-    ) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
-        // Default implementation returns None, indicating this provider doesn't support self-hosting
-        Ok(None)
-    }
-
     /// Returns a unique identifier for this provider type (e.g., "github", "gitlab")
     fn provider_type(&self) -> &'static str {
         // Default implementation uses lowercase name
@@ -160,36 +151,15 @@ impl GitHostingProviderRegistry {
         self.state.read().providers.values().cloned().collect()
     }
 
-    /// Returns the application context associated with this registry.
-    pub fn app_context(&self) -> Option<&AppContext> {
-        // The AppContext is not available in all contexts where we might use
-        // the GitHostingProviderRegistry, so return an Option.
-        AppContext::try_global().ok()
-    }
-
-    /// Find a provider by its type identifier
+    /// Find a provider by its type identifier, returning the Type of the provider if it is found
     pub fn find_provider_by_type(
         &self,
         provider_type: &str,
-    ) -> Option<Arc<dyn GitHostingProvider + Send + Sync + 'static>> {
+    ) -> Option<Arc<dyn GitHostingProvider + Send + Sync>> {
         self.list_hosting_providers()
             .into_iter()
-            .find(|provider| provider.provider_type() == provider_type)
-    }
-
-    /// Create a self-hosted instance of a provider for the given domain
-    pub fn create_self_hosted_instance(
-        &self,
-        provider_type: &str,
-        domain: &str,
-    ) -> Result<Option<Arc<dyn GitHostingProvider + Send + Sync + 'static>>> {
-        if let Some(provider) = self.find_provider_by_type(provider_type) {
-            match provider.create_self_hosted_instance(domain)? {
-                Some(instance) => return Ok(Some(Arc::new(instance))),
-                None => return Ok(None),
-            }
-        }
-        Ok(None)
+            .find(|p| p.provider_type() == provider_type)
+            .clone()
     }
 
     /// Adds the provided [`GitHostingProvider`] to the registry.

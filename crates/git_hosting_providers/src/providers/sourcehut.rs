@@ -21,14 +21,9 @@ impl GitHostingProvider for Sourcehut {
     fn supports_avatars(&self) -> bool {
         false
     }
-    
+
     fn provider_type(&self) -> &'static str {
         "sourcehut"
-    }
-    
-    fn create_self_hosted_instance(&self, _domain: &str) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
-        // Sourcehut doesn't currently support self-hosted instances in Zed
-        Ok(None)
     }
 
     fn format_line_number(&self, line: u32) -> String {

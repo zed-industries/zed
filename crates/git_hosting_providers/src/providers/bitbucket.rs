@@ -13,18 +13,15 @@ pub struct Bitbucket {
 }
 
 impl Bitbucket {
-    pub fn new() -> Self {
+    pub fn new(name: &str, base_url: &str) -> Self {
         Self {
-            name: "Bitbucket".to_string(),
-            base_url: Url::parse("https://bitbucket.org").unwrap(),
+            name: name.to_string(),
+            base_url: Url::parse(&base_url).unwrap(),
         }
     }
-    
-    pub fn create_with_domain(domain: &str) -> Result<Self> {
-        Ok(Self {
-            name: "Bitbucket Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", domain))?,
-        })
+
+    pub fn new_default() -> Self {
+        Self::new("bitbucket", "https://bitbucket.org")
     }
 }
 
@@ -40,19 +37,9 @@ impl GitHostingProvider for Bitbucket {
     fn supports_avatars(&self) -> bool {
         false
     }
-    
+
     fn provider_type(&self) -> &'static str {
         "bitbucket"
-    }
-    
-    fn create_self_hosted_instance(&self, domain: &str) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
-        match Bitbucket::create_with_domain(domain) {
-            Ok(provider) => Ok(Some(Box::new(provider))),
-            Err(e) => {
-                log::warn!("Failed to create self-hosted Bitbucket instance: {}", e);
-                Ok(None)
-            }
-        }
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -123,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Bitbucket
+        let parsed_remote = Bitbucket::new_default()
             .parse_remote_url("git@bitbucket.org:zed-industries/zed.git")
             .unwrap();
 
@@ -138,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Bitbucket
+        let parsed_remote = Bitbucket::new_default()
             .parse_remote_url("https://bitbucket.org/zed-industries/zed.git")
             .unwrap();
 
@@ -153,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
-        let parsed_remote = Bitbucket
+        let parsed_remote = Bitbucket::new_default()
             .parse_remote_url("https://thorstenballzed@bitbucket.org/zed-industries/zed.git")
             .unwrap();
 
@@ -168,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink() {
-        let permalink = Bitbucket.build_permalink(
+        let permalink = Bitbucket::new_default().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -186,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink_with_single_line_selection() {
-        let permalink = Bitbucket.build_permalink(
+        let permalink = Bitbucket::new_default().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -204,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink_with_multi_line_selection() {
-        let permalink = Bitbucket.build_permalink(
+        let permalink = Bitbucket::new_default().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),

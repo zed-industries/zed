@@ -93,14 +93,9 @@ impl GitHostingProvider for Chromium {
     fn supports_avatars(&self) -> bool {
         true
     }
-    
+
     fn provider_type(&self) -> &'static str {
         "chromium"
-    }
-    
-    fn create_self_hosted_instance(&self, _domain: &str) -> Result<Option<Box<dyn GitHostingProvider + Send + Sync + 'static>>> {
-        // Chromium hosting doesn't support self-hosted instances
-        Ok(None)
     }
 
     fn format_line_number(&self, line: u32) -> String {
