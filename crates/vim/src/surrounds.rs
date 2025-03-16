@@ -3,10 +3,12 @@ use crate::{
     object::Object,
     state::Mode,
     Vim,
+    VimSettings,
 };
 use editor::{movement, scroll::Autoscroll, Bias};
 use gpui::{Context, Window};
 use language::BracketPair;
+use settings::Settings;
 
 use std::sync::Arc;
 
@@ -121,7 +123,7 @@ impl Vim {
                 });
             });
         });
-        self.switch_mode(Mode::Normal, false, window, cx);
+        self.switch_mode(VimSettings::get_global(cx).default_mode, false, window, cx);
     }
 
     pub fn delete_surrounds(

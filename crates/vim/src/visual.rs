@@ -593,7 +593,7 @@ impl Vim {
                 editor.change_selections(None, window, cx, |s| s.select_ranges(stable_anchors));
             });
         });
-        self.switch_mode(Mode::Normal, false, window, cx);
+        self.switch_mode(VimSettings::get_global(cx).default_mode, false, window, cx);
     }
 
     pub fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
