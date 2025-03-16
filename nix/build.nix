@@ -145,13 +145,6 @@ let
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
         RUSTFLAGS = if withGLES then "--cfg gles" else "";
-        # TODO: why are these not handled by the linker given that they're in buildInputs?
-        NIX_LDFLAGS = "-rpath ${
-          lib.makeLibraryPath [
-            gpu-lib
-            wayland
-          ]
-        }";
         LK_CUSTOM_WEBRTC = livekit-libwebrtc;
       };
 
@@ -271,7 +264,9 @@ craneLib.buildPackage (
 
     # TODO: why isn't this also done on macOS?
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
-      wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
+      wrapProgram $out/libexec/zed-editor \
+        --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]} \
+        --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ gpu-lib wayland ]}
     '';
 
     meta = {
