@@ -262,7 +262,7 @@ async fn test_debug_panel_item_opens_on_remote(
 
     let shutdown_client = host_project.update(host_cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -353,7 +353,7 @@ async fn test_active_debug_panel_item_set_on_join_project(
 
     let shutdown_client = host_project.update(host_cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -1057,7 +1057,7 @@ async fn test_updated_breakpoints_send_to_dap(
 
     let shutdown_client = host_project.update(host_cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 

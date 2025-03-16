@@ -20,8 +20,8 @@ impl CustomDebugAdapter {
 
     pub fn attach_processes<'a>(
         processes: &'a HashMap<Pid, Process>,
-    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
-        Some(processes.iter().collect::<Vec<_>>())
+    ) -> Vec<(&'a Pid, &'a Process)> {
+        processes.iter().collect::<Vec<_>>()
     }
 }
 

@@ -193,7 +193,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -459,7 +459,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -823,7 +823,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 

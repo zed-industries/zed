@@ -28,15 +28,13 @@ impl JsDebugAdapter {
 
     pub fn attach_processes<'a>(
         processes: &'a HashMap<Pid, Process>,
-    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
+    ) -> Vec<(&'a Pid, &'a Process)> {
         let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
 
-        Some(
-            processes
-                .iter()
-                .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
-                .collect::<Vec<_>>(),
-        )
+        processes
+            .iter()
+            .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
+            .collect::<Vec<_>>()
     }
 }
 

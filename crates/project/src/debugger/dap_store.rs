@@ -616,7 +616,7 @@ impl DapStore {
     pub fn shutdown_sessions(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let mut tasks = vec![];
         for session_id in self.sessions.keys().cloned().collect::<Vec<_>>() {
-            tasks.push(self.shutdown_session(&session_id, cx));
+            tasks.push(self.shutdown_session(session_id, cx));
         }
 
         cx.background_executor().spawn(async move {
@@ -626,7 +626,7 @@ impl DapStore {
 
     pub fn shutdown_session(
         &mut self,
-        session_id: &SessionId,
+        session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(_) = self.as_local_mut() else {
@@ -642,14 +642,14 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
 
-        let Some(session) = self.sessions.remove(session_id) else {
+        let Some(session) = self.sessions.remove(&session_id) else {
             return Task::ready(Err(anyhow!("Could not find session: {:?}", session_id)));
         };
 
         let shutdown_parent_task = session
             .read(cx)
             .parent_id()
-            .map(|parent_id| self.shutdown_session(&parent_id, cx));
+            .map(|parent_id| self.shutdown_session(parent_id, cx));
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
         cx.background_spawn(async move {
@@ -705,7 +705,7 @@ impl DapStore {
         this.update(&mut cx, |dap_store, cx| {
             let session_id = SessionId::from_proto(envelope.payload.session_id);
 
-            let shutdown_task = dap_store.shutdown_session(&session_id, cx);
+            let shutdown_task = dap_store.shutdown_session(session_id, cx);
             cx.spawn(|this, mut cx| async move {
                 let _ = shutdown_task.await.log_err();
 

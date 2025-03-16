@@ -145,7 +145,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -330,7 +330,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -447,7 +447,7 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -531,7 +531,7 @@ async fn test_handle_error_run_in_terminal_reverse_request(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -647,7 +647,7 @@ async fn test_handle_start_debugging_reverse_request(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&child_session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(child_session.read(cx).session_id(), cx)
         })
     });
 
@@ -870,7 +870,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 
@@ -1045,7 +1045,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).session_id(), cx)
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
 

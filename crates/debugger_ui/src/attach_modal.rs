@@ -9,6 +9,7 @@ use std::sync::Arc;
 use sysinfo::System;
 use ui::{prelude::*, Context, Tooltip};
 use ui::{ListItem, ListItemSpacing};
+use util::ResultExt;
 use workspace::ModalView;
 
 #[derive(Debug, Clone)]
@@ -28,7 +29,7 @@ pub(crate) struct AttachModalDelegate {
 }
 
 impl AttachModalDelegate {
-    pub fn new(session: WeakEntity<Session>, dap_store: Entity<DapStore>) -> Self {
+    pub fn _new(session: WeakEntity<Session>, dap_store: Entity<DapStore>) -> Self {
         Self {
             session,
             dap_store,
@@ -46,14 +47,14 @@ pub(crate) struct AttachModal {
 }
 
 impl AttachModal {
-    pub fn new(
+    pub fn _new(
         session: WeakEntity<Session>,
         dap_store: Entity<DapStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
-            Picker::uniform_list(AttachModalDelegate::new(session, dap_store), window, cx)
+            Picker::uniform_list(AttachModalDelegate::_new(session, dap_store), window, cx)
         });
         Self {
             _subscription: cx.subscribe(&picker, |_, _, _, cx| {
@@ -212,7 +213,7 @@ impl PickerDelegate for AttachModalDelegate {
             return cx.emit(DismissEvent);
         };
 
-        let _ = self.session.update(cx, |session, cx| {
+        let _ = self.session.update(cx, |_session, _cx| {
             // session.attach(cx).detach();
         });
     }
@@ -221,9 +222,16 @@ impl PickerDelegate for AttachModalDelegate {
         self.selected_index = 0;
         self.candidates.take();
 
-        self.dap_store.update(cx, |store, cx| {
-            store.shutdown_session(&self.session_id, cx).detach();
-        });
+        let session_id = self
+            .session
+            .read_with(cx, |session, _| session.session_id())
+            .log_err();
+
+        if let Some(session_id) = session_id {
+            self.dap_store.update(cx, |store, cx| {
+                store.shutdown_session(session_id, cx).detach();
+            });
+        }
 
         cx.emit(DismissEvent);
     }
