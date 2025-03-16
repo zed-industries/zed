@@ -6475,6 +6475,7 @@ dependencies = [
  "anyhow",
  "ec4rs",
  "editor",
+ "fuzzy",
  "gpui",
  "indoc",
  "language",
