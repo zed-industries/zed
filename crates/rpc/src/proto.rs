@@ -6,6 +6,7 @@ use futures::{SinkExt as _, StreamExt as _};
 pub use proto::{Message as _, *};
 use std::time::Instant;
 use std::{fmt::Debug, io};
+use zstd::zstd_safe::WriteBuf;
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -61,7 +62,9 @@ where
 
                 self.encoding_buffer.clear();
                 self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
-                self.stream.send(WebSocketMessage::Binary(buffer)).await?;
+                self.stream
+                    .send(WebSocketMessage::Binary(buffer.into()))
+                    .await?;
             }
             Message::Ping => {
                 self.stream
