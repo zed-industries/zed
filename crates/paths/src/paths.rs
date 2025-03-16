@@ -5,15 +5,45 @@ use std::sync::OnceLock;
 
 pub use util::paths::home_dir;
 
+/// A default editorconfig file name to use when resolving project settings.
+pub const EDITORCONFIG_NAME: &str = ".editorconfig";
+
+// Custom data directory if used.
+static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static Path {
     Path::new(".zed_server")
+}
+
+/// Sets a custom directory for all user data, overriding the default support directory.
+pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
+    CUSTOM_DATA_DIR.get_or_init(|| {
+        let path = if cfg!(target_os = "windows") && (dir.contains(r"\") || dir.starts_with(r"\\")) {
+            // Windows absolute path (e.g., "C:\path" or "\\network\path")
+            PathBuf::from(dir)
+        } else if dir.starts_with("./") || dir.starts_with("../") || (!dir.starts_with("/") && !cfg!(target_os = "windows")) {
+            // Relative path on any OS (Linux/macOS: no leading "/", Windows: no drive letter or UNC)
+            std::env::current_dir()
+                .expect("failed to determine current directory")
+                .join(dir)
+        } else {
+            // Absolute path (Linux/macOS: "/path", Windows: assumed relative unless drive letter/UNC)
+            PathBuf::from(dir)
+        };
+        std::fs::create_dir_all(&path).expect("failed to create custom data directory");
+        path
+    })
 }
 
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
     static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONFIG_DIR.get_or_init(|| {
+        if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
+            return custom_dir.join("config");
+        }
+
         if cfg!(target_os = "windows") {
             return dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
@@ -37,6 +67,10 @@ pub fn config_dir() -> &'static PathBuf {
 pub fn support_dir() -> &'static PathBuf {
     static SUPPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
     SUPPORT_DIR.get_or_init(|| {
+        if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
+            return custom_dir.clone();
+        }
+
         if cfg!(target_os = "macos") {
             return home_dir().join("Library/Application Support/Zed");
         }
@@ -359,6 +393,3 @@ pub fn local_debug_file_relative_path() -> &'static Path {
 pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
 }
-
-/// A default editorconfig file name to use when resolving project settings.
-pub const EDITORCONFIG_NAME: &str = ".editorconfig";
