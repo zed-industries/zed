@@ -2,17 +2,17 @@ use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{ToggleRegistersView, UseSystemClipboard, Vim, VimSettings};
+use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAddon, VimSettings};
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::define_connection;
 use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
-use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer};
+use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
-    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, EntityId,
-    Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
+    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
+    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Point};
 use picker::{Picker, PickerDelegate};
@@ -20,9 +20,10 @@ use project::{Project, ProjectItem, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
+use std::collections::HashSet;
 use std::path::Path;
 use std::{fmt::Display, ops::Range, sync::Arc};
-use text::Bias;
+use text::{Bias, ToPoint};
 use theme::ThemeSettings;
 use ui::{
     h_flex, rems, ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement,
@@ -627,6 +628,11 @@ impl VimGlobals {
         })
         .detach();
 
+        cx.observe_new(move |workspace: &mut Workspace, window, _| {
+            MarksView::register(workspace, window);
+        })
+        .detach();
+
         let mut was_enabled = None;
 
         cx.observe_global::<SettingsStore>(move |cx| {
@@ -1226,6 +1232,282 @@ impl RegistersView {
             matches,
         };
 
+        Picker::nonsearchable_uniform_list(delegate, window, cx)
+            .width(rems(36.))
+            .modal(true)
+    }
+}
+
+struct MarksMatch {
+    name: char,
+    position: Point,
+    path: Option<Arc<Path>>,
+}
+
+pub struct MarksViewDelegate {
+    selected_index: usize,
+    matches: Vec<MarksMatch>,
+    vim: Option<Entity<Vim>>,
+}
+
+impl PickerDelegate for MarksViewDelegate {
+    type ListItem = Div;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        Arc::default()
+    }
+
+    fn update_matches(
+        &mut self,
+        _: String,
+        _: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> gpui::Task<()> {
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(m) = self.matches.get(self.selected_index) else {
+            return;
+        };
+        let text = Arc::from(m.name.to_string().into_boxed_str());
+        if let Some(vim) = self.vim.clone() {
+            vim.update(cx, |vim, cx| {
+                vim.jump(text, false, false, window, cx);
+            });
+        }
+
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _: &mut Window, _: &mut Context<Picker<Self>>) {}
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let mark_match = self
+            .matches
+            .get(ix)
+            .expect("Invalid matches state: no element for index {ix}");
+
+        let mut left_output = String::new();
+        let mut runs = Vec::new();
+        left_output.push('`');
+        left_output.push(mark_match.name);
+        runs.push((
+            0..left_output.len(),
+            HighlightStyle::color(cx.theme().colors().text_accent),
+        ));
+        left_output.push(' ');
+        left_output.push(' ');
+        left_output.push_str(
+            format!("{},{}", mark_match.position.row, mark_match.position.column).as_str(),
+        );
+        let right_output = mark_match
+            .path
+            .clone()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(String::new());
+
+        let theme = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().editor_foreground,
+            font_family: theme.buffer_font.family.clone(),
+            font_features: theme.buffer_font.features.clone(),
+            font_fallbacks: theme.buffer_font.fallbacks.clone(),
+            font_size: theme.buffer_font_size(cx).into(),
+            line_height: (theme.line_height() * theme.buffer_font_size(cx)).into(),
+            font_weight: theme.buffer_font.weight,
+            font_style: theme.buffer_font.style,
+            ..Default::default()
+        };
+
+        Some(
+            h_flex()
+                .justify_between()
+                .when(selected, |el| el.bg(cx.theme().colors().element_selected))
+                .font_buffer(cx)
+                .text_buffer(cx)
+                .h(theme.buffer_font_size(cx) * theme.line_height())
+                .px_2()
+                .gap_1()
+                .child(StyledText::new(left_output).with_default_highlights(&text_style, runs))
+                .child(StyledText::new(right_output)),
+        )
+    }
+}
+
+pub struct MarksView {}
+
+impl MarksView {
+    fn register(workspace: &mut Workspace, _window: Option<&mut Window>) {
+        workspace.register_action(|workspace, _: &ToggleMarksView, window, cx| {
+            Self::toggle(workspace, window, cx);
+        });
+    }
+
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+        let entity_id = cx.entity_id();
+        let editor = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx));
+        let vim = workspace
+            .focused_pane(window, cx)
+            .read(cx)
+            .active_item()
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned())
+            .map(|addon| addon.entity);
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            MarksView::new(editor, vim, entity_id, window, cx)
+        });
+    }
+
+    fn new(
+        editor: Option<Entity<Editor>>,
+        vim: Option<Entity<Vim>>,
+        entity_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Picker<MarksViewDelegate>>,
+    ) -> Picker<MarksViewDelegate> {
+        let mut matches = Vec::default();
+        let Some(editor) = editor else {
+            let delegate = MarksViewDelegate {
+                selected_index: 0,
+                matches,
+                vim,
+            };
+            return Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .width(rems(36.))
+                .modal(true);
+        };
+        cx.update_global(|globals: &mut VimGlobals, cx| {
+            let mut has_seen = HashSet::new();
+            let Some(marks_state) = globals.marks.get(&entity_id) else {
+                return;
+            };
+
+            marks_state.update(cx, |ms, _| {
+                for (name, mark_location) in ms.global_marks.iter() {
+                    let Some(c) = name.chars().next() else {
+                        continue;
+                    };
+
+                    has_seen.insert(c);
+
+                    match mark_location {
+                        MarkLocation::Buffer(_entity_id) => {
+                            matches.push(MarksMatch {
+                                name: c,
+                                position: Point::zero(),
+                                path: None,
+                            });
+                        }
+                        MarkLocation::Path(path) => {
+                            if let Some(&position) = ms
+                                .serialized_marks
+                                .get(path.as_ref())
+                                .and_then(|map| map.get(name))
+                                .and_then(|points| points.first())
+                            {
+                                matches.push(MarksMatch {
+                                    name: c,
+                                    position,
+                                    path: Some(path.clone()),
+                                });
+                            }
+                        }
+                    }
+                }
+            });
+
+            editor.update(cx, |editor, cx| {
+                let multi_buffer = editor.buffer();
+                let snapshot = multi_buffer.read(cx).snapshot(cx);
+
+                if multi_buffer.read(cx).is_singleton() {
+                    let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
+                        return;
+                    };
+                    let snapshot = buffer.read(cx).snapshot();
+                    let buffer_id = buffer.read(cx).remote_id();
+                    marks_state.update(cx, |ms, cx| {
+                        // let path = ms.path_for_buffer(&buffer, cx);
+                        let path = buffer.read(cx).file().map(|f| f.path().clone());
+                        let Some(map) = ms.buffer_marks.get(&buffer_id) else {
+                            return;
+                        };
+                        for (name, anchors) in map.iter() {
+                            let Some(name) = name.chars().next() else {
+                                continue;
+                            };
+                            let Some(position) =
+                                anchors.first().map(|anchor| anchor.to_point(&snapshot))
+                            else {
+                                continue;
+                            };
+                            if has_seen.contains(&name) {
+                                continue;
+                            }
+                            matches.push(MarksMatch {
+                                name,
+                                position,
+                                path: path.clone(),
+                            });
+                        }
+                    });
+                } else {
+                    marks_state.update(cx, |ms, _| {
+                        let Some(map) = ms.multibuffer_marks.get(&multi_buffer.entity_id()) else {
+                            return;
+                        };
+                        for (name, anchors) in map.iter() {
+                            let Some(name) = name.chars().next() else {
+                                continue;
+                            };
+                            let Some(position) = anchors
+                                .first()
+                                .map(|anchor| EditorToPoint::to_point(anchor, &snapshot))
+                            else {
+                                continue;
+                            };
+                            if has_seen.contains(&name) {
+                                continue;
+                            }
+                            matches.push(MarksMatch {
+                                name,
+                                position,
+                                path: None,
+                            });
+                        }
+                    });
+                }
+            });
+        });
+
+        matches.sort_by(|a, b| a.name.cmp(&b.name));
+        let delegate = MarksViewDelegate {
+            selected_index: 0,
+            matches,
+            vim,
+        };
         Picker::nonsearchable_uniform_list(delegate, window, cx)
             .width(rems(36.))
             .modal(true)
