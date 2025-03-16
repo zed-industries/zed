@@ -1,4 +1,4 @@
-use crate::{state::Mode, Vim};
+use crate::{state::Mode, Settings, Vim, VimSettings};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use gpui::{actions, Action, Context, Window};
 use language::SelectionGoal;
@@ -48,7 +48,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.switch_mode(Mode::Normal, true, window, cx);
+        self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx);
         self.temp_mode = true;
     }
 }

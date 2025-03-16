@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ops::Range;
 
-use crate::{state::Mode, Vim};
+use crate::{state::Mode, Settings, Vim, VimSettings};
 
 const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
 
@@ -109,7 +109,7 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx)
+        self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx)
     }
 }
 

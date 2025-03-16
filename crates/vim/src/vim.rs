@@ -1404,7 +1404,7 @@ impl Vim {
                         }
                     });
                 });
-                self.switch_mode(Mode::Normal, true, window, cx)
+                self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx)
             }
             Mode::Normal => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
@@ -1449,7 +1449,7 @@ impl Vim {
             && !is_multicursor
             && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&self.mode)
         {
-            self.switch_mode(Mode::Normal, true, window, cx);
+            self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx);
         }
     }
 

@@ -9,7 +9,9 @@ use crate::{
     normal::{ChangeCase, ConvertToLowerCase, ConvertToUpperCase},
     object::Object,
     state::Mode,
+    Settings,
     Vim,
+    VimSettings,
 };
 
 pub enum CaseTarget {
@@ -199,7 +201,7 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx)
+        self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx)
     }
 }
 

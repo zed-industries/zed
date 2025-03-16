@@ -20,7 +20,9 @@ use crate::{
     object::Object,
     state::{Mark, Mode, Operator},
     surrounds::SurroundsType,
+    Settings,
     Vim,
+    VimSettings,
 };
 use case::CaseTarget;
 use collections::BTreeSet;
@@ -475,7 +477,7 @@ impl Vim {
             })
         });
         if self.mode.is_visual() {
-            self.switch_mode(Mode::Normal, true, window, cx)
+            self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx)
         }
     }
 
@@ -534,7 +536,7 @@ impl Vim {
             });
         });
         if self.mode.is_visual() {
-            self.switch_mode(Mode::Normal, true, window, cx)
+            self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx)
         }
     }
 

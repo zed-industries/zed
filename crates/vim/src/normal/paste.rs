@@ -9,7 +9,9 @@ use crate::{
     motion::Motion,
     object::Object,
     state::{Mode, Register},
+    Settings,
     Vim,
+    VimSettings,
 };
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -203,7 +205,7 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+        self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx);
     }
 
     pub fn replace_with_register_object(

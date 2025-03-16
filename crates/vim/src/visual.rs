@@ -18,7 +18,9 @@ use crate::{
     motion::{first_non_whitespace, next_line_end, start_of_line, Motion},
     object::Object,
     state::{Mark, Mode, Operator},
+    Settings,
     Vim,
+    VimSettings,
 };
 
 actions!(
@@ -526,7 +528,7 @@ impl Vim {
                 });
             })
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+        self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx);
     }
 
     pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -547,7 +549,7 @@ impl Vim {
                 }
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+        self.switch_mode(VimSettings::get_global(cx).default_mode, true, window, cx);
     }
 
     pub(crate) fn visual_replace(
