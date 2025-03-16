@@ -134,7 +134,7 @@ impl WrappedLine {
 }
 
 /// An Inline Box used in text layouts.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct InlineBox {
     /// The run index of which this inline box is located
     pub run_ix: usize,

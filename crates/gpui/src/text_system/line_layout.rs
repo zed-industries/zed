@@ -487,6 +487,7 @@ impl LineLayoutCache {
             text: text.as_ref(),
             font_size,
             runs,
+            inline_boxes: inline_boxes.unwrap_or_default(),
             wrap_width,
         } as &dyn AsCacheKeyRef;
 
@@ -510,7 +511,7 @@ impl LineLayoutCache {
                 &text,
                 font_size,
                 runs,
-                inline_boxes.unwrap_or(&[]),
+                inline_boxes.unwrap_or_default(),
             );
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
@@ -526,6 +527,7 @@ impl LineLayoutCache {
                 text,
                 font_size,
                 runs: SmallVec::from(runs),
+                inline_boxes: SmallVec::from(inline_boxes.unwrap_or_default()),
                 wrap_width,
             });
 
@@ -554,6 +556,7 @@ impl LineLayoutCache {
             text: text.as_ref(),
             font_size,
             runs,
+            inline_boxes,
             wrap_width: None,
         } as &dyn AsCacheKeyRef;
 
@@ -569,7 +572,7 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
-            let mut inline_boxes = inline_boxes.iter().peekable();
+            let mut inline_boxes_iter = inline_boxes.iter().peekable();
             let mut inline_boxes_width = px(0.);
             let mut text_layout = self
                 .platform_text_system
@@ -577,18 +580,18 @@ impl LineLayoutCache {
 
             // Adjust glyph positions to accommodate inline boxes
             for (run_ix, run) in text_layout.runs.iter_mut().enumerate() {
-                let mut current_inline_box = inline_boxes.peek();
+                let mut current_inline_box = inline_boxes_iter.peek();
 
                 for (glyph_ix, glyph) in run.glyphs.iter_mut().enumerate() {
                     while let Some(inline_box) = current_inline_box {
                         if inline_box.run_ix == run_ix && inline_box.glyph_ix == glyph_ix {
                             inline_boxes_width += inline_box.size.width;
-                            inline_boxes.next();
+                            inline_boxes_iter.next();
                         } else {
                             break;
                         }
 
-                        current_inline_box = inline_boxes.peek();
+                        current_inline_box = inline_boxes_iter.peek();
                     }
 
                     glyph.position.x += inline_boxes_width;
@@ -601,6 +604,7 @@ impl LineLayoutCache {
                 text,
                 font_size,
                 runs: SmallVec::from(runs),
+                inline_boxes: SmallVec::from(inline_boxes),
                 wrap_width: None,
             });
             current_frame.lines.insert(key.clone(), layout.clone());
@@ -626,6 +630,7 @@ struct CacheKey {
     text: SharedString,
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
+    inline_boxes: SmallVec<[InlineBox; 1]>,
     wrap_width: Option<Pixels>,
 }
 
@@ -634,6 +639,7 @@ struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: Pixels,
     runs: &'a [FontRun],
+    inline_boxes: &'a [InlineBox],
     wrap_width: Option<Pixels>,
 }
 
@@ -657,6 +663,7 @@ impl AsCacheKeyRef for CacheKey {
             text: &self.text,
             font_size: self.font_size,
             runs: self.runs.as_slice(),
+            inline_boxes: self.inline_boxes.as_slice(),
             wrap_width: self.wrap_width,
         }
     }

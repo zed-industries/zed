@@ -463,24 +463,42 @@ impl TextLayout {
 
         for line in &element_state.lines {
             if let Some(inline_box) = line.inline_boxes.get(index) {
+                let mut inline_items_width = px(0.);
+                if line.len() == 0 {
+                    for ib in line.inline_boxes[..index].iter() {
+                        if ib.glyph_ix == inline_box.glyph_ix && ib.run_ix == inline_box.run_ix {
+                            inline_items_width += ib.size.width;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    for ib in line.inline_boxes.iter().skip(index + 1) {
+                        if ib.glyph_ix == inline_box.glyph_ix && ib.run_ix == inline_box.run_ix {
+                            inline_items_width -= ib.size.width;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
                 let origin = line.position_for_index(inline_box.glyph_ix, line_height);
-                let should_remove_width = line
+                let remove_width = line
                     .runs()
                     .get(inline_box.run_ix)
-                    .map(|run| run.glyphs.len() != inline_box.glyph_ix)
-                    .unwrap_or(false);
+                    .map(|run| {
+                        if run.glyphs.len() + 1 == inline_box.glyph_ix {
+                            px(0.)
+                        } else {
+                            inline_box.size.width
+                        }
+                    })
+                    .unwrap_or_default();
 
                 if let Some(origin) = origin {
                     return Some(point(
-                        bounds.origin.x + origin.x
-                            - if should_remove_width {
-                                inline_box.size.width
-                            } else {
-                                px(0.)
-                            },
-                        bounds.origin.y + origin.y + line_height
-                            - inline_box.size.height
-                            - line.descent(),
+                        bounds.origin.x + origin.x + inline_items_width - remove_width,
+                        bounds.origin.y + origin.y + line_height - inline_box.size.height,
                     ));
                 }
             }
@@ -916,7 +934,7 @@ impl InlineText {
     /// Add a element run to the `InlineText``.
     pub fn add_element<R>(mut self, element: R) -> Self
     where
-        R: 'static + Fn(&mut Window) -> AnyElement,
+        R: 'static + FnMut(&mut Window) -> AnyElement,
     {
         self.inline_items.push((
             Box::new(element),
