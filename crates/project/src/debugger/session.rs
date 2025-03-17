@@ -380,10 +380,18 @@ impl LocalMode {
             dap::DebugRequestType::Launch => {
                 self.request(Launch { raw }, cx.background_executor().clone())
             }
-            dap::DebugRequestType::Attach(_) => self.request(
-                super::dap_command::Attach { raw },
-                cx.background_executor().clone(),
-            ),
+            dap::DebugRequestType::Attach(attach_config) => {
+                if attach_config.process_id.is_none() {
+                    return Task::ready(Err(anyhow!(
+                        "Can't start a attach debug session without a process id"
+                    )));
+                }
+
+                self.request(
+                    super::dap_command::Attach { raw },
+                    cx.background_executor().clone(),
+                )
+            }
         };
 
         let breakpoints_task = self.send_all_breakpoints(false, cx);

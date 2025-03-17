@@ -399,11 +399,31 @@ impl DapStore {
                 store.sessions.insert(session_id, session.clone());
             })?;
 
-            session
+            match session
                 .update(&mut cx, |session, cx| {
                     session.initialize_sequence(initialized_rx, cx)
                 })?
-                .await?;
+                .await
+            {
+                Ok(_) => {}
+                Err(error) => {
+                    this.update(&mut cx, |this, cx| {
+                        cx.emit(DapStoreEvent::Notification(format!(
+                            "Debug initialize sequence failed dued to: {}",
+                            error.to_string()
+                        )));
+
+                        if let Some(session) = this.sessions.remove(&session_id) {
+                            session
+                                .update(cx, |session, cx| session.shutdown(cx))
+                                .detach();
+                        }
+                    })
+                    .log_err();
+
+                    return Err(error);
+                }
+            }
 
             this.update(&mut cx, |_, cx| {
                 cx.emit(DapStoreEvent::DebugClientStarted(session_id));
