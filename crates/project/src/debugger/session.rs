@@ -397,24 +397,25 @@ impl LocalMode {
         let breakpoints_task = self.send_all_breakpoints(false, cx);
 
         let configuration_done_supported = ConfigurationDone::is_supported(capabilities);
-        let configuration_sequence = if configuration_done_supported {
-            self.request(ConfigurationDone, cx.background_executor().clone())
-        } else {
-            Task::ready(Ok(()))
-        };
+
+        let configuration_sequence = cx.spawn({
+            let this = self.clone();
+            move |cx| async move {
+                initialized_rx.await?;
+                // todo(debugger) figure out if we want to handle an error here
+                // todo(debugger) We could be sending breakpoints before awaiting the initialization event
+                breakpoints_task.await;
+                if configuration_done_supported {
+                    this.request(ConfigurationDone, cx.background_executor().clone())
+                } else {
+                    Task::ready(Ok(()))
+                }
+                .await
+            }
+        });
 
         cx.background_spawn(async move {
-            initialized_rx.await?;
-
-            breakpoints_task.await; // todo(debugger) figure out if we want to handle an error here
-                                    // todo(debugger) We might be sending breakpoints before configuration is done because tasks start running immediately
-
-            let (config_result, launch_result) =
-                futures::future::join(configuration_sequence, launch).await;
-
-            config_result?;
-            launch_result?;
-
+            futures::future::try_join(launch, configuration_sequence).await?;
             Ok(())
         })
     }

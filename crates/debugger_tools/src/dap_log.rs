@@ -12,7 +12,11 @@ use gpui::{
     actions, div, App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
 };
-use project::{debugger::session::Session, search::SearchQuery, Project};
+use project::{
+    debugger::{dap_store, session::Session},
+    search::SearchQuery,
+    Project,
+};
 use settings::Settings as _;
 use std::{
     borrow::Cow,
@@ -164,23 +168,22 @@ impl LogStore {
                     cx.observe_release(project, move |this, _, _| {
                         this.projects.remove(&weak_project);
                     }),
-                    cx.subscribe(project, |this, project, event, cx| match event {
-                        project::Event::DebugClientStarted(client_id) => {
-                            let session = project
-                                .read(cx)
-                                .dap_store()
-                                .read(cx)
-                                .session_by_id(client_id);
-                            if let Some(session) = session {
-                                this.add_debug_client(*client_id, session, cx);
+                    cx.subscribe(
+                        &project.read(cx).dap_store(),
+                        |this, dap_store, event, cx| match event {
+                            dap_store::DapStoreEvent::DebugClientStarted(session_id) => {
+                                let session = dap_store.read(cx).session_by_id(session_id);
+                                if let Some(session) = session {
+                                    this.add_debug_client(*session_id, session, cx);
+                                }
                             }
-                        }
-                        project::Event::DebugClientShutdown(client_id) => {
-                            this.remove_debug_client(*client_id, cx);
-                        }
+                            dap_store::DapStoreEvent::DebugClientShutdown(session_id) => {
+                                this.remove_debug_client(*session_id, cx);
+                            }
 
-                        _ => {}
-                    }),
+                            _ => {}
+                        },
+                    ),
                 ],
             },
         );

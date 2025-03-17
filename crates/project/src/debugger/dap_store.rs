@@ -395,8 +395,9 @@ impl DapStore {
 
             // we have to insert the session early, so we can handle reverse requests
             // that need the session to be available
-            this.update(&mut cx, |store, _| {
+            this.update(&mut cx, |store, cx| {
                 store.sessions.insert(session_id, session.clone());
+                cx.emit(DapStoreEvent::DebugClientStarted(session_id));
             })?;
 
             match session
@@ -408,16 +409,15 @@ impl DapStore {
                 Ok(_) => {}
                 Err(error) => {
                     this.update(&mut cx, |this, cx| {
-                        cx.emit(DapStoreEvent::Notification(format!(
-                            "Debug initialize sequence failed dued to: {}",
-                            error.to_string()
-                        )));
+                        cx.emit(DapStoreEvent::Notification(error.to_string()));
 
                         if let Some(session) = this.sessions.remove(&session_id) {
                             session
                                 .update(cx, |session, cx| session.shutdown(cx))
                                 .detach();
                         }
+
+                        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
                     })
                     .log_err();
 
@@ -426,7 +426,6 @@ impl DapStore {
             }
 
             this.update(&mut cx, |_, cx| {
-                cx.emit(DapStoreEvent::DebugClientStarted(session_id));
                 cx.notify();
 
                 session
