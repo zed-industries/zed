@@ -5,10 +5,7 @@ pub mod keycodes;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{
-    error::Error,
-    fmt::{Display, Write},
-};
+use std::{error::Error, fmt::Display};
 use util::ResultExt;
 
 #[cfg(target_os = "windows")]

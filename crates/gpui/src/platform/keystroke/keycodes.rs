@@ -363,7 +363,7 @@ impl Default for KeyCodes {
 }
 
 /// TODO:
-#[derive(Copy, Clone, Debug, Default, Hash)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum KeyPosition {
     /// TODO:
     #[default]
@@ -386,6 +386,17 @@ impl PartialEq for KeyPosition {
 }
 
 impl Eq for KeyPosition {}
+
+impl std::hash::Hash for KeyPosition {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            KeyPosition::Any => 0,
+            KeyPosition::Left => 1,
+            KeyPosition::Right => 2,
+        }
+        .hash(state)
+    }
+}
 
 impl KeyCodes {
     fn basic_parse(input: &str) -> Option<Self> {
