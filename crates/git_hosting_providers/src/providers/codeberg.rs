@@ -98,10 +98,6 @@ impl GitHostingProvider for Codeberg {
         true
     }
 
-    fn provider_type(&self) -> &'static str {
-        "codeberg"
-    }
-
     fn format_line_number(&self, line: u32) -> String {
         format!("L{line}")
     }

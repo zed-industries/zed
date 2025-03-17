@@ -142,10 +142,6 @@ impl GitHostingProvider for Github {
         &self.name == "GitHub"
     }
 
-    fn provider_type(&self) -> &'static str {
-        "github"
-    }
-
     fn format_line_number(&self, line: u32) -> String {
         format!("L{line}")
     }

@@ -61,10 +61,6 @@ impl GitHostingProvider for Gitlab {
         false
     }
 
-    fn provider_type(&self) -> &'static str {
-        "gitlab"
-    }
-
     fn format_line_number(&self, line: u32) -> String {
         format!("L{line}")
     }

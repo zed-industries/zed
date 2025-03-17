@@ -94,10 +94,6 @@ impl GitHostingProvider for Chromium {
         true
     }
 
-    fn provider_type(&self) -> &'static str {
-        "chromium"
-    }
-
     fn format_line_number(&self, line: u32) -> String {
         format!("{line}")
     }

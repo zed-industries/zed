@@ -38,10 +38,6 @@ impl GitHostingProvider for Bitbucket {
         false
     }
 
-    fn provider_type(&self) -> &'static str {
-        "bitbucket"
-    }
-
     fn format_line_number(&self, line: u32) -> String {
         format!("lines-{line}")
     }

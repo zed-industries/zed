@@ -86,12 +86,6 @@ pub trait GitHostingProvider {
     ) -> Result<Option<Url>> {
         Ok(None)
     }
-
-    /// Returns a unique identifier for this provider type (e.g., "github", "gitlab")
-    fn provider_type(&self) -> &'static str {
-        // Default implementation uses lowercase name
-        "unknown"
-    }
 }
 
 #[derive(Default, Deref, DerefMut)]
@@ -149,17 +143,6 @@ impl GitHostingProviderRegistry {
         &self,
     ) -> Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>> {
         self.state.read().providers.values().cloned().collect()
-    }
-
-    /// Find a provider by its type identifier, returning the Type of the provider if it is found
-    pub fn find_provider_by_type(
-        &self,
-        provider_type: &str,
-    ) -> Option<Arc<dyn GitHostingProvider + Send + Sync>> {
-        self.list_hosting_providers()
-            .into_iter()
-            .find(|p| p.provider_type() == provider_type)
-            .clone()
     }
 
     /// Adds the provided [`GitHostingProvider`] to the registry.

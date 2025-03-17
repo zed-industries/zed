@@ -33,31 +33,27 @@ pub fn init(cx: &mut App) {
         .unwrap_or(vec![])
         .iter()
         .for_each(|custom_provider_config| {
-            if let Some(provider) =
-                provider_registry.find_provider_by_type(&custom_provider_config.provider_type)
-            {
-                // TODO: Don't `unwrap`.
-                match provider.provider_type() {
-                    "bitbucket" => {
-                        provider_registry.register_hosting_provider(Arc::new(Bitbucket::new(
-                            &custom_provider_config.name,
-                            Url::parse(&custom_provider_config.domain).unwrap(),
-                        )));
-                    }
-                    "github" => {
-                        provider_registry.register_hosting_provider(Arc::new(Github::new(
-                            &custom_provider_config.name,
-                            Url::parse(&custom_provider_config.domain).unwrap(),
-                        )));
-                    }
-                    "gitlab" => {
-                        provider_registry.register_hosting_provider(Arc::new(Gitlab::new(
-                            &custom_provider_config.name,
-                            Url::parse(&custom_provider_config.domain).unwrap(),
-                        )));
-                    }
-                    _ => {}
+            // TODO: Don't `unwrap`.
+            match custom_provider_config.provider_type.as_str() {
+                "bitbucket" => {
+                    provider_registry.register_hosting_provider(Arc::new(Bitbucket::new(
+                        &custom_provider_config.name,
+                        Url::parse(&custom_provider_config.domain).unwrap(),
+                    )));
                 }
+                "github" => {
+                    provider_registry.register_hosting_provider(Arc::new(Github::new(
+                        &custom_provider_config.name,
+                        Url::parse(&custom_provider_config.domain).unwrap(),
+                    )));
+                }
+                "gitlab" => {
+                    provider_registry.register_hosting_provider(Arc::new(Gitlab::new(
+                        &custom_provider_config.name,
+                        Url::parse(&custom_provider_config.domain).unwrap(),
+                    )));
+                }
+                _ => {}
             }
         });
 }

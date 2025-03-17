@@ -22,10 +22,6 @@ impl GitHostingProvider for Gitee {
         false
     }
 
-    fn provider_type(&self) -> &'static str {
-        "gitee"
-    }
-
     fn format_line_number(&self, line: u32) -> String {
         format!("L{line}")
     }
