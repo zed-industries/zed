@@ -950,12 +950,12 @@ impl Terminal {
                         term.bounds_to_string(*python_match.start(), *python_match.end());
 
                     let p: Result<_, _> = python_extract_path_and_line(file_line.as_str())
-                        .and_then(|(file_path, line_number)| {
-                            Some((
+                        .map(|(file_path, line_number)| {
+                            (
                                 format!("{}:{}", file_path, line_number),
                                 false,
                                 python_match,
-                            ))
+                            )
                         })
                         .ok_or_else(|| {
                             "Could not parse python file, line number reference".to_string()
