@@ -1299,6 +1299,7 @@ impl EditorElement {
         scrollbar_range_data: ScrollbarRangeData,
         scroll_position: gpui::Point<f32>,
         non_visible_cursors: bool,
+        minimap_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> AxisPair<Option<ScrollbarLayout>> {
@@ -1381,7 +1382,8 @@ impl EditorElement {
                                 self.style.scrollbar_width
                             } else {
                                 px(0.)
-                            },
+                            }
+                            - minimap_width,
                         text_bounds.bottom_right().y,
                     ),
                 )
@@ -1487,6 +1489,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
         snapshot: &EditorSnapshot,
+        minimap_width: Pixels,
         bounds: Bounds<Pixels>,
         scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
         line_height: Pixels,
@@ -1523,7 +1526,7 @@ impl EditorElement {
                 let header_height = line_height * FILE_HEADER_HEIGHT as f32;
                 let minimap_bounds = Bounds::from_corners(
                     point(
-                        bounds.size.width - px(100.) - scrollbar_y_width,
+                        bounds.size.width - minimap_width - scrollbar_y_width,
                         bounds.origin.y - header_height + px(2.),
                     ),
                     point(bounds.size.width - scrollbar_y_width, bounds.bottom()),
@@ -6680,6 +6683,11 @@ impl Element for EditorElement {
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
+                    let minimap_width = match snapshot.mode {
+                        EditorMode::Full => px(100.),
+                        _ => px(0.),
+                    };
+
                     let letter_size = size(em_width, line_height);
 
                     let gutter_dimensions = snapshot
@@ -6690,7 +6698,7 @@ impl Element for EditorElement {
                             cx,
                         )
                         .unwrap_or_default();
-                    let text_width = bounds.size.width - gutter_dimensions.width;
+                    let text_width = bounds.size.width - gutter_dimensions.width - minimap_width;
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
@@ -7333,6 +7341,7 @@ impl Element for EditorElement {
                         scrollbar_range_data,
                         scroll_position,
                         non_visible_cursors,
+                        minimap_width,
                         window,
                         cx,
                     );
@@ -7492,6 +7501,7 @@ impl Element for EditorElement {
                             window,
                             cx,
                             &snapshot,
+                            minimap_width,
                             bounds,
                             scrollbars_layout.clone(),
                             line_height,
