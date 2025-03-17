@@ -1976,6 +1976,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<IndentGuideLayout>> {
+        if self.editor.read(cx).mode() == EditorMode::Minimap {
+            return None;
+        }
         let indent_guides = self.editor.update(cx, |editor, cx| {
             editor.indent_guides(visible_buffer_range, snapshot, cx)
         })?;
@@ -7150,7 +7153,7 @@ impl Element for EditorElement {
                             false
                         };
 
-                        if clamped || autoscrolled {
+                        if (clamped || autoscrolled) && editor.mode != EditorMode::Minimap {
                             snapshot = editor.snapshot(window, cx);
                             scroll_position = snapshot.scroll_position();
                         }

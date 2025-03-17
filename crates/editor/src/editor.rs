@@ -6084,6 +6084,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
+        if self.mode() == EditorMode::Minimap {
+            return None;
+        }
         let active_inline_completion = self.active_inline_completion.as_ref()?;
 
         if self.edit_prediction_visible_in_cursor_popover(true) {
@@ -14758,7 +14761,9 @@ impl Editor {
     }
 
     pub fn render_git_blame_gutter(&self, cx: &App) -> bool {
-        self.show_git_blame_gutter && self.has_blame_entries(cx)
+        self.show_git_blame_gutter
+            && self.has_blame_entries(cx)
+            && self.mode() != EditorMode::Minimap
     }
 
     pub fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
@@ -14771,6 +14776,7 @@ impl Editor {
                     .is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
+            && self.mode() != EditorMode::Minimap
     }
 
     fn has_blame_entries(&self, cx: &App) -> bool {
