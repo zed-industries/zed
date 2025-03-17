@@ -3,16 +3,16 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Project, ProjectEnvironment, ProjectItem, ProjectPath,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use askpass::{AskPassDelegate, AskPassSession};
-use buffer_diff::BufferDiffEvent;
+use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
-    future::OptionFuture,
-    StreamExt as _,
+    future::{OptionFuture, Shared},
+    FutureExt as _, StreamExt as _,
 };
 use git::repository::DiffType;
 use git::{
@@ -26,15 +26,15 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
 };
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, BufferEvent, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, git_reset, ToProto},
+    proto::{self, git_reset, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
 use settings::WorktreeId;
 use std::{
-    collections::VecDeque,
+    collections::{hash_map, VecDeque},
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -42,27 +42,75 @@ use std::{
 
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt};
-use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry, WorkDirectory};
+use worktree::{
+    File, ProjectEntryId, RepositoryEntry, StatusEntry, UpdatedGitRepositoriesSet, WorkDirectory,
+    Worktree,
+};
 
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
     repositories: Vec<Entity<Repository>>,
+    #[allow(clippy::type_complexity)]
+    loading_diffs:
+        HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
+    diffs: HashMap<BufferId, Entity<BufferDiffState>>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<GitJob>,
+    shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: [Subscription; 2],
+}
+
+#[derive(Default)]
+struct SharedDiffs {
+    unstaged: Option<Entity<BufferDiff>>,
+    uncommitted: Option<Entity<BufferDiff>>,
+}
+
+#[derive(Default)]
+struct BufferDiffState {
+    unstaged_diff: Option<WeakEntity<BufferDiff>>,
+    uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    recalculate_diff_task: Option<Task<Result<()>>>,
+    language: Option<Arc<Language>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    diff_updated_futures: Vec<oneshot::Sender<()>>,
+
+    head_text: Option<Arc<String>>,
+    index_text: Option<Arc<String>>,
+    head_changed: bool,
+    index_changed: bool,
+    language_changed: bool,
+}
+
+#[derive(Clone, Debug)]
+enum DiffBasesChange {
+    SetIndex(Option<String>),
+    SetHead(Option<String>),
+    SetEach {
+        index: Option<String>,
+        head: Option<String>,
+    },
+    SetBoth(Option<String>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum DiffKind {
+    Unstaged,
+    Uncommitted,
 }
 
 enum GitStoreState {
     Local {
-        client: AnyProtoClient,
+        downstream_client: Option<(AnyProtoClient, ProjectId)>,
         environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
     },
     Ssh {
-        environment: Entity<ProjectEnvironment>,
         upstream_client: AnyProtoClient,
-        project_id: ProjectId,
+        upstream_project_id: ProjectId,
+        downstream_client: Option<(AnyProtoClient, ProjectId)>,
+        environment: Entity<ProjectEnvironment>,
     },
     Remote {
         upstream_client: AnyProtoClient,
@@ -123,29 +171,18 @@ impl GitStore {
         buffer_store: Entity<BufferStore>,
         environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
-        client: AnyProtoClient,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let update_sender = Self::spawn_git_worker(cx);
-        let _subscriptions = [
-            cx.subscribe(worktree_store, Self::on_worktree_store_event),
-            cx.subscribe(&buffer_store, Self::on_buffer_store_event),
-        ];
-
-        let state = GitStoreState::Local {
-            client,
-            environment,
-            fs,
-        };
-
-        GitStore {
-            state,
+        Self::new(
+            worktree_store,
             buffer_store,
-            repositories: Vec::new(),
-            active_index: None,
-            update_sender,
-            _subscriptions,
-        }
+            GitStoreState::Local {
+                downstream_client: None,
+                environment,
+                fs,
+            },
+            cx,
+        )
     }
 
     pub fn remote(
@@ -153,27 +190,17 @@ impl GitStore {
         buffer_store: Entity<BufferStore>,
         upstream_client: AnyProtoClient,
         project_id: ProjectId,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let update_sender = Self::spawn_git_worker(cx);
-        let _subscriptions = [
-            cx.subscribe(worktree_store, Self::on_worktree_store_event),
-            cx.subscribe(&buffer_store, Self::on_buffer_store_event),
-        ];
-
-        let state = GitStoreState::Remote {
-            upstream_client,
-            project_id,
-        };
-
-        GitStore {
-            state,
+        Self::new(
+            worktree_store,
             buffer_store,
-            repositories: Vec::new(),
-            active_index: None,
-            update_sender,
-            _subscriptions,
-        }
+            GitStoreState::Remote {
+                upstream_client,
+                project_id,
+            },
+            cx,
+        )
     }
 
     pub fn ssh(
@@ -181,20 +208,32 @@ impl GitStore {
         buffer_store: Entity<BufferStore>,
         environment: Entity<ProjectEnvironment>,
         upstream_client: AnyProtoClient,
-        project_id: ProjectId,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new(
+            worktree_store,
+            buffer_store,
+            GitStoreState::Ssh {
+                upstream_client,
+                upstream_project_id: ProjectId(SSH_PROJECT_ID),
+                downstream_client: None,
+                environment,
+            },
+            cx,
+        )
+    }
+
+    fn new(
+        worktree_store: &Entity<WorktreeStore>,
+        buffer_store: Entity<BufferStore>,
+        state: GitStoreState,
+        cx: &mut Context<Self>,
     ) -> Self {
         let update_sender = Self::spawn_git_worker(cx);
         let _subscriptions = [
             cx.subscribe(worktree_store, Self::on_worktree_store_event),
             cx.subscribe(&buffer_store, Self::on_buffer_store_event),
         ];
-
-        let state = GitStoreState::Ssh {
-            upstream_client,
-            project_id,
-            environment,
-        };
 
         GitStore {
             state,
@@ -203,6 +242,9 @@ impl GitStore {
             active_index: None,
             update_sender,
             _subscriptions,
+            loading_diffs: HashMap::default(),
+            shared_diffs: HashMap::default(),
+            diffs: HashMap::default(),
         }
     }
 
@@ -226,6 +268,50 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
         client.add_entity_request_handler(Self::handle_git_diff);
+        client.add_entity_request_handler(Self::handle_open_unstaged_diff);
+        client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
+        client.add_entity_message_handler(Self::handle_update_diff_bases);
+    }
+
+    pub fn is_local(&self) -> bool {
+        matches!(self.state, GitStoreState::Local { .. })
+    }
+
+    pub fn shared(&mut self, remote_id: u64, client: AnyProtoClient, _cx: &mut App) {
+        match &mut self.state {
+            GitStoreState::Local {
+                downstream_client, ..
+            }
+            | GitStoreState::Ssh {
+                downstream_client, ..
+            } => {
+                *downstream_client = Some((client, ProjectId(remote_id)));
+            }
+            GitStoreState::Remote { .. } => {
+                debug_panic!("shared called on remote store");
+            }
+        }
+    }
+
+    pub fn unshared(&mut self, _cx: &mut Context<Self>) {
+        match &mut self.state {
+            GitStoreState::Local {
+                downstream_client, ..
+            }
+            | GitStoreState::Ssh {
+                downstream_client, ..
+            } => {
+                downstream_client.take();
+            }
+            GitStoreState::Remote { .. } => {
+                debug_panic!("unshared called on remote store");
+            }
+        }
+        self.shared_diffs.clear();
+    }
+
+    pub(crate) fn forget_shared_diffs_for(&mut self, peer_id: &proto::PeerId) {
+        self.shared_diffs.remove(peer_id);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
@@ -233,15 +319,213 @@ impl GitStore {
             .map(|index| self.repositories[index].clone())
     }
 
-    fn client(&self) -> AnyProtoClient {
+    pub fn open_unstaged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(diff_state) = self.diffs.get(&buffer_id) {
+            if let Some(unstaged_diff) = diff_state
+                .read(cx)
+                .unstaged_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(unstaged_diff)
+                    });
+                }
+                return Task::ready(Ok(unstaged_diff));
+            }
+        }
+
+        let task = match self.loading_diffs.entry((buffer_id, DiffKind::Unstaged)) {
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+            hash_map::Entry::Vacant(entry) => {
+                let staged_text = self.state.load_staged_text(&buffer, &self.buffer_store, cx);
+                entry
+                    .insert(
+                        cx.spawn(move |this, cx| async move {
+                            Self::open_diff_internal(
+                                this,
+                                DiffKind::Unstaged,
+                                staged_text.await.map(DiffBasesChange::SetIndex),
+                                buffer,
+                                cx,
+                            )
+                            .await
+                            .map_err(Arc::new)
+                        })
+                        .shared(),
+                    )
+                    .clone()
+            }
+        };
+
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub fn open_uncommitted_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        if let Some(diff_state) = self.diffs.get(&buffer_id) {
+            if let Some(uncommitted_diff) = diff_state
+                .read(cx)
+                .uncommitted_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(uncommitted_diff)
+                    });
+                }
+                return Task::ready(Ok(uncommitted_diff));
+            }
+        }
+
+        let task = match self.loading_diffs.entry((buffer_id, DiffKind::Uncommitted)) {
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+            hash_map::Entry::Vacant(entry) => {
+                let changes = self
+                    .state
+                    .load_committed_text(&buffer, &self.buffer_store, cx);
+
+                entry
+                    .insert(
+                        cx.spawn(move |this, cx| async move {
+                            Self::open_diff_internal(
+                                this,
+                                DiffKind::Uncommitted,
+                                changes.await,
+                                buffer,
+                                cx,
+                            )
+                            .await
+                            .map_err(Arc::new)
+                        })
+                        .shared(),
+                    )
+                    .clone()
+            }
+        };
+
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    async fn open_diff_internal(
+        this: WeakEntity<Self>,
+        kind: DiffKind,
+        texts: Result<DiffBasesChange>,
+        buffer_entity: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Entity<BufferDiff>> {
+        let diff_bases_change = match texts {
+            Err(e) => {
+                this.update(&mut cx, |this, cx| {
+                    let buffer = buffer_entity.read(cx);
+                    let buffer_id = buffer.remote_id();
+                    this.loading_diffs.remove(&(buffer_id, kind));
+                })?;
+                return Err(e);
+            }
+            Ok(change) => change,
+        };
+
+        this.update(&mut cx, |this, cx| {
+            let buffer = buffer_entity.read(cx);
+            let buffer_id = buffer.remote_id();
+            let language = buffer.language().cloned();
+            let language_registry = buffer.language_registry();
+            let text_snapshot = buffer.text_snapshot();
+            this.loading_diffs.remove(&(buffer_id, kind));
+
+            let diff_state = this
+                .diffs
+                .entry(buffer_id)
+                .or_insert_with(|| cx.new(|_| BufferDiffState::default()));
+
+            let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+
+            cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
+            diff_state.update(cx, |diff_state, cx| {
+                diff_state.language = language;
+                diff_state.language_registry = language_registry;
+
+                match kind {
+                    DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
+                    DiffKind::Uncommitted => {
+                        let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
+                            diff
+                        } else {
+                            let unstaged_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                            diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
+                            unstaged_diff
+                        };
+
+                        diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
+                        diff_state.uncommitted_diff = Some(diff.downgrade())
+                    }
+                }
+
+                let rx = diff_state.diff_bases_changed(text_snapshot, diff_bases_change, cx);
+
+                anyhow::Ok(async move {
+                    rx.await.ok();
+                    Ok(diff)
+                })
+            })
+        })??
+        .await
+    }
+
+    pub fn get_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Option<Entity<BufferDiff>> {
+        let diff_state = self.diffs.get(&buffer_id)?;
+        diff_state.read(cx).unstaged_diff.as_ref()?.upgrade()
+    }
+
+    pub fn get_uncommitted_diff(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<Entity<BufferDiff>> {
+        let diff_state = self.diffs.get(&buffer_id)?;
+        diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
+    }
+
+    fn downstream_client(&self) -> Option<(AnyProtoClient, ProjectId)> {
         match &self.state {
-            GitStoreState::Local { client, .. } => client.clone(),
+            GitStoreState::Local {
+                downstream_client, ..
+            }
+            | GitStoreState::Ssh {
+                downstream_client, ..
+            } => downstream_client.clone(),
+            GitStoreState::Remote { .. } => None,
+        }
+    }
+
+    fn upstream_client(&self) -> Option<AnyProtoClient> {
+        match &self.state {
+            GitStoreState::Local { .. } => None,
             GitStoreState::Ssh {
                 upstream_client, ..
-            } => upstream_client.clone(),
-            GitStoreState::Remote {
+            }
+            | GitStoreState::Remote {
                 upstream_client, ..
-            } => upstream_client.clone(),
+            } => Some(upstream_client.clone()),
         }
     }
 
@@ -256,7 +540,7 @@ impl GitStore {
     fn project_id(&self) -> Option<ProjectId> {
         match &self.state {
             GitStoreState::Local { .. } => None,
-            GitStoreState::Ssh { project_id, .. } => Some(*project_id),
+            GitStoreState::Ssh { .. } => Some(ProjectId(proto::SSH_PROJECT_ID)),
             GitStoreState::Remote { project_id, .. } => Some(*project_id),
         }
     }
@@ -265,12 +549,12 @@ impl GitStore {
         &mut self,
         worktree_store: Entity<WorktreeStore>,
         event: &WorktreeStoreEvent,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
         let this = cx.weak_entity();
-        let client = self.client();
+        let upstream_client = self.upstream_client();
         let project_id = self.project_id();
 
         worktree_store.update(cx, |worktree_store, cx| {
@@ -288,7 +572,10 @@ impl GitStore {
                                 )
                             })
                             .or_else(|| {
-                                let client = client.clone();
+                                let client = upstream_client
+                                    .clone()
+                                    .context("no upstream client")
+                                    .log_err()?;
                                 let project_id = project_id?;
                                 Some((
                                     GitRepo::Remote {
@@ -373,9 +660,25 @@ impl GitStore {
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_) => {
                 cx.emit(GitEvent::GitStateUpdated);
             }
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                if self.is_local() {
+                    cx.subscribe(worktree, Self::on_worktree_event).detach();
+                }
+            }
             _ => {
                 cx.emit(GitEvent::FileSystemUpdated);
             }
+        }
+    }
+
+    fn on_worktree_event(
+        &mut self,
+        worktree: Entity<Worktree>,
+        event: &worktree::Event,
+        cx: &mut Context<Self>,
+    ) {
+        if let worktree::Event::UpdatedGitRepositories(changed_repos) = event {
+            self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
         }
     }
 
@@ -383,23 +686,68 @@ impl GitStore {
         &mut self,
         _: Entity<BufferStore>,
         event: &BufferStoreEvent,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) {
-        if let BufferStoreEvent::BufferDiffAdded(diff) = event {
-            cx.subscribe(diff, Self::on_buffer_diff_event).detach();
+        match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                cx.subscribe(&buffer, |this, buffer, event, cx| {
+                    if let BufferEvent::LanguageChanged = event {
+                        let buffer_id = buffer.read(cx).remote_id();
+                        if let Some(diff_state) = this.diffs.get(&buffer_id) {
+                            diff_state.update(cx, |diff_state, cx| {
+                                diff_state.buffer_language_changed(buffer, cx);
+                            });
+                        }
+                    }
+                })
+                .detach();
+            }
+            BufferStoreEvent::SharedBufferClosed(peer_id, buffer_id) => {
+                if let Some(diffs) = self.shared_diffs.get_mut(peer_id) {
+                    diffs.remove(buffer_id);
+                }
+            }
+            BufferStoreEvent::BufferDropped(buffer_id) => {
+                self.diffs.remove(&buffer_id);
+                for diffs in self.shared_diffs.values_mut() {
+                    diffs.remove(buffer_id);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    pub fn recalculate_buffer_diffs(
+        &mut self,
+        buffers: Vec<Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> {
+        let mut futures = Vec::new();
+        for buffer in buffers {
+            if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
+                let buffer = buffer.read(cx).text_snapshot();
+                futures.push(diff_state.update(cx, |diff_state, cx| {
+                    diff_state.recalculate_diffs(buffer, cx)
+                }));
+            }
+        }
+        async move {
+            futures::future::join_all(futures).await;
         }
     }
 
     fn on_buffer_diff_event(
-        this: &mut GitStore,
+        &mut self,
         diff: Entity<buffer_diff::BufferDiff>,
         event: &BufferDiffEvent,
-        cx: &mut Context<'_, GitStore>,
+        cx: &mut Context<Self>,
     ) {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
-            if let Some((repo, path)) = this.repository_and_path_for_buffer_id(buffer_id, cx) {
+            if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                 let recv = repo.update(cx, |repo, cx| {
+                    log::debug!("updating index text for buffer {}", path.display());
                     repo.set_index_text(
                         path,
                         new_index_text.as_ref().map(|rope| rope.to_string()),
@@ -423,6 +771,160 @@ impl GitStore {
                 .detach();
             }
         }
+    }
+
+    fn local_worktree_git_repos_changed(
+        &mut self,
+        worktree: Entity<Worktree>,
+        changed_repos: &UpdatedGitRepositoriesSet,
+        cx: &mut Context<Self>,
+    ) {
+        debug_assert!(worktree.read(cx).is_local());
+
+        let mut diff_state_updates = Vec::new();
+        for (buffer_id, diff_state) in &self.diffs {
+            let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
+                continue;
+            };
+            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+                continue;
+            };
+            if file.worktree != worktree
+                || !changed_repos
+                    .iter()
+                    .any(|(work_dir, _)| file.path.starts_with(work_dir))
+            {
+                continue;
+            }
+
+            let diff_state = diff_state.read(cx);
+            let has_unstaged_diff = diff_state
+                .unstaged_diff
+                .as_ref()
+                .is_some_and(|diff| diff.is_upgradable());
+            let has_uncommitted_diff = diff_state
+                .uncommitted_diff
+                .as_ref()
+                .is_some_and(|set| set.is_upgradable());
+            diff_state_updates.push((
+                buffer,
+                file.path.clone(),
+                has_unstaged_diff.then(|| diff_state.index_text.clone()),
+                has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+            ));
+        }
+
+        if diff_state_updates.is_empty() {
+            return;
+        }
+
+        cx.spawn(move |this, mut cx| async move {
+            let snapshot =
+                worktree.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
+
+            let mut diff_bases_changes_by_buffer = Vec::new();
+            for (buffer, path, current_index_text, current_head_text) in diff_state_updates {
+                log::debug!("reloading git state for buffer {}", path.display());
+                let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
+                    continue;
+                };
+                let Some(relative_path) = local_repo.relativize(&path).ok() else {
+                    continue;
+                };
+                let index_text = if current_index_text.is_some() {
+                    local_repo
+                        .repo()
+                        .load_index_text(relative_path.clone(), cx.clone())
+                        .await
+                } else {
+                    None
+                };
+                let head_text = if current_head_text.is_some() {
+                    local_repo
+                        .repo()
+                        .load_committed_text(relative_path, cx.clone())
+                        .await
+                } else {
+                    None
+                };
+
+                // Avoid triggering a diff update if the base text has not changed.
+                if let Some((current_index, current_head)) =
+                    current_index_text.as_ref().zip(current_head_text.as_ref())
+                {
+                    if current_index.as_deref() == index_text.as_ref()
+                        && current_head.as_deref() == head_text.as_ref()
+                    {
+                        continue;
+                    }
+                }
+
+                let diff_bases_change =
+                    match (current_index_text.is_some(), current_head_text.is_some()) {
+                        (true, true) => Some(if index_text == head_text {
+                            DiffBasesChange::SetBoth(head_text)
+                        } else {
+                            DiffBasesChange::SetEach {
+                                index: index_text,
+                                head: head_text,
+                            }
+                        }),
+                        (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
+                        (false, true) => Some(DiffBasesChange::SetHead(head_text)),
+                        (false, false) => None,
+                    };
+
+                diff_bases_changes_by_buffer.push((buffer, diff_bases_change))
+            }
+
+            this.update(&mut cx, |this, cx| {
+                for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
+                    let Some(diff_state) = this.diffs.get(&buffer.read(cx).remote_id()) else {
+                        continue;
+                    };
+                    let Some(diff_bases_change) = diff_bases_change else {
+                        continue;
+                    };
+
+                    let downstream_client = this.downstream_client();
+                    diff_state.update(cx, |diff_state, cx| {
+                        use proto::update_diff_bases::Mode;
+
+                        let buffer = buffer.read(cx);
+                        if let Some((client, project_id)) = downstream_client {
+                            let (staged_text, committed_text, mode) = match diff_bases_change
+                                .clone()
+                            {
+                                DiffBasesChange::SetIndex(index) => (index, None, Mode::IndexOnly),
+                                DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
+                                DiffBasesChange::SetEach { index, head } => {
+                                    (index, head, Mode::IndexAndHead)
+                                }
+                                DiffBasesChange::SetBoth(text) => {
+                                    (None, text, Mode::IndexMatchesHead)
+                                }
+                            };
+                            let message = proto::UpdateDiffBases {
+                                project_id: project_id.to_proto(),
+                                buffer_id: buffer.remote_id().to_proto(),
+                                staged_text,
+                                committed_text,
+                                mode: mode as i32,
+                            };
+
+                            client.send(message).log_err();
+                        }
+
+                        let _ = diff_state.diff_bases_changed(
+                            buffer.text_snapshot(),
+                            diff_bases_change,
+                            cx,
+                        );
+                    });
+                }
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn all_repositories(&self) -> Vec<Entity<Repository>> {
@@ -459,7 +961,7 @@ impl GitStore {
         result
     }
 
-    fn spawn_git_worker(cx: &mut Context<'_, GitStore>) -> mpsc::UnboundedSender<GitJob> {
+    fn spawn_git_worker(cx: &mut Context<GitStore>) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
         cx.spawn(|_, mut cx| async move {
@@ -504,12 +1006,13 @@ impl GitStore {
             }
             GitStoreState::Ssh {
                 upstream_client,
-                project_id,
+                upstream_project_id: project_id,
                 ..
             }
             | GitStoreState::Remote {
                 upstream_client,
                 project_id,
+                ..
             } => {
                 let client = upstream_client.clone();
                 let project_id = *project_id;
@@ -1014,6 +1517,109 @@ impl GitStore {
         Ok(proto::GitDiffResponse { diff })
     }
 
+    pub async fn handle_open_unstaged_diff(
+        this: Entity<Self>,
+        request: TypedEnvelope<proto::OpenUnstagedDiff>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenUnstagedDiffResponse> {
+        let buffer_id = BufferId::new(request.payload.buffer_id)?;
+        let diff = this
+            .update(&mut cx, |this, cx| {
+                let buffer = this.buffer_store.read(cx).get(buffer_id)?;
+                Some(this.open_unstaged_diff(buffer, cx))
+            })?
+            .ok_or_else(|| anyhow!("no such buffer"))?
+            .await?;
+        this.update(&mut cx, |this, _| {
+            let shared_diffs = this
+                .shared_diffs
+                .entry(request.original_sender_id.unwrap_or(request.sender_id))
+                .or_default();
+            shared_diffs.entry(buffer_id).or_default().unstaged = Some(diff.clone());
+        })?;
+        let staged_text = diff.read_with(&cx, |diff, _| diff.base_text_string())?;
+        Ok(proto::OpenUnstagedDiffResponse { staged_text })
+    }
+
+    pub async fn handle_open_uncommitted_diff(
+        this: Entity<Self>,
+        request: TypedEnvelope<proto::OpenUncommittedDiff>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenUncommittedDiffResponse> {
+        let buffer_id = BufferId::new(request.payload.buffer_id)?;
+        let diff = this
+            .update(&mut cx, |this, cx| {
+                let buffer = this.buffer_store.read(cx).get(buffer_id)?;
+                Some(this.open_uncommitted_diff(buffer, cx))
+            })?
+            .ok_or_else(|| anyhow!("no such buffer"))?
+            .await?;
+        this.update(&mut cx, |this, _| {
+            let shared_diffs = this
+                .shared_diffs
+                .entry(request.original_sender_id.unwrap_or(request.sender_id))
+                .or_default();
+            shared_diffs.entry(buffer_id).or_default().uncommitted = Some(diff.clone());
+        })?;
+        diff.read_with(&cx, |diff, cx| {
+            use proto::open_uncommitted_diff_response::Mode;
+
+            let unstaged_diff = diff.secondary_diff();
+            let index_snapshot = unstaged_diff.and_then(|diff| {
+                let diff = diff.read(cx);
+                diff.base_text_exists().then(|| diff.base_text())
+            });
+
+            let mode;
+            let staged_text;
+            let committed_text;
+            if diff.base_text_exists() {
+                let committed_snapshot = diff.base_text();
+                committed_text = Some(committed_snapshot.text());
+                if let Some(index_text) = index_snapshot {
+                    if index_text.remote_id() == committed_snapshot.remote_id() {
+                        mode = Mode::IndexMatchesHead;
+                        staged_text = None;
+                    } else {
+                        mode = Mode::IndexAndHead;
+                        staged_text = Some(index_text.text());
+                    }
+                } else {
+                    mode = Mode::IndexAndHead;
+                    staged_text = None;
+                }
+            } else {
+                mode = Mode::IndexAndHead;
+                committed_text = None;
+                staged_text = index_snapshot.as_ref().map(|buffer| buffer.text());
+            }
+
+            proto::OpenUncommittedDiffResponse {
+                committed_text,
+                staged_text,
+                mode: mode.into(),
+            }
+        })
+    }
+
+    pub async fn handle_update_diff_bases(
+        this: Entity<Self>,
+        request: TypedEnvelope<proto::UpdateDiffBases>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let buffer_id = BufferId::new(request.payload.buffer_id)?;
+        this.update(&mut cx, |this, cx| {
+            if let Some(diff_state) = this.diffs.get_mut(&buffer_id) {
+                if let Some(buffer) = this.buffer_store.read(cx).get(buffer_id) {
+                    let buffer = buffer.read(cx).text_snapshot();
+                    diff_state.update(cx, |diff_state, cx| {
+                        diff_state.handle_base_texts_updated(buffer, request.payload, cx);
+                    })
+                }
+            }
+        })
+    }
+
     fn repository_for_request(
         this: &Entity<Self>,
         worktree_id: WorktreeId,
@@ -1037,6 +1643,207 @@ impl GitStore {
     }
 }
 
+impl BufferDiffState {
+    fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.language = buffer.read(cx).language().cloned();
+        self.language_changed = true;
+        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
+    }
+
+    fn unstaged_diff(&self) -> Option<Entity<BufferDiff>> {
+        self.unstaged_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {
+        self.uncommitted_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn handle_base_texts_updated(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        message: proto::UpdateDiffBases,
+        cx: &mut Context<Self>,
+    ) {
+        use proto::update_diff_bases::Mode;
+
+        let Some(mode) = Mode::from_i32(message.mode) else {
+            return;
+        };
+
+        let diff_bases_change = match mode {
+            Mode::HeadOnly => DiffBasesChange::SetHead(message.committed_text),
+            Mode::IndexOnly => DiffBasesChange::SetIndex(message.staged_text),
+            Mode::IndexMatchesHead => DiffBasesChange::SetBoth(message.committed_text),
+            Mode::IndexAndHead => DiffBasesChange::SetEach {
+                index: message.staged_text,
+                head: message.committed_text,
+            },
+        };
+
+        let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
+    }
+
+    pub fn wait_for_recalculation(&mut self) -> Option<oneshot::Receiver<()>> {
+        if self.diff_updated_futures.is_empty() {
+            return None;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+        Some(rx)
+    }
+
+    fn diff_bases_changed(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        diff_bases_change: DiffBasesChange,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        match diff_bases_change {
+            DiffBasesChange::SetIndex(index) => {
+                self.index_text = index.map(|mut index| {
+                    text::LineEnding::normalize(&mut index);
+                    Arc::new(index)
+                });
+                self.index_changed = true;
+            }
+            DiffBasesChange::SetHead(head) => {
+                self.head_text = head.map(|mut head| {
+                    text::LineEnding::normalize(&mut head);
+                    Arc::new(head)
+                });
+                self.head_changed = true;
+            }
+            DiffBasesChange::SetBoth(text) => {
+                let text = text.map(|mut text| {
+                    text::LineEnding::normalize(&mut text);
+                    Arc::new(text)
+                });
+                self.head_text = text.clone();
+                self.index_text = text;
+                self.head_changed = true;
+                self.index_changed = true;
+            }
+            DiffBasesChange::SetEach { index, head } => {
+                self.index_text = index.map(|mut index| {
+                    text::LineEnding::normalize(&mut index);
+                    Arc::new(index)
+                });
+                self.index_changed = true;
+                self.head_text = head.map(|mut head| {
+                    text::LineEnding::normalize(&mut head);
+                    Arc::new(head)
+                });
+                self.head_changed = true;
+            }
+        }
+
+        self.recalculate_diffs(buffer, cx)
+    }
+
+    fn recalculate_diffs(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        log::debug!("recalculate diffs");
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+
+        let language = self.language.clone();
+        let language_registry = self.language_registry.clone();
+        let unstaged_diff = self.unstaged_diff();
+        let uncommitted_diff = self.uncommitted_diff();
+        let head = self.head_text.clone();
+        let index = self.index_text.clone();
+        let index_changed = self.index_changed;
+        let head_changed = self.head_changed;
+        let language_changed = self.language_changed;
+        let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
+            (Some(index), Some(head)) => Arc::ptr_eq(index, head),
+            (None, None) => true,
+            _ => false,
+        };
+        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+            let mut new_unstaged_diff = None;
+            if let Some(unstaged_diff) = &unstaged_diff {
+                new_unstaged_diff = Some(
+                    BufferDiff::update_diff(
+                        unstaged_diff.clone(),
+                        buffer.clone(),
+                        index,
+                        index_changed,
+                        language_changed,
+                        language.clone(),
+                        language_registry.clone(),
+                        &mut cx,
+                    )
+                    .await?,
+                );
+            }
+
+            let mut new_uncommitted_diff = None;
+            if let Some(uncommitted_diff) = &uncommitted_diff {
+                new_uncommitted_diff = if index_matches_head {
+                    new_unstaged_diff.clone()
+                } else {
+                    Some(
+                        BufferDiff::update_diff(
+                            uncommitted_diff.clone(),
+                            buffer.clone(),
+                            head,
+                            head_changed,
+                            language_changed,
+                            language.clone(),
+                            language_registry.clone(),
+                            &mut cx,
+                        )
+                        .await?,
+                    )
+                }
+            }
+
+            let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
+                unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
+            {
+                unstaged_diff.update(&mut cx, |diff, cx| {
+                    diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
+                })?
+            } else {
+                None
+            };
+
+            if let Some((uncommitted_diff, new_uncommitted_diff)) =
+                uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
+            {
+                uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
+                    uncommitted_diff.set_snapshot(
+                        &buffer,
+                        new_uncommitted_diff,
+                        language_changed,
+                        unstaged_changed_range,
+                        cx,
+                    );
+                })?;
+            }
+
+            if let Some(this) = this.upgrade() {
+                this.update(&mut cx, |this, _| {
+                    this.index_changed = false;
+                    this.head_changed = false;
+                    this.language_changed = false;
+                    for tx in this.diff_updated_futures.drain(..) {
+                        tx.send(()).ok();
+                    }
+                })?;
+            }
+
+            Ok(())
+        }));
+
+        rx
+    }
+}
+
 fn make_remote_delegate(
     this: Entity<GitStore>,
     project_id: u64,
@@ -1047,7 +1854,10 @@ fn make_remote_delegate(
 ) -> AskPassDelegate {
     AskPassDelegate::new(cx, move |prompt, tx, cx| {
         this.update(cx, |this, cx| {
-            let response = this.client().request(proto::AskPassRequest {
+            let Some((client, _)) = this.downstream_client() else {
+                return;
+            };
+            let response = client.request(proto::AskPassRequest {
                 project_id,
                 worktree_id: worktree_id.to_proto(),
                 work_directory_id: work_directory_id.to_proto(),
@@ -1064,7 +1874,115 @@ fn make_remote_delegate(
     })
 }
 
-impl GitRepo {}
+impl GitStoreState {
+    fn load_staged_text(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_store: &Entity<BufferStore>,
+        cx: &App,
+    ) -> Task<Result<Option<String>>> {
+        match self {
+            GitStoreState::Local { .. } => {
+                if let Some((worktree, path)) =
+                    buffer_store.read(cx).worktree_for_buffer(buffer, cx)
+                {
+                    worktree.read(cx).load_staged_file(path.as_ref(), cx)
+                } else {
+                    return Task::ready(Err(anyhow!("no such worktree")));
+                }
+            }
+            GitStoreState::Ssh {
+                upstream_client,
+                upstream_project_id: project_id,
+                ..
+            }
+            | GitStoreState::Remote {
+                upstream_client,
+                project_id,
+            } => {
+                let buffer_id = buffer.read(cx).remote_id();
+                let project_id = *project_id;
+                let client = upstream_client.clone();
+                cx.background_spawn(async move {
+                    let response = client
+                        .request(proto::OpenUnstagedDiff {
+                            project_id: project_id.to_proto(),
+                            buffer_id: buffer_id.to_proto(),
+                        })
+                        .await?;
+                    Ok(response.staged_text)
+                })
+            }
+        }
+    }
+
+    fn load_committed_text(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_store: &Entity<BufferStore>,
+        cx: &App,
+    ) -> Task<Result<DiffBasesChange>> {
+        match self {
+            GitStoreState::Local { .. } => {
+                if let Some((worktree, path)) =
+                    buffer_store.read(cx).worktree_for_buffer(buffer, cx)
+                {
+                    let worktree = worktree.read(cx);
+                    let committed_text = worktree.load_committed_file(&path, cx);
+                    let staged_text = worktree.load_staged_file(&path, cx);
+                    cx.background_spawn(async move {
+                        let committed_text = committed_text.await?;
+                        let staged_text = staged_text.await?;
+                        let diff_bases_change = if committed_text == staged_text {
+                            DiffBasesChange::SetBoth(committed_text)
+                        } else {
+                            DiffBasesChange::SetEach {
+                                index: staged_text,
+                                head: committed_text,
+                            }
+                        };
+                        Ok(diff_bases_change)
+                    })
+                } else {
+                    Task::ready(Err(anyhow!("no such worktree")))
+                }
+            }
+            GitStoreState::Ssh {
+                upstream_client,
+                upstream_project_id: project_id,
+                ..
+            }
+            | GitStoreState::Remote {
+                upstream_client,
+                project_id,
+            } => {
+                use proto::open_uncommitted_diff_response::Mode;
+
+                let buffer_id = buffer.read(cx).remote_id();
+                let project_id = *project_id;
+                let client = upstream_client.clone();
+                cx.background_spawn(async move {
+                    let response = client
+                        .request(proto::OpenUncommittedDiff {
+                            project_id: project_id.to_proto(),
+                            buffer_id: buffer_id.to_proto(),
+                        })
+                        .await?;
+                    let mode =
+                        Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
+                    let bases = match mode {
+                        Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
+                        Mode::IndexAndHead => DiffBasesChange::SetEach {
+                            head: response.committed_text,
+                            index: response.staged_text,
+                        },
+                    };
+                    Ok(bases)
+                })
+            }
+        }
+    }
+}
 
 impl Repository {
     pub fn git_store(&self) -> Option<Entity<GitStore>> {
@@ -1121,7 +2039,9 @@ impl Repository {
 
             let mut path = PathBuf::new();
             path = path.join(worktree_name);
-            path = path.join(project_path.path);
+            if project_path.path.components().count() > 0 {
+                path = path.join(project_path.path);
+            }
             Some(path.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| self.repository_entry.work_directory.display_name())

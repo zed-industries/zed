@@ -94,6 +94,7 @@ impl BufferId {
         self.into()
     }
 }
+
 impl From<BufferId> for u64 {
     fn from(id: BufferId) -> Self {
         id.0.get()

@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::Write;
 use std::sync::Arc;
 
@@ -560,7 +561,37 @@ impl Thread {
             request.messages.push(context_message);
         }
 
+        self.attach_stale_files(&mut request.messages, cx);
+
         request
+    }
+
+    fn attach_stale_files(&self, messages: &mut Vec<LanguageModelRequestMessage>, cx: &App) {
+        const STALE_FILES_HEADER: &str = "These files changed since last read:";
+
+        let mut stale_message = String::new();
+
+        for stale_file in self.action_log.read(cx).stale_buffers(cx) {
+            let Some(file) = stale_file.read(cx).file() else {
+                continue;
+            };
+
+            if stale_message.is_empty() {
+                write!(&mut stale_message, "{}", STALE_FILES_HEADER).ok();
+            }
+
+            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
+        }
+
+        if !stale_message.is_empty() {
+            let context_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![stale_message.into()],
+                cache: false,
+            };
+
+            messages.push(context_message);
+        }
     }
 
     pub fn stream_completion(

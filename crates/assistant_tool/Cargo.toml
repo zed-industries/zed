@@ -14,6 +14,7 @@ path = "src/assistant_tool.rs"
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+clock.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
 language.workspace = true

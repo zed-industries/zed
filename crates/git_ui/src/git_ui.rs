@@ -2,14 +2,14 @@ use std::any::Any;
 
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
+use commit_modal::CommitModal;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{actions, App, Entity, FocusHandle};
+use gpui::{actions, App, FocusHandle};
 use onboarding::{clear_dismissed, GitOnboardingModal};
-use project::Project;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -29,12 +29,14 @@ actions!(git, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
-    branch_picker::init(cx);
-    cx.observe_new(ProjectDiff::register).detach();
-    commit_modal::init(cx);
-    git_panel::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
+        ProjectDiff::register(workspace, cx);
+        CommitModal::register(workspace);
+        git_panel::register(workspace);
+        repository_selector::register(workspace);
+        branch_picker::register(workspace);
+
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
             return;
@@ -118,10 +120,6 @@ pub fn init(cx: &mut App) {
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
     GitStatusIcon::new(status)
-}
-
-fn can_push_and_pull(project: &Entity<Project>, cx: &App) -> bool {
-    !project.read(cx).is_via_collab()
 }
 
 fn render_remote_button(

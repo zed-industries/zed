@@ -684,6 +684,7 @@ impl Hover {
 enum EntitySubscription {
     Project(PendingEntitySubscription<Project>),
     BufferStore(PendingEntitySubscription<BufferStore>),
+    GitStore(PendingEntitySubscription<GitStore>),
     WorktreeStore(PendingEntitySubscription<WorktreeStore>),
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
@@ -904,7 +905,6 @@ impl Project {
                     buffer_store.clone(),
                     environment.clone(),
                     fs.clone(),
-                    client.clone().into(),
                     cx,
                 )
             });
@@ -1046,7 +1046,6 @@ impl Project {
                     buffer_store.clone(),
                     environment.clone(),
                     ssh_proto.clone(),
-                    ProjectId(SSH_PROJECT_ID),
                     cx,
                 )
             });
@@ -1167,6 +1166,7 @@ impl Project {
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
             EntitySubscription::BufferStore(client.subscribe_to_entity::<BufferStore>(remote_id)?),
+            EntitySubscription::GitStore(client.subscribe_to_entity::<GitStore>(remote_id)?),
             EntitySubscription::WorktreeStore(
                 client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
             ),
@@ -1196,7 +1196,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 6],
+        subscriptions: [EntitySubscription; 7],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
@@ -1326,7 +1326,7 @@ impl Project {
                 },
                 breakpoint_store,
                 dap_store: dap_store.clone(),
-                git_store,
+                git_store: git_store.clone(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1355,6 +1355,9 @@ impl Project {
                 }
                 EntitySubscription::WorktreeStore(subscription) => {
                     subscription.set_entity(&worktree_store, &mut cx)
+                }
+                EntitySubscription::GitStore(subscription) => {
+                    subscription.set_entity(&git_store, &mut cx)
                 }
                 EntitySubscription::SettingsObserver(subscription) => {
                     subscription.set_entity(&settings_observer, &mut cx)
@@ -1993,6 +1996,9 @@ impl Project {
         self.settings_observer.update(cx, |settings_observer, cx| {
             settings_observer.shared(project_id, self.client.clone().into(), cx)
         });
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.shared(project_id, self.client.clone().into(), cx)
+        });
 
         self.client_state = ProjectClientState::Shared {
             remote_id: project_id,
@@ -2079,6 +2085,9 @@ impl Project {
             });
             self.settings_observer.update(cx, |settings_observer, cx| {
                 settings_observer.unshared(cx);
+            });
+            self.git_store.update(cx, |git_store, cx| {
+                git_store.unshared(cx);
             });
 
             self.client
@@ -2305,10 +2314,8 @@ impl Project {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
-
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_unstaged_diff(buffer, cx)
-        })
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
     pub fn open_uncommitted_diff(
@@ -2319,9 +2326,8 @@ impl Project {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
-
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_uncommitted_diff(buffer, cx)
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.open_uncommitted_diff(buffer, cx)
         })
     }
 
@@ -2897,8 +2903,8 @@ impl Project {
                         if buffers.is_empty() {
                             None
                         } else {
-                            Some(this.buffer_store.update(cx, |buffer_store, cx| {
-                                buffer_store.recalculate_buffer_diffs(buffers, cx)
+                            Some(this.git_store.update(cx, |git_store, cx| {
+                                git_store.recalculate_buffer_diffs(buffers, cx)
                             }))
                         }
                     })
@@ -4173,6 +4179,9 @@ impl Project {
                 for buffer in buffer_store.buffers() {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
+            });
+            this.git_store.update(cx, |git_store, _| {
+                git_store.forget_shared_diffs_for(&peer_id);
             });
 
             cx.emit(Event::CollaboratorLeft(peer_id));

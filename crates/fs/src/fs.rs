@@ -52,7 +52,7 @@ use util::ResultExt;
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
-use git::repository::FakeGitRepositoryState;
+use git::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
 #[cfg(any(test, feature = "test-support"))]
@@ -885,7 +885,7 @@ enum FakeFsEntry {
         mtime: MTime,
         len: u64,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
-        git_repo_state: Option<Arc<Mutex<git::repository::FakeGitRepositoryState>>>,
+        git_repo_state: Option<Arc<Mutex<git::FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -2095,7 +2095,7 @@ impl Fs for FakeFs {
                     )))
                 })
                 .clone();
-            Some(git::repository::FakeGitRepository::open(state))
+            Some(git::FakeGitRepository::open(state))
         } else {
             None
         }
