@@ -329,7 +329,7 @@ impl LocalMode {
         cx.background_spawn(async move {
             match task.await {
                 Ok(_) => {}
-                Err(err) => log::warn!("Set breakpoints requst failed for path: {}", err),
+                Err(err) => log::warn!("Set breakpoints request failed for path: {}", err),
             }
         })
     }
