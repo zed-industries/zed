@@ -1434,8 +1434,6 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-
-
 **Options**
 
 1. Disable inline git blame:
