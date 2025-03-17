@@ -37,8 +37,7 @@ impl LlmTokenClaims {
         user: &user::Model,
         is_staff: bool,
         billing_preferences: Option<billing_preference::Model>,
-        has_llm_closed_beta_feature_flag: bool,
-        has_predict_edits_feature_flag: bool,
+        feature_flags: &Vec<String>,
         has_llm_subscription: bool,
         plan: rpc::proto::Plan,
         system_id: Option<String>,
@@ -59,8 +58,12 @@ impl LlmTokenClaims {
             metrics_id: user.metrics_id,
             github_user_login: user.github_login.clone(),
             is_staff,
-            has_llm_closed_beta_feature_flag,
-            has_predict_edits_feature_flag,
+            has_llm_closed_beta_feature_flag: feature_flags
+                .iter()
+                .any(|flag| flag == "llm-closed-beta"),
+            has_predict_edits_feature_flag: feature_flags
+                .iter()
+                .any(|flag| flag == "predict-edits"),
             has_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
                 .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
