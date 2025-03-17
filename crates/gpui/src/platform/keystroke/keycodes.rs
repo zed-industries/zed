@@ -539,7 +539,7 @@ impl KeyCodes {
         })
     }
     /// input is standard US English layout key
-    fn parse(input: &str) -> anyhow::Result<(Self, bool)> {
+    pub fn parse(input: &str) -> anyhow::Result<(Self, bool)> {
         if let Some(key) = Self::basic_parse(input) {
             return Ok((key, false));
         }

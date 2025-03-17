@@ -4360,15 +4360,10 @@ mod tests {
             );
             #[cfg(target_os = "windows")]
             assert!(
-                // TODO:
-                // bindings.into_iter().any(|binding| binding
-                //     .keystrokes()
-                //     .iter()
-                //     .any(|k| k.key.to_output_string(k.modifiers.shift) == key)),
                 bindings.into_iter().any(|binding| binding
                     .keystrokes()
                     .iter()
-                    .any(|k| k.key == gpui::KeyCodes::parse(key).unwrap())),
+                    .any(|k| k.key == gpui::KeyCodes::parse(key).unwrap().0)),
                 "On {} Failed to find {} with key binding {}",
                 line,
                 action.name(),
