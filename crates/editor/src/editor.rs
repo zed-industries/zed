@@ -1083,6 +1083,12 @@ pub enum MultibufferSelectionMode {
     All,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RewrapOptions {
+    pub override_language_settings: bool,
+    pub preserve_existing_whitespace: bool,
+}
+
 impl Editor {
     pub fn single_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
@@ -3199,7 +3205,13 @@ impl Editor {
                         .line_len(MultiBufferRow(latest.start.row))
                         == latest.start.column
                 {
-                    this.rewrap_impl(true, cx)
+                    this.rewrap_impl(
+                        RewrapOptions {
+                            override_language_settings: true,
+                            preserve_existing_whitespace: true,
+                        },
+                        cx,
+                    )
                 }
             }
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
@@ -8641,10 +8653,10 @@ impl Editor {
     }
 
     pub fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
-        self.rewrap_impl(false, cx)
+        self.rewrap_impl(RewrapOptions::default(), cx)
     }
 
-    pub fn rewrap_impl(&mut self, override_language_settings: bool, cx: &mut Context<Self>) {
+    pub fn rewrap_impl(&mut self, options: RewrapOptions, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
@@ -8718,7 +8730,7 @@ impl Editor {
                 RewrapBehavior::Anywhere => true,
             };
 
-            let should_rewrap = override_language_settings
+            let should_rewrap = options.override_language_settings
                 || allow_rewrap_based_on_language
                 || self.hard_wrap.is_some();
             if !should_rewrap {
@@ -8775,15 +8787,16 @@ impl Editor {
             });
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
-                lines_without_prefixes.join(" "),
+                dbg!(lines_without_prefixes).join("\n"),
                 wrap_column,
                 tab_size,
+                options.preserve_existing_whitespace,
             );
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
             // matches vim.
             let mut diff_options = DiffOptions::default();
-            if override_language_settings {
+            if options.override_language_settings {
                 diff_options.max_word_diff_len = 0;
                 diff_options.max_word_diff_line_count = 0;
             } else {
@@ -8803,7 +8816,7 @@ impl Editor {
         }
 
         self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            .update(cx, |buffer, cx| buffer.edit(dbg!(edits), None, cx));
     }
 
     pub fn cut_common(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ClipboardItem {
@@ -16656,10 +16669,15 @@ fn should_stay_with_preceding_ideograph(text: &str) -> bool {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-struct WordBreakToken<'a> {
-    token: &'a str,
-    grapheme_len: usize,
-    is_whitespace: bool,
+enum WordBreakToken<'a> {
+    Word {
+        token: &'a str,
+        grapheme_len: usize,
+    },
+    Whitespace {
+        original: &'a str,
+        original_grapheme_len: usize,
+    },
 }
 
 impl<'a> Iterator for WordBreakingTokenizer<'a> {
@@ -16708,16 +16726,14 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
             let token = &self.input[..offset];
             self.input = &self.input[offset..];
             if is_whitespace {
-                Some(WordBreakToken {
-                    token: " ",
-                    grapheme_len: 1,
-                    is_whitespace: true,
+                Some(WordBreakToken::Whitespace {
+                    original: token,
+                    original_grapheme_len: graphemes,
                 })
             } else {
-                Some(WordBreakToken {
+                Some(WordBreakToken::Word {
                     token,
                     grapheme_len: graphemes,
-                    is_whitespace: false,
                 })
             }
         } else {
@@ -16728,66 +16744,69 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
 
 #[test]
 fn test_word_breaking_tokenizer() {
-    let tests: &[(&str, &[(&str, usize, bool)])] = &[
+    let tests: &[(&str, &[WordBreakToken<'static>])] = &[
         ("", &[]),
-        ("  ", &[(" ", 1, true)]),
-        ("Ʒ", &[("Ʒ", 1, false)]),
-        ("Ǽ", &[("Ǽ", 1, false)]),
-        ("⋑", &[("⋑", 1, false)]),
-        ("⋑⋑", &[("⋑⋑", 2, false)]),
+        ("  ", &[whitespace("  ", 2)]),
+        ("Ʒ", &[word("Ʒ", 1)]),
+        ("Ǽ", &[word("Ǽ", 1)]),
+        ("⋑", &[word("⋑", 1)]),
+        ("⋑⋑", &[word("⋑⋑", 2)]),
         (
             "原理，进而",
-            &[
-                ("原", 1, false),
-                ("理，", 2, false),
-                ("进", 1, false),
-                ("而", 1, false),
-            ],
+            &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
         ),
         (
             "hello world",
-            &[("hello", 5, false), (" ", 1, true), ("world", 5, false)],
+            &[word("hello", 5), whitespace(" ", 1), word("world", 5)],
         ),
         (
             "hello, world",
-            &[("hello,", 6, false), (" ", 1, true), ("world", 5, false)],
+            &[word("hello,", 6), whitespace(" ", 1), word("world", 5)],
         ),
         (
             "  hello world",
             &[
-                (" ", 1, true),
-                ("hello", 5, false),
-                (" ", 1, true),
-                ("world", 5, false),
+                whitespace("  ", 2),
+                word("hello", 5),
+                whitespace(" ", 1),
+                word("world", 5),
             ],
         ),
         (
             "这是什么 \n 钢笔",
             &[
-                ("这", 1, false),
-                ("是", 1, false),
-                ("什", 1, false),
-                ("么", 1, false),
-                (" ", 1, true),
-                ("钢", 1, false),
-                ("笔", 1, false),
+                word("这", 1),
+                word("是", 1),
+                word("什", 1),
+                word("么", 1),
+                whitespace(" \n ", 3),
+                word("钢", 1),
+                word("笔", 1),
             ],
         ),
-        (" mutton", &[(" ", 1, true), ("mutton", 6, false)]),
+        (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
     ];
+
+    fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+        WordBreakToken::Word {
+            token,
+            grapheme_len,
+        }
+    }
+
+    fn whitespace(original: &'static str, original_grapheme_len: usize) -> WordBreakToken<'static> {
+        WordBreakToken::Whitespace {
+            original,
+            original_grapheme_len,
+        }
+    }
 
     for (input, result) in tests {
         assert_eq!(
-            WordBreakingTokenizer::new(input).collect::<Vec<_>>(),
-            result
-                .iter()
-                .copied()
-                .map(|(token, grapheme_len, is_whitespace)| WordBreakToken {
-                    token,
-                    grapheme_len,
-                    is_whitespace,
-                })
+            WordBreakingTokenizer::new(input)
                 .collect::<Vec<_>>()
+                .as_slice(),
+            *result,
         );
     }
 }
@@ -16797,31 +16816,43 @@ fn wrap_with_prefix(
     unwrapped_text: String,
     wrap_column: usize,
     tab_size: NonZeroU32,
+    preserve_existing_whitespace: bool,
 ) -> String {
+    dbg!(&unwrapped_text);
     let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
     let mut wrapped_text = String::new();
     let mut current_line = line_prefix.clone();
 
     let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
     let mut current_line_len = line_prefix_len;
-    for WordBreakToken {
-        token,
-        grapheme_len,
-        is_whitespace,
-    } in tokenizer
-    {
+    for token in tokenizer {
+        let grapheme_len = match token {
+            WordBreakToken::Word { grapheme_len, .. } => grapheme_len,
+            WordBreakToken::Whitespace { .. } => 1,
+        };
         if current_line_len + grapheme_len > wrap_column && current_line_len != line_prefix_len {
             wrapped_text.push_str(current_line.trim_end());
             wrapped_text.push('\n');
             current_line.truncate(line_prefix.len());
             current_line_len = line_prefix_len;
-            if !is_whitespace {
-                current_line.push_str(token);
-                current_line_len += grapheme_len;
-            }
-        } else if !is_whitespace {
+        }
+        if let WordBreakToken::Word {
+            token,
+            grapheme_len,
+        } = token
+        {
             current_line.push_str(token);
             current_line_len += grapheme_len;
+        } else if let (
+            WordBreakToken::Whitespace {
+                original,
+                original_grapheme_len,
+            },
+            true,
+        ) = (token, preserve_existing_whitespace)
+        {
+            current_line.push_str(original);
+            current_line_len += original_grapheme_len;
         } else if current_line_len != line_prefix_len {
             current_line.push(' ');
             current_line_len += 1;
@@ -16841,7 +16872,8 @@ fn test_wrap_with_prefix() {
             "# ".to_string(),
             "abcdefg".to_string(),
             4,
-            NonZeroU32::new(4).unwrap()
+            NonZeroU32::new(4).unwrap(),
+            false,
         ),
         "# abcdefg"
     );
@@ -16850,7 +16882,8 @@ fn test_wrap_with_prefix() {
             "".to_string(),
             "\thello world".to_string(),
             8,
-            NonZeroU32::new(4).unwrap()
+            NonZeroU32::new(4).unwrap(),
+            false,
         ),
         "hello\nworld"
     );
@@ -16859,7 +16892,8 @@ fn test_wrap_with_prefix() {
             "// ".to_string(),
             "xx \nyy zz aa bb cc".to_string(),
             12,
-            NonZeroU32::new(4).unwrap()
+            NonZeroU32::new(4).unwrap(),
+            false,
         ),
         "// xx yy zz\n// aa bb cc"
     );
@@ -16868,7 +16902,8 @@ fn test_wrap_with_prefix() {
             String::new(),
             "这是什么 \n 钢笔".to_string(),
             3,
-            NonZeroU32::new(4).unwrap()
+            NonZeroU32::new(4).unwrap(),
+            false,
         ),
         "这是什\n么 钢\n笔"
     );
