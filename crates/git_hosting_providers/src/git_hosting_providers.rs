@@ -18,8 +18,8 @@ pub fn init(cx: &App) {
     provider_registry.register_hosting_provider(Arc::new(Chromium));
     provider_registry.register_hosting_provider(Arc::new(Codeberg));
     provider_registry.register_hosting_provider(Arc::new(Gitee));
-    provider_registry.register_hosting_provider(Arc::new(Github::new()));
-    provider_registry.register_hosting_provider(Arc::new(Gitlab::new()));
+    provider_registry.register_hosting_provider(Arc::new(Github::public_instance()));
+    provider_registry.register_hosting_provider(Arc::new(Gitlab::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Sourcehut));
 }
 
