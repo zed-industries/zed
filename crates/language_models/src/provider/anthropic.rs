@@ -1,5 +1,6 @@
+use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
-use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
+use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent, Usage};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -24,7 +25,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
@@ -506,7 +507,7 @@ pub fn into_anthropic(
                         MessageContent::ToolUse(tool_use) => {
                             Some(anthropic::RequestContent::ToolUse {
                                 id: tool_use.id.to_string(),
-                                name: tool_use.name,
+                                name: tool_use.name.to_string(),
                                 input: tool_use.input,
                                 cache_control,
                             })
@@ -515,7 +516,7 @@ pub fn into_anthropic(
                             Some(anthropic::RequestContent::ToolResult {
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content,
+                                content: tool_result.content.to_string(),
                                 cache_control,
                             })
                         }
@@ -581,12 +582,16 @@ pub fn map_to_language_model_completion_events(
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
         tool_uses_by_index: HashMap<usize, RawToolUse>,
+        usage: Usage,
+        stop_reason: StopReason,
     }
 
     futures::stream::unfold(
         State {
             events,
             tool_uses_by_index: HashMap::default(),
+            usage: Usage::default(),
+            stop_reason: StopReason::EndTurn,
         },
         |mut state| async move {
             while let Some(event) = state.events.next().await {
@@ -598,7 +603,7 @@ pub fn map_to_language_model_completion_events(
                         } => match content_block {
                             ResponseContent::Text { text } => {
                                 return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
                                     state,
                                 ));
                             }
@@ -611,34 +616,33 @@ pub fn map_to_language_model_completion_events(
                                         input_json: String::new(),
                                     },
                                 );
-
-                                return Some((None, state));
                             }
                         },
                         Event::ContentBlockDelta { index, delta } => match delta {
                             ContentDelta::TextDelta { text } => {
                                 return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
                                     state,
                                 ));
                             }
                             ContentDelta::InputJsonDelta { partial_json } => {
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);
-                                    return Some((None, state));
                                 }
                             }
                         },
                         Event::ContentBlockStop { index } => {
                             if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
                                 return Some((
-                                    Some(maybe!({
+                                    vec![maybe!({
                                         Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
                                                 id: tool_use.id.into(),
-                                                name: tool_use.name,
+                                                name: tool_use.name.into(),
                                                 input: if tool_use.input_json.is_empty() {
-                                                    serde_json::Value::Null
+                                                    serde_json::Value::Object(
+                                                        serde_json::Map::default(),
+                                                    )
                                                 } else {
                                                     serde_json::Value::from_str(
                                                         &tool_use.input_json,
@@ -647,44 +651,63 @@ pub fn map_to_language_model_completion_events(
                                                 },
                                             },
                                         ))
-                                    })),
+                                    })],
                                     state,
                                 ));
                             }
                         }
                         Event::MessageStart { message } => {
+                            update_usage(&mut state.usage, &message.usage);
                             return Some((
-                                Some(Ok(LanguageModelCompletionEvent::StartMessage {
-                                    message_id: message.id,
-                                })),
+                                vec![
+                                    Ok(LanguageModelCompletionEvent::StartMessage {
+                                        message_id: message.id,
+                                    }),
+                                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
+                                        &state.usage,
+                                    ))),
+                                ],
                                 state,
-                            ))
+                            ));
                         }
-                        Event::MessageDelta { delta, .. } => {
+                        Event::MessageDelta { delta, usage } => {
+                            update_usage(&mut state.usage, &usage);
                             if let Some(stop_reason) = delta.stop_reason.as_deref() {
-                                let stop_reason = match stop_reason {
+                                state.stop_reason = match stop_reason {
                                     "end_turn" => StopReason::EndTurn,
                                     "max_tokens" => StopReason::MaxTokens,
                                     "tool_use" => StopReason::ToolUse,
-                                    _ => StopReason::EndTurn,
+                                    _ => {
+                                        log::error!(
+                                            "Unexpected anthropic stop_reason: {stop_reason}"
+                                        );
+                                        StopReason::EndTurn
+                                    }
                                 };
-
-                                return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason))),
-                                    state,
-                                ));
                             }
+                            return Some((
+                                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
+                                    convert_usage(&state.usage),
+                                ))],
+                                state,
+                            ));
+                        }
+                        Event::MessageStop => {
+                            return Some((
+                                vec![Ok(LanguageModelCompletionEvent::Stop(state.stop_reason))],
+                                state,
+                            ));
                         }
                         Event::Error { error } => {
                             return Some((
-                                Some(Err(anyhow!(AnthropicError::ApiError(error)))),
+                                vec![Err(anyhow!(AnthropicError::ApiError(error)))],
                                 state,
                             ));
                         }
                         _ => {}
                     },
                     Err(err) => {
-                        return Some((Some(Err(anyhow!(err))), state));
+                        return Some((vec![Err(anyhow!(err))], state));
                     }
                 }
             }
@@ -692,7 +715,32 @@ pub fn map_to_language_model_completion_events(
             None
         },
     )
-    .filter_map(|event| async move { event })
+    .flat_map(futures::stream::iter)
+}
+
+/// Updates usage data by preferring counts from `new`.
+fn update_usage(usage: &mut Usage, new: &Usage) {
+    if let Some(input_tokens) = new.input_tokens {
+        usage.input_tokens = Some(input_tokens);
+    }
+    if let Some(output_tokens) = new.output_tokens {
+        usage.output_tokens = Some(output_tokens);
+    }
+    if let Some(cache_creation_input_tokens) = new.cache_creation_input_tokens {
+        usage.cache_creation_input_tokens = Some(cache_creation_input_tokens);
+    }
+    if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
+        usage.cache_read_input_tokens = Some(cache_read_input_tokens);
+    }
+}
+
+fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
+    language_model::TokenUsage {
+        input_tokens: usage.input_tokens.unwrap_or(0),
+        output_tokens: usage.output_tokens.unwrap_or(0),
+        cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
+        cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
+    }
 }
 
 struct ConfigurationView {
@@ -803,12 +851,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ANTHROPIC_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:",
-            "- Create one at:",
-            "- Paste your API key below and hit enter to use the assistant:",
-        ];
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -817,17 +859,20 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(
+                            InstructionListItem::new(
+                                "Create one by visiting",
+                                Some("Anthropic's settings"),
+                                Some("https://console.anthropic.com/settings/keys")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                        )
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()
@@ -837,14 +882,15 @@ impl Render for ConfigurationView {
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
+                        .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
                 .child(
                     Label::new(
                         format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .into_any()
         } else {

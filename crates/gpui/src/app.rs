@@ -82,7 +82,7 @@ impl AppCell {
 #[derive(Deref, DerefMut)]
 pub struct AppRef<'a>(Ref<'a, App>);
 
-impl<'a> Drop for AppRef<'a> {
+impl Drop for AppRef<'_> {
     fn drop(&mut self) {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
@@ -95,7 +95,7 @@ impl<'a> Drop for AppRef<'a> {
 #[derive(Deref, DerefMut)]
 pub struct AppRefMut<'a>(RefMut<'a, App>);
 
-impl<'a> Drop for AppRefMut<'a> {
+impl Drop for AppRefMut<'_> {
     fn drop(&mut self) {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
@@ -1046,7 +1046,7 @@ impl App {
         &self.foreground_executor
     }
 
-    /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
+    /// Spawns the future returned by the given function on the main thread. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
     #[track_caller]
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
@@ -1424,6 +1424,11 @@ impl App {
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
         self.platform.set_dock_menu(menus, &self.keymap.borrow());
+    }
+
+    /// Performs the action associated with the given dock menu item, only used on Windows for now.
+    pub fn perform_dock_menu_action(&self, action: usize) {
+        self.platform.perform_dock_menu_action(action);
     }
 
     /// Adds given path to the bottom of the list of recent paths for the application.

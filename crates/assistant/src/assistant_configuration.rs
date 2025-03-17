@@ -110,7 +110,7 @@ impl ConfigurationView {
                     .bg(cx.theme().colors().surface_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .rounded_md()
+                    .rounded_sm()
                     .when(configuration_view.is_none(), |this| {
                         this.child(div().child(Label::new(format!(
                             "No configuration view for {}",

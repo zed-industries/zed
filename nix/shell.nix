@@ -1,65 +1,62 @@
 {
-  pkgs ? import <nixpkgs> { },
+  lib,
+  mkShell,
+  stdenv,
+  stdenvAdapters,
+  makeFontsConf,
+
+  zed-editor,
+
+  rust-analyzer,
+  cargo-nextest,
+  nixfmt-rfc-style,
+  protobuf,
+  nodejs_22,
 }:
 let
-  inherit (pkgs) lib;
+  moldStdenv = stdenvAdapters.useMoldLinker stdenv;
+  mkShell' =
+    if stdenv.hostPlatform.isLinux then mkShell.override { stdenv = moldStdenv; } else mkShell;
 in
-pkgs.mkShell rec {
-  packages =
-    [
-      pkgs.clang
-      pkgs.curl
-      pkgs.cmake
-      pkgs.perl
-      pkgs.pkg-config
-      pkgs.protobuf
-      pkgs.rustPlatform.bindgenHook
-      pkgs.rust-analyzer
-    ]
-    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-      pkgs.mold
-    ];
+mkShell' {
+  inputsFrom = [ zed-editor ];
+  packages = [
+    rust-analyzer
+    cargo-nextest
+    nixfmt-rfc-style
+    # TODO: package protobuf-language-server for editing zed.proto
+    # TODO: add other tools used in our scripts
 
-  buildInputs =
-    [
-      pkgs.bzip2
-      pkgs.curl
-      pkgs.fontconfig
-      pkgs.freetype
-      pkgs.libgit2
-      pkgs.openssl
-      pkgs.sqlite
-      pkgs.stdenv.cc.cc
-      pkgs.zlib
-      pkgs.zstd
-      pkgs.rustToolchain
-    ]
-    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-      pkgs.alsa-lib
-      pkgs.libxkbcommon
-      pkgs.wayland
-      pkgs.xorg.libxcb
-      pkgs.vulkan-loader
-    ]
-    ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.apple-sdk_15;
+    # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
+    # we'll just put it on `$PATH`:
+    nodejs_22
+  ];
 
-  LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
+  # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones, because
+  # we need Swift 6.0 and nixpkgs doesn't have it
+  shellHook = lib.optionalString stdenv.hostPlatform.isDarwin ''
+    export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer";
+  '';
 
-  PROTOC="${pkgs.protobuf}/bin/protoc";
-
-  # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones,
-  # because we need Swift 6.0 and nixpkgs doesn't have it.
-  # Xcode is required for development anyways
-  shellHook = lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
-      export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
-      export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer";
-    '';
-
-  FONTCONFIG_FILE = pkgs.makeFontsConf {
-    fontDirectories = [
-      "./assets/fonts/zed-mono"
-      "./assets/fonts/zed-sans"
-    ];
-  };
-  ZSTD_SYS_USE_PKG_CONFIG = true;
+  env =
+    let
+      baseEnvs =
+        (zed-editor.overrideAttrs (attrs: {
+          passthru = { inherit (attrs) env; };
+        })).env; # exfil `env`; it's not in drvAttrs
+    in
+    # unsetting this var so we download the staticlib during the build
+    (removeAttrs baseEnvs [ "LK_CUSTOM_WEBRTC" ])
+    // {
+      # note: different than `$FONTCONFIG_FILE` in `build.nix` – this refers to relative paths
+      # outside the nix store instead of to `$src`
+      FONTCONFIG_FILE = makeFontsConf {
+        fontDirectories = [
+          "./assets/fonts/plex-mono"
+          "./assets/fonts/plex-sans"
+        ];
+      };
+      PROTOC = "${protobuf}/bin/protoc";
+    };
 }

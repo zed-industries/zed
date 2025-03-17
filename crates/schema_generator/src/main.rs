@@ -1,26 +1,36 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use schemars::schema_for;
 use theme::{IconThemeFamilyContent, ThemeFamilyContent};
 
 #[derive(Parser, Debug)]
-struct Args {}
+pub struct Args {
+    #[arg(value_enum)]
+    pub schema_type: SchemaType,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[clap(rename_all = "snake_case")]
+pub enum SchemaType {
+    Theme,
+    IconTheme,
+}
 
 fn main() -> Result<()> {
     env_logger::init();
 
-    let _args = Args::parse();
+    let args = Args::parse();
 
-    let theme_family_schema = schema_for!(ThemeFamilyContent);
-    println!("Theme Schema:");
-    println!("{}", serde_json::to_string_pretty(&theme_family_schema)?);
-
-    let icon_theme_family_schema = schema_for!(IconThemeFamilyContent);
-    println!("Icon Theme Schema:");
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&icon_theme_family_schema)?
-    );
+    match args.schema_type {
+        SchemaType::Theme => {
+            let schema = schema_for!(ThemeFamilyContent);
+            println!("{}", serde_json::to_string_pretty(&schema)?);
+        }
+        SchemaType::IconTheme => {
+            let schema = schema_for!(IconThemeFamilyContent);
+            println!("{}", serde_json::to_string_pretty(&schema)?);
+        }
+    }
 
     Ok(())
 }

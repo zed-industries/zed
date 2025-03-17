@@ -6,7 +6,7 @@ use crate::{
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, bail, Context as _, Result};
-use buffer_diff::{BufferDiff, BufferDiffEvent};
+use buffer_diff::BufferDiff;
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
@@ -15,7 +15,6 @@ use git::{blame::Blame, repository::RepoPath};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
-use http_client::Url;
 use language::{
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
@@ -34,7 +33,6 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
-    str::FromStr as _,
     sync::Arc,
     time::Instant,
 };
@@ -136,6 +134,15 @@ impl BufferDiffState {
         let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
     }
 
+    pub fn wait_for_recalculation(&mut self) -> Option<oneshot::Receiver<()>> {
+        if self.diff_updated_futures.is_empty() {
+            return None;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+        Some(rx)
+    }
+
     fn diff_bases_changed(
         &mut self,
         buffer: text::BufferSnapshot,
@@ -208,39 +215,29 @@ impl BufferDiffState {
             _ => false,
         };
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-            let mut unstaged_changed_range = None;
+            let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
-                unstaged_changed_range = BufferDiff::update_diff(
-                    unstaged_diff.clone(),
-                    buffer.clone(),
-                    index,
-                    index_changed,
-                    language_changed,
-                    language.clone(),
-                    language_registry.clone(),
-                    &mut cx,
-                )
-                .await?;
-
-                unstaged_diff.update(&mut cx, |_, cx| {
-                    if language_changed {
-                        cx.emit(BufferDiffEvent::LanguageChanged);
-                    }
-                    if let Some(changed_range) = unstaged_changed_range.clone() {
-                        cx.emit(BufferDiffEvent::DiffChanged {
-                            changed_range: Some(changed_range),
-                        })
-                    }
-                })?;
+                new_unstaged_diff = Some(
+                    BufferDiff::update_diff(
+                        unstaged_diff.clone(),
+                        buffer.clone(),
+                        index,
+                        index_changed,
+                        language_changed,
+                        language.clone(),
+                        language_registry.clone(),
+                        &mut cx,
+                    )
+                    .await?,
+                );
             }
 
+            let mut new_uncommitted_diff = None;
             if let Some(uncommitted_diff) = &uncommitted_diff {
-                let uncommitted_changed_range =
-                    if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
-                        uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
-                            uncommitted_diff.update_diff_from(&buffer, unstaged_diff, cx)
-                        })?
-                    } else {
+                new_uncommitted_diff = if index_matches_head {
+                    new_unstaged_diff.clone()
+                } else {
+                    Some(
                         BufferDiff::update_diff(
                             uncommitted_diff.clone(),
                             buffer.clone(),
@@ -251,32 +248,32 @@ impl BufferDiffState {
                             language_registry.clone(),
                             &mut cx,
                         )
-                        .await?
-                    };
+                        .await?,
+                    )
+                }
+            }
 
+            let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
+                unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
+            {
+                unstaged_diff.update(&mut cx, |diff, cx| {
+                    diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
+                })?
+            } else {
+                None
+            };
+
+            if let Some((uncommitted_diff, new_uncommitted_diff)) =
+                uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
+            {
                 uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
-                    if language_changed {
-                        cx.emit(BufferDiffEvent::LanguageChanged);
-                    }
-                    let changed_range = match (unstaged_changed_range, uncommitted_changed_range) {
-                        (None, None) => None,
-                        (Some(unstaged_range), None) => {
-                            uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
-                        }
-                        (None, Some(uncommitted_range)) => Some(uncommitted_range),
-                        (Some(unstaged_range), Some(uncommitted_range)) => {
-                            let mut start = uncommitted_range.start;
-                            let mut end = uncommitted_range.end;
-                            if let Some(unstaged_range) =
-                                uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
-                            {
-                                start = unstaged_range.start.min(&uncommitted_range.start, &buffer);
-                                end = unstaged_range.end.max(&uncommitted_range.end, &buffer);
-                            }
-                            Some(start..end)
-                        }
-                    };
-                    cx.emit(BufferDiffEvent::DiffChanged { changed_range });
+                    uncommitted_diff.set_snapshot(
+                        &buffer,
+                        new_uncommitted_diff,
+                        language_changed,
+                        unstaged_changed_range,
+                        cx,
+                    );
                 })?;
             }
 
@@ -330,6 +327,7 @@ enum OpenBuffer {
 
 pub enum BufferStoreEvent {
     BufferAdded(Entity<Buffer>),
+    BufferDiffAdded(Entity<BufferDiff>),
     BufferDropped(BufferId),
     BufferChangedFilePath {
         buffer: Entity<Buffer>,
@@ -803,8 +801,7 @@ impl LocalBufferStore {
             let Some(buffer) = buffer.upgrade() else {
                 continue;
             };
-            let buffer = buffer.read(cx);
-            let Some(file) = File::from_dyn(buffer.file()) else {
+            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
                 continue;
             };
             if file.worktree != worktree_handle {
@@ -815,21 +812,20 @@ impl LocalBufferStore {
                 .iter()
                 .any(|(work_dir, _)| file.path.starts_with(work_dir))
             {
-                let snapshot = buffer.text_snapshot();
+                let has_unstaged_diff = diff_state
+                    .unstaged_diff
+                    .as_ref()
+                    .is_some_and(|diff| diff.is_upgradable());
+                let has_uncommitted_diff = diff_state
+                    .uncommitted_diff
+                    .as_ref()
+                    .is_some_and(|set| set.is_upgradable());
                 diff_state_updates.push((
-                    snapshot.clone(),
+                    buffer,
                     file.path.clone(),
-                    diff_state
-                        .unstaged_diff
-                        .as_ref()
-                        .and_then(|set| set.upgrade())
-                        .is_some(),
-                    diff_state
-                        .uncommitted_diff
-                        .as_ref()
-                        .and_then(|set| set.upgrade())
-                        .is_some(),
-                ))
+                    has_unstaged_diff.then(|| diff_state.index_text.clone()),
+                    has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                ));
             }
         }
 
@@ -841,52 +837,70 @@ impl LocalBufferStore {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_changes_by_buffer = cx
-                .background_spawn(async move {
-                    diff_state_updates
-                        .into_iter()
-                        .filter_map(
-                            |(buffer_snapshot, path, needs_staged_text, needs_committed_text)| {
-                                let local_repo = snapshot.local_repo_for_path(&path)?;
-                                let relative_path = local_repo.relativize(&path).ok()?;
-                                let staged_text = if needs_staged_text {
-                                    local_repo.repo().load_index_text(&relative_path)
+                .spawn(async move |cx| {
+                    let mut results = Vec::new();
+                    for (buffer, path, current_index_text, current_head_text) in diff_state_updates
+                    {
+                        let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
+                            continue;
+                        };
+                        let Some(relative_path) = local_repo.relativize(&path).ok() else {
+                            continue;
+                        };
+                        let index_text = if current_index_text.is_some() {
+                            local_repo
+                                .repo()
+                                .load_index_text(relative_path.clone(), cx.clone())
+                                .await
+                        } else {
+                            None
+                        };
+                        let head_text = if current_head_text.is_some() {
+                            local_repo
+                                .repo()
+                                .load_committed_text(relative_path, cx.clone())
+                                .await
+                        } else {
+                            None
+                        };
+
+                        // Avoid triggering a diff update if the base text has not changed.
+                        if let Some((current_index, current_head)) =
+                            current_index_text.as_ref().zip(current_head_text.as_ref())
+                        {
+                            if current_index.as_deref() == index_text.as_ref()
+                                && current_head.as_deref() == head_text.as_ref()
+                            {
+                                continue;
+                            }
+                        }
+
+                        let diff_bases_change =
+                            match (current_index_text.is_some(), current_head_text.is_some()) {
+                                (true, true) => Some(if index_text == head_text {
+                                    DiffBasesChange::SetBoth(head_text)
                                 } else {
-                                    None
-                                };
-                                let committed_text = if needs_committed_text {
-                                    local_repo.repo().load_committed_text(&relative_path)
-                                } else {
-                                    None
-                                };
-                                let diff_bases_change =
-                                    match (needs_staged_text, needs_committed_text) {
-                                        (true, true) => Some(if staged_text == committed_text {
-                                            DiffBasesChange::SetBoth(committed_text)
-                                        } else {
-                                            DiffBasesChange::SetEach {
-                                                index: staged_text,
-                                                head: committed_text,
-                                            }
-                                        }),
-                                        (true, false) => {
-                                            Some(DiffBasesChange::SetIndex(staged_text))
-                                        }
-                                        (false, true) => {
-                                            Some(DiffBasesChange::SetHead(committed_text))
-                                        }
-                                        (false, false) => None,
-                                    };
-                                Some((buffer_snapshot, diff_bases_change))
-                            },
-                        )
-                        .collect::<Vec<_>>()
+                                    DiffBasesChange::SetEach {
+                                        index: index_text,
+                                        head: head_text,
+                                    }
+                                }),
+                                (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
+                                (false, true) => Some(DiffBasesChange::SetHead(head_text)),
+                                (false, false) => None,
+                            };
+
+                        results.push((buffer, diff_bases_change))
+                    }
+
+                    results
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                for (buffer_snapshot, diff_bases_change) in diff_bases_changes_by_buffer {
+                for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
                     let Some(OpenBuffer::Complete { diff_state, .. }) =
-                        this.opened_buffers.get_mut(&buffer_snapshot.remote_id())
+                        this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
                     else {
                         continue;
                     };
@@ -897,8 +911,9 @@ impl LocalBufferStore {
                     diff_state.update(cx, |diff_state, cx| {
                         use proto::update_diff_bases::Mode;
 
+                        let buffer = buffer.read(cx);
                         if let Some((client, project_id)) = this.downstream_client.as_ref() {
-                            let buffer_id = buffer_snapshot.remote_id().to_proto();
+                            let buffer_id = buffer.remote_id().to_proto();
                             let (staged_text, committed_text, mode) = match diff_bases_change
                                 .clone()
                             {
@@ -922,8 +937,11 @@ impl LocalBufferStore {
                             client.send(message).log_err();
                         }
 
-                        let _ =
-                            diff_state.diff_bases_changed(buffer_snapshot, diff_bases_change, cx);
+                        let _ = diff_state.diff_bases_changed(
+                            buffer.text_snapshot(),
+                            diff_bases_change,
+                            cx,
+                        );
                     });
                 }
             })
@@ -1352,8 +1370,23 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff) = self.get_unstaged_diff(buffer_id, cx) {
-            return Task::ready(Ok(diff));
+        if let Some(OpenBuffer::Complete { diff_state, .. }) = self.opened_buffers.get(&buffer_id) {
+            if let Some(unstaged_diff) = diff_state
+                .read(cx)
+                .unstaged_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(unstaged_diff)
+                    });
+                }
+                return Task::ready(Ok(unstaged_diff));
+            }
         }
 
         let task = match self.loading_diffs.entry((buffer_id, DiffKind::Unstaged)) {
@@ -1392,8 +1425,24 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff) = self.get_uncommitted_diff(buffer_id, cx) {
-            return Task::ready(Ok(diff));
+
+        if let Some(OpenBuffer::Complete { diff_state, .. }) = self.opened_buffers.get(&buffer_id) {
+            if let Some(uncommitted_diff) = diff_state
+                .read(cx)
+                .uncommitted_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                if let Some(task) =
+                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                {
+                    return cx.background_executor().spawn(async move {
+                        task.await?;
+                        Ok(uncommitted_diff)
+                    });
+                }
+                return Task::ready(Ok(uncommitted_diff));
+            }
         }
 
         let task = match self.loading_diffs.entry((buffer_id, DiffKind::Uncommitted)) {
@@ -1472,18 +1521,20 @@ impl BufferStore {
             if let Some(OpenBuffer::Complete { diff_state, .. }) =
                 this.opened_buffers.get_mut(&buffer_id)
             {
+                let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                cx.emit(BufferStoreEvent::BufferDiffAdded(diff.clone()));
                 diff_state.update(cx, |diff_state, cx| {
                     diff_state.language = language;
                     diff_state.language_registry = language_registry;
 
-                    let diff = cx.new(|_| BufferDiff::new(&text_snapshot));
                     match kind {
                         DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                         DiffKind::Uncommitted => {
                             let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                                 diff
                             } else {
-                                let unstaged_diff = cx.new(|_| BufferDiff::new(&text_snapshot));
+                                let unstaged_diff =
+                                    cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                                 diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                                 unstaged_diff
                             };
@@ -1580,11 +1631,12 @@ impl BufferStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
-                cx.background_spawn(async move {
+                cx.spawn(|cx| async move {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
-                    repo.blame(&relative_path, content)
+                    repo.blame(relative_path.clone(), content, cx)
+                        .await
                         .with_context(|| format!("Failed to blame {:?}", relative_path.0))
                         .map(Some)
                 })
@@ -1632,9 +1684,9 @@ impl BufferStore {
                     // file in the Cargo registry (presumably opened with go-to-definition
                     // from a normal Rust file). If so, we can put together a permalink
                     // using crate metadata.
-                    if !buffer
+                    if buffer
                         .language()
-                        .is_some_and(|lang| lang.name() == "Rust".into())
+                        .is_none_or(|lang| lang.name() != "Rust".into())
                     {
                         return Task::ready(Err(anyhow!("no permalink available")));
                     }
@@ -1652,11 +1704,17 @@ impl BufferStore {
                     Err(e) => return Task::ready(Err(e)),
                 };
 
+                let remote = repo_entry
+                    .branch()
+                    .and_then(|b| b.upstream.as_ref())
+                    .and_then(|b| b.remote_name())
+                    .unwrap_or("origin")
+                    .to_string();
+
                 cx.spawn(|cx| async move {
-                    const REMOTE_NAME: &str = "origin";
                     let origin_url = repo
-                        .remote_url(REMOTE_NAME)
-                        .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+                        .remote_url(&remote)
+                        .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
 
                     let sha = repo
                         .head_sha()
@@ -2384,8 +2442,7 @@ impl BufferStore {
                 shared.diff = Some(diff.clone());
             }
         })?;
-        let staged_text =
-            diff.read_with(&cx, |diff, _| diff.base_text().map(|buffer| buffer.text()))?;
+        let staged_text = diff.read_with(&cx, |diff, _| diff.base_text_string())?;
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2415,22 +2472,25 @@ impl BufferStore {
         diff.read_with(&cx, |diff, cx| {
             use proto::open_uncommitted_diff_response::Mode;
 
-            let staged_buffer = diff
-                .secondary_diff()
-                .and_then(|diff| diff.read(cx).base_text());
+            let unstaged_diff = diff.secondary_diff();
+            let index_snapshot = unstaged_diff.and_then(|diff| {
+                let diff = diff.read(cx);
+                diff.base_text_exists().then(|| diff.base_text())
+            });
 
             let mode;
             let staged_text;
             let committed_text;
-            if let Some(committed_buffer) = diff.base_text() {
-                committed_text = Some(committed_buffer.text());
-                if let Some(staged_buffer) = staged_buffer {
-                    if staged_buffer.remote_id() == committed_buffer.remote_id() {
+            if diff.base_text_exists() {
+                let committed_snapshot = diff.base_text();
+                committed_text = Some(committed_snapshot.text());
+                if let Some(index_text) = index_snapshot {
+                    if index_text.remote_id() == committed_snapshot.remote_id() {
                         mode = Mode::IndexMatchesHead;
                         staged_text = None;
                     } else {
                         mode = Mode::IndexAndHead;
-                        staged_text = Some(staged_buffer.text());
+                        staged_text = Some(index_text.text());
                     }
                 } else {
                     mode = Mode::IndexAndHead;
@@ -2439,7 +2499,7 @@ impl BufferStore {
             } else {
                 mode = Mode::IndexAndHead;
                 committed_text = None;
-                staged_text = staged_buffer.as_ref().map(|buffer| buffer.text());
+                staged_text = index_snapshot.as_ref().map(|buffer| buffer.text());
             }
 
             proto::OpenUncommittedDiffResponse {
@@ -2732,20 +2792,10 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
         })
         .collect::<Vec<_>>();
 
-    let permalinks = blame
-        .permalinks
-        .into_iter()
-        .map(|(oid, url)| proto::CommitPermalink {
-            oid: oid.as_bytes().into(),
-            permalink: url.to_string(),
-        })
-        .collect::<Vec<_>>();
-
     proto::BlameBufferResponse {
         blame_response: Some(proto::blame_buffer_response::BlameResponse {
             entries,
             messages,
-            permalinks,
             remote_url: blame.remote_url,
         }),
     }
@@ -2784,20 +2834,8 @@ fn deserialize_blame_buffer_response(
         .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
         .collect::<HashMap<_, _>>();
 
-    let permalinks = response
-        .permalinks
-        .into_iter()
-        .filter_map(|permalink| {
-            Some((
-                git::Oid::from_bytes(&permalink.oid).ok()?,
-                Url::from_str(&permalink.permalink).ok()?,
-            ))
-        })
-        .collect::<HashMap<_, _>>();
-
     Some(Blame {
         entries,
-        permalinks,
         messages,
         remote_url: response.remote_url,
     })

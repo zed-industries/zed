@@ -18,6 +18,7 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
+use git_ui::onboarding::GitBanner;
 use gpui::{
     actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -126,6 +127,7 @@ pub struct TitleBar {
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     zed_predict_banner: Entity<ZedPredictBanner>,
+    git_banner: Entity<GitBanner>,
 }
 
 impl Render for TitleBar {
@@ -210,6 +212,7 @@ impl Render for TitleBar {
                     )
                     .child(self.render_collaborator_list(window, cx))
                     .child(self.zed_predict_banner.clone())
+                    .child(self.git_banner.clone())
                     .child(
                         h_flex()
                             .gap_1()
@@ -307,12 +310,13 @@ impl TitleBar {
                 cx.notify()
             }),
         );
-        subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe(&project, |_, _, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         let zed_predict_banner = cx.new(ZedPredictBanner::new);
+        let git_banner = cx.new(GitBanner::new);
 
         Self {
             platform_style,
@@ -326,6 +330,7 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             zed_predict_banner,
+            git_banner,
         }
     }
 
@@ -401,7 +406,7 @@ impl TitleBar {
                         .child(
                             Label::new(nickname.clone())
                                 .size(LabelSize::Small)
-                                .text_ellipsis(),
+                                .truncate(),
                         ),
                 )
                 .tooltip(move |window, cx| {

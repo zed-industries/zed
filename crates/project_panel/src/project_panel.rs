@@ -26,7 +26,7 @@ use gpui::{
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
-use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
@@ -59,7 +59,8 @@ use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
-    DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace,
+    DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
+    Workspace,
 };
 use worktree::{CreatedEntry, GitEntry, GitEntryRef};
 
@@ -1028,7 +1029,7 @@ impl ProjectPanel {
         });
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(edit_state) = &self.edit_state {
             if edit_state.processing_filename.is_none() {
                 self.filename_editor.update(cx, |editor, cx| {
@@ -1211,7 +1212,7 @@ impl ProjectPanel {
                                 project_panel
                                     .workspace
                                     .update(cx, |workspace, cx| {
-                                        workspace.open_abs_path(abs_path, true, window, cx)
+                                        workspace.open_abs_path(abs_path, OpenOptions { visible: Some(OpenVisible::All), ..Default::default() }, window, cx)
                                     })
                                     .ok()
                             }
@@ -4245,7 +4246,7 @@ impl ProjectPanel {
             if skip_ignored
                 && worktree
                     .entry_for_id(entry_id)
-                    .map_or(true, |entry| entry.is_ignored)
+                    .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
             {
                 return;
             }
@@ -4434,7 +4435,7 @@ impl Render for ProjectPanel {
                 }))
                 .key_context(self.dispatch_context(window, cx))
                 .on_action(cx.listener(Self::select_next))
-                .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::select_previous))
                 .on_action(cx.listener(Self::select_first))
                 .on_action(cx.listener(Self::select_last))
                 .on_action(cx.listener(Self::select_parent))
@@ -7522,7 +7523,7 @@ mod tests {
         );
         cx.update(|window, cx| {
             panel.update(cx, |this, cx| {
-                this.select_prev(&Default::default(), window, cx);
+                this.select_previous(&Default::default(), window, cx);
             })
         });
         assert_eq!(
@@ -7579,7 +7580,7 @@ mod tests {
         // ESC clears out all marks
         cx.update(|window, cx| {
             panel.update(cx, |this, cx| {
-                this.select_prev(&SelectPrev, window, cx);
+                this.select_previous(&SelectPrevious, window, cx);
                 this.select_next(&SelectNext, window, cx);
             })
         });
@@ -7597,8 +7598,8 @@ mod tests {
         cx.update(|window, cx| {
             panel.update(cx, |this, cx| {
                 this.cut(&Cut, window, cx);
-                this.select_prev(&SelectPrev, window, cx);
-                this.select_prev(&SelectPrev, window, cx);
+                this.select_previous(&SelectPrevious, window, cx);
+                this.select_previous(&SelectPrevious, window, cx);
 
                 this.paste(&Paste, window, cx);
                 // this.expand_selected_entry(&ExpandSelectedEntry, cx);
@@ -7867,6 +7868,123 @@ mod tests {
                 "      .gitignore",
             ],
             "When a gitignored entry is explicitly revealed, it should be shown in the project tree"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                    worktree_settings.file_scan_inclusions =
+                        Some(vec!["always_included_but_ignored_dir/*".to_string()]);
+                });
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_reveal_entries = Some(false)
+                });
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                ".git": {},
+                ".gitignore": "**/gitignored_dir\n/always_included_but_ignored_dir",
+                "dir_1": {
+                    "file_1.py": "# File 1_1 contents",
+                    "file_2.py": "# File 1_2 contents",
+                    "file_3.py": "# File 1_3 contents",
+                    "gitignored_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                },
+                "dir_2": {
+                    "file_1.py": "# File 2_1 contents",
+                    "file_2.py": "# File 2_2 contents",
+                    "file_3.py": "# File 2_3 contents",
+                },
+                "always_included_but_ignored_dir": {
+                    "file_a.py": "# File contents",
+                    "file_b.py": "# File contents",
+                    "file_c.py": "# File contents",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > always_included_but_ignored_dir",
+                "    > dir_1",
+                "    > dir_2",
+                "      .gitignore",
+            ]
+        );
+
+        let gitignored_dir_file =
+            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
+        let always_included_but_ignored_dir_file = find_project_entry(
+            &panel,
+            "project_root/always_included_but_ignored_dir/file_a.py",
+            cx,
+        )
+        .expect("file that is .gitignored but set to always be included should have an entry");
+        assert_eq!(
+            gitignored_dir_file, None,
+            "File in the gitignored dir should not have an entry unless its directory is toggled"
+        );
+
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_reveal_entries = Some(true)
+                });
+            })
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::ActiveEntryChanged(Some(
+                    always_included_but_ignored_dir_file,
+                )))
+            })
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v always_included_but_ignored_dir",
+                "          file_a.py  <== selected  <== marked",
+                "          file_b.py",
+                "          file_c.py",
+                "    v dir_1",
+                "        > gitignored_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "When auto reveal is enabled, a gitignored but always included selected entry should be revealed in the project panel"
         );
     }
 

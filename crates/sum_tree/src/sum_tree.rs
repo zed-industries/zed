@@ -225,6 +225,15 @@ impl<T: Item> SumTree<T> {
         }))
     }
 
+    /// Useful in cases where the item type has a non-trivial context type, but the zero value of the summary type doesn't depend on that context.
+    pub fn from_summary(summary: T::Summary) -> Self {
+        SumTree(Arc::new(Node::Leaf {
+            summary,
+            items: ArrayVec::new(),
+            item_summaries: ArrayVec::new(),
+        }))
+    }
+
     pub fn from_item(item: T, cx: &<T::Summary as Summary>::Context) -> Self {
         let mut tree = Self::new(cx);
         tree.push(item, cx);
@@ -1468,7 +1477,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for u8 {
+    impl Dimension<'_, IntegersSummary> for u8 {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1478,7 +1487,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Count {
+    impl Dimension<'_, IntegersSummary> for Count {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1488,13 +1497,13 @@ mod tests {
         }
     }
 
-    impl<'a> SeekTarget<'a, IntegersSummary, IntegersSummary> for Count {
+    impl SeekTarget<'_, IntegersSummary, IntegersSummary> for Count {
         fn cmp(&self, cursor_location: &IntegersSummary, _: &()) -> Ordering {
             self.0.cmp(&cursor_location.count)
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Sum {
+    impl Dimension<'_, IntegersSummary> for Sum {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }

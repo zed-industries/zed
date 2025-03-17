@@ -21,10 +21,10 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::ResultExt;
 
-use crate::AllLanguageModelSettings;
+use crate::{ui::InstructionListItem, AllLanguageModelSettings};
 
 const PROVIDER_ID: &str = "openai";
 const PROVIDER_NAME: &str = "OpenAI";
@@ -540,14 +540,6 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
-        const INSTRUCTIONS: [&str; 4] = [
-            "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
-            " - Create one by visiting:",
-            " - Ensure your OpenAI account has credits",
-            " - Paste your API key below and hit enter to start using the assistant",
-        ];
-
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -556,19 +548,21 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("openai_console", OPENAI_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _, cx| cx.open_url(OPENAI_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(InstructionListItem::new(
+                            "Create one by visiting",
+                            Some("OpenAI's console"),
+                            Some("https://platform.openai.com/api-keys"),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Ensure your OpenAI account has credits",
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste your API key below and hit enter to start using the assistant",
+                        )),
                 )
-                .children(
-                    (2..INSTRUCTIONS.len()).map(|n|
-                        Label::new(INSTRUCTIONS[n])).collect::<Vec<_>>())
                 .child(
                     h_flex()
                         .w_full()
@@ -578,20 +572,20 @@ impl Render for ConfigurationView {
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
+                        .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
                 .child(
                     Label::new(
                         format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .child(
                     Label::new(
                         "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .into_any()
         } else {
