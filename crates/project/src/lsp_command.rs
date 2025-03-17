@@ -2943,7 +2943,7 @@ impl LspCommand for InlayHints {
             };
 
             let buffer = buffer.clone();
-            cx.spawn(move |mut cx| async move {
+            cx.spawn(async move |cx| {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
                     &buffer,

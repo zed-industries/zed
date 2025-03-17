@@ -217,7 +217,7 @@ impl LocalLspStore {
             #[cfg(any(test, feature = "test-support"))]
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
-            move |cx| async move {
+            async move |cx| {
                 let binary = binary.await?;
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = lsp_store
