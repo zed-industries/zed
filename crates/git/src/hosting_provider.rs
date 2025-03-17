@@ -28,7 +28,7 @@ pub struct BuildPermalinkParams<'a> {
 /// A Git hosting provider.
 #[async_trait]
 pub trait GitHostingProvider {
-    /// Returns the display name of the provider (e.g., "GitHub", "GitLab Self-Hosted").
+    /// Returns the name of the provider.
     fn name(&self) -> String;
 
     /// Returns the base URL of the provider.
