@@ -1486,32 +1486,32 @@ impl EditorElement {
         &self,
         window: &mut Window,
         cx: &mut App,
+        snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
         editor_width: Pixels,
     ) -> Option<AnyElement> {
-        let minimap_elem = self.editor.update(cx, |editor, cx| {
-            let mut editor_clone = editor.clone(window, cx);
-            if editor_clone.mode() != EditorMode::Full {
-                return None;
-            }
-            editor_clone.mode = EditorMode::Minimap;
-            editor_clone.set_text_style_refinement(TextStyleRefinement {
-                font_size: Some(px(1.).into()),
-                ..Default::default()
-            });
-            Some(editor_clone.render(window, cx).into_any_element())
-        });
+        match snapshot.mode {
+            EditorMode::Full => {
+                let mut minimap_elem = self.editor.update(cx, |editor, cx| {
+                    let mut editor_clone = editor.clone(window, cx);
+                    editor_clone.mode = EditorMode::Minimap;
+                    editor_clone.set_text_style_refinement(TextStyleRefinement {
+                        font_size: Some(px(1.).into()),
+                        ..Default::default()
+                    });
+                    editor_clone.render(window, cx).into_any_element()
+                });
 
-        match minimap_elem {
-            Some(mut element) => {
                 let mut minimap_bounds = bounds.clone();
                 minimap_bounds.size.width = editor_width * 0.3;
                 minimap_bounds.origin.x = editor_width * 0.7;
-                let size = element.layout_as_root(minimap_bounds.size.into(), window, cx);
-                element.prepaint_as_root(minimap_bounds.origin.into(), size.into(), window, cx);
-                Some(element)
+                _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
+                window.with_absolute_element_offset(minimap_bounds.origin, |window| {
+                    minimap_elem.prepaint(window, cx)
+                });
+                Some(minimap_elem)
             }
-            None => None,
+            _ => None,
         }
     }
 
@@ -7373,8 +7373,6 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let minimap = self.layout_minimap(window, cx, bounds, editor_width);
-
                     self.layout_gutter_menu(
                         line_height,
                         &text_hitbox,
@@ -7454,6 +7452,10 @@ impl Element for EditorElement {
 
                     window.with_element_namespace("expand_toggles", |window| {
                         self.prepaint_expand_toggles(&mut expand_toggles, window, cx)
+                    });
+
+                    let minimap = window.with_element_namespace("minimap", |window| {
+                        self.layout_minimap(window, cx, &snapshot, bounds, editor_width)
                     });
 
                     let invisible_symbol_font_size = font_size / 2.;
