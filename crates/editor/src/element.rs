@@ -1508,7 +1508,7 @@ impl EditorElement {
                     editor.render(window, cx).into_any_element()
                 });
 
-                let mut minimap_bounds = bounds.clone();
+                let mut minimap_bounds = bounds;
                 minimap_bounds.size.width = px(100.);
                 minimap_bounds.origin.x =
                     bounds.size.width - minimap_bounds.size.width - scrollbar_width;
