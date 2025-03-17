@@ -354,8 +354,8 @@ message Envelope {
         GetCodeLensResponse get_code_lens_response = 324;
         RefreshCodeLens refresh_code_lens = 325;
 
-        ToggleBreakpoint toggle_breakpoint = 358;
-        BreakpointsForFile breakpoints_for_file = 359; // current max
+        ToggleBreakpoint toggle_breakpoint = 326;
+        BreakpointsForFile breakpoints_for_file = 327; // current max
 
 
     }
