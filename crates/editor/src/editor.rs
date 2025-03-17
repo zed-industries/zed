@@ -12448,14 +12448,22 @@ impl Editor {
         if split {
             workspace.split_item(SplitDirection::Right, item.clone(), window, cx);
         } else {
-            let destination_index = workspace.active_pane().update(cx, |pane, cx| {
-                if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-                    pane.close_current_preview_item(window, cx)
-                } else {
-                    None
+            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+                let (preview_item_id, preview_item_idx) =
+                    workspace.active_pane().update(cx, |pane, _| {
+                        (pane.preview_item_id(), pane.preview_item_idx())
+                    });
+
+                workspace.add_item_to_active_pane(item.clone(), preview_item_idx, true, window, cx);
+
+                if let Some(preview_item_id) = preview_item_id {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.remove_item(preview_item_id, false, false, window, cx);
+                    });
                 }
-            });
-            workspace.add_item_to_active_pane(item.clone(), destination_index, true, window, cx);
+            } else {
+                workspace.add_item_to_active_pane(item.clone(), None, true, window, cx);
+            }
         }
         workspace.active_pane().update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_id), cx);
@@ -14020,8 +14028,6 @@ impl Editor {
             self.change_selections(Some(autoscroll), window, cx, |s| {
                 s.select_ranges([destination..destination]);
             });
-        } else if all_diff_hunks_expanded {
-            window.dispatch_action(::git::ExpandCommitEditor.boxed_clone(), cx);
         }
     }
 

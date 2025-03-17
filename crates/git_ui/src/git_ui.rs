@@ -7,9 +7,8 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{actions, App, Entity, FocusHandle};
+use gpui::{actions, App, FocusHandle};
 use onboarding::{clear_dismissed, GitOnboardingModal};
-use project::Project;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -118,10 +117,6 @@ pub fn init(cx: &mut App) {
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
     GitStatusIcon::new(status)
-}
-
-fn can_push_and_pull(project: &Entity<Project>, cx: &App) -> bool {
-    !project.read(cx).is_via_collab()
 }
 
 fn render_remote_button(

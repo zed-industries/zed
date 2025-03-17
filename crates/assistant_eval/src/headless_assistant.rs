@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use assistant2::{Thread, ThreadEvent, ThreadStore};
+use assistant2::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
 use collections::HashMap;
@@ -103,6 +103,7 @@ impl HeadlessAssistant {
             ThreadEvent::ToolFinished {
                 tool_use_id,
                 pending_tool_use,
+                ..
             } => {
                 if let Some(pending_tool_use) = pending_tool_use {
                     println!(
@@ -121,9 +122,8 @@ impl HeadlessAssistant {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
                         thread.update(cx, |thread, cx| {
-                            // Currently evals do not support specifying context.
-                            let updated_context = vec![];
-                            thread.send_tool_results_to_model(model, updated_context, cx);
+                            thread.attach_tool_results(vec![], cx);
+                            thread.send_to_model(model, RequestKind::Chat, cx);
                         });
                     }
                 }

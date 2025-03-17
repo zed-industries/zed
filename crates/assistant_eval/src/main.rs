@@ -48,7 +48,12 @@ fn main() {
 
     let crate_dir = PathBuf::from("../zed-agent-bench");
     let evaluation_data_dir = crate_dir.join("evaluation_data").canonicalize().unwrap();
-    let repos_dir = crate_dir.join("repos").canonicalize().unwrap();
+
+    let repos_dir = crate_dir.join("repos");
+    if !repos_dir.exists() {
+        std::fs::create_dir_all(&repos_dir).unwrap();
+    }
+    let repos_dir = repos_dir.canonicalize().unwrap();
 
     let all_evals = std::fs::read_dir(&evaluation_data_dir)
         .unwrap()

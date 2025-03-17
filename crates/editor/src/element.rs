@@ -55,7 +55,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
 };
-use project::project_settings::{self, GitGutterSetting, ProjectSettings};
+use project::project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -2640,7 +2640,7 @@ impl EditorElement {
             }
 
             Block::ExcerptBoundary {
-                next_excerpt,
+                excerpt,
                 height,
                 starts_new_buffer,
                 ..
@@ -2648,40 +2648,31 @@ impl EditorElement {
                 let color = cx.theme().colors().clone();
                 let mut result = v_flex().id(block_id).w_full();
 
-                if let Some(next_excerpt) = next_excerpt {
-                    let jump_data =
-                        header_jump_data(snapshot, block_row_start, *height, next_excerpt);
+                let jump_data = header_jump_data(snapshot, block_row_start, *height, excerpt);
 
-                    if *starts_new_buffer {
-                        if sticky_header_excerpt_id != Some(next_excerpt.id) {
-                            let selected = selected_buffer_ids.contains(&next_excerpt.buffer_id);
+                if *starts_new_buffer {
+                    if sticky_header_excerpt_id != Some(excerpt.id) {
+                        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
-                            result = result.child(self.render_buffer_header(
-                                next_excerpt,
-                                false,
-                                selected,
-                                false,
-                                jump_data,
-                                window,
-                                cx,
-                            ));
-                        } else {
-                            result = result
-                                .child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
-                        }
+                        result = result.child(self.render_buffer_header(
+                            excerpt, false, selected, false, jump_data, window, cx,
+                        ));
                     } else {
-                        result = result.child(
-                            h_flex().relative().child(
-                                div()
-                                    .top(line_height / 2.)
-                                    .absolute()
-                                    .w_full()
-                                    .h_px()
-                                    .bg(color.border_variant),
-                            ),
-                        );
-                    };
-                }
+                        result =
+                            result.child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
+                    }
+                } else {
+                    result = result.child(
+                        h_flex().relative().child(
+                            div()
+                                .top(line_height / 2.)
+                                .absolute()
+                                .w_full()
+                                .h_px()
+                                .bg(color.border_variant),
+                        ),
+                    );
+                };
 
                 result.into_any()
             }
@@ -2972,6 +2963,7 @@ impl EditorElement {
                 element,
                 available_space: size(AvailableSpace::MinContent, element_size.height.into()),
                 style: BlockStyle::Fixed,
+                is_buffer_header: block.is_buffer_header(),
             });
         }
 
@@ -3022,6 +3014,7 @@ impl EditorElement {
                 element,
                 available_space: size(width.into(), element_size.height.into()),
                 style,
+                is_buffer_header: block.is_buffer_header(),
             });
         }
 
@@ -3072,6 +3065,7 @@ impl EditorElement {
                             element,
                             available_space: size(width, element_size.height.into()),
                             style,
+                            is_buffer_header: block.is_buffer_header(),
                         });
                     }
                 }
@@ -3133,15 +3127,13 @@ impl EditorElement {
 
     fn layout_sticky_buffer_header(
         &self,
-        StickyHeaderExcerpt {
-            excerpt,
-            next_buffer_row,
-        }: StickyHeaderExcerpt<'_>,
+        StickyHeaderExcerpt { excerpt }: StickyHeaderExcerpt<'_>,
         scroll_position: f32,
         line_height: Pixels,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         selected_buffer_ids: &Vec<BufferId>,
+        blocks: &[BlockLayout],
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -3177,17 +3169,23 @@ impl EditorElement {
             .into_any_element();
 
         let mut origin = hitbox.origin;
+        // Move floating header up to avoid colliding with the next buffer header.
+        for block in blocks.iter() {
+            if !block.is_buffer_header {
+                continue;
+            }
 
-        if let Some(next_buffer_row) = next_buffer_row {
-            // Push up the sticky header when the excerpt is getting close to the top of the viewport
+            let Some(display_row) = block.row.filter(|row| row.0 > scroll_position as u32) else {
+                continue;
+            };
 
-            let max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
-
+            let max_row = display_row.0.saturating_sub(FILE_HEADER_HEIGHT);
             let offset = scroll_position - max_row as f32;
 
             if offset > 0.0 {
                 origin.y -= Pixels(offset) * line_height;
             }
+            break;
         }
 
         let size = size(
@@ -4379,8 +4377,6 @@ impl EditorElement {
                 };
 
                 if let Some((hunk_bounds, background_color, corner_radii, status)) = hunk_to_paint {
-                    let unstaged = status.has_secondary_hunk();
-
                     // Flatten the background color with the editor color to prevent
                     // elements below transparent hunks from showing through
                     let flattened_background_color = cx
@@ -4389,7 +4385,7 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if unstaged {
+                    if !Self::diff_hunk_hollow(status, cx) {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -5622,6 +5618,18 @@ impl EditorElement {
             &[run],
         )
     }
+
+    fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
+        let unstaged = status.has_secondary_hunk();
+        let unstaged_hollow = ProjectSettings::get_global(cx)
+            .git
+            .hunk_style
+            .map_or(false, |style| {
+                matches!(style, GitHunkStyleSetting::UnstagedHollow)
+            });
+
+        unstaged == unstaged_hollow
+    }
 }
 
 fn header_jump_data(
@@ -6773,10 +6781,9 @@ impl Element for EditorElement {
                             }
                         };
 
-                        let unstaged = diff_status.has_secondary_hunk();
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
 
-                        let staged_highlight = LineHighlight {
+                        let hollow_highlight = LineHighlight {
                             background: (background_color.opacity(if is_light {
                                 0.08
                             } else {
@@ -6790,13 +6797,13 @@ impl Element for EditorElement {
                             }),
                         };
 
-                        let unstaged_highlight =
+                        let filled_highlight =
                             solid_background(background_color.opacity(hunk_opacity)).into();
 
-                        let background = if unstaged {
-                            unstaged_highlight
+                        let background = if Self::diff_hunk_hollow(diff_status, cx) {
+                            hollow_highlight
                         } else {
-                            staged_highlight
+                            filled_highlight
                         };
 
                         highlighted_rows
@@ -7034,6 +7041,7 @@ impl Element for EditorElement {
                                 &snapshot,
                                 &hitbox,
                                 &selected_buffer_ids,
+                                &blocks,
                                 window,
                                 cx,
                             )
@@ -7917,6 +7925,7 @@ struct BlockLayout {
     element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,
+    is_buffer_header: bool,
 }
 
 pub fn layout_line(
