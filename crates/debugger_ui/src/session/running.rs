@@ -22,7 +22,7 @@ use ui::{
 };
 use util::ResultExt;
 use variable_list::VariableList;
-use workspace::{item::ItemEvent, Item, Workspace};
+use workspace::Workspace;
 
 pub struct RunningState {
     session: Entity<Session>,

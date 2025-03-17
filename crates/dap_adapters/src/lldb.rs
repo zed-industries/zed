@@ -17,9 +17,7 @@ impl LldbDebugAdapter {
         LldbDebugAdapter {}
     }
 
-    pub fn attach_processes<'a>(
-        processes: &'a HashMap<Pid, Process>,
-    ) -> Vec<(&'a Pid, &'a Process)> {
+    pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
         processes.iter().collect::<Vec<_>>()
     }
 }

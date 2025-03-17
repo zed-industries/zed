@@ -409,8 +409,7 @@ impl TransportDelegate {
             if let Some(error_message) = response
                 .body
                 .clone()
-                .map(|body| serde_json::from_value::<ErrorResponse>(body))
-                .and_then(|response| response.ok())
+                .and_then(|body| serde_json::from_value::<ErrorResponse>(body).ok())
                 .and_then(|response| response.error.map(|msg| msg.format))
                 .or_else(|| response.message.clone())
             {
