@@ -80,6 +80,7 @@ pub(crate) fn rust_lang() -> Arc<Language> {
     Arc::new(language)
 }
 
+#[cfg(test)]
 pub(crate) fn git_commit_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {

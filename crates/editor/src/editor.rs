@@ -1086,7 +1086,7 @@ pub enum MultibufferSelectionMode {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RewrapOptions {
     pub override_language_settings: bool,
-    pub preserve_existing_whitespace: bool,
+    pub preserve_existing_newlines: bool,
 }
 
 impl Editor {
@@ -3208,7 +3208,7 @@ impl Editor {
                     this.rewrap_impl(
                         RewrapOptions {
                             override_language_settings: true,
-                            preserve_existing_whitespace: true,
+                            preserve_existing_newlines: true,
                         },
                         cx,
                     )
@@ -8694,7 +8694,8 @@ impl Editor {
                     *indent_size_occurrences.entry(indent).or_insert(0) += 1;
                 }
 
-                let indent_size = indent_size_occurrences
+                eprintln!("-----------------");
+                let indent_size = dbg!(indent_size_occurrences)
                     .into_iter()
                     .max_by_key(|(indent, count)| (*count, indent.len_with_expanded_tabs(tab_size)))
                     .map(|(indent, _)| indent)
@@ -8706,6 +8707,7 @@ impl Editor {
             };
 
             let mut line_prefix = indent_size.chars().collect::<String>();
+            dbg!(&line_prefix);
 
             let mut inside_comment = false;
             if let Some(comment_prefix) =
@@ -8765,6 +8767,7 @@ impl Editor {
             let start_offset = start.to_offset(&buffer);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
+            dbg!(&line_prefix);
             let Some(lines_without_prefixes) = selection_text
                 .lines()
                 .map(|line| {
@@ -8786,11 +8789,11 @@ impl Editor {
                     .preferred_line_length as usize
             });
             let wrapped_text = wrap_with_prefix(
-                line_prefix,
+                dbg!(line_prefix),
                 dbg!(lines_without_prefixes).join("\n"),
-                wrap_column,
-                tab_size,
-                options.preserve_existing_whitespace,
+                dbg!(wrap_column),
+                dbg!(tab_size),
+                dbg!(options.preserve_existing_newlines),
             );
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
@@ -16670,14 +16673,9 @@ fn should_stay_with_preceding_ideograph(text: &str) -> bool {
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum WordBreakToken<'a> {
-    Word {
-        token: &'a str,
-        grapheme_len: usize,
-    },
-    Whitespace {
-        original: &'a str,
-        original_grapheme_len: usize,
-    },
+    Word { token: &'a str, grapheme_len: usize },
+    Newline,
+    Whitespace,
 }
 
 impl<'a> Iterator for WordBreakingTokenizer<'a> {
@@ -16693,16 +16691,16 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
 
         let mut iter = self.input.graphemes(true).peekable();
         let mut offset = 0;
-        let mut graphemes = 0;
+        let mut grapheme_len = 0;
         if let Some(first_grapheme) = iter.next() {
             let is_whitespace = is_grapheme_whitespace(first_grapheme);
             offset += first_grapheme.len();
-            graphemes += 1;
+            grapheme_len += 1;
             if is_grapheme_ideographic(first_grapheme) && !is_whitespace {
                 if let Some(grapheme) = iter.peek().copied() {
                     if should_stay_with_preceding_ideograph(grapheme) {
                         offset += grapheme.len();
-                        graphemes += 1;
+                        grapheme_len += 1;
                     }
                 }
             } else {
@@ -16719,21 +16717,23 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
                         break;
                     };
                     offset += grapheme.len();
-                    graphemes += 1;
+                    grapheme_len += 1;
                     iter.next();
+                    if grapheme == "\n" {
+                        break;
+                    }
                 }
             }
             let token = &self.input[..offset];
             self.input = &self.input[offset..];
-            if is_whitespace {
-                Some(WordBreakToken::Whitespace {
-                    original: token,
-                    original_grapheme_len: graphemes,
-                })
+            if token == "\n" {
+                Some(WordBreakToken::Newline)
+            } else if is_whitespace {
+                Some(WordBreakToken::Whitespace)
             } else {
                 Some(WordBreakToken::Word {
                     token,
-                    grapheme_len: graphemes,
+                    grapheme_len,
                 })
             }
         } else {
@@ -16794,11 +16794,8 @@ fn test_word_breaking_tokenizer() {
         }
     }
 
-    fn whitespace(original: &'static str, original_grapheme_len: usize) -> WordBreakToken<'static> {
-        WordBreakToken::Whitespace {
-            original,
-            original_grapheme_len,
-        }
+    fn whitespace() -> WordBreakToken<'static> {
+        WordBreakToken::Whitespace
     }
 
     for (input, result) in tests {
@@ -16816,7 +16813,7 @@ fn wrap_with_prefix(
     unwrapped_text: String,
     wrap_column: usize,
     tab_size: NonZeroU32,
-    preserve_existing_whitespace: bool,
+    preserve_existing_newlines: bool,
 ) -> String {
     dbg!(&unwrapped_text);
     let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
@@ -16849,7 +16846,7 @@ fn wrap_with_prefix(
                 original_grapheme_len,
             },
             true,
-        ) = (token, preserve_existing_whitespace)
+        ) = (token, preserve_existing_newlines)
         {
             current_line.push_str(original);
             current_line_len += original_grapheme_len;

@@ -4805,7 +4805,18 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Default::default(), window, cx);
     });
-    cx.simulate_input("six");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        #\x20
+        #ˇ
+        "
+    ));
+
+    cx.simulate_input("6");
     cx.run_until_parked();
     cx.assert_editor_state(indoc!(
         "
@@ -4813,7 +4824,7 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
         four
         five
         #
-        # sixˇ
+        #6ˇ
         "
     ));
 }
