@@ -118,24 +118,27 @@ impl From<dap::Thread> for Thread {
 type UpstreamProjectId = u64;
 
 struct RemoteConnection {
-    client: AnyProtoClient,
-    upstream_project_id: UpstreamProjectId,
+    _client: AnyProtoClient,
+    _upstream_project_id: UpstreamProjectId,
 }
 
 impl RemoteConnection {
     fn send_proto_client_request<R: DapCommand>(
         &self,
-        request: R,
-        session_id: SessionId,
+        _request: R,
+        _session_id: SessionId,
         cx: &mut App,
     ) -> Task<Result<R::Response>> {
-        let message = request.to_proto(session_id, self.upstream_project_id);
-        let upstream_client = self.client.clone();
+        // let message = request.to_proto(session_id, self.upstream_project_id);
+        // let upstream_client = self.client.clone();
         cx.background_executor().spawn(async move {
-            let response = upstream_client.request(message).await?;
-            request.response_from_proto(response)
+            // debugger(todo): Properly send messages when we wrap dap_commands in envelopes again
+            // let response = upstream_client.request(message).await?;
+            // request.response_from_proto(response)
+            Err(anyhow!("Sending dap commands over RPC isn't supported yet"))
         })
     }
+
     fn request<R: DapCommand>(
         &self,
         request: R,
@@ -781,8 +784,8 @@ impl Session {
     ) -> Self {
         Self {
             mode: Mode::Remote(RemoteConnection {
-                client,
-                upstream_project_id,
+                _client: client,
+                _upstream_project_id: upstream_project_id,
             }),
             id: session_id,
             parent_id: None,

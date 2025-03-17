@@ -354,42 +354,10 @@ message Envelope {
         GetCodeLensResponse get_code_lens_response = 324;
         RefreshCodeLens refresh_code_lens = 325;
 
-        DapNextRequest dap_next_request = 326;
-        DapStepInRequest dap_step_in_request = 327;
-        DapStepOutRequest dap_step_out_request = 328;
-        DapStepBackRequest dap_step_back_request = 329;
-        DapContinueRequest dap_continue_request = 330;
-        DapContinueResponse dap_continue_response = 331;
-        DapPauseRequest dap_pause_request = 332;
-        DapDisconnectRequest dap_disconnect_request = 333;
-        DapTerminateThreadsRequest dap_terminate_threads_request = 334;
-        DapTerminateRequest dap_terminate_request = 335;
-        DapRestartRequest dap_restart_request = 336;
-        VariablesRequest variables_request = 337;
-        DapVariables dap_variables = 338;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 339;
-        IgnoreBreakpointState ignore_breakpoint_state = 340;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 341;
-        DapModulesRequest dap_modules_request = 342;
-        DapModulesResponse dap_modules_response = 343;
-        DapLoadedSourcesRequest dap_loaded_sources_request = 344;
-        DapLoadedSourcesResponse dap_loaded_sources_response = 345;
-        DapStackTraceRequest dap_stack_trace_request = 346;
-        DapStackTraceResponse dap_stack_trace_response = 347;
-        DapScopesRequest dap_scopes_request = 348;
-        DapScopesResponse dap_scopes_response = 349;
-        DapSetVariableValueRequest dap_set_variable_value_request = 350;
-        DapSetVariableValueResponse dap_set_variable_value_response = 351;
-        DapEvaluateRequest dap_evaluate_request = 352;
-        DapEvaluateResponse dap_evaluate_response = 353;
-        DapCompletionRequest dap_completion_request = 354;
-        DapCompletionResponse dap_completion_response = 355;
-        DapThreadsRequest dap_threads_request = 356;
-        DapThreadsResponse dap_threads_response = 357;
         ToggleBreakpoint toggle_breakpoint = 358;
-        BreakpointsForFile breakpoints_for_file = 359;
-        DapLocationsRequest dap_locations_request = 360;
-        DapLocationsResponse dap_locations_response = 361; // current max
+        BreakpointsForFile breakpoints_for_file = 359; // current max
+
+
     }
 
     reserved 87 to 88;

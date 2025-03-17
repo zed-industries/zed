@@ -116,9 +116,7 @@ pub struct DapStore {
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
-    pub fn init(client: &AnyProtoClient) {
-        client.add_entity_message_handler(Self::handle_ignore_breakpoint_state);
-
+    pub fn init(_client: &AnyProtoClient) {
         // todo(debugger): Reenable these after we finish handle_dap_command refactor
         // client.add_entity_request_handler(Self::handle_dap_command::<NextCommand>);
         // client.add_entity_request_handler(Self::handle_dap_command::<StepInCommand>);
@@ -303,6 +301,7 @@ impl DapStore {
         &self.breakpoint_store
     }
 
+    #[allow(dead_code)]
     async fn handle_ignore_breakpoint_state(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::IgnoreBreakpointState>,
