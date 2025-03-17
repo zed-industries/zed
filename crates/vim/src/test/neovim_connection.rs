@@ -127,7 +127,7 @@ impl NeovimConnection {
             || keystroke.modifiers.control
             || keystroke.modifiers.alt
             || keystroke.modifiers.platform
-            || keystroke.key.len() > 1;
+            || keystroke.key.display().len() > 1;
         let start = if special { "<" } else { "" };
         let shift = if keystroke.modifiers.shift { "S-" } else { "" };
         let ctrl = if keystroke.modifiers.control {
