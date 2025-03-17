@@ -1489,6 +1489,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
         scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
+        line_height: Pixels,
     ) -> Option<AnyElement> {
         match snapshot.mode {
             EditorMode::Full => {
@@ -1521,10 +1522,11 @@ impl EditorElement {
                 };
                 let mut bottom_right = bounds.bottom_right();
                 bottom_right.x -= scrollbar_y_width;
+                let header_height = line_height * FILE_HEADER_HEIGHT as f32;
                 let minimap_bounds = Bounds::from_corners(
                     point(
                         bounds.size.width - px(100.) - scrollbar_y_width,
-                        bounds.origin.y,
+                        bounds.origin.y - header_height + px(2.),
                     ),
                     bottom_right,
                 );
@@ -7490,6 +7492,7 @@ impl Element for EditorElement {
                             &snapshot,
                             bounds,
                             scrollbars_layout.clone(),
+                            line_height,
                         )
                     });
 
