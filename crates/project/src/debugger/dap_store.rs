@@ -398,6 +398,7 @@ impl DapStore {
             this.update(&mut cx, |store, cx| {
                 store.sessions.insert(session_id, session.clone());
                 cx.emit(DapStoreEvent::DebugClientStarted(session_id));
+                cx.notify();
             })?;
 
             match session
@@ -411,25 +412,16 @@ impl DapStore {
                     this.update(&mut cx, |this, cx| {
                         cx.emit(DapStoreEvent::Notification(error.to_string()));
 
-                        if let Some(session) = this.sessions.remove(&session_id) {
-                            session
-                                .update(cx, |session, cx| session.shutdown(cx))
-                                .detach();
-                        }
-
-                        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
-                    })
+                        this.shutdown_session(session_id, cx)
+                    })?
+                    .await
                     .log_err();
 
                     return Err(error);
                 }
             }
 
-            this.update(&mut cx, |_, cx| {
-                cx.notify();
-
-                session
-            })
+            Ok(session)
         });
         (session_id, task)
     }
