@@ -365,6 +365,7 @@ pub enum EditorMode {
     SingleLine { auto_width: bool },
     AutoHeight { max_lines: usize },
     Full,
+    Minimap,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1525,6 +1526,7 @@ impl Editor {
         let mode = match self.mode {
             EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
+            EditorMode::Minimap => "minimap",
             EditorMode::Full => "full",
         };
 
@@ -17845,7 +17847,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
-            EditorMode::Full => TextStyle {
+            EditorMode::Full | EditorMode::Minimap => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
@@ -17861,7 +17863,7 @@ impl Render for Editor {
         }
 
         let background = match self.mode {
-            EditorMode::SingleLine { .. } => cx.theme().system().transparent,
+            EditorMode::SingleLine { .. } | EditorMode::Minimap => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
             EditorMode::Full => cx.theme().colors().editor_background,
         };

@@ -1482,6 +1482,39 @@ impl EditorElement {
         axis_pair(horizontal_scrollbar, vertical_scrollbar)
     }
 
+    fn layout_minimap(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        bounds: Bounds<Pixels>,
+        editor_width: Pixels,
+    ) -> Option<AnyElement> {
+        let minimap_elem = self.editor.update(cx, |editor, cx| {
+            let mut editor_clone = editor.clone(window, cx);
+            if editor_clone.mode() != EditorMode::Full {
+                return None;
+            }
+            editor_clone.mode = EditorMode::Minimap;
+            editor_clone.set_text_style_refinement(TextStyleRefinement {
+                font_size: Some(px(1.).into()),
+                ..Default::default()
+            });
+            Some(editor_clone.render(window, cx).into_any_element())
+        });
+
+        match minimap_elem {
+            Some(mut element) => {
+                let mut minimap_bounds = bounds.clone();
+                minimap_bounds.size.width = editor_width * 0.3;
+                minimap_bounds.origin.x = editor_width * 0.7;
+                let size = element.layout_as_root(minimap_bounds.size.into(), window, cx);
+                element.prepaint_as_root(minimap_bounds.origin.into(), size.into(), window, cx);
+                Some(element)
+            }
+            None => None,
+        }
+    }
+
     fn prepaint_crease_toggles(
         &self,
         crease_toggles: &mut [Option<AnyElement>],
@@ -5339,6 +5372,16 @@ impl EditorElement {
         }
     }
 
+    fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        if let Some(mut minimap) = layout.minimap.take() {
+            window.paint_layer(layout.hitbox.bounds, |window| {
+                window.with_element_namespace("minimap", |window| {
+                    minimap.paint(window, cx);
+                });
+            });
+        }
+    }
+
     fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for mut block in layout.blocks.drain(..) {
             block.element.paint(window, cx);
@@ -6447,7 +6490,7 @@ impl EditorElement {
     /// This allows UI elements to scale based on the `buffer_font_size`.
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
         match self.editor.read(cx).mode {
-            EditorMode::Full => {
+            EditorMode::Full | EditorMode::Minimap => {
                 let buffer_font_size = self.style.text.font_size;
                 match buffer_font_size {
                     AbsoluteLength::Pixels(pixels) => {
@@ -6564,7 +6607,7 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Full => {
+                    EditorMode::Minimap | EditorMode::Full => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = relative(1.).into();
@@ -7330,6 +7373,8 @@ impl Element for EditorElement {
                         }
                     }
 
+                    let minimap = self.layout_minimap(window, cx, bounds, editor_width);
+
                     self.layout_gutter_menu(
                         line_height,
                         &text_hitbox,
@@ -7488,6 +7533,7 @@ impl Element for EditorElement {
                         display_hunks,
                         content_origin,
                         scrollbars_layout,
+                        minimap,
                         active_rows,
                         highlighted_rows,
                         highlighted_ranges,
@@ -7580,6 +7626,7 @@ impl Element for EditorElement {
                     });
 
                     self.paint_scrollbars(layout, window, cx);
+                    self.paint_minimap(layout, window, cx);
                     self.paint_inline_completion_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
                 });
@@ -7664,6 +7711,7 @@ pub struct EditorLayout {
     gutter_hitbox: Hitbox,
     content_origin: gpui::Point<Pixels>,
     scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
+    minimap: Option<AnyElement>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,
