@@ -309,9 +309,7 @@ impl EditToolRequest {
         }
 
         self.action_log
-            .update(cx, |log, cx| {
-                log.notify_buffers_changed(self.changed_buffers, cx)
-            })
+            .update(cx, |log, cx| log.buffer_edited(self.changed_buffers, cx))
             .log_err();
 
         let errors = self.parser.errors();

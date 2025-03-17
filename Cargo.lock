@@ -692,6 +692,7 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "collections",
  "derive_more",
  "gpui",
