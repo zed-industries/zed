@@ -1,5 +1,6 @@
 mod edit_action;
 pub mod log;
+mod resolve_search_block;
 
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
@@ -7,16 +8,17 @@ use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, Task};
+use language::OffsetRangeExt;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
-use project::{search::SearchQuery, Project};
+use project::Project;
+use resolve_search_block::resolve_search_block;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
-use util::paths::PathMatcher;
 use util::ResultExt;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -129,22 +131,9 @@ struct EditToolRequest {
     parser: EditActionParser,
     output: String,
     changed_buffers: HashSet<Entity<language::Buffer>>,
-    bad_searches: Vec<BadSearch>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     tool_log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
-}
-
-#[derive(Debug)]
-enum DiffResult {
-    BadSearch(BadSearch),
-    Diff(language::Diff),
-}
-
-#[derive(Debug)]
-struct BadSearch {
-    file_path: String,
-    search: String,
 }
 
 impl EditToolRequest {
@@ -204,7 +193,6 @@ impl EditToolRequest {
                 // we start with the success header so we don't need to shift the output in the common case
                 output: Self::SUCCESS_OUTPUT_HEADER.to_string(),
                 changed_buffers: HashSet::default(),
-                bad_searches: Vec::new(),
                 action_log,
                 project,
                 tool_log,
@@ -251,36 +239,30 @@ impl EditToolRequest {
             .update(cx, |project, cx| project.open_buffer(project_path, cx))?
             .await?;
 
-        let result = match action {
+        let diff = match action {
             EditAction::Replace {
                 old,
                 new,
-                file_path,
+                file_path: _,
             } => {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-                cx.background_executor()
-                    .spawn(Self::replace_diff(old, new, file_path, snapshot))
-                    .await
+                let diff = cx
+                    .background_executor()
+                    .spawn(Self::replace_diff(old, new, snapshot))
+                    .await;
+
+                anyhow::Ok(diff)
             }
-            EditAction::Write { content, .. } => Ok(DiffResult::Diff(
-                buffer
-                    .read_with(cx, |buffer, cx| buffer.diff(content, cx))?
-                    .await,
-            )),
+            EditAction::Write { content, .. } => Ok(buffer
+                .read_with(cx, |buffer, cx| buffer.diff(content, cx))?
+                .await),
         }?;
 
-        match result {
-            DiffResult::BadSearch(invalid_replace) => {
-                self.bad_searches.push(invalid_replace);
-            }
-            DiffResult::Diff(diff) => {
-                let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+        let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
 
-                write!(&mut self.output, "\n\n{}", source)?;
-                self.changed_buffers.insert(buffer);
-            }
-        }
+        write!(&mut self.output, "\n\n{}", source)?;
+        self.changed_buffers.insert(buffer);
 
         Ok(())
     }
@@ -288,29 +270,9 @@ impl EditToolRequest {
     async fn replace_diff(
         old: String,
         new: String,
-        file_path: std::path::PathBuf,
         snapshot: language::BufferSnapshot,
-    ) -> Result<DiffResult> {
-        let query = SearchQuery::text(
-            old.clone(),
-            false,
-            true,
-            true,
-            PathMatcher::new(&[])?,
-            PathMatcher::new(&[])?,
-            None,
-        )?;
-
-        let matches = query.search(&snapshot, None).await;
-
-        if matches.is_empty() {
-            return Ok(DiffResult::BadSearch(BadSearch {
-                search: new.clone(),
-                file_path: file_path.display().to_string(),
-            }));
-        }
-
-        let edit_range = matches[0].clone();
+    ) -> language::Diff {
+        let edit_range = resolve_search_block(&snapshot, &old).to_offset(&snapshot);
         let diff = language::text_diff(&old, &new);
 
         let edits = diff
@@ -328,7 +290,7 @@ impl EditToolRequest {
             edits,
         };
 
-        anyhow::Ok(DiffResult::Diff(diff))
+        diff
     }
 
     const SUCCESS_OUTPUT_HEADER: &str = "Successfully applied. Here's a list of changes:";
@@ -354,7 +316,7 @@ impl EditToolRequest {
 
         let errors = self.parser.errors();
 
-        if errors.is_empty() && self.bad_searches.is_empty() {
+        if errors.is_empty() {
             if changed_buffer_count == 0 {
                 return Err(anyhow!(
                     "The instructions didn't lead to any changes. You might need to consult the file contents first."
@@ -375,24 +337,6 @@ impl EditToolRequest {
                     0..Self::SUCCESS_OUTPUT_HEADER.len(),
                     Self::ERROR_OUTPUT_HEADER_WITH_EDITS,
                 );
-            }
-
-            if !self.bad_searches.is_empty() {
-                writeln!(
-                    &mut output,
-                    "\n\nThese searches failed because they didn't match any strings:"
-                )?;
-
-                for replace in self.bad_searches {
-                    writeln!(
-                        &mut output,
-                        "- '{}' does not appear in `{}`",
-                        replace.search.replace("\r", "\\r").replace("\n", "\\n"),
-                        replace.file_path
-                    )?;
-                }
-
-                write!(&mut output, "Make sure to use exact searches.")?;
             }
 
             if !errors.is_empty() {
