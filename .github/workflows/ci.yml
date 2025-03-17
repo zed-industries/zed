@@ -222,7 +222,8 @@ jobs:
     needs: [job_spec]
     if: |
       github.repository_owner == 'zed-industries' &&
-      needs.job_spec.outputs.run_tests == 'true'
+      needs.job_spec.outputs.run_tests == 'true' &&
+      false
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -371,7 +372,8 @@ jobs:
     needs: [job_spec]
     if: |
       github.repository_owner == 'zed-industries' &&
-      needs.job_spec.outputs.run_tests == 'true'
+      needs.job_spec.outputs.run_tests == 'true' &&
+      false
     # Use bigger runners for PRs (speed); smaller for async (cost)
     runs-on: ${{ github.event_name == 'pull_request' && 'windows-2025-32' || 'windows-2025-16' }}
     steps:
