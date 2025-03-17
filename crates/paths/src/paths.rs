@@ -17,7 +17,12 @@ pub fn remote_server_dir_relative() -> &'static Path {
 }
 
 /// Sets a custom directory for all user data, overriding the default support directory.
+/// 
+/// Panics if called after paths have been initialized (e.g., via `support_dir` or `config_dir`).
 pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
+    if CUSTOM_DATA_DIR.get().is_some() {
+        panic!("set_custom_data_dir called after data_dir was initialized");
+    }
     CUSTOM_DATA_DIR.get_or_init(|| {
         let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
