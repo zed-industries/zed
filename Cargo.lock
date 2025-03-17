@@ -17466,6 +17466,8 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zeta",
+ "zlog",
+ "zlog_settings",
 ]
 
 [[package]]
@@ -17778,6 +17780,18 @@ name = "zlog"
 version = "0.1.0"
 dependencies = [
  "log",
+]
+
+[[package]]
+name = "zlog_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "schemars",
+ "serde",
+ "settings",
+ "zlog",
 ]
 
 [[package]]

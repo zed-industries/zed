@@ -172,6 +172,7 @@ members = [
     "crates/zed_actions",
     "crates/zeta",
     "crates/zlog",
+    "crates/zlog_settings",
 
     #
     # Extensions
@@ -376,6 +377,7 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
+zlog_settings = { path = "crates/zlog_settings" }
 
 #
 # External crates

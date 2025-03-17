@@ -1,12 +1,35 @@
 //! # logger
 pub use log as log_impl;
 
-pub const MAX_SCOPE_DEPTH: usize = 4;
+pub const SCOPE_DEPTH_MAX: usize = 4;
+
+/// because we are currently just wrapping the `log` crate in `zlog`,
+/// we need to work around the fact that the `log` crate only provides a
+/// single global level filter. In order to have more precise control until
+/// we no longer wrap `log`, we bump up the priority of log level so that it
+/// will be logged, even if the actual level is lower
+/// This is fine for now, as we use a `info` level filter by default in releases,
+/// which hopefully won't result in confusion like `warn` or `error` levels might.
+pub fn min_printed_log_level(level: log_impl::Level) -> log_impl::Level {
+    // this logic is defined based on the logic used in the `log` crate,
+    // which checks that a logs level is <= both of these values,
+    // so we take the minimum of the two values to ensure that check passes
+    let level_min_static = log_impl::STATIC_MAX_LEVEL;
+    let level_min_dynamic = log_impl::max_level();
+    if level <= level_min_static && level <= level_min_dynamic {
+        return level;
+    }
+    return log_impl::LevelFilter::min(level_min_static, level_min_dynamic)
+        .to_level()
+        .unwrap_or(level);
+}
 
 #[macro_export]
 macro_rules! log {
     ($logger:expr, $level:expr, $($arg:tt)+) => {
-        $crate::log_impl::log!(target: &$logger.fmt_scope(), $level, $($arg)+);
+        if $crate::scope_map::is_scope_enabled(&$logger.scope, $level) {
+            $crate::log_impl::log!(target: &$logger.fmt_scope(), $crate::min_printed_log_level($level), $($arg)+);
+        }
     }
 }
 
@@ -16,7 +39,7 @@ macro_rules! trace {
         $crate::log!($logger, $crate::log_impl::Level::Trace, $($arg)+);
     };
     ($($arg:tt)+) => {
-        $crate::log!(default_logger!(), $crate::log_impl::Level::Trace, $($arg)+);
+        $crate::log!($crate::default_logger!(), $crate::log_impl::Level::Trace, $($arg)+);
     };
 }
 
@@ -26,7 +49,7 @@ macro_rules! debug {
         $crate::log!($logger, $crate::log_impl::Level::Debug, $($arg)+);
     };
     ($($arg:tt)+) => {
-        $crate::log!(default_logger!(), $crate::log_impl::Level::Debug, $($arg)+);
+        $crate::log!($crate::default_logger!(), $crate::log_impl::Level::Debug, $($arg)+);
     };
 }
 
@@ -36,7 +59,7 @@ macro_rules! info {
         $crate::log!($logger, $crate::log_impl::Level::Info, $($arg)+);
     };
     ($($arg:tt)+) => {
-        $crate::log!(default_logger!(), $crate::log_impl::Level::Info, $($arg)+);
+        $crate::log!($crate::default_logger!(), $crate::log_impl::Level::Info, $($arg)+);
     };
 }
 
@@ -46,7 +69,7 @@ macro_rules! warn {
         $crate::log!($logger, $crate::log_impl::Level::Warn, $($arg)+);
     };
     ($($arg:tt)+) => {
-        $crate::log!(default_logger!(), $crate::log_impl::Level::Warn, $($arg)+);
+        $crate::log!($crate::default_logger!(), $crate::log_impl::Level::Warn, $($arg)+);
     };
 }
 
@@ -56,7 +79,7 @@ macro_rules! error {
         $crate::log!($logger, $crate::log_impl::Level::Error, $($arg)+);
     };
     ($($arg:tt)+) => {
-        $crate::log!(default_logger!(), $crate::log_impl::Level::Error, $($arg)+);
+        $crate::log!($crate::default_logger!(), $crate::log_impl::Level::Error, $($arg)+);
     };
 }
 
@@ -104,7 +127,7 @@ macro_rules! scoped {
 macro_rules! default_logger {
     () => {
         $crate::Logger {
-            scope: [$crate::crate_name!(), "", "", ""],
+            scope: $crate::private::scope_new(&[$crate::crate_name!()]),
         }
     };
 }
@@ -112,13 +135,48 @@ macro_rules! default_logger {
 #[macro_export]
 macro_rules! crate_name {
     () => {
-        module_path!()
+        $crate::private::extract_crate_name_from_module_path(module_path!())
     };
 }
 
+/// functions that are used in macros, and therefore must be public,
+/// but should not be used directly
+pub mod private {
+    use super::*;
+
+    pub fn extract_crate_name_from_module_path(module_path: &'static str) -> &'static str {
+        return module_path
+            .split_once("::")
+            .map(|(crate_name, _)| crate_name)
+            .unwrap_or(module_path);
+    }
+
+    pub fn scope_new(scopes: &[&'static str]) -> Scope {
+        assert!(scopes.len() <= SCOPE_DEPTH_MAX);
+        let mut scope = [""; SCOPE_DEPTH_MAX];
+        scope[0..scopes.len()].copy_from_slice(scopes);
+        scope
+    }
+
+    pub fn scope_alloc_new(scopes: &[&str]) -> ScopeAlloc {
+        assert!(scopes.len() <= SCOPE_DEPTH_MAX);
+        let mut scope = [""; SCOPE_DEPTH_MAX];
+        scope[0..scopes.len()].copy_from_slice(scopes);
+        scope.map(|s| s.to_string())
+    }
+
+    pub fn scope_to_alloc(scope: &Scope) -> ScopeAlloc {
+        return scope.map(|s| s.to_string());
+    }
+}
+
+pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
+pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
+const SCOPE_STRING_SEP: &'static str = ".";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Logger {
-    pub scope: [&'static str; MAX_SCOPE_DEPTH],
+    pub scope: Scope,
 }
 
 impl Logger {
@@ -131,7 +189,7 @@ impl Logger {
             last += 1;
         }
 
-        return self.scope[0..last].join(".");
+        return self.scope[0..last].join(SCOPE_STRING_SEP);
     }
 }
 
@@ -190,5 +248,94 @@ impl Timer {
             elapsed
         );
         self.done = true;
+    }
+}
+
+pub mod scope_map {
+    use super::*;
+
+    type ScopeMap = std::collections::HashMap<ScopeAlloc, log_impl::Level>;
+    static _SCOPE_MAP: std::sync::OnceLock<std::sync::RwLock<ScopeMap>> =
+        std::sync::OnceLock::new();
+
+    fn get() -> &'static std::sync::RwLock<ScopeMap> {
+        _SCOPE_MAP.get_or_init(|| {
+            let map = ScopeMap::default();
+            std::sync::RwLock::new(map)
+        })
+    }
+
+    pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> bool {
+        let Ok(map) = get().read() else {
+            // on failure, default to enabled detection done by `log` crate
+            return true;
+        };
+
+        if map.is_empty() {
+            // if no scopes are enabled, default to enabled detection done by `log` crate
+            return true;
+        }
+        let Some(level_enabled) = map.get(&private::scope_to_alloc(scope)) else {
+            // if this scope isn't configured, default to enabled detection done by `log` crate
+            return true;
+        };
+        if level_enabled < &level {
+            // if the configured level is lower than the requested level, disable logging
+            // note: err = 0, warn = 1, etc.
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn refresh(settings: &std::collections::HashMap<String, String>) {
+        // compute new scope map then atomically swap it, instead of
+        // updating in place to reduce contention
+        let mut map_new = ScopeMap::with_capacity(settings.len());
+        'settings: for (key, value) in settings {
+            let level = match value.to_ascii_lowercase().as_str() {
+                "" => log_impl::Level::Trace,
+                "trace" => log_impl::Level::Trace,
+                "debug" => log_impl::Level::Debug,
+                "info" => log_impl::Level::Info,
+                "warn" => log_impl::Level::Warn,
+                "error" => log_impl::Level::Error,
+                "off" | "disable" | "no" | "none" | "disabled" => {
+                    crate::warn!("Invalid log level \"{value}\", set to error to disable non-error logging. Defaulting to error");
+                    log_impl::Level::Error
+                }
+                _ => {
+                    crate::warn!("Invalid log level \"{value}\", ignoring");
+                    continue 'settings;
+                }
+            };
+            let mut scope_buf = [""; SCOPE_DEPTH_MAX];
+            for (index, scope) in key.split(SCOPE_STRING_SEP).enumerate() {
+                let Some(scope_ptr) = scope_buf.get_mut(index) else {
+                    crate::warn!("Invalid scope key, too many nested scopes: '{key}'");
+                    continue 'settings;
+                };
+                *scope_ptr = scope;
+            }
+            let scope = scope_buf.map(|s| s.to_string());
+            map_new.insert(scope, level);
+        }
+
+        let Ok(mut map) = get().write() else {
+            crate::warn!("Failed to update log scope settings");
+            return;
+        };
+        *map = map_new;
+        eprintln!("Refreshed\nmap = {map:?}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_crate_name() {
+        assert_eq!(crate_name!(), "zlog");
     }
 }
