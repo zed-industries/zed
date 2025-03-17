@@ -1,5 +1,5 @@
 [package]
-name = "http_client"
+name = "http_client_tls"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -12,7 +12,7 @@ workspace = true
 test-support = []
 
 [lib]
-path = "src/http_client.rs"
+path = "src/http_client_tls.rs"
 doctest = true
 
 [dependencies]
@@ -25,3 +25,5 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true

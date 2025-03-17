@@ -2739,6 +2739,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "http_client_tls",
  "log",
  "parking_lot",
  "paths",
@@ -6193,6 +6194,21 @@ dependencies = [
 
 [[package]]
 name = "http_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes 1.10.1",
+ "derive_more",
+ "futures 0.3.31",
+ "http 1.2.0",
+ "log",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "http_client_tls"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -11460,6 +11476,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "http_client_tls",
  "log",
  "regex",
  "reqwest 0.12.8",
