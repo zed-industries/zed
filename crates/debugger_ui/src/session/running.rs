@@ -685,27 +685,3 @@ impl Focusable for RunningState {
         self.focus_handle.clone()
     }
 }
-
-impl Item for RunningState {
-    type Event = DebugPanelItemEvent;
-
-    fn tab_content(
-        &self,
-        _params: workspace::item::TabContentParams,
-        _window: &Window,
-        _cx: &App,
-    ) -> AnyElement {
-        todo!()
-    }
-
-    fn tab_tooltip_text(&self, _cx: &App) -> Option<SharedString> {
-        todo!()
-    }
-
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
-        match event {
-            DebugPanelItemEvent::Close => f(ItemEvent::CloseItem),
-            DebugPanelItemEvent::Stopped { .. } => {}
-        }
-    }
-}
