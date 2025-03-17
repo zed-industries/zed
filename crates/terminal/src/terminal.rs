@@ -318,6 +318,20 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
 const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
+const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file_path>[^"]+)", line (?P<line_number>\d+)"#;
+
+fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
+    // assumes a match from the PYTHON_FILE_LINE_REGEX
+    if let Some(comma_pos) = input.rfind(',') {
+        let line_part = &input[comma_pos + 7..]; // skip ", line "
+        println!("'{}'", line_part);
+        if let Ok(line_number) = line_part.parse::<u32>() {
+            let path_part = &input[6..comma_pos - 1]; // skip `File "` and remove the trailing `"`
+            return Some((path_part, line_number));
+        }
+    }
+    None
+}
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -472,6 +486,7 @@ impl TerminalBuilder {
             // hovered_word: false,
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
+            python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
             vi_mode_enabled: false,
             is_ssh_terminal,
             python_venv_directory,
@@ -627,6 +642,7 @@ pub struct Terminal {
     selection_phase: SelectionPhase,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
+    python_file_line_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_ssh_terminal: bool,
@@ -926,6 +942,20 @@ impl Terminal {
                 } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
                     Some((url, true, url_match))
+                } else if let Some(python_match) =
+                    regex_match_at(term, point, &mut self.python_file_line_regex)
+                {
+                    let file_line =
+                        term.bounds_to_string(*python_match.start(), *python_match.end());
+
+                    let (file_path, line_number) = python_extract_path_and_line(file_line.as_str())
+                        .expect("Cannot parse python file line syntax");
+
+                    Some((
+                        format!("{}:{}", file_path, line_number),
+                        false,
+                        python_match,
+                    ))
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
@@ -2090,7 +2120,8 @@ mod tests {
     use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
     use crate::{
-        content_index_for_mouse, rgb_for_index, IndexedCell, TerminalBounds, TerminalContent,
+        content_index_for_mouse, python_extract_path_and_line, rgb_for_index, IndexedCell,
+        TerminalBounds, TerminalContent,
     };
 
     #[test]
@@ -2277,5 +2308,12 @@ mod tests {
             "Main.cs:20:5:Error desc",
             vec!["Main.cs:20:5:Error", "desc"],
         );
+    }
+
+    #[test]
+    fn test_python_file_line() {
+        let (file, line) = python_extract_path_and_line("File \"/zed/bad_py.py\", line 8").unwrap();
+        assert!(file == "/zed/bad_py.py");
+        assert!(line == 8);
     }
 }
