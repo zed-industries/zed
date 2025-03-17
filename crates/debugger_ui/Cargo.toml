@@ -41,7 +41,6 @@ settings.workspace = true
 sum_tree.workspace = true
 sysinfo.workspace = true
 task.workspace = true
-tasks_ui.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 ui.workspace = true

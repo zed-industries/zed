@@ -1,15 +1,15 @@
+use dap::DebugRequestType;
 use fuzzy::{StringMatch, StringMatchCandidate};
+use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
-use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use project::debugger::attach_processes;
-use project::debugger::dap_store::DapStore;
-use project::debugger::session::Session;
+
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{prelude::*, Context, Tooltip};
 use ui::{ListItem, ListItemSpacing};
-use util::ResultExt;
+use util::debug_panic;
 use workspace::ModalView;
 
 #[derive(Debug, Clone)]
@@ -23,16 +23,16 @@ pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
-    dap_store: Entity<DapStore>,
-    session: WeakEntity<Session>,
+    project: Entity<project::Project>,
+    debug_config: task::DebugAdapterConfig,
     candidates: Option<Vec<Candidate>>,
 }
 
 impl AttachModalDelegate {
-    pub fn _new(session: WeakEntity<Session>, dap_store: Entity<DapStore>) -> Self {
+    pub fn new(project: Entity<project::Project>, debug_config: task::DebugAdapterConfig) -> Self {
         Self {
-            session,
-            dap_store,
+            project,
+            debug_config,
             candidates: None,
             selected_index: 0,
             matches: Vec::default(),
@@ -41,20 +41,20 @@ impl AttachModalDelegate {
     }
 }
 
-pub(crate) struct AttachModal {
+pub struct AttachModal {
     _subscription: Subscription,
     pub(crate) picker: Entity<Picker<AttachModalDelegate>>,
 }
 
 impl AttachModal {
-    pub fn _new(
-        session: WeakEntity<Session>,
-        dap_store: Entity<DapStore>,
+    pub fn new(
+        project: Entity<project::Project>,
+        debug_config: task::DebugAdapterConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
-            Picker::uniform_list(AttachModalDelegate::_new(session, dap_store), window, cx)
+            Picker::uniform_list(AttachModalDelegate::new(project, debug_config), window, cx)
         });
         Self {
             _subscription: cx.subscribe(&picker, |_, _, _, cx| {
@@ -116,25 +116,14 @@ impl PickerDelegate for AttachModalDelegate {
     ) -> gpui::Task<()> {
         cx.spawn(|this, mut cx| async move {
             let Some(processes) = this
-                .update(&mut cx, |this, cx| {
+                .update(&mut cx, |this, _| {
                     if let Some(processes) = this.delegate.candidates.clone() {
                         processes
                     } else {
-                        let Some(config) = this
-                            .delegate
-                            .session
-                            .update(cx, |session, _| session.configuration())
-                            .ok()
-                            .flatten()
-                        else {
-                            cx.emit(DismissEvent);
-
-                            return Vec::new();
-                        };
-
                         let system = System::new_all();
 
-                        let processes = attach_processes(&config.kind, &system.processes());
+                        let processes =
+                            attach_processes(&this.delegate.debug_config.kind, &system.processes());
                         let candidates = processes
                             .into_iter()
                             .map(|(pid, process)| Candidate {
@@ -209,29 +198,31 @@ impl PickerDelegate for AttachModalDelegate {
                 self.candidates.as_ref().map(|candidates| &candidates[ix])
             });
 
-        let Some(_candidate) = candidate else {
+        let Some(candidate) = candidate else {
             return cx.emit(DismissEvent);
         };
 
-        let _ = self.session.update(cx, |_session, _cx| {
-            // session.attach(cx).detach();
-        });
+        match &mut self.debug_config.request {
+            DebugRequestType::Attach(config) => {
+                config.process_id = Some(candidate.pid);
+            }
+            DebugRequestType::Launch => {
+                debug_panic!("Debugger attach modal used on launch debug config");
+                return;
+            }
+        }
+
+        let config = self.debug_config.clone();
+        self.project
+            .update(cx, |project, cx| project.start_debug_session(config, cx))
+            .detach_and_log_err(cx);
+
+        cx.emit(DismissEvent);
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = 0;
         self.candidates.take();
-
-        let session_id = self
-            .session
-            .read_with(cx, |session, _| session.session_id())
-            .log_err();
-
-        if let Some(session_id) = session_id {
-            self.dap_store.update(cx, |store, cx| {
-                store.shutdown_session(session_id, cx).detach();
-            });
-        }
 
         cx.emit(DismissEvent);
     }

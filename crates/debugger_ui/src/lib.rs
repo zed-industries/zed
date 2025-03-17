@@ -4,7 +4,7 @@ use feature_flags::{Debugger, FeatureFlagViewExt};
 use gpui::App;
 use session::DebugSession;
 use settings::Settings;
-use workspace::{ShutdownDebugAdapters, Start, Workspace};
+use workspace::{ShutdownDebugAdapters, Workspace};
 
 pub mod attach_modal;
 pub mod debugger_panel;
@@ -26,16 +26,6 @@ pub fn init(cx: &mut App) {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
                     workspace.toggle_panel_focus::<DebugPanel>(window, cx);
-                })
-                .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    tasks_ui::toggle_modal(
-                        workspace,
-                        None,
-                        task::TaskModal::DebugModal,
-                        window,
-                        cx,
-                    )
-                    .detach();
                 })
                 .register_action(
                     |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {

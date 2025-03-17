@@ -3,12 +3,13 @@ use std::path::Path;
 
 use ::settings::Settings;
 use editor::Editor;
+use feature_flags::{Debugger, FeatureFlagViewExt};
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, TaskContexts, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskModal, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
-use workspace::{tasks::schedule_resolved_task, Workspace};
+use workspace::{tasks::schedule_resolved_task, Start, Workspace};
 
 mod modal;
 mod settings;
@@ -18,7 +19,7 @@ pub use modal::{Rerun, Spawn};
 pub fn init(cx: &mut App) {
     settings::TaskSettings::register(cx);
     cx.observe_new(
-        |workspace: &mut Workspace, _window: Option<&mut Window>, _: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
@@ -88,6 +89,17 @@ pub fn init(cx: &mut App) {
                         toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
                     };
                 });
+
+            let Some(window) = window else {
+                return;
+            };
+
+            cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
+                workspace.register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
+                    crate::toggle_modal(workspace, None, task::TaskModal::DebugModal, window, cx)
+                        .detach();
+                });
+            });
         },
     )
     .detach();
