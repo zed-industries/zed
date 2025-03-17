@@ -87,8 +87,18 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let git_store =
-            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let git_store = cx.new(|cx| {
+            let mut store = GitStore::local(
+                &worktree_store,
+                buffer_store.clone(),
+                environment.clone(),
+                fs.clone(),
+                cx,
+            );
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
+        });
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
@@ -98,7 +108,6 @@ impl HeadlessProject {
                 cx,
             )
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
@@ -554,15 +563,29 @@ impl HeadlessProject {
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
         let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let check_info = envelope
+            .payload
+            .config
+            .as_ref()
+            .is_some_and(|config| config.is_dir);
 
         let mut entries = Vec::new();
+        let mut entry_info = Vec::new();
         let mut response = fs.read_dir(&expanded).await?;
         while let Some(path) = response.next().await {
-            if let Some(file_name) = path?.file_name() {
+            let path = path?;
+            if let Some(file_name) = path.file_name() {
                 entries.push(file_name.to_string_lossy().to_string());
+                if check_info {
+                    let is_dir = fs.is_dir(&path).await;
+                    entry_info.push(proto::EntryInfo { is_dir });
+                }
             }
         }
-        Ok(proto::ListRemoteDirectoryResponse { entries })
+        Ok(proto::ListRemoteDirectoryResponse {
+            entries,
+            entry_info,
+        })
     }
 
     pub async fn handle_get_path_metadata(

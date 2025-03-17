@@ -271,7 +271,10 @@ mod tests {
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
+        language_settings::{
+            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+            WordsCompletionMode,
+        },
         Point,
     };
     use project::Project;
@@ -286,7 +289,13 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         // flaky
-        init_test(cx, |_| {});
+        init_test(cx, |settings| {
+            settings.defaults.completions = Some(CompletionSettings {
+                words: WordsCompletionMode::Disabled,
+                lsp: true,
+                lsp_fetch_timeout_ms: 0,
+            });
+        });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
         let mut cx = EditorLspTestContext::new_rust(
@@ -511,7 +520,13 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         // flaky
-        init_test(cx, |_| {});
+        init_test(cx, |settings| {
+            settings.defaults.completions = Some(CompletionSettings {
+                words: WordsCompletionMode::Disabled,
+                lsp: true,
+                lsp_fetch_timeout_ms: 0,
+            });
+        });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
         let mut cx = EditorLspTestContext::new_rust(
@@ -730,8 +745,8 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx
-            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
@@ -766,7 +781,7 @@ mod tests {
             assert!(editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2 + a\n\n\n\n\n\nc = 3\nd = 4\n\n"
+                "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
         });
@@ -788,7 +803,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4\n\n"
+                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
@@ -797,7 +812,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 \n\n"
+                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -808,7 +823,7 @@ mod tests {
             assert!(editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 + c\n\n"
+                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -982,8 +997,8 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx
-            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;

@@ -2,6 +2,7 @@ use std::sync::OnceLock;
 
 use ::util::ResultExt;
 use windows::{
+    core::BOOL,
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{Foundation::*, Graphics::Dwm::*, UI::WindowsAndMessaging::*},
     UI::{

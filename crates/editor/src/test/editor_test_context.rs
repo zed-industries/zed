@@ -12,7 +12,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::{ExcerptRange, MultiBufferRow};
+use multi_buffer::{Anchor, ExcerptRange, MultiBufferRow};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
@@ -87,6 +87,16 @@ impl EditorTestContext {
     #[cfg(not(target_os = "windows"))]
     fn root_path() -> &'static Path {
         Path::new("/root")
+    }
+
+    pub async fn for_editor_in(editor: Entity<Editor>, cx: &mut gpui::VisualTestContext) -> Self {
+        cx.focus(&editor);
+        Self {
+            window: cx.windows()[0],
+            cx: cx.clone(),
+            editor,
+            assertion_cx: AssertionContextManager::new(),
+        }
     }
 
     pub async fn for_editor(editor: WindowHandle<Editor>, cx: &mut gpui::TestAppContext) -> Self {
@@ -381,6 +391,87 @@ impl EditorTestContext {
         assert_state_with_diff(&self.editor, &mut self.cx, &expected_diff_text);
     }
 
+    #[track_caller]
+    pub fn assert_excerpts_with_selections(&mut self, marked_text: &str) {
+        let expected_excerpts = marked_text
+            .strip_prefix("[EXCERPT]\n")
+            .unwrap()
+            .split("[EXCERPT]\n")
+            .collect::<Vec<_>>();
+
+        let (multibuffer_snapshot, selections, excerpts) = self.update_editor(|editor, _, cx| {
+            let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+
+            let selections = editor.selections.disjoint_anchors();
+            let excerpts = multibuffer_snapshot
+                .excerpts()
+                .map(|(e_id, snapshot, range)| (e_id, snapshot.clone(), range))
+                .collect::<Vec<_>>();
+
+            (multibuffer_snapshot, selections, excerpts)
+        });
+
+        assert!(
+            excerpts.len() == expected_excerpts.len(),
+            "should have {} excerpts, got {}",
+            expected_excerpts.len(),
+            excerpts.len()
+        );
+
+        for (ix, (excerpt_id, snapshot, range)) in excerpts.into_iter().enumerate() {
+            let is_folded = self
+                .update_editor(|editor, _, cx| editor.is_buffer_folded(snapshot.remote_id(), cx));
+            let (expected_text, expected_selections) =
+                marked_text_ranges(expected_excerpts[ix], true);
+            if expected_text == "[FOLDED]\n" {
+                assert!(is_folded, "excerpt {} should be folded", ix);
+                let is_selected = selections.iter().any(|s| s.head().excerpt_id == excerpt_id);
+                if expected_selections.len() > 0 {
+                    assert!(
+                        is_selected,
+                        "excerpt {ix} should be selected. got {:?}",
+                        self.editor_state(),
+                    );
+                } else {
+                    assert!(
+                        !is_selected,
+                        "excerpt {ix} should not be selected, got: {selections:?}",
+                    );
+                }
+                continue;
+            }
+            assert!(!is_folded, "excerpt {} should not be folded", ix);
+            assert_eq!(
+                multibuffer_snapshot
+                    .text_for_range(Anchor::range_in_buffer(
+                        excerpt_id,
+                        snapshot.remote_id(),
+                        range.context.clone()
+                    ))
+                    .collect::<String>(),
+                expected_text
+            );
+
+            let selections = selections
+                .iter()
+                .filter(|s| s.head().excerpt_id == excerpt_id)
+                .map(|s| {
+                    let head = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
+                    let tail = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
+                    tail..head
+                })
+                .collect::<Vec<_>>();
+            // todo: selections that cross excerpt boundaries..
+            assert_eq!(
+                selections, expected_selections,
+                "excerpt {} has incorrect selections",
+                ix,
+            );
+        }
+    }
+
     /// Make an assertion about the editor's text and the ranges and directions
     /// of its selections using a string containing embedded range markers.
     ///
@@ -389,6 +480,17 @@ impl EditorTestContext {
     pub fn assert_editor_state(&mut self, marked_text: &str) {
         let (expected_text, expected_selections) = marked_text_ranges(marked_text, true);
         pretty_assertions::assert_eq!(self.buffer_text(), expected_text, "unexpected buffer text");
+        self.assert_selections(expected_selections, marked_text.to_string())
+    }
+
+    /// Make an assertion about the editor's text and the ranges and directions
+    /// of its selections using a string containing embedded range markers.
+    ///
+    /// See the `util::test::marked_text_ranges` function for more information.
+    #[track_caller]
+    pub fn assert_display_state(&mut self, marked_text: &str) {
+        let (expected_text, expected_selections) = marked_text_ranges(marked_text, true);
+        pretty_assertions::assert_eq!(self.display_text(), expected_text, "unexpected buffer text");
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 

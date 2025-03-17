@@ -131,7 +131,7 @@ pub struct SshPrompt {
     connection_string: SharedString,
     nickname: Option<SharedString>,
     status_message: Option<SharedString>,
-    prompt: Option<(Entity<Markdown>, oneshot::Sender<Result<String>>)>,
+    prompt: Option<(Entity<Markdown>, oneshot::Sender<String>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Entity<Editor>,
 }
@@ -176,7 +176,7 @@ impl SshPrompt {
     pub fn set_prompt(
         &mut self,
         prompt: String,
-        tx: oneshot::Sender<Result<String>>,
+        tx: oneshot::Sender<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -223,7 +223,7 @@ impl SshPrompt {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
             self.editor.update(cx, |editor, cx| {
-                tx.send(Ok(editor.text(cx))).ok();
+                tx.send(editor.text(cx)).ok();
                 editor.clear(window, cx);
             });
         }
@@ -331,7 +331,7 @@ impl RenderOnce for SshConnectionHeader {
             .px(DynamicSpacing::Base12.rems(cx))
             .pt(DynamicSpacing::Base08.rems(cx))
             .pb(DynamicSpacing::Base04.rems(cx))
-            .rounded_t_md()
+            .rounded_t_sm()
             .w_full()
             .gap_1p5()
             .child(Icon::new(IconName::Server).size(IconSize::XSmall))
@@ -429,11 +429,10 @@ pub struct SshClientDelegate {
 }
 
 impl remote::SshClientDelegate for SshClientDelegate {
-    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
-        let (tx, rx) = oneshot::channel();
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
-            tx.send(Ok(password)).ok();
+            tx.send(password).ok();
         } else {
             self.window
                 .update(cx, |_, window, cx| {
@@ -443,7 +442,6 @@ impl remote::SshClientDelegate for SshClientDelegate {
                 })
                 .ok();
         }
-        rx
     }
 
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {

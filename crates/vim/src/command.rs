@@ -37,9 +37,9 @@ use crate::{
         JoinLines,
     },
     object::Object,
-    state::Mode,
+    state::{Mark, Mode},
     visual::VisualDeleteLine,
-    Vim,
+    ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -284,6 +284,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     true,
                     true,
                     vec![Point::new(range.start.0, 0)..end],
+                    window,
                     cx,
                 )
             }
@@ -594,8 +595,13 @@ impl Position {
                 }
             }
             Position::Mark { name, offset } => {
-                let Some(mark) = vim.marks.get(&name.to_string()).and_then(|vec| vec.last()) else {
+                let Some(Mark::Local(anchors)) =
+                    vim.get_mark(&name.to_string(), editor, window, cx)
+                else {
                     return Err(anyhow!("mark {} not set", name));
+                };
+                let Some(mark) = anchors.last() else {
+                    return Err(anyhow!("mark {} contains empty anchors", name));
                 };
                 mark.to_point(&snapshot.buffer_snapshot)
                     .row
@@ -784,8 +790,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("bp", "revious"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("bp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -794,8 +800,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
         VimCommand::new(("tabnew", ""), workspace::NewFile),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("tabp", "revious"), workspace::ActivatePrevItem).count(),
-        VimCommand::new(("tabN", "ext"), workspace::ActivatePrevItem).count(),
+        VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(
             ("tabc", "lose"),
             workspace::CloseActiveItem {
@@ -827,10 +833,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
         VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).range(wrap_count),
-        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
-        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("cp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("cN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
+        VimCommand::new(("lp", "revious"), editor::actions::GoToPreviousDiagnostic)
+            .range(wrap_count),
+        VimCommand::new(("lN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
@@ -851,6 +859,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 .boxed_clone(),
             )
         }),
+        VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -1417,11 +1426,11 @@ impl ShellExec {
                 cx.emit(workspace::Event::SpawnTask {
                     action: Box::new(SpawnInTerminal {
                         id: TaskId("vim".to_string()),
-                        full_label: self.command.clone(),
-                        label: self.command.clone(),
+                        full_label: command.clone(),
+                        label: command.clone(),
                         command: command.clone(),
                         args: Vec::new(),
-                        command_label: self.command.clone(),
+                        command_label: command.clone(),
                         cwd,
                         env: HashMap::default(),
                         use_new_terminal: true,
@@ -1432,6 +1441,7 @@ impl ShellExec {
                         shell,
                         show_summary: false,
                         show_command: false,
+                        show_rerun: false,
                     }),
                 });
             });
