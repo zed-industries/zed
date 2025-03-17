@@ -11,6 +11,7 @@ use gpui::{
     WeakEntity, Window,
 };
 use language::LanguageRegistry;
+use regex::Regex;
 use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
@@ -368,7 +369,7 @@ impl MarkdownPreviewView {
     fn clear_image_caches(
         &self,
         editor: Entity<Editor>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(folder_path) = Self::get_folder_for_active_editor(&editor.read(cx), cx) else {
