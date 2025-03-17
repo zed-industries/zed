@@ -25,33 +25,8 @@ pub fn init(cx: &mut App) {
     provider_registry.register_hosting_provider(Arc::new(Gitlab::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Sourcehut));
 
-    GitProviderSettings::register(cx);
-
-    let settings = GitProviderSettings::get_global(cx);
-
-    for custom_provider_config in settings.providers.iter() {
-        // TODO: Don't `unwrap`.
-        match custom_provider_config.provider {
-            settings::GitHostingProviderKind::Bitbucket => {
-                provider_registry.register_hosting_provider(Arc::new(Bitbucket::new(
-                    &custom_provider_config.name,
-                    Url::parse(&custom_provider_config.domain).unwrap(),
-                )));
-            }
-            settings::GitHostingProviderKind::Github => {
-                provider_registry.register_hosting_provider(Arc::new(Github::new(
-                    &custom_provider_config.name,
-                    Url::parse(&custom_provider_config.domain).unwrap(),
-                )));
-            }
-            settings::GitHostingProviderKind::Gitlab => {
-                provider_registry.register_hosting_provider(Arc::new(Gitlab::new(
-                    &custom_provider_config.name,
-                    Url::parse(&custom_provider_config.domain).unwrap(),
-                )));
-            }
-        }
-    }
+    GitHostingProviderSettings::register(cx);
+    init_git_hosting_provider_settings(cx);
 }
 
 /// Registers additional Git hosting providers.
