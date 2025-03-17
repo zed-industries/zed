@@ -1488,7 +1488,7 @@ impl EditorElement {
         cx: &mut App,
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
-        editor_width: Pixels,
+        scrollbar_width: Pixels,
     ) -> Option<AnyElement> {
         match snapshot.mode {
             EditorMode::Full => {
@@ -1498,7 +1498,7 @@ impl EditorElement {
 
                 editor.mode = EditorMode::Minimap;
                 editor.set_text_style_refinement(TextStyleRefinement {
-                    font_size: Some(px(1.).into()),
+                    font_size: Some(px(2.).into()),
                     ..Default::default()
                 });
 
@@ -1509,8 +1509,9 @@ impl EditorElement {
                 });
 
                 let mut minimap_bounds = bounds.clone();
-                minimap_bounds.size.width = editor_width * 0.3;
-                minimap_bounds.origin.x = editor_width * 0.7;
+                minimap_bounds.size.width = px(100.);
+                minimap_bounds.origin.x =
+                    bounds.size.width - minimap_bounds.size.width - scrollbar_width;
                 _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
                 window.with_absolute_element_offset(minimap_bounds.origin, |window| {
                     minimap_elem.prepaint(window, cx)
@@ -7461,7 +7462,7 @@ impl Element for EditorElement {
                     });
 
                     let minimap = window.with_element_namespace("minimap", |window| {
-                        self.layout_minimap(window, cx, &snapshot, bounds, editor_width)
+                        self.layout_minimap(window, cx, &snapshot, bounds, style.scrollbar_width)
                     });
 
                     let invisible_symbol_font_size = font_size / 2.;

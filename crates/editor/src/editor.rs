@@ -17863,9 +17863,9 @@ impl Render for Editor {
         }
 
         let background = match self.mode {
-            EditorMode::SingleLine { .. } | EditorMode::Minimap => cx.theme().system().transparent,
+            EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
-            EditorMode::Full => cx.theme().colors().editor_background,
+            EditorMode::Full | EditorMode::Minimap => cx.theme().colors().editor_background,
         };
 
         EditorElement::new(
