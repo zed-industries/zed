@@ -852,6 +852,14 @@
       // "min_column": 0
     }
   },
+  // The list of custom Git hosting providers.
+  "git_hosting_providers": [
+    // {
+    //   "provider": "github",
+    //   "name": "BigCorp GitHub",
+    //   "base_url": "https://code.big-corp.com"
+    // }
+  ],
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
   //      "load_direnv": "direct"

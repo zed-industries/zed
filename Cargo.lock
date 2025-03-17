@@ -5506,8 +5506,10 @@ dependencies = [
  "indoc",
  "pretty_assertions",
  "regex",
+ "schemars",
  "serde",
  "serde_json",
+ "settings",
  "url",
  "util",
 ]
