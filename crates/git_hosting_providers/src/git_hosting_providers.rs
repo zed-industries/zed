@@ -3,7 +3,6 @@ mod settings;
 
 use std::sync::Arc;
 
-use ::settings::Settings as _;
 use anyhow::{anyhow, Result};
 use git::repository::GitRepository;
 use git::GitHostingProviderRegistry;
@@ -16,6 +15,8 @@ pub use crate::settings::*;
 
 /// Initializes the Git hosting providers.
 pub fn init(cx: &mut App) {
+    crate::settings::init(cx);
+
     let provider_registry = GitHostingProviderRegistry::global(cx);
     provider_registry.register_hosting_provider(Arc::new(Bitbucket::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Chromium));
@@ -25,8 +26,7 @@ pub fn init(cx: &mut App) {
     provider_registry.register_hosting_provider(Arc::new(Gitlab::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Sourcehut));
 
-    GitHostingProviderSettings::register(cx);
-    init_git_hosting_provider_settings(cx);
+
 }
 
 /// Registers additional Git hosting providers.

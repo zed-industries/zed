@@ -11,7 +11,13 @@ use util::ResultExt as _;
 
 use crate::{Bitbucket, Github, Gitlab};
 
-pub fn init_git_hosting_provider_settings(cx: &mut App) {
+pub(crate) fn init(cx: &mut App) {
+    GitHostingProviderSettings::register(cx);
+
+    init_git_hosting_provider_settings(cx);
+}
+
+fn init_git_hosting_provider_settings(cx: &mut App) {
     update_git_hosting_providers_from_settings(cx);
 
     cx.observe_global::<SettingsStore>(update_git_hosting_providers_from_settings)
@@ -22,8 +28,8 @@ fn update_git_hosting_providers_from_settings(cx: &mut App) {
     let settings = GitHostingProviderSettings::get_global(cx);
     let provider_registry = GitHostingProviderRegistry::global(cx);
 
-    for provider in settings.providers.iter() {
-        let Some(url) = Url::parse(&provider.domain).log_err() else {
+    for provider in settings.git_hosting_providers.iter() {
+        let Some(url) = Url::parse(&provider.base_url).log_err() else {
             continue;
         };
 
@@ -45,30 +51,30 @@ pub enum GitHostingProviderKind {
     Bitbucket,
 }
 
-/// Configuration for a custom Git hosting provider.
+/// A custom Git hosting provider.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GitProviderConfig {
+pub struct GitHostingProviderConfig {
     /// The type of the provider.
     ///
     /// Must be one of `github`, `gitlab`, or `bitbucket`.
     pub provider: GitHostingProviderKind,
 
-    /// The domain name for the provider (e.g., "code.corp.big.com").
-    pub domain: String,
+    /// The base URL for the provider (e.g., "https://code.corp.big.com").
+    pub base_url: String,
 
-    /// The display name for the provider (e.g., "MyCo GitHub").
+    /// The display name for the provider (e.g., "BigCorp GitHub").
     pub name: String,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GitHostingProviderSettings {
-    /// List of custom Git providers.
+    /// The list of custom Git hosting providers.
     #[serde(default)]
-    pub providers: Vec<GitProviderConfig>,
+    pub git_hosting_providers: Vec<GitHostingProviderConfig>,
 }
 
 impl Settings for GitHostingProviderSettings {
-    const KEY: Option<&'static str> = Some("git_providers");
+    const KEY: Option<&'static str> = None;
 
     type FileContent = Self;
 
