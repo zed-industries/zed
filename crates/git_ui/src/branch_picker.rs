@@ -7,7 +7,7 @@ use gpui::{
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, Window,
 };
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -223,6 +223,13 @@ impl PickerDelegate for BranchListDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select branch...".into()
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        match self.style {
+            BranchListStyle::Modal => PickerEditorPosition::Start,
+            BranchListStyle::Popover => PickerEditorPosition::End,
+        }
     }
 
     fn match_count(&self) -> usize {

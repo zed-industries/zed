@@ -3829,7 +3829,7 @@ impl Render for GitPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(Corner::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -4094,7 +4094,7 @@ impl RenderOnce for PanelRepoFooter {
                 repo_selector_trigger.disabled(single_repo).truncate(true),
                 Tooltip::text("Switch active repository"),
             )
-            .attach(gpui::Corner::BottomLeft)
+            .anchor(Corner::BottomLeft)
             .into_any_element();
 
         let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
@@ -4116,7 +4116,7 @@ impl RenderOnce for PanelRepoFooter {
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
             )
-            .anchor(Corner::TopLeft)
+            .anchor(Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
