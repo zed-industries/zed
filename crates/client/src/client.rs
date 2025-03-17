@@ -1154,7 +1154,7 @@ impl Client {
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some(http_client::tls_config().into()),
+                            Some(http_client_tls::tls_config().into()),
                         )
                         .await?;
                     Ok(Connection::new(
