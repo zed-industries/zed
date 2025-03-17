@@ -13,15 +13,15 @@ pub struct Bitbucket {
 }
 
 impl Bitbucket {
-    pub fn new(name: &str, base_url: &str) -> Self {
+    pub fn new(name: impl Into<String>, base_url: Url) -> Self {
         Self {
-            name: name.to_string(),
-            base_url: Url::parse(&base_url).unwrap(),
+            name: name.into(),
+            base_url,
         }
     }
 
-    pub fn new_default() -> Self {
-        Self::new("bitbucket", "https://bitbucket.org")
+    pub fn public_instance() -> Self {
+        Self::new("Bitbucket", Url::parse("https://bitbucket.org").unwrap())
     }
 }
 

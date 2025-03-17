@@ -2,10 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
-use project::{Project, ProjectPath};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,10 +14,10 @@ pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
     /// This path should never be absolute, and the first component
-    /// of the path should always be a top-level directory in a project.
+    /// of the path should always be a root directory in a project.
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - directory1
     /// - directory2
@@ -49,6 +49,7 @@ impl Tool for ReadFileTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
@@ -56,18 +57,8 @@ impl Tool for ReadFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree_root_name) = input.path.components().next() else {
-            return Task::ready(Err(anyhow!("Invalid path")));
-        };
-        let Some(worktree) = project
-            .read(cx)
-            .worktree_for_root_name(&worktree_root_name.as_os_str().to_string_lossy(), cx)
-        else {
-            return Task::ready(Err(anyhow!("Directory not found in the project")));
-        };
-        let project_path = ProjectPath {
-            worktree_id: worktree.read(cx).id(),
-            path: Arc::from(input.path.strip_prefix(worktree_root_name).unwrap()),
+        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+            return Task::ready(Err(anyhow!("Path not found in project")));
         };
         cx.spawn(|cx| async move {
             let buffer = cx

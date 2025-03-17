@@ -45,21 +45,22 @@ struct User {
     pub avatar_url: String,
 }
 
+#[derive(Debug)]
 pub struct Github {
     name: String,
     base_url: Url,
 }
 
 impl Github {
-    pub fn new_default() -> Self {
-        Self::new("GitHub", "https://github.com")
+    pub fn new(name: impl Into<String>, base_url: Url) -> Self {
+        Self {
+            name: name.into(),
+            base_url,
+        }
     }
 
-    pub fn new(name: &str, base_url: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            base_url: Url::parse(&base_url).unwrap(),
-        }
+    pub fn public_instance() -> Self {
+        Self::new("GitHub", Url::parse("https://github.com").unwrap())
     }
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
@@ -75,10 +76,10 @@ impl Github {
             bail!("not a GitHub URL");
         }
 
-        Ok(Self {
-            name: "GitHub Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", host))?,
-        })
+        Ok(Self::new(
+            "GitHub Self-Hosted",
+            Url::parse(&format!("https://{}", host))?,
+        ))
     }
 
     async fn fetch_github_commit_author(

@@ -36,23 +36,24 @@ pub fn init(cx: &mut App) {
             if let Some(provider) =
                 provider_registry.find_provider_by_type(&custom_provider_config.provider_type)
             {
+                // TODO: Don't `unwrap`.
                 match provider.provider_type() {
                     "bitbucket" => {
                         provider_registry.register_hosting_provider(Arc::new(Bitbucket::new(
                             &custom_provider_config.name,
-                            &custom_provider_config.domain,
+                            Url::parse(&custom_provider_config.domain).unwrap(),
                         )));
                     }
                     "github" => {
                         provider_registry.register_hosting_provider(Arc::new(Github::new(
                             &custom_provider_config.name,
-                            &custom_provider_config.domain,
+                            Url::parse(&custom_provider_config.domain).unwrap(),
                         )));
                     }
                     "gitlab" => {
                         provider_registry.register_hosting_provider(Arc::new(Gitlab::new(
                             &custom_provider_config.name,
-                            &custom_provider_config.domain,
+                            Url::parse(&custom_provider_config.domain).unwrap(),
                         )));
                     }
                     _ => {}

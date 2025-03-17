@@ -1889,7 +1889,7 @@ pub(crate) fn end_of_line(
     }
 }
 
-fn sentence_backwards(
+pub(crate) fn sentence_backwards(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     mut times: usize,
@@ -1935,7 +1935,11 @@ fn sentence_backwards(
     DisplayPoint::zero()
 }
 
-fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usize) -> DisplayPoint {
+pub(crate) fn sentence_forwards(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    mut times: usize,
+) -> DisplayPoint {
     let start = point.to_point(map).to_offset(&map.buffer_snapshot);
     let mut chars = map.buffer_chars_at(start).peekable();
 

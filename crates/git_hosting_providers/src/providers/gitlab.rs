@@ -17,15 +17,15 @@ pub struct Gitlab {
 }
 
 impl Gitlab {
-    pub fn new_default() -> Self {
-        Self::new("GitLab", "https://gitlab.com")
+    pub fn new(name: impl Into<String>, base_url: Url) -> Self {
+        Self {
+            name: name.into(),
+            base_url,
+        }
     }
 
-    pub fn new(name: &str, base_url: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            base_url: Url::parse(&base_url).unwrap(),
-        }
+    pub fn public_instance() -> Self {
+        Self::new("GitLab", Url::parse("https://gitlab.com").unwrap())
     }
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
@@ -41,10 +41,10 @@ impl Gitlab {
             bail!("not a GitLab URL");
         }
 
-        Ok(Self {
-            name: "GitLab Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", host))?,
-        })
+        Ok(Self::new(
+            "GitLab Self-Hosted",
+            Url::parse(&format!("https://{}", host))?,
+        ))
     }
 }
 

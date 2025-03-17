@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use chrono::{Local, Utc};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
@@ -45,6 +45,7 @@ impl Tool for NowTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         _cx: &mut App,
     ) -> Task<Result<String>> {
         let input: NowToolInput = match serde_json::from_value(input) {
