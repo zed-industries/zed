@@ -8,20 +8,26 @@ pub use util::paths::home_dir;
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
-// Custom data directory if used.
+// Custom data directory override, set only by set_custom_data_dir.
 static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+// Resolved data directory, combining custom or platform defaults, set once.
+static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+// Resolved config directory, combining custom or platform defaults, set once.
+static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static Path {
     Path::new(".zed_server")
 }
 
-/// Sets a custom directory for all user data, overriding the default support directory.
-/// 
-/// Panics if called after paths have been initialized (e.g., via `support_dir` or `config_dir`).
+/// Sets a custom directory for all user data, overriding the default data directory.
+///
+/// Panics if called after the data directory has been initialized (e.g., via `data_dir` or `config_dir`).
 pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
-    if CUSTOM_DATA_DIR.get().is_some() {
-        panic!("set_custom_data_dir called after data_dir was initialized");
+    if CURRENT_DATA_DIR.get().is_some() || CONFIG_DIR.get().is_some() {
+        panic!("set_custom_data_dir called after data_dir or config_dir was initialized");
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
         let path = PathBuf::from(dir);
@@ -32,62 +38,51 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
 
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
-    static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONFIG_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
-            return custom_dir.join("config");
-        }
-
-        if cfg!(target_os = "windows") {
-            return dirs::config_dir()
+            custom_dir.join("config")
+        } else if cfg!(target_os = "windows") {
+            dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
-                .join("Zed");
-        }
-
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
+                .join("Zed")
+        } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
-                dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
+                dirs::config_dir()
+                    .expect("failed to determine XDG_CONFIG_HOME directory")
+                    .join("zed")
             }
-            .join("zed");
+        } else {
+            home_dir().join(".config").join("zed")
         }
-
-        home_dir().join(".config").join("zed")
     })
 }
 
-/// Returns the path to the support directory used by Zed.
+/// Returns the path to the data directory used by Zed.
 pub fn data_dir() -> &'static PathBuf {
-    static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DATA_DIR.get_or_init(|| {
+    CURRENT_DATA_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
-            return custom_dir.clone();
-        }
-
-        if cfg!(target_os = "macos") {
-            return home_dir().join("Library/Application Support/Zed");
-        }
-
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
+            custom_dir.clone()
+        } else if cfg!(target_os = "macos") {
+            home_dir().join("Library/Application Support/Zed")
+        } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
-                dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
+                dirs::data_local_dir()
+                    .expect("failed to determine XDG_DATA_HOME directory")
+                    .join("zed")
             }
-            .join("zed");
-        }
-
-        if cfg!(target_os = "windows") {
-            return dirs::data_local_dir()
+        } else if cfg!(target_os = "windows") {
+            dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("Zed");
+                .join("Zed")
+        } else {
+            config_dir().clone() // Fallback
         }
-
-        config_dir().clone()
     })
 }
-
 /// Returns the path to the temp directory used by Zed.
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -323,7 +318,7 @@ pub fn languages_dir() -> &'static PathBuf {
 /// This is where debug adapters are downloaded to for DAPs that are built-in to Zed.
 pub fn debug_adapters_dir() -> &'static PathBuf {
     static DEBUG_ADAPTERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DEBUG_ADAPTERS_DIR.get_or_init(|| support_dir().join("debug_adapters"))
+    DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("debug_adapters"))
 }
 
 /// Returns the path to the Copilot directory.
