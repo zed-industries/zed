@@ -2312,6 +2312,16 @@ mod tests {
     }
 
     #[test]
+    fn test_python_file_line_regex() {
+        re_test(
+            crate::PYTHON_FILE_LINE_REGEX,
+            "hay File \"/zed/bad_py.py\", line 8 stack",
+            vec!["File \"/zed/bad_py.py\", line 8"],
+        );
+        re_test(crate::PYTHON_FILE_LINE_REGEX, "unrelated", vec![]);
+    }
+
+    #[test]
     fn test_python_file_line() {
         let inputs: Vec<(&str, Option<(&str, u32)>)> = vec![
             (
