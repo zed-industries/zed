@@ -37,7 +37,7 @@ use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
 use rpc::{
-    proto::{self, UpdateDebugAdapter, UpdateThreadStatus},
+    proto::{self},
     AnyProtoClient, TypedEnvelope,
 };
 use serde_json::Value;
@@ -73,8 +73,6 @@ pub enum DapStoreEvent {
     },
     Notification(String),
     RemoteHasInitialized,
-    UpdateDebugAdapter(UpdateDebugAdapter),
-    UpdateThreadStatus(UpdateThreadStatus),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -119,10 +117,6 @@ impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
     pub fn init(client: &AnyProtoClient) {
-        client.add_entity_message_handler(Self::handle_shutdown_debug_client);
-        client.add_entity_message_handler(Self::handle_set_debug_client_capabilities);
-        client.add_entity_message_handler(Self::handle_update_debug_adapter);
-        client.add_entity_message_handler(Self::handle_update_thread_status);
         client.add_entity_message_handler(Self::handle_ignore_breakpoint_state);
 
         // todo(debugger): Reenable these after we finish handle_dap_command refactor
@@ -303,31 +297,6 @@ impl DapStore {
         self.sessions
             .get(session_id)
             .map(|client| client.read(cx).capabilities.clone())
-    }
-
-    pub fn update_capabilities_for_client(
-        &mut self,
-        session_id: SessionId,
-        capabilities: &Capabilities,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(client) = self.session_by_id(session_id) {
-            client.update(cx, |this, _cx| {
-                this.capabilities = this.capabilities.merge(capabilities.clone());
-            });
-        }
-
-        cx.notify();
-
-        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
-            downstream_client
-                .send(dap::proto_conversions::capabilities_to_proto(
-                    &capabilities,
-                    *project_id,
-                    session_id.to_proto(),
-                ))
-                .log_err();
-        }
     }
 
     pub fn breakpoint_store(&self) -> &Entity<BreakpointStore> {
@@ -789,15 +758,6 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(_) = self.as_local_mut() else {
-            if let Some((upstream_client, project_id)) = self.upstream_client() {
-                let future = upstream_client.request(proto::ShutdownDebugClient {
-                    project_id,
-                    session_id: session_id.to_proto(),
-                });
-
-                return cx.background_spawn(async move { future.await.map(|_| ()) });
-            }
-
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
 
@@ -819,61 +779,6 @@ impl DapStore {
             }
 
             Ok(())
-        })
-    }
-
-    async fn handle_update_debug_adapter(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::UpdateDebugAdapter>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |_, cx| {
-            cx.emit(DapStoreEvent::UpdateDebugAdapter(envelope.payload));
-        })
-    }
-
-    async fn handle_update_thread_status(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::UpdateThreadStatus>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |_, cx| {
-            cx.emit(DapStoreEvent::UpdateThreadStatus(envelope.payload));
-        })
-    }
-
-    async fn handle_set_debug_client_capabilities(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::SetDebugClientCapabilities>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |dap_store, cx| {
-            dap_store.update_capabilities_for_client(
-                SessionId::from_proto(envelope.payload.session_id),
-                &dap::proto_conversions::capabilities_from_proto(&envelope.payload),
-                cx,
-            );
-        })
-    }
-
-    async fn handle_shutdown_debug_client(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::ShutdownDebugClient>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |dap_store, cx| {
-            let session_id = SessionId::from_proto(envelope.payload.session_id);
-
-            let shutdown_task = dap_store.shutdown_session(session_id, cx);
-            cx.spawn(|this, mut cx| async move {
-                let _ = shutdown_task.await.log_err();
-
-                this.update(&mut cx, |_, cx| {
-                    cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
-                    cx.notify();
-                })
-            })
-            .detach();
         })
     }
 

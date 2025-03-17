@@ -354,9 +354,6 @@ message Envelope {
         GetCodeLensResponse get_code_lens_response = 324;
         RefreshCodeLens refresh_code_lens = 325;
 
-        UpdateDebugAdapter update_debug_adapter = 326;
-        ShutdownDebugClient shutdown_debug_client = 327;
-        SetDebugClientCapabilities set_debug_client_capabilities = 328;
         DapNextRequest dap_next_request = 329;
         DapStepInRequest dap_step_in_request = 330;
         DapStepOutRequest dap_step_out_request = 331;
@@ -368,7 +365,6 @@ message Envelope {
         DapTerminateThreadsRequest dap_terminate_threads_request = 337;
         DapTerminateRequest dap_terminate_request = 338;
         DapRestartRequest dap_restart_request = 339;
-        UpdateThreadStatus update_thread_status = 340;
         VariablesRequest variables_request = 341;
         DapVariables dap_variables = 342;
         DapRestartStackFrameRequest dap_restart_stack_frame_request = 343;
@@ -2644,36 +2640,6 @@ enum BreakpointKind {
 }
 
 
-message ActiveDebugClientsResponse {
-    repeated DebugClient clients = 1;
-}
-
-message DebugClient {
-    uint64 client_id = 1;
-    SetDebugClientCapabilities capabilities = 2;
-    bool ignore_breakpoints = 3;
-}
-
-message ShutdownDebugClient {
-    uint64 project_id = 1;
-    uint64 session_id = 2;
-}
-
-message SetDebugClientCapabilities {
-    uint64 session_id = 1;
-    uint64 project_id = 2;
-    bool supports_loaded_sources_request = 3;
-    bool supports_modules_request = 4;
-    bool supports_restart_request = 5;
-    bool supports_set_expression = 6;
-    bool supports_single_thread_execution_requests = 7;
-    bool supports_step_back = 8;
-    bool supports_stepping_granularity = 9;
-    bool supports_terminate_threads_request = 10;
-    bool supports_restart_frame_request = 11;
-    bool supports_clipboard_context = 12;
-}
-
 message Breakpoint {
     Anchor position = 1;
     BreakpointKind kind = 3;
@@ -2749,19 +2715,7 @@ message DebuggerVariableContainer {
     uint64 depth = 3;
 }
 
-message DebuggerThreadState {
-    DebuggerThreadStatus thread_status = 1;
-    bool stopped = 2;
-}
-
-message UpdateThreadStatus {
-    uint64 project_id = 1;
-    uint64 client_id = 2;
-    uint64 thread_id = 3;
-    DebuggerThreadStatus status = 4;
-}
-
-enum DebuggerThreadStatus {
+enum DapThreadStatus {
     Running = 0;
     Stopped = 1;
     Exited = 2;
@@ -2797,14 +2751,6 @@ message VariablesRequest {
     optional uint64 start = 5;
     optional uint64 count = 6;
     optional ValueFormat format = 7;
-}
-
-
-message DebuggerStackFrameList {
-    uint64 thread_id = 1;
-    uint64 client_id = 2;
-    uint64 current_stack_frame = 3;
-    repeated DapStackFrame stack_frames = 4;
 }
 
 enum SteppingGranularity {
@@ -3082,27 +3028,6 @@ message DapStackFrame {
 message DebuggerLoadedSourceList {
     uint64 client_id = 1;
     repeated DapSource sources = 2;
-}
-
-message DebuggerConsole {
-    // repeated DapOutputEvent events = 1;
-}
-
-message DebuggerModuleList {
-    repeated DapModule modules = 1;
-    uint64 client_id = 2;
-}
-
-message UpdateDebugAdapter {
-    uint64 project_id = 1;
-    uint64 client_id = 2;
-    optional uint64 thread_id = 3;
-    oneof variant {
-        DebuggerThreadState thread_state = 5;
-        DebuggerStackFrameList stack_frame_list = 6;
-        DebuggerModuleList modules = 7;
-        DapOutputEvent output_event = 8;
-    }
 }
 
 message DapVariables {

@@ -2,11 +2,8 @@ use anyhow::{anyhow, Result};
 use client::proto::{
     self, DapChecksum, DapChecksumAlgorithm, DapEvaluateContext, DapModule, DapScope,
     DapScopePresentationHint, DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable,
-    SetDebugClientCapabilities,
 };
-use dap_types::{
-    Capabilities, OutputEventCategory, OutputEventGroup, ScopePresentationHint, Source,
-};
+use dap_types::{OutputEventCategory, OutputEventGroup, ScopePresentationHint, Source};
 
 pub trait ProtoConversion {
     type ProtoType;
@@ -334,53 +331,6 @@ impl ProtoConversion for dap_types::Module {
             date_time_stamp: payload.date_time_stamp,
             address_range: payload.address_range,
         })
-    }
-}
-
-pub fn capabilities_from_proto(payload: &SetDebugClientCapabilities) -> Capabilities {
-    Capabilities {
-        supports_loaded_sources_request: Some(payload.supports_loaded_sources_request),
-        supports_modules_request: Some(payload.supports_modules_request),
-        supports_restart_request: Some(payload.supports_restart_request),
-        supports_set_expression: Some(payload.supports_set_expression),
-        supports_single_thread_execution_requests: Some(
-            payload.supports_single_thread_execution_requests,
-        ),
-        supports_step_back: Some(payload.supports_step_back),
-        supports_stepping_granularity: Some(payload.supports_stepping_granularity),
-        supports_terminate_threads_request: Some(payload.supports_terminate_threads_request),
-        supports_restart_frame: Some(payload.supports_restart_frame_request),
-        supports_clipboard_context: Some(payload.supports_clipboard_context),
-        ..Default::default()
-    }
-}
-
-pub fn capabilities_to_proto(
-    capabilities: &Capabilities,
-    project_id: u64,
-    session_id: u64,
-) -> SetDebugClientCapabilities {
-    SetDebugClientCapabilities {
-        session_id,
-        project_id,
-        supports_loaded_sources_request: capabilities
-            .supports_loaded_sources_request
-            .unwrap_or_default(),
-        supports_modules_request: capabilities.supports_modules_request.unwrap_or_default(),
-        supports_restart_request: capabilities.supports_restart_request.unwrap_or_default(),
-        supports_set_expression: capabilities.supports_set_expression.unwrap_or_default(),
-        supports_single_thread_execution_requests: capabilities
-            .supports_single_thread_execution_requests
-            .unwrap_or_default(),
-        supports_step_back: capabilities.supports_step_back.unwrap_or_default(),
-        supports_stepping_granularity: capabilities
-            .supports_stepping_granularity
-            .unwrap_or_default(),
-        supports_terminate_threads_request: capabilities
-            .supports_terminate_threads_request
-            .unwrap_or_default(),
-        supports_restart_frame_request: capabilities.supports_restart_frame.unwrap_or_default(),
-        supports_clipboard_context: capabilities.supports_clipboard_context.unwrap_or_default(),
     }
 }
 
