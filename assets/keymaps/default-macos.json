@@ -16,9 +16,9 @@
     "bindings": {
       "f4": "debugger::Start",
       "f5": "debugger::Continue",
-      // "shift-f5": "debugger:Stop",
-      // "f6": "debugger:Pause",
-      // "f7": "debugger:StepOver",
+      "shift-f5": "debugger::Stop",
+      "f6": "debugger::Pause",
+      "f7": "debugger::StepOver",
       "f11": "debugger::StepInto",
       "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",

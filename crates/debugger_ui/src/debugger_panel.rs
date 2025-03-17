@@ -159,18 +159,19 @@ impl DebugPanel {
                         .update(cx, |this, cx| {
                             this.active_session(cx)
                                 .map(|item| {
-                                    let caps = item
-                                        .read(cx)
-                                        .mode()
-                                        .as_running()
-                                        .map(|running| running.read(cx).capabilities(cx))
-                                        .unwrap_or_default();
+                                    let running = item.read(cx).mode().as_running().cloned();
 
-                                    (
-                                        true,
-                                        caps.supports_restart_request.unwrap_or_default(),
-                                        caps.supports_step_back.unwrap_or_default(),
-                                    )
+                                    match running {
+                                        Some(running) => {
+                                            let caps = running.read(cx).capabilities(cx);
+                                            (
+                                                true,
+                                                caps.supports_restart_request.unwrap_or_default(),
+                                                caps.supports_step_back.unwrap_or_default(),
+                                            )
+                                        }
+                                        None => (false, false, false),
+                                    }
                                 })
                                 .unwrap_or((false, false, false))
                         });
