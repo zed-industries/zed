@@ -158,7 +158,7 @@ impl MessageEditor {
             return;
         }
 
-        if self.thread.read(cx).is_streaming() {
+        if self.thread.read(cx).is_generating() {
             return;
         }
 
@@ -328,7 +328,7 @@ impl Render for MessageEditor {
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
         let bg_color = cx.theme().colors().editor_background;
-        let is_streaming_completion = self.thread.read(cx).is_streaming();
+        let is_generating = self.thread.read(cx).is_generating();
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
         let submit_label_color = if is_editor_empty {
@@ -352,7 +352,7 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
-            .when(is_streaming_completion, |parent| {
+            .when(is_generating, |parent| {
                 let focus_handle = self.editor.focus_handle(cx).clone();
                 parent.child(
                     h_flex().py_3().w_full().justify_center().child(
@@ -625,7 +625,7 @@ impl Render for MessageEditor {
                                                 .disabled(
                                                     is_editor_empty
                                                         || !is_model_selected
-                                                        || is_streaming_completion,
+                                                        || is_generating,
                                                 )
                                                 .child(
                                                     h_flex()
@@ -660,7 +660,7 @@ impl Render for MessageEditor {
                                                         "Type a message to submit",
                                                     ))
                                                 })
-                                                .when(is_streaming_completion, |button| {
+                                                .when(is_generating, |button| {
                                                     button.tooltip(Tooltip::text(
                                                         "Cancel to submit a new message",
                                                     ))

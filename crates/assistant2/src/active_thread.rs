@@ -116,7 +116,7 @@ impl ActiveThread {
     pub fn cancel_last_completion(&mut self, cx: &mut App) -> bool {
         self.last_error.take();
         self.thread
-            .update(cx, |thread, _cx| thread.cancel_last_completion())
+            .update(cx, |thread, cx| thread.cancel_last_completion(cx))
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -343,8 +343,11 @@ impl ActiveThread {
                 });
             }
             ThreadEvent::ToolFinished {
-                pending_tool_use, ..
+                pending_tool_use,
+                canceled,
+                ..
             } => {
+                let canceled = *canceled;
                 if let Some(tool_use) = pending_tool_use {
                     self.render_scripting_tool_use_markdown(
                         tool_use.id.clone(),
@@ -396,7 +399,10 @@ impl ActiveThread {
 
                             this.update(&mut cx, |this, cx| {
                                 this.thread.update(cx, |thread, cx| {
-                                    thread.send_tool_results_to_model(model, updated_context, cx);
+                                    thread.attach_tool_results(updated_context, cx);
+                                    if !canceled {
+                                        thread.send_to_model(model, RequestKind::Chat, cx);
+                                    }
                                 });
                             })
                         })

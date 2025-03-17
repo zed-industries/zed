@@ -7,7 +7,7 @@ use gpui::{App, AsyncApp, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self};
 use std::fmt::Display;

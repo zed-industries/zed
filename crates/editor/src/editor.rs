@@ -70,7 +70,7 @@ pub use element::{
 };
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use futures::{
-    future::{self, Shared},
+    future::{self, join, Shared},
     FutureExt,
 };
 use fuzzy::StringMatchCandidate;
@@ -83,8 +83,8 @@ use code_context_menus::{
 use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
-    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Background, Bounds,
-    ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity,
+    AnimationExt, AnyElement, App, AppContext, AsyncWindowContext, AvailableSpace, Background,
+    Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
     Global, HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
     ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText, Subscription,
@@ -1250,11 +1250,15 @@ impl Editor {
                 project_subscriptions.push(cx.subscribe_in(
                     project,
                     window,
-                    |editor, _, event, window, cx| {
-                        if let project::Event::RefreshInlayHints = event {
+                    |editor, _, event, window, cx| match event {
+                        project::Event::RefreshCodeLens => {
+                            // we always query lens with actions, without storing them, always refreshing them
+                        }
+                        project::Event::RefreshInlayHints => {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-                        } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
+                        }
+                        project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
                                 if focus_handle.is_focused(window) {
@@ -1274,6 +1278,7 @@ impl Editor {
                                 }
                             }
                         }
+                        _ => {}
                     },
                 ));
                 if let Some(task_inventory) = project
@@ -17631,7 +17636,16 @@ impl CodeActionProvider for Entity<Project> {
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| {
-            project.code_actions(buffer, range, None, cx)
+            let code_lens = project.code_lens(buffer, range.clone(), cx);
+            let code_actions = project.code_actions(buffer, range, None, cx);
+            cx.background_spawn(async move {
+                let (code_lens, code_actions) = join(code_lens, code_actions).await;
+                Ok(code_lens
+                    .context("code lens fetch")?
+                    .into_iter()
+                    .chain(code_actions.context("code action fetch")?)
+                    .collect())
+            })
         })
     }
 
