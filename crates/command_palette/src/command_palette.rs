@@ -2,6 +2,7 @@ mod persistence;
 
 use std::{
     cmp::{self, Reverse},
+    collections::HashMap,
     sync::Arc,
     time::Duration,
 };
@@ -239,6 +240,17 @@ impl CommandPaletteDelegate {
             self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
         }
     }
+
+    fn hit_counts(&self) -> HashMap<String, u16> {
+        if let Ok(commands) = COMMAND_PALETTE_HISTORY.list_commands_used() {
+            commands
+                .into_iter()
+                .map(|command| (command.command_name, command.invocations))
+                .collect()
+        } else {
+            HashMap::new()
+        }
+    }
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
@@ -280,22 +292,16 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let executor = cx.background_executor().clone();
             let query = normalize_query(query.as_str());
+            let hit_counts = self.hit_counts();
             async move {
                 commands.sort_by_key(|action| {
                     (
                         // Ok, so what do we do here? Grab everything from the SQLite database
                         // Reverse(stored_hit_counts.binary_search(|x| x.command_name == action.name).unwrap_or(default)),
-                        Reverse(
-                            COMMAND_PALETTE_HISTORY
-                                .read_command_history(&action.name)
-                                .map_or(0, |cmd| {
-                                    if let Some(cmd) = cmd {
-                                        cmd.invocations
-                                    } else {
-                                        0
-                                    }
-                                }),
-                        ),
+                        // This seems problematic. I think I need to go back to a list approach
+                        // - Limit by a lot
+                        // - Try a filtration thing?
+                        Reverse(hit_counts.get(&action.name).cloned()),
                         action.name.clone(),
                     )
                 });
@@ -396,9 +402,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.commands.clear();
         let command_name = command.name.clone();
         cx.background_spawn(async move {
-            COMMAND_PALETTE_HISTORY
-                .write_command_used(command_name)
-                .await?;
+            COMMAND_PALETTE_HISTORY.write_command(command_name).await?;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -738,7 +742,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_saves_hitcount_to_kv_store(cx: &mut TestAppContext) {
+    async fn test_saves_hitcount_to_command_history_db(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =

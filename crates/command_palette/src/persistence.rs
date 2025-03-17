@@ -36,17 +36,20 @@ define_connection!(pub static ref COMMAND_PALETTE_HISTORY: CommandPaletteDB<()> 
 );
 
 impl CommandPaletteDB {
+    pub async fn write_command(&self, command_name: String) -> Result<()> {
+        self.write_command_internal(command_name, u16::MAX).await
+    }
     query! {
         pub fn read_command_history(command: &str) -> Result<Option<SerializedCommand>> {
             SELECT command_name, invocations FROM command_palette_history WHERE command_name=(?)
         }
     }
     query! {
-        pub async fn write_command_used(command_name: String) -> Result<()> {
+        async fn write_command_internal(command_name: String, max_invocations: u16) -> Result<()> {
             // Upsert
             INSERT INTO command_palette_history(command_name, invocations) VALUES  ((?), 1)
             ON CONFLICT DO
-            UPDATE SET invocations = invocations + 1
+            UPDATE SET invocations = MIN(invocations + 1, (?))
         }
     }
 
@@ -59,6 +62,8 @@ impl CommandPaletteDB {
 
 #[cfg(test)]
 mod tests {
+    use db::sqlez_macros::sql;
+
     use crate::persistence::CommandPaletteDB;
 
     #[gpui::test]
@@ -69,7 +74,7 @@ mod tests {
 
         assert!(retrieved_cmd.is_none());
 
-        db.write_command_used("editor: backspace".to_string())
+        db.write_command("editor: backspace".to_string())
             .await
             .unwrap();
 
@@ -78,7 +83,7 @@ mod tests {
         assert!(used_command.is_some());
         assert_eq!(used_command.expect("is some").invocations, 1);
 
-        db.write_command_used("editor: backspace".to_string())
+        db.write_command("editor: backspace".to_string())
             .await
             .unwrap();
 
@@ -96,13 +101,13 @@ mod tests {
         assert!(empty_commands.is_ok());
         assert_eq!(empty_commands.expect("is ok").len(), 0);
 
-        db.write_command_used("go to line: toggle".to_string())
+        db.write_command("go to line: toggle".to_string())
             .await
             .unwrap();
-        db.write_command_used("editor: backspace".to_string())
+        db.write_command("editor: backspace".to_string())
             .await
             .unwrap();
-        db.write_command_used("editor: backspace".to_string())
+        db.write_command("editor: backspace".to_string())
             .await
             .unwrap();
 
@@ -115,5 +120,22 @@ mod tests {
         assert_eq!(commands.as_slice()[0].invocations, 2);
         assert_eq!(commands.as_slice()[1].command_name, "go to line: toggle");
         assert_eq!(commands.as_slice()[1].invocations, 1);
+    }
+
+    #[gpui::test]
+    async fn test_handles_max_integer_value() {
+        let db = CommandPaletteDB(db::open_test_db("test_handles_max_integer_value").await);
+        db.write(|conn| {
+            conn.exec_bound(
+                sql!(INSERT INTO command_palette_history(command_name, invocations ) VALUES ((?), (?)))
+            ).unwrap()(("some-command", u16::MAX)).unwrap();
+        }).await;
+
+        db.write_command("some-command".to_string()).await.unwrap();
+
+        let some_command = db.read_command_history("some-command").unwrap();
+
+        assert!(some_command.is_some());
+        assert_eq!(some_command.expect("is some").invocations, u16::MAX);
     }
 }
