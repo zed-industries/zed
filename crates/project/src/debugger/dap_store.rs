@@ -21,20 +21,26 @@ use dap::{
         StartDebugging,
     },
     Capabilities, CompletionItem, CompletionsArguments, ErrorResponse, EvaluateArguments,
-    EvaluateArgumentsContext, EvaluateResponse, SetExpressionArguments, SetVariableArguments,
-    Source, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
+    SetExpressionArguments, SetVariableArguments, Source, StartDebuggingRequestArguments,
+    StartDebuggingRequestArgumentsRequest,
 };
 use fs::Fs;
-use futures::{channel::oneshot, future::Shared};
+use futures::{
+    channel::{mpsc, oneshot},
+    future::Shared,
+};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+
 use rpc::{
     proto::{self, UpdateDebugAdapter, UpdateThreadStatus},
     AnyProtoClient, TypedEnvelope,
 };
+use serde_json::Value;
 use settings::WorktreeId;
 use smol::{lock::Mutex, stream::StreamExt};
 use std::{
@@ -56,7 +62,15 @@ pub enum DapStoreEvent {
         session_id: SessionId,
         message: Message,
     },
-    RunInTerminal((SessionId, dap::messages::Request)),
+    RunInTerminal {
+        session_id: SessionId,
+        title: Option<String>,
+        cwd: PathBuf,
+        command: Option<String>,
+        args: Vec<String>,
+        envs: HashMap<String, String>,
+        sender: mpsc::Sender<Result<u32>>,
+    },
     Notification(String),
     RemoteHasInitialized,
     UpdateDebugAdapter(UpdateDebugAdapter),
@@ -153,9 +167,8 @@ impl DapStore {
                                     this.handle_start_debugging_request(session_id, request, cx)
                                         .detach_and_log_err(cx);
                                 } else if request.command == RunInTerminal::COMMAND {
-                                    // Dapstore doesn't have access to project or workspace so the debug panel
-                                    // needs to handle the event
-                                    cx.emit(DapStoreEvent::RunInTerminal((session_id, request)));
+                                    this.handle_run_in_terminal_request(session_id, request, cx)
+                                        .detach_and_log_err(cx);
                                 }
                             })
                             .log_err();
@@ -500,6 +513,145 @@ impl DapStore {
                         request_seq,
                         success,
                         StartDebugging::COMMAND.to_string(),
+                        body,
+                        cx,
+                    )
+                })?
+                .await
+        })
+    }
+
+    fn handle_run_in_terminal_request(
+        &mut self,
+        session_id: SessionId,
+        request: dap::messages::Request,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(session) = self.session_by_id(session_id) else {
+            return Task::ready(Err(anyhow!("Session not found")));
+        };
+
+        let request_args = serde_json::from_value::<RunInTerminalRequestArguments>(
+            request.arguments.unwrap_or_default(),
+        )
+        .expect("To parse StartDebuggingRequestArguments");
+
+        let seq = request.seq;
+
+        let cwd = PathBuf::from(request_args.cwd);
+        match cwd.try_exists() {
+            Ok(true) => (),
+            Ok(false) | Err(_) => {
+                return session.update(cx, |session, cx| {
+                    session.respond_to_client(
+                        seq,
+                        false,
+                        RunInTerminal::COMMAND.to_string(),
+                        serde_json::to_value(dap::ErrorResponse {
+                            error: Some(dap::Message {
+                                id: seq,
+                                format: format!("Received invalid/unknown cwd: {cwd:?}"),
+                                variables: None,
+                                send_telemetry: None,
+                                show_user: None,
+                                url: None,
+                                url_label: None,
+                            }),
+                        })
+                        .ok(),
+                        cx,
+                    )
+                })
+            }
+        }
+
+        let mut args = request_args.args.clone();
+
+        // Handle special case for NodeJS debug adapter
+        // If only the Node binary path is provided, we set the command to None
+        // This prevents the NodeJS REPL from appearing, which is not the desired behavior
+        // The expected usage is for users to provide their own Node command, e.g., `node test.js`
+        // This allows the NodeJS debug client to attach correctly
+        let command = if args.len() > 1 {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+
+        let mut envs: HashMap<String, String> = Default::default();
+        if let Some(Value::Object(env)) = request_args.env {
+            for (key, value) in env {
+                let value_str = match (key.as_str(), value) {
+                    (_, Value::String(value)) => value,
+                    _ => continue,
+                };
+
+                envs.insert(key, value_str);
+            }
+        }
+
+        let (tx, mut rx) = mpsc::channel::<Result<u32>>(1);
+
+        cx.emit(DapStoreEvent::RunInTerminal {
+            session_id,
+            title: request_args.title,
+            cwd,
+            command,
+            args,
+            envs,
+            sender: tx,
+        });
+        cx.notify();
+
+        let session = session.downgrade();
+        cx.spawn(|_, mut cx| async move {
+            let (success, body) = match rx.next().await {
+                Some(Ok(pid)) => (
+                    true,
+                    serde_json::to_value(dap::RunInTerminalResponse {
+                        process_id: None,
+                        shell_process_id: Some(pid as u64),
+                    })
+                    .ok(),
+                ),
+                Some(Err(error)) => (
+                    false,
+                    serde_json::to_value(dap::ErrorResponse {
+                        error: Some(dap::Message {
+                            id: seq,
+                            format: error.to_string(),
+                            variables: None,
+                            send_telemetry: None,
+                            show_user: None,
+                            url: None,
+                            url_label: None,
+                        }),
+                    })
+                    .ok(),
+                ),
+                None => (
+                    false,
+                    serde_json::to_value(dap::ErrorResponse {
+                        error: Some(dap::Message {
+                            id: seq,
+                            format: "failed to receive response from spawn terminal".to_string(),
+                            variables: None,
+                            send_telemetry: None,
+                            show_user: None,
+                            url: None,
+                            url_label: None,
+                        }),
+                    })
+                    .ok(),
+                ),
+            };
+
+            session
+                .update(&mut cx, |session, cx| {
+                    session.respond_to_client(
+                        seq,
+                        success,
+                        RunInTerminal::COMMAND.to_string(),
                         body,
                         cx,
                     )

@@ -3,12 +3,10 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::SessionId,
-    debugger_settings::DebuggerSettings,
-    requests::{Request, RunInTerminal},
-    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, RunInTerminalRequestArguments,
-    StoppedEvent, ThreadEvent,
+    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
+    ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
 };
+use futures::{channel::mpsc, SinkExt as _};
 use gpui::{
     actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity,
@@ -19,12 +17,10 @@ use project::{
     Project,
 };
 use rpc::proto::{self};
-use serde_json::Value;
 use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
-use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     pane, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop,
@@ -272,71 +268,42 @@ impl DebugPanel {
                     cx.notify();
                 });
             }
-            dap_store::DapStoreEvent::RunInTerminal((session_id, request)) => {
-                self.handle_run_in_terminal_request(session_id, request, dap_store, window, cx);
+            dap_store::DapStoreEvent::RunInTerminal {
+                title,
+                cwd,
+                command,
+                args,
+                envs,
+                sender,
+                ..
+            } => {
+                self.handle_run_in_terminal_request(
+                    title.clone(),
+                    cwd.clone(),
+                    command.clone(),
+                    args.clone(),
+                    envs.clone(),
+                    sender.clone(),
+                    window,
+                    cx,
+                )
+                .detach_and_log_err(cx);
             }
             _ => {}
         }
     }
 
     fn handle_run_in_terminal_request(
-        &mut self,
-        session_id: &SessionId,
-        request: &dap::messages::Request,
-        dap_store: &Entity<DapStore>,
+        &self,
+        title: Option<String>,
+        cwd: PathBuf,
+        command: Option<String>,
+        args: Vec<String>,
+        envs: HashMap<String, String>,
+        mut sender: mpsc::Sender<Result<u32>>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
-            return;
-        };
-
-        let seq = request.seq;
-
-        let Some(request_args) = request
-            .arguments
-            .clone()
-            .and_then(|args| serde_json::from_value::<RunInTerminalRequestArguments>(args).ok())
-        else {
-            session.update(cx, |session, cx| {
-                session
-                    .respond_to_client(
-                        seq,
-                        false,
-                        RunInTerminal::COMMAND.to_string(),
-                        serde_json::to_value(dap::ErrorResponse {
-                            error: Some(dap::Message {
-                                id: seq,
-                                format:
-                                    "Request arguments must be provided when spawnng debug terminal"
-                                        .into(),
-                                variables: None,
-                                send_telemetry: None,
-                                show_user: None,
-                                url: None,
-                                url_label: None,
-                            }),
-                        })
-                        .ok(),
-                        cx,
-                    )
-                    .detach_and_log_err(cx);
-            });
-            return;
-        };
-
-        let mut envs: HashMap<String, String> = Default::default();
-        if let Some(Value::Object(env)) = request_args.env {
-            for (key, value) in env {
-                let value_str = match (key.as_str(), value) {
-                    (_, Value::String(value)) => value,
-                    _ => continue,
-                };
-
-                envs.insert(key, value_str);
-            }
-        }
-
+    ) -> Task<Result<()>> {
         let terminal_task = self.workspace.update(cx, |workspace, cx| {
             let terminal_panel = workspace.panel::<TerminalPanel>(cx).ok_or_else(|| {
                 anyhow!("RunInTerminal DAP request failed because TerminalPanel wasn't found")
@@ -347,44 +314,14 @@ impl DebugPanel {
                 Err(err) => return Task::ready(Err(err)),
             };
 
-            let cwd = PathBuf::from(request_args.cwd);
-
-            match cwd.try_exists() {
-                Ok(true) => (),
-                Ok(false) => {
-                    return Task::ready(Err(anyhow!(
-                        "cwd from RunInTerminal request does not exist"
-                    )))
-                }
-                Err(err) => {
-                    return Task::ready(Err(anyhow!(
-                        "Couldn't verify cwd from RunInTerminal request. err msg: {}",
-                        err.to_string()
-                    )))
-                }
-            }
-
             terminal_panel.update(cx, |terminal_panel, cx| {
-                let mut args = request_args.args.clone();
-
-                // Handle special case for NodeJS debug adapter
-                // If only the Node binary path is provided, we set the command to None
-                // This prevents the NodeJS REPL from appearing, which is not the desired behavior
-                // The expected usage is for users to provide their own Node command, e.g., `node test.js`
-                // This allows the NodeJS debug client to attach correctly
-                let command = if args.len() > 1 {
-                    Some(args.remove(0))
-                } else {
-                    None
-                };
-
                 let terminal_task = terminal_panel.add_terminal(
                     TerminalKind::Debug {
                         command,
                         args,
                         envs,
                         cwd,
-                        title: request_args.title,
+                        title,
                     },
                     task::RevealStrategy::Always,
                     window,
@@ -403,75 +340,24 @@ impl DebugPanel {
             })
         });
 
-        let session = session.downgrade();
-        let dap_store = dap_store.downgrade();
-        cx.spawn(|mut cx| async move {
-            // Ensure a response is always sent, even in error cases,
-            // to maintain proper communication with the debug adapter
-            let (success, body) = match terminal_task {
+        cx.background_spawn(async move {
+            match terminal_task {
                 Ok(pid_task) => match pid_task.await {
-                    Ok(pid) => (
-                        true,
-                        serde_json::to_value(dap::RunInTerminalResponse {
-                            process_id: None,
-                            shell_process_id: pid.map(|pid| pid.as_u32() as u64),
-                        })
-                        .ok(),
-                    ),
-                    Err(error) => {
-                        dap_store
-                            .update(&mut cx, |_, cx| {
-                                cx.emit(dap_store::DapStoreEvent::Notification(error.to_string()));
-                            })
-                            .log_err();
-
-                        (
-                            false,
-                            serde_json::to_value(dap::ErrorResponse {
-                                error: Some(dap::Message {
-                                    id: seq,
-                                    format: error.to_string(),
-                                    variables: None,
-                                    send_telemetry: None,
-                                    show_user: None,
-                                    url: None,
-                                    url_label: None,
-                                }),
-                            })
-                            .ok(),
-                        )
+                    Ok(Some(pid)) => sender.send(Ok(pid.as_u32())).await?,
+                    Ok(None) => {
+                        sender
+                            .send(Err(anyhow!(
+                                "Terminal was spawned but PID was not available"
+                            )))
+                            .await?
                     }
+                    Err(error) => sender.send(Err(anyhow!(error))).await?,
                 },
-                Err(error) => (
-                    false,
-                    serde_json::to_value(dap::ErrorResponse {
-                        error: Some(dap::Message {
-                            id: seq,
-                            format: error.to_string(),
-                            variables: None,
-                            send_telemetry: None,
-                            show_user: None,
-                            url: None,
-                            url_label: None,
-                        }),
-                    })
-                    .ok(),
-                ),
+                Err(error) => sender.send(Err(anyhow!(error))).await?,
             };
 
-            let respond_task = session.update(&mut cx, |session, cx| {
-                session.respond_to_client(
-                    seq,
-                    success,
-                    RunInTerminal::COMMAND.to_string(),
-                    body,
-                    cx,
-                )
-            })?;
-
-            respond_task.await
+            Ok(())
         })
-        .detach_and_log_err(cx);
     }
 
     fn handle_pane_event(
