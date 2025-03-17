@@ -37,11 +37,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    client::{DebugAdapterClient, SessionId},
-    messages::Message,
-    DebugAdapterConfig,
-};
+use dap::{client::DebugAdapterClient, DebugAdapterConfig};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -265,13 +261,6 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
-    DebugClientStarted(SessionId),
-    DebugClientShutdown(SessionId),
-    DebugClientEvent {
-        session_id: SessionId,
-        message: Message,
-    },
-    DebugClientLog(SessionId, String),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -2606,21 +2595,6 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            DapStoreEvent::DebugClientStarted(session_id) => {
-                cx.emit(Event::DebugClientStarted(*session_id));
-            }
-            DapStoreEvent::DebugClientShutdown(session_id) => {
-                cx.emit(Event::DebugClientShutdown(*session_id));
-            }
-            DapStoreEvent::DebugClientEvent {
-                session_id,
-                message,
-            } => {
-                cx.emit(Event::DebugClientEvent {
-                    session_id: *session_id,
-                    message: message.clone(),
-                });
-            }
             DapStoreEvent::Notification(message) => {
                 cx.emit(Event::Toast {
                     notification_id: "dap".into(),
