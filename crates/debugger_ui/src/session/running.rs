@@ -176,7 +176,7 @@ impl Render for RunningState {
                                         IconButton::new("debug-restart", IconName::DebugRestart)
                                             .icon_size(IconSize::Small)
                                             .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.restart_client(cx);
+                                                this.restart_session(cx);
                                             }))
                                             .disabled(
                                                 !capabilities
@@ -470,7 +470,7 @@ impl RunningState {
         self.session.read(cx).ignore_breakpoints()
     }
 
-    pub fn capabilities(&self, cx: &mut Context<Self>) -> Capabilities {
+    pub fn capabilities(&self, cx: &App) -> Capabilities {
         self.session().read(cx).capabilities().clone()
     }
 
@@ -608,7 +608,7 @@ impl RunningState {
         });
     }
 
-    pub fn restart_client(&self, cx: &mut Context<Self>) {
+    pub fn restart_session(&self, cx: &mut Context<Self>) {
         self.session().update(cx, |state, cx| {
             state.restart(None, cx);
         });

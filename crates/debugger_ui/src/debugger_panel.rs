@@ -155,11 +155,24 @@ impl DebugPanel {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
 
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
-                    let (has_active_session, support_step_back) =
-                        debug_panel.update(cx, |this, cx| {
+                    let (has_active_session, supports_restart, support_step_back) = debug_panel
+                        .update(cx, |this, cx| {
                             this.active_session(cx)
-                                .map(|_item| (true, false))
-                                .unwrap_or((false, false))
+                                .map(|item| {
+                                    let caps = item
+                                        .read(cx)
+                                        .mode()
+                                        .as_running()
+                                        .map(|running| running.read(cx).capabilities(cx))
+                                        .unwrap_or_default();
+
+                                    (
+                                        true,
+                                        caps.supports_restart_request.unwrap_or_default(),
+                                        caps.supports_step_back.unwrap_or_default(),
+                                    )
+                                })
+                                .unwrap_or((false, false, false))
                         });
 
                     let filter = CommandPaletteFilter::global_mut(cx);
@@ -171,14 +184,20 @@ impl DebugPanel {
                         TypeId::of::<Stop>(),
                         TypeId::of::<Disconnect>(),
                         TypeId::of::<Pause>(),
-                        TypeId::of::<Restart>(),
                         TypeId::of::<ToggleIgnoreBreakpoints>(),
                     ];
 
                     let step_back_action_type = [TypeId::of::<StepBack>()];
+                    let restart_action_type = [TypeId::of::<Restart>()];
 
                     if has_active_session {
                         filter.show_action_types(debugger_action_types.iter());
+
+                        if supports_restart {
+                            filter.show_action_types(restart_action_type.iter());
+                        } else {
+                            filter.hide_action_types(&restart_action_type);
+                        }
 
                         if support_step_back {
                             filter.show_action_types(step_back_action_type.iter());
@@ -189,6 +208,7 @@ impl DebugPanel {
                         // show only the `debug: start`
                         filter.hide_action_types(&debugger_action_types);
                         filter.hide_action_types(&step_back_action_type);
+                        filter.hide_action_types(&restart_action_type);
                     }
                 })
                 .detach();
@@ -198,7 +218,7 @@ impl DebugPanel {
         })
     }
 
-    pub fn active_session(&self, cx: &Context<Self>) -> Option<Entity<DebugSession>> {
+    pub fn active_session(&self, cx: &App) -> Option<Entity<DebugSession>> {
         self.pane
             .read(cx)
             .active_item()
