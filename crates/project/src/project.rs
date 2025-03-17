@@ -652,6 +652,7 @@ impl Hover {
 enum EntitySubscription {
     Project(PendingEntitySubscription<Project>),
     BufferStore(PendingEntitySubscription<BufferStore>),
+    GitStore(PendingEntitySubscription<GitStore>),
     WorktreeStore(PendingEntitySubscription<WorktreeStore>),
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
@@ -1094,6 +1095,7 @@ impl Project {
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
             EntitySubscription::BufferStore(client.subscribe_to_entity::<BufferStore>(remote_id)?),
+            EntitySubscription::GitStore(client.subscribe_to_entity::<GitStore>(remote_id)?),
             EntitySubscription::WorktreeStore(
                 client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
             ),
@@ -1122,7 +1124,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 5],
+        subscriptions: [EntitySubscription; 6],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
@@ -1239,7 +1241,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                git_store,
+                git_store: git_store.clone(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1268,6 +1270,9 @@ impl Project {
                 }
                 EntitySubscription::WorktreeStore(subscription) => {
                     subscription.set_entity(&worktree_store, &mut cx)
+                }
+                EntitySubscription::GitStore(subscription) => {
+                    subscription.set_entity(&git_store, &mut cx)
                 }
                 EntitySubscription::SettingsObserver(subscription) => {
                     subscription.set_entity(&settings_observer, &mut cx)
