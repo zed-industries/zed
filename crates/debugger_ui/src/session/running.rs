@@ -498,7 +498,6 @@ impl RunningState {
         self.thread_id
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn thread_status(&self, cx: &App) -> Option<ThreadStatus> {
         self.thread_id
             .map(|id| self.session().read(cx).thread_status(id))

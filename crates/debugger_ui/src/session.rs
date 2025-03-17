@@ -197,19 +197,22 @@ impl Focusable for DebugSession {
 
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
-    fn tab_content(&self, _: item::TabContentParams, _: &Window, _: &App) -> AnyElement {
-        let label = match &self.mode {
-            DebugSessionState::Inert(_) => "New Session",
-            DebugSessionState::Starting(_) => "Starting",
-            DebugSessionState::Failed(_) => "Failed",
-            DebugSessionState::Running(_) => "Running",
+    fn tab_content(&self, _: item::TabContentParams, _: &Window, cx: &App) -> AnyElement {
+        let (label, color) = match &self.mode {
+            DebugSessionState::Inert(_) => ("New Session", Color::Default),
+            DebugSessionState::Starting(_) => ("Starting", Color::Default),
+            DebugSessionState::Failed(_) => ("Failed", Color::Error),
+            DebugSessionState::Running(state) => (
+                state
+                    .read_with(cx, |state, cx| state.thread_status(cx))
+                    .map(|status| status.label())
+                    .unwrap_or("Running"),
+                Color::Default,
+            ),
         };
-        let color = if let DebugSessionState::Failed(_) = &self.mode {
-            Color::Error
-        } else {
-            Color::Default
-        };
+
         let is_starting = matches!(self.mode, DebugSessionState::Starting(_));
+
         h_flex()
             .gap_1()
             .children(is_starting.then(|| {

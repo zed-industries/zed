@@ -86,6 +86,18 @@ pub enum ThreadStatus {
     Ended,
 }
 
+impl ThreadStatus {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ThreadStatus::Running => "Running",
+            ThreadStatus::Stopped => "Stopped",
+            ThreadStatus::Stepping => "Stepping",
+            ThreadStatus::Exited => "Exited",
+            ThreadStatus::Ended => "Ended",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
