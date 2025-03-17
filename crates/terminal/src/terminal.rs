@@ -322,15 +322,16 @@ const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file_path>[^"]+)", line (?P<li
 
 fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
     // assumes a match from the PYTHON_FILE_LINE_REGEX
-    if let Some(comma_pos) = input.rfind(',') {
-        let line_part = &input[comma_pos + 7..]; // skip ", line "
-        println!("'{}'", line_part);
-        if let Ok(line_number) = line_part.parse::<u32>() {
-            let path_part = &input[6..comma_pos - 1]; // skip `File "` and remove the trailing `"`
-            return Some((path_part, line_number));
-        }
+    let filename_end_pos = input.rfind('"')?;
+    let line_prefix_end = filename_end_pos + 1 + ", line ".len();
+    if line_prefix_end >= input.len() {
+        return None;
     }
-    None
+    let line_part = &input[line_prefix_end..];
+    let line_number = line_part.parse::<u32>().ok()?;
+    let file_prefix_end = "File \"".len();
+    let path_part = &input[file_prefix_end..filename_end_pos]; // -1 to remove the trailing `"`
+    return Some((path_part, line_number));
 }
 
 pub struct TerminalBuilder {
@@ -2312,8 +2313,19 @@ mod tests {
 
     #[test]
     fn test_python_file_line() {
-        let (file, line) = python_extract_path_and_line("File \"/zed/bad_py.py\", line 8").unwrap();
-        assert!(file == "/zed/bad_py.py");
-        assert!(line == 8);
+        let inputs: Vec<(&str, Option<(&str, u32)>)> = vec![
+            (
+                "File \"/zed/bad_py.py\", line 8",
+                Some(("/zed/bad_py.py", 8u32)),
+            ),
+            ("File \"/zed/bad_py.py\"", None),
+            ("unrelated", None),
+        ];
+        let actual = inputs
+            .iter()
+            .map(|input| python_extract_path_and_line(input.0))
+            .collect::<Vec<_>>();
+        let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }
