@@ -91,7 +91,10 @@ impl KeyBinding {
         match key_icon {
             Some(icon) => KeyIcon::new(icon, color).size(self.size).into_any_element(),
             None => {
-                let key = util::capitalize(keystroke.key.unparse());
+                #[cfg(not(target_os = "windows"))]
+                let key = util::capitalize(&keystroke.key);
+                #[cfg(target_os = "windows")]
+                let key = util::capitalize(&keystroke.key.display());
                 Key::new(&key, color).size(self.size).into_any_element()
             }
         }
@@ -112,7 +115,16 @@ impl RenderOnce for KeyBinding {
                     self.key_binding
                         .keystrokes()
                         .iter()
-                        .map(|k| k.key.unparse().to_string())
+                        .map(|k| {
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                k.key.to_string()
+                            }
+                            #[cfg(target_os = "windows")]
+                            {
+                                k.key.display()
+                            }
+                        })
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
@@ -149,27 +161,29 @@ impl RenderOnce for KeyBinding {
 }
 
 fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<IconName> {
-    // match keystroke.key.as_str() {
-    //     "left" => Some(IconName::ArrowLeft),
-    //     "right" => Some(IconName::ArrowRight),
-    //     "up" => Some(IconName::ArrowUp),
-    //     "down" => Some(IconName::ArrowDown),
-    //     "backspace" => Some(IconName::Backspace),
-    //     "delete" => Some(IconName::Delete),
-    //     "return" => Some(IconName::Return),
-    //     "enter" => Some(IconName::Return),
-    //     "tab" => Some(IconName::Tab),
-    //     "space" => Some(IconName::Space),
-    //     "escape" => Some(IconName::Escape),
-    //     "pagedown" => Some(IconName::PageDown),
-    //     "pageup" => Some(IconName::PageUp),
-    //     "shift" if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
-    //     "control" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
-    //     "platform" if platform_style == PlatformStyle::Mac => Some(IconName::Command),
-    //     "function" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
-    //     "alt" if platform_style == PlatformStyle::Mac => Some(IconName::Option),
-    //     _ => None,
-    // }
+    #[cfg(not(target_os = "windows"))]
+    match keystroke.key.as_str() {
+        "left" => Some(IconName::ArrowLeft),
+        "right" => Some(IconName::ArrowRight),
+        "up" => Some(IconName::ArrowUp),
+        "down" => Some(IconName::ArrowDown),
+        "backspace" => Some(IconName::Backspace),
+        "delete" => Some(IconName::Delete),
+        "return" => Some(IconName::Return),
+        "enter" => Some(IconName::Return),
+        "tab" => Some(IconName::Tab),
+        "space" => Some(IconName::Space),
+        "escape" => Some(IconName::Escape),
+        "pagedown" => Some(IconName::PageDown),
+        "pageup" => Some(IconName::PageUp),
+        "shift" if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+        "control" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        "platform" if platform_style == PlatformStyle::Mac => Some(IconName::Command),
+        "function" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        "alt" if platform_style == PlatformStyle::Mac => Some(IconName::Option),
+        _ => None,
+    }
+    #[cfg(target_os = "windows")]
     match keystroke.key {
         gpui::KeyCodes::Left => Some(IconName::ArrowLeft),
         gpui::KeyCodes::Right => Some(IconName::ArrowRight),
@@ -451,12 +465,22 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
     }
 
     if vim_mode {
-        text.push_str(keystroke.key.unparse())
+        #[cfg(not(target_os = "windows"))]
+        text.push_str(&keystroke.key);
+        #[cfg(target_os = "windows")]
+        text.push_str(&keystroke.key.display());
     } else {
+        #[cfg(not(target_os = "windows"))]
+        let key = match keystroke.key.as_str() {
+            "pageup" => "PageUp",
+            "pagedown" => "PageDown",
+            key => &util::capitalize(key.unparse()),
+        };
+        #[cfg(target_os = "windows")]
         let key = match &keystroke.key {
             gpui::KeyCodes::PageUp => "PageUp",
             gpui::KeyCodes::PageDown => "PageDown",
-            key => &util::capitalize(key.unparse()),
+            key => &util::capitalize(&key.display()),
         };
         text.push_str(key);
     }

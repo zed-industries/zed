@@ -232,7 +232,7 @@ impl Keystroke {
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {
         self.key_char.is_none()
-            && (is_printable_key(&self.key) || self.key == KeyCodes::Unknown("".into()))
+            && (is_printable_key(&self.key) || is_empty_key(&self.key))
             && !(self.modifiers.platform
                 || self.modifiers.control
                 || self.modifiers.function
@@ -255,7 +255,7 @@ impl Keystroke {
                     "space" => Some(" ".into()),
                     "tab" => Some("\t".into()),
                     "enter" => Some("\n".into()),
-                    key if !is_printable_key(key) || key.is_empty() => None,
+                    key if !is_printable_key(key) || is_empty_key(key) => None,
                     key => {
                         if self.modifiers.shift {
                             Some(key.to_uppercase())
@@ -271,7 +271,7 @@ impl Keystroke {
                     KeyCodes::Space => Some(" ".into()),
                     KeyCodes::Tab => Some("\t".into()),
                     KeyCodes::Enter => Some("\n".into()),
-                    key if !is_printable_key(key) || *key == KeyCodes::Unknown("".into()) => None,
+                    key if !is_printable_key(key) || is_empty_key(key) => None,
                     key => Some(key.to_output_string(self.modifiers.shift)),
                 };
             }
@@ -280,6 +280,46 @@ impl Keystroke {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+fn is_printable_key(key: &str) -> bool {
+    !matches!(
+        key,
+        "f1" | "f2"
+            | "f3"
+            | "f4"
+            | "f5"
+            | "f6"
+            | "f7"
+            | "f8"
+            | "f9"
+            | "f10"
+            | "f11"
+            | "f12"
+            | "f13"
+            | "f14"
+            | "f15"
+            | "f16"
+            | "f17"
+            | "f18"
+            | "f19"
+            | "backspace"
+            | "delete"
+            | "left"
+            | "right"
+            | "up"
+            | "down"
+            | "pageup"
+            | "pagedown"
+            | "insert"
+            | "home"
+            | "end"
+            | "back"
+            | "forward"
+            | "escape"
+    )
+}
+
+#[cfg(target_os = "windows")]
 fn is_printable_key(key: &KeyCodes) -> bool {
     !matches!(
         key,
@@ -323,45 +363,19 @@ fn is_printable_key(key: &KeyCodes) -> bool {
             | KeyCodes::Escape
     )
 }
-// fn is_printable_key(key: &str) -> bool {
-//     !matches!(
-//         key,
-//         "f1" | "f2"
-//             | "f3"
-//             | "f4"
-//             | "f5"
-//             | "f6"
-//             | "f7"
-//             | "f8"
-//             | "f9"
-//             | "f10"
-//             | "f11"
-//             | "f12"
-//             | "f13"
-//             | "f14"
-//             | "f15"
-//             | "f16"
-//             | "f17"
-//             | "f18"
-//             | "f19"
-//             | "backspace"
-//             | "delete"
-//             | "left"
-//             | "right"
-//             | "up"
-//             | "down"
-//             | "pageup"
-//             | "pagedown"
-//             | "insert"
-//             | "home"
-//             | "end"
-//             | "back"
-//             | "forward"
-//             | "escape"
-//     )
-// }
+
+#[cfg(not(target_os = "windows"))]
+fn is_empty_key(key: &str) -> bool {
+    key.is_empty()
+}
+
+#[cfg(target_os = "windows")]
+fn is_empty_key(key: &KeyCodes) -> bool {
+    *key == KeyCodes::Unknown("".into())
+}
 
 impl std::fmt::Display for Keystroke {
+    #[cfg(not(target_os = "windows"))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.modifiers.control {
             f.write_char('^')?;
@@ -382,41 +396,44 @@ impl std::fmt::Display for Keystroke {
         if self.modifiers.shift {
             f.write_char('⇧')?;
         }
-        // let key = match self.key.as_str() {
-        //     "backspace" => '⌫',
-        //     "up" => '↑',
-        //     "down" => '↓',
-        //     "left" => '←',
-        //     "right" => '→',
-        //     "tab" => '⇥',
-        //     "escape" => '⎋',
-        //     "shift" => '⇧',
-        //     "control" => '⌃',
-        //     "alt" => '⌥',
-        //     "platform" => '⌘',
-        //     key => {
-        //         if key.len() == 1 {
-        //             key.chars().next().unwrap().to_ascii_uppercase()
-        //         } else {
-        //             return f.write_str(key);
-        //         }
-        //     }
-        // };
-        let key = match &self.key {
-            KeyCodes::Backspace => '⌫',
-            KeyCodes::Up => '↑',
-            KeyCodes::Down => '↓',
-            KeyCodes::Left => '←',
-            KeyCodes::Right => '→',
-            KeyCodes::Tab => '⇥',
-            KeyCodes::Escape => '⎋',
-            KeyCodes::Shift(_) => '⇧',
-            KeyCodes::Control(_) => '⌃',
-            KeyCodes::Alt(_) => '⌥',
-            KeyCodes::Platform(_) => '⌘',
-            key => key.unparse().chars().next().unwrap(),
+        let key = match self.key.as_str() {
+            "backspace" => '⌫',
+            "up" => '↑',
+            "down" => '↓',
+            "left" => '←',
+            "right" => '→',
+            "tab" => '⇥',
+            "escape" => '⎋',
+            "shift" => '⇧',
+            "control" => '⌃',
+            "alt" => '⌥',
+            "platform" => '⌘',
+            key => {
+                if key.len() == 1 {
+                    key.chars().next().unwrap().to_ascii_uppercase()
+                } else {
+                    return f.write_str(key);
+                }
+            }
         };
         f.write_char(key)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.modifiers.control {
+            f.write_str("Ctrl")?;
+        }
+        if self.modifiers.alt {
+            f.write_str("Alt")?;
+        }
+        if self.modifiers.platform {
+            f.write_str("Win")?;
+        }
+        if self.modifiers.shift {
+            f.write_str("Shift")?;
+        }
+        f.write_str(&self.key.display())
     }
 }
 

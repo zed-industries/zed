@@ -1472,9 +1472,6 @@ async fn test_remap_adjacent_dog_cat(cx: &mut gpui::TestAppContext) {
 async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
     cx.update(|_, cx| {
-        // What? 📌 is a key?
-        // This is definitely wrong, if we want to insert some text, we should use SendText or something else,
-        // but not SendKeystrokes.
         cx.bind_keys([
             KeyBinding::new(
                 "p i n",

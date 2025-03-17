@@ -325,7 +325,7 @@ fn handle_syskeydown_msg(
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
-    println!("parse_syskeydown_msg_keystroke {:#?}", keystroke);
+    // println!("parse_syskeydown_msg_keystroke {:#?}", keystroke);
     let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyDownEvent {
         keystroke,
@@ -369,10 +369,10 @@ fn handle_keydown_msg(
             is_held: lparam.0 & (0x1 << 30) > 0,
         })
     }) else {
-        println!("parse_keydown_msg_keystroke failed");
+        // println!("parse_keydown_msg_keystroke failed");
         return Some(1);
     };
-    println!("parse_keydown_msg_keystroke {:#?}", event);
+    // println!("parse_keydown_msg_keystroke {:#?}", event);
 
     let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
@@ -1238,6 +1238,7 @@ where
 
 fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<String> {
     let first_char = char::from_u32((wparam.0 as u16).into())?;
+    println!("char {:#?}", first_char);
     if first_char.is_control() {
         None
     } else {

@@ -302,6 +302,8 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // What's going on here?
+        // On Windows, the character palette is opened with Win+.(period).
         if self
             .terminal
             .read(cx)
@@ -309,10 +311,10 @@ impl TerminalView {
             .mode
             .contains(TermMode::ALT_SCREEN)
         {
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "windows"))]
             let key = "ctrl-cmd-space";
-            #[cfg(not(target_os = "macos"))]
-            let key = "ctrl-space";
+            #[cfg(target_os = "windows")]
+            let key = "win-.";
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse(key, false, None).unwrap(),

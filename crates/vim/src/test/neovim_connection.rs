@@ -111,10 +111,16 @@ impl NeovimConnection {
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
     pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let mut keystroke = Keystroke::parse(keystroke_text, true, None).unwrap();
+        let mut keystroke = Keystroke::parse(keystroke_text, false, None).unwrap();
 
+        // What's this? "<" key? "lt" key?
+        #[cfg(not(target_os = "windows"))]
         if keystroke.key == "<" {
-            keystroke.key = "lt".to_string()
+            keystroke.key = "lt".to_string();
+        }
+        #[cfg(target_os = "windows")]
+        if keystroke.key == gpui::KeyCodes::Unknown("<".into()) {
+            keystroke.key = gpui::KeyCodes::Unknown("lt".to_string());
         }
 
         let special = keystroke.modifiers.shift
@@ -137,7 +143,13 @@ impl NeovimConnection {
         };
         let end = if special { ">" } else { "" };
 
+        #[cfg(not(target_os = "windows"))]
         let key = format!("{start}{shift}{ctrl}{alt}{cmd}{}{end}", keystroke.key);
+        #[cfg(target_os = "windows")]
+        let key = format!(
+            "{start}{shift}{ctrl}{alt}{cmd}{}{end}",
+            keystroke.key.display()
+        );
 
         self.data
             .push_back(NeovimData::Key(keystroke_text.to_string()));
