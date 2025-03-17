@@ -3,11 +3,11 @@ mod settings;
 
 use std::sync::Arc;
 
+use ::settings::Settings as _;
 use anyhow::{anyhow, Result};
 use git::repository::GitRepository;
 use git::GitHostingProviderRegistry;
 use gpui::App;
-use ::settings::Settings as _;
 use url::Url;
 use util::maybe;
 
@@ -29,35 +29,29 @@ pub fn init(cx: &mut App) {
 
     let settings = GitProviderSettings::get_global(cx);
 
-    settings
-        .providers
-        .clone()
-        .unwrap_or(vec![])
-        .iter()
-        .for_each(|custom_provider_config| {
-            // TODO: Don't `unwrap`.
-            match custom_provider_config.provider_type.as_str() {
-                "bitbucket" => {
-                    provider_registry.register_hosting_provider(Arc::new(Bitbucket::new(
-                        &custom_provider_config.name,
-                        Url::parse(&custom_provider_config.domain).unwrap(),
-                    )));
-                }
-                "github" => {
-                    provider_registry.register_hosting_provider(Arc::new(Github::new(
-                        &custom_provider_config.name,
-                        Url::parse(&custom_provider_config.domain).unwrap(),
-                    )));
-                }
-                "gitlab" => {
-                    provider_registry.register_hosting_provider(Arc::new(Gitlab::new(
-                        &custom_provider_config.name,
-                        Url::parse(&custom_provider_config.domain).unwrap(),
-                    )));
-                }
-                _ => {}
+    for custom_provider_config in settings.providers.iter() {
+        // TODO: Don't `unwrap`.
+        match custom_provider_config.provider {
+            settings::GitHostingProviderKind::Bitbucket => {
+                provider_registry.register_hosting_provider(Arc::new(Bitbucket::new(
+                    &custom_provider_config.name,
+                    Url::parse(&custom_provider_config.domain).unwrap(),
+                )));
             }
-        });
+            settings::GitHostingProviderKind::Github => {
+                provider_registry.register_hosting_provider(Arc::new(Github::new(
+                    &custom_provider_config.name,
+                    Url::parse(&custom_provider_config.domain).unwrap(),
+                )));
+            }
+            settings::GitHostingProviderKind::Gitlab => {
+                provider_registry.register_hosting_provider(Arc::new(Gitlab::new(
+                    &custom_provider_config.name,
+                    Url::parse(&custom_provider_config.domain).unwrap(),
+                )));
+            }
+        }
+    }
 }
 
 /// Registers additional Git hosting providers.
@@ -97,7 +91,6 @@ pub fn get_host_from_git_remote_url(remote_url: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::get_host_from_git_remote_url;
-    use crate::settings::GitProviderConfig;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -121,15 +114,5 @@ mod tests {
             let host = get_host_from_git_remote_url(remote_url).ok();
             assert_eq!(host, expected_host);
         }
-    }
-
-    #[test]
-    fn test_git_provider_config_is_valid() {
-        let config = GitProviderConfig {
-            domain: "code.corp.big.com".to_string(),
-            provider_type: "github".to_string(),
-            name: "Corporate GitHub".to_string(),
-        };
-        assert!(config.is_valid());
     }
 }
