@@ -946,22 +946,23 @@ impl Terminal {
                 } else if let Some(python_match) =
                     regex_match_at(term, point, &mut self.python_file_line_regex)
                 {
-                    let file_line =
+                    let matching_line =
                         term.bounds_to_string(*python_match.start(), *python_match.end());
 
-                    let p: Result<_, _> = python_extract_path_and_line(file_line.as_str())
-                        .map(|(file_path, line_number)| {
-                            (
-                                format!("{}:{}", file_path, line_number),
-                                false,
-                                python_match,
-                            )
-                        })
-                        .ok_or_else(|| {
-                            "Could not parse python file, line number reference".to_string()
-                        });
+                    let file_and_line: Result<_, _> =
+                        python_extract_path_and_line(matching_line.as_str())
+                            .map(|(file_path, line_number)| {
+                                (
+                                    format!("{}:{}", file_path, line_number),
+                                    false,
+                                    python_match,
+                                )
+                            })
+                            .ok_or_else(|| {
+                                "Could not parse python file, line number reference".to_string()
+                            });
 
-                    p.log_err()
+                    file_and_line.log_err()
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
