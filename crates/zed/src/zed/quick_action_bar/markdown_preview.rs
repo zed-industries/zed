@@ -30,7 +30,7 @@ impl QuickActionBar {
         // TODO:
         // Do we have "click" key on keyboard?
         let alt_click = gpui::Keystroke {
-            key: gpui::KeyCodes::Unknown,
+            key: gpui::KeyCodes::Unknown("click".into()),
             modifiers: Modifiers::alt(),
             ..Default::default()
         };

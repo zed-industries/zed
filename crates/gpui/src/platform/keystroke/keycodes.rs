@@ -5,11 +5,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use crate::Modifiers;
 
 /// TODO:
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum KeyCodes {
     /// Un-recognized key
-    #[default]
-    Unknown,
+    Unknown(String),
     /// Fn on macOS
     Function,
     /// Control-break processing, `VK_CANCEL` on Windows.
@@ -357,6 +356,12 @@ pub enum KeyCodes {
     // OEMClear,
 }
 
+impl Default for KeyCodes {
+    fn default() -> Self {
+        Self::Unknown("".to_string())
+    }
+}
+
 /// TODO:
 #[derive(Copy, Clone, Debug, Default, Hash)]
 pub enum KeyPosition {
@@ -385,7 +390,6 @@ impl Eq for KeyPosition {}
 impl KeyCodes {
     fn basic_parse(input: &str) -> Option<Self> {
         Some(match input {
-            "UnImplemented" | "Unknown" => Self::Unknown,
             "fn" => Self::Function,
             "cancel" => Self::Cancel,
             "backspace" => Self::Backspace,
@@ -610,14 +614,14 @@ impl KeyCodes {
         let shift = high & 1;
         let ctrl = high & 2;
         let alt = high & 8;
-        let this = VIRTUAL_KEY(low as u16).into();
+        let this = VIRTUAL_KEY(low as u16).try_into()?;
         Ok((this, shift != 0, ctrl != 0, alt != 0))
     }
 
     /// TODO:
     pub fn unparse(&self) -> &str {
         match self {
-            KeyCodes::Unknown => "UnImplemented",
+            KeyCodes::Unknown(content) => &content,
             KeyCodes::Function => "fn",
             KeyCodes::Cancel => "cancel",
             KeyCodes::Backspace => "backspace",
@@ -840,9 +844,11 @@ impl KeyCodes {
     }
 }
 
-impl From<VIRTUAL_KEY> for KeyCodes {
-    fn from(value: VIRTUAL_KEY) -> Self {
-        match value {
+impl TryFrom<VIRTUAL_KEY> for KeyCodes {
+    type Error = anyhow::Error;
+
+    fn try_from(value: VIRTUAL_KEY) -> Result<Self, Self::Error> {
+        Ok(match value {
             // VirtualKeyCode::Unknown => todo!(),
             // VirtualKeyCode::Function => todo!(),
             VK_CANCEL => KeyCodes::Cancel,
@@ -1011,8 +1017,8 @@ impl From<VIRTUAL_KEY> for KeyCodes {
             // VK_ZOOM => KeyCodes::Zoom,
             // VK_PA1 => KeyCodes::PA1,
             // VK_OEM_CLEAR => KeyCodes::OEMClear,
-            _ => KeyCodes::Unknown,
-        }
+            _ => return Err(anyhow::anyhow!("Unknown VIRTUAL_KEY({})", value.0)),
+        })
     }
 }
 

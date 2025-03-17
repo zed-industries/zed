@@ -181,10 +181,10 @@ impl Keystroke {
             &mut alt,
         )
         .log_err()
-        .unwrap_or(KeyCodes::Unknown); // TODO:
-        if key == KeyCodes::Unknown {
-            key_char = Some(source.to_string());
-        }
+        .unwrap_or_else(|| {
+            key_char = Some(key.clone());
+            KeyCodes::Unknown(key)
+        });
 
         Ok(Keystroke {
             modifiers: Modifiers {
@@ -232,7 +232,7 @@ impl Keystroke {
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {
         self.key_char.is_none()
-            && (is_printable_key(&self.key) || self.key == KeyCodes::Unknown)
+            && (is_printable_key(&self.key) || self.key == KeyCodes::Unknown("".into()))
             && !(self.modifiers.platform
                 || self.modifiers.control
                 || self.modifiers.function
@@ -267,11 +267,11 @@ impl Keystroke {
             }
             #[cfg(target_os = "windows")]
             {
-                self.key_char = match self.key {
+                self.key_char = match &self.key {
                     KeyCodes::Space => Some(" ".into()),
                     KeyCodes::Tab => Some("\t".into()),
                     KeyCodes::Enter => Some("\n".into()),
-                    key if !is_printable_key(&key) || key == KeyCodes::Unknown => None,
+                    key if !is_printable_key(key) || *key == KeyCodes::Unknown("".into()) => None,
                     key => Some(key.to_output_string(self.modifiers.shift)),
                 };
             }

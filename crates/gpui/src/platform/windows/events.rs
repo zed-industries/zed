@@ -1206,14 +1206,11 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         return None;
     }
 
-    match KeyCodes::from(VIRTUAL_KEY(vk_code)) {
-        KeyCodes::Unknown => None,
-        key => Some(Keystroke {
-            modifiers,
-            key,
-            key_char: None,
-        }),
-    }
+    Some(Keystroke {
+        modifiers,
+        key: KeyCodes::try_from(VIRTUAL_KEY(vk_code)).log_err()?,
+        key_char: None,
+    })
 }
 
 fn parse_keydown_msg_keystroke<F>(wparam: WPARAM, f: F) -> Option<PlatformInput>
@@ -1223,8 +1220,7 @@ where
     let vk_code = wparam.loword();
     let modifiers = current_modifiers();
 
-    match KeyCodes::from(VIRTUAL_KEY(vk_code)) {
-        KeyCodes::Unknown => None,
+    match KeyCodes::try_from(VIRTUAL_KEY(vk_code)).log_err()? {
         KeyCodes::Shift(_)
         | KeyCodes::Alt(_)
         | KeyCodes::Control(_)

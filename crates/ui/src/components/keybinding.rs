@@ -453,7 +453,7 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
     if vim_mode {
         text.push_str(keystroke.key.unparse())
     } else {
-        let key = match keystroke.key {
+        let key = match &keystroke.key {
             gpui::KeyCodes::PageUp => "PageUp",
             gpui::KeyCodes::PageDown => "PageDown",
             key => &util::capitalize(key.unparse()),
