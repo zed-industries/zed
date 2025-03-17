@@ -1030,8 +1030,7 @@ impl TryFrom<VIRTUAL_KEY> for KeyCodes {
 
     fn try_from(value: VIRTUAL_KEY) -> Result<Self, Self::Error> {
         Ok(match value {
-            // VirtualKeyCode::Unknown => todo!(),
-            // VirtualKeyCode::Function => todo!(),
+            // VirtualKeyCode::Function => todo(),
             VK_CANCEL => KeyCodes::Cancel,
             VK_BACK => KeyCodes::Backspace,
             VK_TAB => KeyCodes::Tab,
