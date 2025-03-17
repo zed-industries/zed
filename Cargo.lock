@@ -5114,7 +5114,6 @@ dependencies = [
  "fsevent",
  "futures 0.3.31",
  "git",
- "git2",
  "gpui",
  "libc",
  "log",

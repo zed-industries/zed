@@ -1291,9 +1291,6 @@ mod preview {
 #[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use collections::HashMap;
     use db::indoc;
     use editor::test::editor_test_context::{assert_state_with_diff, EditorTestContext};
     use git::status::{StatusCode, TrackedStatus};
@@ -1301,6 +1298,7 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::path::Path;
     use unindent::Unindent as _;
     use util::path;
 
@@ -1353,16 +1351,16 @@ mod tests {
             path!("/project/.git").as_ref(),
             &[("foo.txt".into(), "foo\n".into())],
         );
-        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.statuses = HashMap::from_iter([(
-                "foo.txt".into(),
-                TrackedStatus {
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "foo.txt".as_ref(),
+                FileStatus::Tracked(TrackedStatus {
                     index_status: StatusCode::Unmodified,
                     worktree_status: StatusCode::Modified,
-                }
-                .into(),
-            )]);
-        });
+                }),
+            )],
+        );
         cx.run_until_parked();
 
         let editor = diff.update(cx, |diff, _| diff.editor.clone());
@@ -1416,26 +1414,25 @@ mod tests {
                 ("foo".into(), "foo\n".into()),
             ],
         );
-        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.statuses = HashMap::from_iter([
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
                 (
-                    "bar".into(),
-                    TrackedStatus {
+                    "bar".as_ref(),
+                    FileStatus::Tracked(TrackedStatus {
                         index_status: StatusCode::Unmodified,
                         worktree_status: StatusCode::Modified,
-                    }
-                    .into(),
+                    }),
                 ),
                 (
-                    "foo".into(),
-                    TrackedStatus {
+                    "foo".as_ref(),
+                    FileStatus::Tracked(TrackedStatus {
                         index_status: StatusCode::Unmodified,
                         worktree_status: StatusCode::Modified,
-                    }
-                    .into(),
+                    }),
                 ),
-            ]);
-        });
+            ],
+        );
         cx.run_until_parked();
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
@@ -1515,16 +1512,6 @@ mod tests {
             path!("/project/.git").as_ref(),
             &[("foo".into(), "original\n".into())],
         );
-        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.statuses = HashMap::from_iter([(
-                "foo".into(),
-                TrackedStatus {
-                    index_status: StatusCode::Unmodified,
-                    worktree_status: StatusCode::Modified,
-                }
-                .into(),
-            )]);
-        });
         cx.run_until_parked();
 
         let diff_editor = diff.update(cx, |diff, _| diff.editor.clone());

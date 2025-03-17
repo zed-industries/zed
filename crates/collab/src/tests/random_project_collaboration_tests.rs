@@ -1016,17 +1016,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                         client.fs().create_dir(&dot_git_dir).await?;
                     }
 
-                    if git_operation {
-                        client.fs().set_status_for_repo_via_git_operation(
-                            &dot_git_dir,
-                            statuses.as_slice(),
-                        );
-                    } else {
-                        client.fs().set_status_for_repo_via_working_copy_change(
-                            &dot_git_dir,
-                            statuses.as_slice(),
-                        );
-                    }
+                    client
+                        .fs()
+                        .set_status_for_repo(&dot_git_dir, statuses.as_slice());
                 }
             },
         }

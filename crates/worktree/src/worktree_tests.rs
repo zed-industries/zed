@@ -717,6 +717,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         }),
     )
     .await;
+    fs.set_status_for_repo("/root/tree/.git".as_ref(), &[]);
 
     let tree = Worktree::local(
         "/root/tree".as_ref(),
@@ -744,14 +745,6 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         assert_entry_git_state(tree, "tracked-dir/ancestor-ignored-file1", None, false);
         assert_entry_git_state(tree, "ignored-dir/ignored-file1", None, true);
     });
-
-    fs.set_status_for_repo_via_working_copy_change(
-        Path::new("/root/tree/.git"),
-        &[(
-            Path::new("tracked-dir/tracked-file2"),
-            StatusCode::Added.index(),
-        )],
-    );
 
     fs.create_file(
         "/root/tree/tracked-dir/tracked-file2".as_ref(),
@@ -801,6 +794,10 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
         }),
     )
     .await;
+    fs.set_head_for_repo(
+        "/root/.git".as_ref(),
+        &[(".gitignore".into(), "*.xml".into())],
+    );
 
     let tree = Worktree::local(
         "/root".as_ref(),
@@ -831,11 +828,6 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     fs.atomic_write("/root/.gitignore".into(), "*.xml".into())
         .await
         .unwrap();
-
-    fs.set_status_for_repo_via_working_copy_change(
-        Path::new("/root/.git"),
-        &[(Path::new("b.txt"), StatusCode::Added.index())],
-    );
 
     cx.executor().run_until_parked();
     cx.read(|cx| {
@@ -1464,12 +1456,17 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
         json!({
             ".git": {},
             "a.txt": "",
-            "b":  {
+            "b": {
                 "c.txt": "",
             },
         }),
     )
     .await;
+    fs.set_head_and_index_for_repo(
+        "/root/.git".as_ref(),
+        &[("a.txt".into(), "".into()), ("b/c.txt".into(), "".into())],
+    );
+    cx.run_until_parked();
 
     let tree = Worktree::local(
         "/root".as_ref(),
@@ -1506,9 +1503,12 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
 
     // Regression test: changes to the git repository should still be
     // detected.
-    fs.set_status_for_repo_via_git_operation(
-        Path::new("/root/.git"),
-        &[(Path::new("b/c.txt"), StatusCode::Modified.index())],
+    fs.set_head_for_repo(
+        "/root/.git".as_ref(),
+        &[
+            ("a.txt".into(), "".into()),
+            ("b/c.txt".into(), "something-else".into()),
+        ],
     );
     cx.executor().run_until_parked();
     cx.executor().advance_clock(Duration::from_secs(1));
@@ -2916,18 +2916,18 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
     )
     .await;
 
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/x/.git"),
         &[
             (Path::new("x2.txt"), StatusCode::Modified.index()),
             (Path::new("z.txt"), StatusCode::Added.index()),
         ],
     );
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/x/y/.git"),
         &[(Path::new("y1.txt"), CONFLICT)],
     );
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/z/.git"),
         &[(Path::new("z2.txt"), StatusCode::Added.index())],
     );
@@ -3006,7 +3006,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     )
     .await;
 
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/.git"),
         &[
             (Path::new("a/b/c1.txt"), StatusCode::Added.index()),
@@ -3110,18 +3110,18 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
     )
     .await;
 
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/x/.git"),
         &[(Path::new("x1.txt"), StatusCode::Added.index())],
     );
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/y/.git"),
         &[
             (Path::new("y1.txt"), CONFLICT),
             (Path::new("y2.txt"), StatusCode::Modified.index()),
         ],
     );
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/z/.git"),
         &[(Path::new("z2.txt"), StatusCode::Modified.index())],
     );
@@ -3213,19 +3213,19 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     )
     .await;
 
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/x/.git"),
         &[
             (Path::new("x2.txt"), StatusCode::Modified.index()),
             (Path::new("z.txt"), StatusCode::Added.index()),
         ],
     );
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/x/y/.git"),
         &[(Path::new("y1.txt"), CONFLICT)],
     );
 
-    fs.set_status_for_repo_via_git_operation(
+    fs.set_status_for_repo(
         Path::new("/root/z/.git"),
         &[(Path::new("z2.txt"), StatusCode::Added.index())],
     );
@@ -3653,6 +3653,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[track_caller]
 fn assert_entry_git_state(
     tree: &Worktree,
     path: &str,
