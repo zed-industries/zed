@@ -118,6 +118,22 @@ impl ToolUseState {
         this
     }
 
+    pub fn cancel_pending(&mut self) -> Vec<PendingToolUse> {
+        let mut pending_tools = Vec::new();
+        for (tool_use_id, tool_use) in self.pending_tool_uses_by_id.drain() {
+            self.tool_results.insert(
+                tool_use_id.clone(),
+                LanguageModelToolResult {
+                    tool_use_id,
+                    content: "Tool canceled by user".into(),
+                    is_error: true,
+                },
+            );
+            pending_tools.push(tool_use.clone());
+        }
+        pending_tools
+    }
+
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
     }

@@ -240,7 +240,7 @@ impl Thread {
         self.messages.iter()
     }
 
-    pub fn is_streaming(&self) -> bool {
+    pub fn is_generating(&self) -> bool {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
@@ -267,8 +267,8 @@ impl Thread {
             .into_iter()
             .chain(self.scripting_tool_use.pending_tool_uses());
 
-        // If the only pending tool uses left are the ones with errors, then that means that we've finished running all
-        // of the pending tools.
+        // If the only pending tool uses left are the ones with errors, then
+        // that means that we've finished running all of the pending tools.
         all_pending_tool_uses.all(|tool_use| tool_use.status.is_error())
     }
 
@@ -683,7 +683,7 @@ impl Thread {
                                 )));
                             }
 
-                            thread.cancel_last_completion();
+                            thread.cancel_last_completion(cx);
                         }
                     }
                     cx.emit(ThreadEvent::DoneStreaming);
@@ -833,6 +833,7 @@ impl Thread {
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
                             pending_tool_use,
+                            canceled: false,
                         });
                     })
                     .ok();
@@ -862,6 +863,7 @@ impl Thread {
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
                             pending_tool_use,
+                            canceled: false,
                         });
                     })
                     .ok();
@@ -872,9 +874,8 @@ impl Thread {
             .run_pending_tool(tool_use_id, insert_output_task);
     }
 
-    pub fn send_tool_results_to_model(
+    pub fn attach_tool_results(
         &mut self,
-        model: Arc<dyn LanguageModel>,
         updated_context: Vec<ContextSnapshot>,
         cx: &mut Context<Self>,
     ) {
@@ -893,17 +894,25 @@ impl Thread {
             Vec::new(),
             cx,
         );
-        self.send_to_model(model, RequestKind::Chat, cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.
     ///
     /// Returns whether a completion was canceled.
-    pub fn cancel_last_completion(&mut self) -> bool {
-        if let Some(_last_completion) = self.pending_completions.pop() {
+    pub fn cancel_last_completion(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.pending_completions.pop().is_some() {
             true
         } else {
-            false
+            let mut canceled = false;
+            for pending_tool_use in self.tool_use.cancel_pending() {
+                canceled = true;
+                cx.emit(ThreadEvent::ToolFinished {
+                    tool_use_id: pending_tool_use.id.clone(),
+                    pending_tool_use: Some(pending_tool_use),
+                    canceled: true,
+                });
+            }
+            canceled
         }
     }
 
@@ -1114,6 +1123,8 @@ pub enum ThreadEvent {
         tool_use_id: LanguageModelToolUseId,
         /// The pending tool use that corresponds to this tool.
         pending_tool_use: Option<PendingToolUse>,
+        /// Whether the tool was canceled by the user.
+        canceled: bool,
     },
 }
 
