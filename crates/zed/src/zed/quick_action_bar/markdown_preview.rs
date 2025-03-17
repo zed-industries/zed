@@ -27,8 +27,15 @@ impl QuickActionBar {
             return None;
         }
 
+        #[cfg(not(target_os = "windows"))]
+        let alt_click = gpui::Keystroke {
+            key: "click".into(),
+            modifiers: Modifiers::alt(),
+            ..Default::default()
+        };
         // TODO:
         // Do we have "click" key on keyboard?
+        #[cfg(target_os = "windows")]
         let alt_click = gpui::Keystroke {
             key: gpui::KeyCodes::Unknown("click".into()),
             modifiers: Modifiers::alt(),
