@@ -5916,11 +5916,13 @@ impl LspStore {
                 .unwrap()
                 .buffer_snapshot_for_lsp_version(&buffer, server_id, version, cx)?;
 
-            if let Some(existing_diagnostics) =
-                buffer.read(cx).get_diagnostics(server_id).map(|diag| {
-                    diag.iter()
-                        .filter(|v| filter(&v.diagnostic))
-                        .map(|v| {
+            diagnostics.extend(
+                buffer
+                    .read(cx)
+                    .get_diagnostics(server_id)
+                    .into_iter()
+                    .flat_map(|diag| {
+                        diag.iter().filter(|v| filter(&v.diagnostic)).map(|v| {
                             let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                             let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
                             let range = start..end;
@@ -5929,11 +5931,8 @@ impl LspStore {
                                 diagnostic: v.diagnostic.clone(),
                             }
                         })
-                        .collect::<Vec<_>>()
-                })
-            {
-                diagnostics.extend(existing_diagnostics);
-            }
+                    }),
+            );
 
             self.as_local_mut().unwrap().update_buffer_diagnostics(
                 &buffer,
