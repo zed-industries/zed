@@ -21,9 +21,9 @@ use crate::{
     EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk, GoToPreviousHunk,
     GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
     InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SmoothCursorManager,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
@@ -83,6 +83,7 @@ const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
 const MIN_SCROLL_THUMB_SIZE: f32 = 25.;
 
 struct SelectionLayout {
+    id: usize,
     head: DisplayPoint,
     cursor_shape: CursorShape,
     is_newest: bool,
@@ -140,6 +141,7 @@ impl SelectionLayout {
         }
 
         Self {
+            id: selection.id,
             head,
             cursor_shape,
             is_newest,
@@ -1151,11 +1153,28 @@ impl EditorElement {
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
 
+            let is_animating =
+                !matches!(editor.smooth_cursor_manager, SmoothCursorManager::Inactive);
+            let animated_selection_ids = if is_animating {
+                match &editor.smooth_cursor_manager {
+                    SmoothCursorManager::Active { cursors } => {
+                        cursors.keys().copied().collect::<HashSet<_>>()
+                    }
+                    _ => HashSet::default(),
+                }
+            } else {
+                HashSet::default()
+            };
+
             let show_local_cursors = editor.show_local_cursors(window, cx);
 
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
+
+                    if animated_selection_ids.contains(&selection.id) {
+                        continue;
+                    }
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
                     if (selection.is_local && !show_local_cursors)
@@ -1283,6 +1302,19 @@ impl EditorElement {
                 }
             }
 
+            if is_animating {
+                let animated_cursors = self.layout_animated_cursors(
+                    editor,
+                    content_origin,
+                    line_height,
+                    em_advance,
+                    selections,
+                    window,
+                    cx,
+                );
+                cursors.extend(animated_cursors);
+            }
+
             cursors
         });
 
@@ -1291,6 +1323,47 @@ impl EditorElement {
         }
 
         cursor_layouts
+    }
+
+    fn layout_animated_cursors(
+        &self,
+        editor: &mut Editor,
+        content_origin: gpui::Point<Pixels>,
+        line_height: Pixels,
+        em_advance: Pixels,
+        selections: &[(PlayerColor, Vec<SelectionLayout>)],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<CursorLayout> {
+        let new_positions = editor.smooth_cursor_manager.animate();
+        if !new_positions.is_empty() {
+            window.request_animation_frame();
+        }
+        new_positions
+            .into_iter()
+            .map(|(id, position)| {
+                // todo smit: worst way to get cursor shape and player color
+                let (cursor_shape, player_color) = selections
+                    .iter()
+                    .find_map(|(player_color, sels)| {
+                        sels.iter()
+                            .find(|sel| sel.id == id)
+                            .map(|sel| (sel.cursor_shape, *player_color))
+                    })
+                    .unwrap_or((CursorShape::Bar, editor.current_user_player_color(cx)));
+                let mut cursor = CursorLayout {
+                    color: player_color.cursor,
+                    block_width: em_advance,
+                    origin: position,
+                    line_height,
+                    shape: cursor_shape,
+                    block_text: None,
+                    cursor_name: None,
+                };
+                cursor.layout(content_origin, None, window, cx);
+                cursor
+            })
+            .collect()
     }
 
     fn layout_scrollbars(

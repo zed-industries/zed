@@ -38,6 +38,7 @@ mod proposed_changes_editor;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod smooth_cursor_manager;
 pub mod tasks;
 
 #[cfg(test)]
@@ -152,6 +153,7 @@ use selections_collection::{
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
+use smooth_cursor_manager::SmoothCursorManager;
 use snippet::Snippet;
 use std::{
     any::TypeId,
@@ -760,6 +762,7 @@ pub struct Editor {
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
+    smooth_cursor_manager: SmoothCursorManager,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1467,6 +1470,7 @@ impl Editor {
             serialize_selections: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
+            smooth_cursor_manager: SmoothCursorManager::Inactive,
         };
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2030,6 +2034,7 @@ impl Editor {
         local: bool,
         old_cursor_position: &Anchor,
         show_completions: bool,
+        pre_edit_pixel_points: HashMap<usize, Option<gpui::Point<Pixels>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2162,6 +2167,23 @@ impl Editor {
 
             hide_hover(self, cx);
 
+            let mut post_edit_pixel_points = HashMap::default();
+
+            for selection in self.selections.disjoint_anchors().iter() {
+                let head_point =
+                    self.to_pixel_point(selection.head(), &self.snapshot(window, cx), window);
+                post_edit_pixel_points.insert(selection.id, head_point);
+            }
+
+            if let Some(pending) = self.selections.pending_anchor() {
+                let head_point =
+                    self.to_pixel_point(pending.head(), &self.snapshot(window, cx), window);
+                post_edit_pixel_points.insert(pending.id, head_point);
+            }
+
+            self.smooth_cursor_manager
+                .update(pre_edit_pixel_points, post_edit_pixel_points);
+
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
             {
@@ -2279,6 +2301,21 @@ impl Editor {
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
         let old_cursor_position = self.selections.newest_anchor().head();
+
+        let mut pre_edit_pixel_points = HashMap::default();
+
+        for selection in self.selections.disjoint_anchors().iter() {
+            let head_point =
+                self.to_pixel_point(selection.head(), &self.snapshot(window, cx), window);
+            pre_edit_pixel_points.insert(selection.id, head_point);
+        }
+
+        if let Some(pending) = self.selections.pending_anchor() {
+            let head_point =
+                self.to_pixel_point(pending.head(), &self.snapshot(window, cx), window);
+            pre_edit_pixel_points.insert(pending.id, head_point);
+        }
+
         self.push_to_selection_history();
 
         let (changed, result) = self.selections.change_with(cx, change);
@@ -2287,7 +2324,14 @@ impl Editor {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, request_completions, window, cx);
+            self.selections_did_change(
+                true,
+                &old_cursor_position,
+                request_completions,
+                pre_edit_pixel_points,
+                window,
+                cx,
+            );
 
             if self.should_open_signature_help_automatically(
                 &old_cursor_position,
@@ -3100,6 +3144,20 @@ impl Editor {
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
+            let mut pre_edit_pixel_points = HashMap::default();
+
+            for selection in this.selections.disjoint_anchors().iter() {
+                let head_point =
+                    this.to_pixel_point(selection.head(), &this.snapshot(window, cx), window);
+                pre_edit_pixel_points.insert(selection.id, head_point);
+            }
+
+            if let Some(pending) = this.selections.pending_anchor() {
+                let head_point =
+                    this.to_pixel_point(pending.head(), &this.snapshot(window, cx), window);
+                pre_edit_pixel_points.insert(pending.id, head_point);
+            }
+
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
@@ -3201,6 +3259,22 @@ impl Editor {
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
+
+            let mut post_edit_pixel_points = HashMap::default();
+
+            for selection in this.selections.disjoint_anchors().iter() {
+                let head_point =
+                    this.to_pixel_point(selection.head(), &this.snapshot(window, cx), window);
+                post_edit_pixel_points.insert(selection.id, head_point);
+            }
+
+            if let Some(pending) = this.selections.pending_anchor() {
+                let head_point =
+                    this.to_pixel_point(pending.head(), &this.snapshot(window, cx), window);
+                post_edit_pixel_points.insert(pending.id, head_point);
+            }
+            this.smooth_cursor_manager
+                .update(pre_edit_pixel_points, post_edit_pixel_points);
         });
     }
 
@@ -3253,6 +3327,20 @@ impl Editor {
 
     pub fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
         self.transact(window, cx, |this, window, cx| {
+            let mut pre_edit_pixel_points = HashMap::default();
+
+            for selection in this.selections.disjoint_anchors().iter() {
+                let head_point =
+                    this.to_pixel_point(selection.head(), &this.snapshot(window, cx), window);
+                pre_edit_pixel_points.insert(selection.id, head_point);
+            }
+
+            if let Some(pending) = this.selections.pending_anchor() {
+                let head_point =
+                    this.to_pixel_point(pending.head(), &this.snapshot(window, cx), window);
+                pre_edit_pixel_points.insert(pending.id, head_point);
+            }
+
             let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
                 let selections = this.selections.all::<usize>(cx);
                 let multi_buffer = this.buffer.read(cx);
@@ -3363,6 +3451,23 @@ impl Editor {
                 s.select(new_selections)
             });
             this.refresh_inline_completion(true, false, window, cx);
+
+            let mut post_edit_pixel_points = HashMap::default();
+
+            for selection in this.selections.disjoint_anchors().iter() {
+                let head_point =
+                    this.to_pixel_point(selection.head(), &this.snapshot(window, cx), window);
+                post_edit_pixel_points.insert(selection.id, head_point);
+            }
+
+            if let Some(pending) = this.selections.pending_anchor() {
+                let head_point =
+                    this.to_pixel_point(pending.head(), &this.snapshot(window, cx), window);
+                post_edit_pixel_points.insert(pending.id, head_point);
+            }
+
+            this.smooth_cursor_manager
+                .update(pre_edit_pixel_points, post_edit_pixel_points);
         });
     }
 
@@ -13185,7 +13290,14 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, true, window, cx);
+        self.selections_did_change(
+            false,
+            &old_cursor_position,
+            true,
+            HashMap::default(),
+            window,
+            cx,
+        );
     }
 
     fn push_to_selection_history(&mut self) {
