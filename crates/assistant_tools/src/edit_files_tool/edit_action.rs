@@ -412,6 +412,7 @@ fn replacement() {}
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(input);
 
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
         assert_eq!(
             actions[0].0,
@@ -421,7 +422,6 @@ fn replacement() {}
                 new: "fn replacement() {}".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -443,6 +443,7 @@ This change makes the function better.
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(input);
 
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
         assert_eq!(
             actions[0].0,
@@ -452,7 +453,6 @@ This change makes the function better.
                 new: "fn replacement() {}".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -481,7 +481,9 @@ fn new_util() -> bool { true }
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(input);
 
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 2);
+
         let (action, _) = &actions[0];
         assert_eq!(
             action,
@@ -500,7 +502,6 @@ fn new_util() -> bool { true }
                 new: "fn new_util() -> bool { true }".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -532,7 +533,9 @@ fn replacement() {
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(input);
 
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
+
         let (action, _) = &actions[0];
         assert_eq!(
             action,
@@ -542,7 +545,6 @@ fn replacement() {
                 new: "fn replacement() {\n    println!(\"This is the replacement function\");\n    let x = 100;\n    if x > 50 {\n        println!(\"Large number\");\n    } else {\n        println!(\"Small number\");\n    }\n}".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -563,6 +565,7 @@ fn new_function() {
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(input);
 
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
         assert_eq!(
             actions[0].0,
@@ -572,7 +575,6 @@ fn new_function() {
                     .to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -603,6 +605,7 @@ fn this_will_be_deleted() {
             }
         );
 
+        let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(&input.replace("\n", "\r\n"));
         assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
@@ -616,7 +619,6 @@ fn this_will_be_deleted() {
                 new: "".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -661,16 +663,17 @@ fn replacement() {}"#;
 
         let mut parser = EditActionParser::new();
         let actions1 = parser.parse_chunk(input_part1);
+        assert_no_errors(&parser);
         assert_eq!(actions1.len(), 0);
-        assert_eq!(parser.errors().len(), 0);
 
         let actions2 = parser.parse_chunk(input_part2);
         // No actions should be complete yet
+        assert_no_errors(&parser);
         assert_eq!(actions2.len(), 0);
-        assert_eq!(parser.errors().len(), 0);
 
         let actions3 = parser.parse_chunk(input_part3);
         // The third chunk should complete the action
+        assert_no_errors(&parser);
         assert_eq!(actions3.len(), 1);
         let (action, _) = &actions3[0];
         assert_eq!(
@@ -681,7 +684,6 @@ fn replacement() {}"#;
                 new: "fn replacement() {}".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -690,25 +692,27 @@ fn replacement() {}"#;
         let actions1 = parser.parse_chunk("src/main.rs\n```rust\n<<<<<<< SEARCH\n");
 
         // Check parser is in the correct state
+        assert_no_errors(&parser);
         assert_eq!(parser.state, State::SearchBlock);
         assert_eq!(
             parser.action_source,
             b"src/main.rs\n```rust\n<<<<<<< SEARCH\n"
         );
-        assert_eq!(parser.errors().len(), 0);
 
         // Continue parsing
         let actions2 = parser.parse_chunk("original code\n=======\n");
+
+        assert_no_errors(&parser);
         assert_eq!(parser.state, State::ReplaceBlock);
         assert_eq!(
             &parser.action_source[parser.old_range.clone()],
             b"original code"
         );
-        assert_eq!(parser.errors().len(), 0);
 
         let actions3 = parser.parse_chunk("replacement code\n>>>>>>> REPLACE\n```\n");
 
         // After complete parsing, state should reset
+        assert_no_errors(&parser);
         assert_eq!(parser.state, State::Default);
         assert_eq!(parser.action_source, b"\n");
         assert!(parser.old_range.is_empty());
@@ -717,7 +721,6 @@ fn replacement() {}"#;
         assert_eq!(actions1.len(), 0);
         assert_eq!(actions2.len(), 0);
         assert_eq!(actions3.len(), 1);
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -810,7 +813,8 @@ fn new_utils_func() {}
 
             let (chunk, rest) = remaining.split_at(chunk_size);
 
-            actions.extend(parser.parse_chunk(chunk));
+            let chunk_actions = parser.parse_chunk(chunk);
+            actions.extend(chunk_actions);
             remaining = rest;
         }
 
