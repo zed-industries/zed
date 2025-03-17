@@ -1348,7 +1348,8 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "git_gutter": "tracked_files",
     "inline_blame": {
       "enabled": true
-    }
+    },
+    "hunk_style": "staged_hollow"
   }
 }
 ```
@@ -1393,6 +1394,42 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     }
+  }
+}
+```
+
+### Hunk Style
+
+- Description: What styling we should use for the diff hunks.
+- Setting: `hunk_style`
+- Default:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+**Options**
+
+1. Show the staged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+2. Show unstaged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "unstaged_hollow"
   }
 }
 ```
