@@ -180,6 +180,8 @@ impl Keystroke {
         )
         .log_err()
         .unwrap_or_else(|| {
+            // This is actually some hacky code for the tests, in some tests, we are using `KeyStroke` to
+            // send text to the app, for example, test_remap_nested_pineapple
             key_char = Some(key.clone());
             KeyCodes::Unknown(key)
         });

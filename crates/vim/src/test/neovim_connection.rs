@@ -123,11 +123,15 @@ impl NeovimConnection {
             keystroke.key = gpui::KeyCodes::Unknown("lt".to_string());
         }
 
+        #[cfg(not(target_os = "windows"))]
+        let long_key = keystroke.key.len() > 1;
+        #[cfg(target_os = "windows")]
+        let long_key = keystroke.key.display().len() > 1;
         let special = keystroke.modifiers.shift
             || keystroke.modifiers.control
             || keystroke.modifiers.alt
             || keystroke.modifiers.platform
-            || keystroke.key.display().len() > 1;
+            || long_key;
         let start = if special { "<" } else { "" };
         let shift = if keystroke.modifiers.shift { "S-" } else { "" };
         let ctrl = if keystroke.modifiers.control {
