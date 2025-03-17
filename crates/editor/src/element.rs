@@ -1520,15 +1520,13 @@ impl EditorElement {
                     }
                     None => px(0.),
                 };
-                let mut bottom_right = bounds.bottom_right();
-                bottom_right.x -= scrollbar_y_width;
                 let header_height = line_height * FILE_HEADER_HEIGHT as f32;
                 let minimap_bounds = Bounds::from_corners(
                     point(
                         bounds.size.width - px(100.) - scrollbar_y_width,
                         bounds.origin.y - header_height + px(2.),
                     ),
-                    bottom_right,
+                    point(bounds.size.width - scrollbar_y_width, bounds.bottom()),
                 );
                 _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
                 window.with_element_offset(minimap_bounds.origin, |window| {
