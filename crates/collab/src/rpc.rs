@@ -4036,7 +4036,7 @@ async fn accept_terms_of_service(
 }
 
 /// The minimum account age an account must have in order to use the LLM service.
-const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
+pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
 
 async fn get_llm_api_token(
     _request: proto::GetLlmToken,
@@ -4066,6 +4066,8 @@ async fn get_llm_api_token(
 
     let has_llm_subscription = session.has_llm_subscription(&db).await?;
 
+    // This check is now handled in the `perform_completion` endpoint. We can remove the check here once the tokens have
+    // had ~1 hour to cycle.
     let bypass_account_age_check =
         has_llm_subscription || has_bypass_account_age_check_feature_flag;
     if !bypass_account_age_check {
