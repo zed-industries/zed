@@ -318,7 +318,7 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
 const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
-const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file_path>[^"]+)", line (?P<line_number>\d+)"#;
+const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
 fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
     // assumes a match from the PYTHON_FILE_LINE_REGEX
