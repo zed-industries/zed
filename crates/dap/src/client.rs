@@ -193,7 +193,7 @@ impl DebugAdapterClient {
                 let response = response??;
                 match response.success {
                     true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
-                    false => Err(anyhow!("Request failed: {}", response.body.unwrap_or_default())),
+                    false => Err(anyhow!("Request failed: {}", response.message.unwrap_or_default())),
                 }
             }
 

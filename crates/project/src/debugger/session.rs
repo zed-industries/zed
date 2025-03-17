@@ -400,8 +400,8 @@ impl LocalMode {
             let this = self.clone();
             move |cx| async move {
                 initialized_rx.await?;
-                // todo(debugger) figure out if we want to handle an error here
-                // todo(debugger) We could be sending breakpoints before awaiting the initialization event
+                // todo(debugger) figure out if we want to handle a breakpoint response error
+                // This will probably consist of letting a user know that breakpoints failed to be set
                 cx.update(|cx| this.send_all_breakpoints(false, cx))?.await;
 
                 if configuration_done_supported {
@@ -860,6 +860,7 @@ impl Session {
                     command,
                     seq: request_seq + 1,
                     request_seq,
+                    message: None,
                 }))
                 .await
         })

@@ -406,13 +406,16 @@ impl TransportDelegate {
         if response.success {
             Ok(response)
         } else {
-            if let Some(body) = response.body.clone() {
-                if let Ok(error) = serde_json::from_value::<ErrorResponse>(body) {
-                    if let Some(message) = error.error {
-                        return Err(anyhow!(message.format));
-                    };
-                };
-            }
+            if let Some(error_message) = response
+                .body
+                .clone()
+                .map(|body| serde_json::from_value::<ErrorResponse>(body))
+                .and_then(|response| response.ok())
+                .and_then(|response| response.error.map(|msg| msg.format))
+                .or_else(|| response.message.clone())
+            {
+                return Err(anyhow!(error_message));
+            };
 
             Err(anyhow!(
                 "Received error response from adapter. Response: {:?}",
@@ -743,6 +746,7 @@ impl FakeTransport {
                         success: response.as_ref().is_ok(),
                         command: R::COMMAND.into(),
                         body: util::maybe!({ serde_json::to_value(response.ok()?).ok() }),
+                        message: None,
                     }))
                     .unwrap();
 
