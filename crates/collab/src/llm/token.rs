@@ -3,7 +3,7 @@ use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::Cents;
 use crate::{db::billing_preference, Config};
 use anyhow::{anyhow, Result};
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -20,8 +20,16 @@ pub struct LlmTokenClaims {
     pub system_id: Option<String>,
     pub metrics_id: Uuid,
     pub github_user_login: String,
+    // This field is temporarily optional so it can be added
+    // in a backwards-compatible way. We can make it required
+    // once all of the LLM tokens have cycled (~1 hour after
+    // this change has been deployed).
+    #[serde(default)]
+    pub account_created_at: Option<NaiveDateTime>,
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
+    #[serde(default)]
+    pub bypass_account_age_check: bool,
     #[serde(default)]
     pub has_predict_edits_feature_flag: bool,
     pub has_llm_subscription: bool,
@@ -57,10 +65,14 @@ impl LlmTokenClaims {
             system_id,
             metrics_id: user.metrics_id,
             github_user_login: user.github_login.clone(),
+            account_created_at: Some(user.account_created_at()),
             is_staff,
             has_llm_closed_beta_feature_flag: feature_flags
                 .iter()
                 .any(|flag| flag == "llm-closed-beta"),
+            bypass_account_age_check: feature_flags
+                .iter()
+                .any(|flag| flag == "bypass-account-age-check"),
             has_predict_edits_feature_flag: feature_flags
                 .iter()
                 .any(|flag| flag == "predict-edits"),
