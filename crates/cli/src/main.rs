@@ -702,12 +702,13 @@ mod windows {
             Ok(())
         }
 
-        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
-            std::process::Command::new(self.0.clone())
-                .arg(ipc_url)
-                .arg("--foreground")
-                .spawn()?
-                .wait()
+        fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus> {
+            let mut cmd = std::process::Command::new(self.0.clone());
+            cmd.arg(ipc_url).arg("--foreground");
+            if let Some(dir) = user_data_dir {
+                cmd.arg("--user-data-dir").arg(dir);
+            }
+            cmd.spawn()?.wait()
         }
 
         fn path(&self) -> PathBuf {
@@ -889,13 +890,18 @@ mod mac_os {
             Ok(())
         }
 
-        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+        fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus> {
             let path = match self {
                 Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
                 Bundle::LocalPath { executable, .. } => executable.clone(),
             };
 
-            std::process::Command::new(path).arg(ipc_url).status()
+            let mut cmd = std::process::Command::new(path);
+            cmd.arg(ipc_url);
+            if let Some(dir) = user_data_dir {
+                cmd.arg("--user-data-dir").arg(dir);
+            }
+            cmd.status()
         }
 
         fn path(&self) -> PathBuf {
