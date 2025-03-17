@@ -46,7 +46,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{debug_panic, paths::home_dir, truncate_and_trailoff};
+use util::{paths::home_dir, truncate_and_trailoff, ResultExt};
 
 use std::{
     cmp::{self, min},
@@ -327,6 +327,7 @@ static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
 fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
     if let Some(captures) = PYTHON_FILE_LINE_MATCHER.captures(input) {
         let path_part = captures.name("file")?.as_str();
+
         let line_number: u32 = captures.name("line")?.as_str().parse().ok()?;
         return Some((path_part, line_number));
     }
@@ -948,18 +949,19 @@ impl Terminal {
                     let file_line =
                         term.bounds_to_string(*python_match.start(), *python_match.end());
 
-                    if let Some((file_path, line_number)) =
-                        python_extract_path_and_line(file_line.as_str())
-                    {
-                        Some((
-                            format!("{}:{}", file_path, line_number),
-                            false,
-                            python_match,
-                        ))
-                    } else {
-                        debug_panic!("Could not parse python file, line number reference");
-                        None
-                    }
+                    let p: Result<_, _> = python_extract_path_and_line(file_line.as_str())
+                        .and_then(|(file_path, line_number)| {
+                            Some((
+                                format!("{}:{}", file_path, line_number),
+                                false,
+                                python_match,
+                            ))
+                        })
+                        .ok_or_else(|| {
+                            "Could not parse python file, line number reference".to_string()
+                        });
+
+                    p.log_err()
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 

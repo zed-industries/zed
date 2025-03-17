@@ -13751,7 +13751,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "libc",
- "log",
  "rand 0.8.5",
  "regex",
  "release_channel",

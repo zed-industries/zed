@@ -31,7 +31,6 @@ task.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
-log.workspace = true
 regex.workspace = true
 
 [target.'cfg(windows)'.dependencies]
