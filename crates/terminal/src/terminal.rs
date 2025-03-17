@@ -39,20 +39,21 @@ use mappings::mouse::{
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::PtyProcessInfo;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{paths::home_dir, truncate_and_trailoff};
+use util::{debug_panic, paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use thiserror::Error;
@@ -320,18 +321,16 @@ const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
+static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(PYTHON_FILE_LINE_REGEX).unwrap());
+
 fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
-    // assumes a match from the PYTHON_FILE_LINE_REGEX
-    let filename_end_pos = input.rfind('"')?;
-    let line_prefix_end = filename_end_pos + 1 + ", line ".len();
-    if line_prefix_end >= input.len() {
-        return None;
+    if let Some(captures) = PYTHON_FILE_LINE_MATCHER.captures(input) {
+        let path_part = captures.name("file")?.as_str();
+        let line_number: u32 = captures.name("line")?.as_str().parse().ok()?;
+        return Some((path_part, line_number));
     }
-    let line_part = &input[line_prefix_end..];
-    let line_number = line_part.parse::<u32>().ok()?;
-    let file_prefix_end = "File \"".len();
-    let path_part = &input[file_prefix_end..filename_end_pos]; // -1 to remove the trailing `"`
-    return Some((path_part, line_number));
+    None
 }
 
 pub struct TerminalBuilder {
@@ -949,14 +948,18 @@ impl Terminal {
                     let file_line =
                         term.bounds_to_string(*python_match.start(), *python_match.end());
 
-                    let (file_path, line_number) = python_extract_path_and_line(file_line.as_str())
-                        .expect("Cannot parse python file line syntax");
-
-                    Some((
-                        format!("{}:{}", file_path, line_number),
-                        false,
-                        python_match,
-                    ))
+                    if let Some((file_path, line_number)) =
+                        python_extract_path_and_line(file_line.as_str())
+                    {
+                        Some((
+                            format!("{}:{}", file_path, line_number),
+                            false,
+                            python_match,
+                        ))
+                    } else {
+                        debug_panic!("Could not parse python file, line number reference");
+                        None
+                    }
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
@@ -2328,8 +2331,9 @@ mod tests {
                 "File \"/zed/bad_py.py\", line 8",
                 Some(("/zed/bad_py.py", 8u32)),
             ),
-            ("File \"/zed/bad_py.py\"", None),
+            ("File \"path/to/zed/bad_py.py\"", None),
             ("unrelated", None),
+            ("", None),
         ];
         let actual = inputs
             .iter()
