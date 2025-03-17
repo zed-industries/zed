@@ -23,7 +23,7 @@ use crate::{
     InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp,
     Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
@@ -2119,9 +2119,11 @@ impl EditorElement {
         })
     }
 
-    fn layout_excerpt_gutter(
+    fn layout_expand_toggles(
         &self,
         gutter_hitbox: &Hitbox,
+        gutter_dimensions: GutterDimensions,
+        em_width: Pixels,
         line_height: Pixels,
         scroll_position: gpui::Point<f32>,
         buffer_rows: &[RowInfo],
@@ -2142,7 +2144,8 @@ impl EditorElement {
             .read(cx)
             .snapshot(cx)
             .widest_line_number()
-            .ilog10();
+            .ilog10()
+            + 1;
 
         let elements = buffer_rows
             .into_iter()
@@ -2159,20 +2162,27 @@ impl EditorElement {
                     ExpandExcerptDirection::UpAndDown => IconName::ExpandVertical,
                 };
 
+                let git_gutter_width = Self::gutter_strip_width(line_height);
+                let available_width = gutter_dimensions.left_padding - git_gutter_width;
+
                 let editor = self.editor.clone();
-                let is_wide = max_line_number_length > 3
+                let is_wide = max_line_number_length >= MIN_LINE_NUMBER_DIGITS
                     && row_info
                         .buffer_row
-                        .is_some_and(|row| (row + 1).ilog10() + 1 == max_line_number_length);
+                        .is_some_and(|row| (row + 1).ilog10() + 1 == max_line_number_length)
+                    || gutter_dimensions.right_padding == px(0.);
+
+                let width = if is_wide {
+                    available_width - px(2.)
+                } else {
+                    available_width + em_width - px(2.)
+                };
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
                     .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
-                    .width((icon_size + button_h_padding * 2).into())
-                    .when(is_wide, |el| {
-                        el.width((icon_size + button_h_padding).into())
-                    })
+                    .width(width.into())
                     .on_click(move |_, _, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.expand_excerpt(excerpt_id, direction, cx);
@@ -2185,7 +2195,7 @@ impl EditorElement {
                     .into_any_element();
 
                 let position = point(
-                    px(1.),
+                    git_gutter_width + px(1.),
                     ix as f32 * line_height - (scroll_top % line_height) + px(1.),
                 );
                 let origin = gutter_hitbox.origin + position;
@@ -4416,6 +4426,10 @@ impl EditorElement {
         });
     }
 
+    fn gutter_strip_width(line_height: Pixels) -> Pixels {
+        (0.275 * line_height).floor()
+    }
+
     fn diff_hunk_bounds(
         snapshot: &EditorSnapshot,
         line_height: Pixels,
@@ -4424,7 +4438,7 @@ impl EditorElement {
     ) -> Bounds<Pixels> {
         let scroll_position = snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
-        let gutter_strip_width = (0.275 * line_height).floor();
+        let gutter_strip_width = Self::gutter_strip_width(line_height);
 
         match hunk {
             DisplayDiffHunk::Folded { display_row, .. } => {
@@ -6879,8 +6893,10 @@ impl Element for EditorElement {
 
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
-                            self.layout_excerpt_gutter(
+                            self.layout_expand_toggles(
                                 &gutter_hitbox,
+                                gutter_dimensions,
+                                em_width,
                                 line_height,
                                 scroll_position,
                                 &row_infos,
