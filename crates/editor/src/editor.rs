@@ -14020,8 +14020,6 @@ impl Editor {
             self.change_selections(Some(autoscroll), window, cx, |s| {
                 s.select_ranges([destination..destination]);
             });
-        } else if all_diff_hunks_expanded {
-            window.dispatch_action(::git::ExpandCommitEditor.boxed_clone(), cx);
         }
     }
 
