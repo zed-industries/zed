@@ -24,6 +24,47 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PathHyperlinkNavigation {
+    /// Disables all path hyperlink navigation in the terminal
+    None,
+    /// Enables path hyperlinks for the hovered or Cmd-clicked word,
+    /// - Common surrounding symbols are stripped, e.g., `"` `'` `[` `]` `(` `)`
+    /// - Line and column suffixes are processed, e.g. `foo.rs:4:2` and `foo.rs(4,2)`
+    /// - Relative paths resolve against all open worktree roots and the current terminal
+    /// working directory
+    /// - _Linux and macOS only_ : `~/` prefix resolves to `$HOME`
+    /// - `git diff` prefixes are processed, e.g., `a/foo.rs`
+    /// - Paths with spaces surrounded in common symbols are supported
+    /// - Paths with spaces which are preceeded by up to 2 tokens, and take up the rest of
+    /// the line are supported
+    #[default]
+    Default,
+    /// Enables advanced path hyperlink support. All of [Default](PathHyperlinkNavigation::Default),
+    /// plus:
+    /// - Path with spaces at the end of a line
+    Advanced,
+    /// Enables exhaustive path hyperlink support. All of [Advanced](PathHyperlinkNavigation::Advanced),
+    /// plus less common paths with spaces scenarios
+    /// - Paths with spaces comprising any contiguous sequence of words on a line which include
+    /// the hovered or Cmd-clicked word
+    Exhaustive,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct TerminalSettings {
     pub shell: Shell,
@@ -48,6 +89,9 @@ pub struct TerminalSettings {
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
+    pub path_hyperlink_navigation: PathHyperlinkNavigation,
+    pub path_hyperlink_regexes: Vec<String>,
+    pub path_hyperlink_timeout: u64,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -223,6 +267,15 @@ pub struct TerminalSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    pub path_hyperlink_navigation: Option<PathHyperlinkNavigation>,
+    /// Regexes used to identify path for hyperlink navigation
+    ///
+    /// Default: []
+    pub path_hyperlink_regexes: Option<Vec<String>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 100
+    pub path_hyperlink_timeout: Option<u64>,
 }
 
 impl settings::Settings for TerminalSettings {

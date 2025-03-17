@@ -1042,7 +1042,26 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
+    /// Hover and Cmd-click hyperlink navigation for paths
+    /// This setting can take five values:
+    ///
+    /// 1. null (default): Inherit editor settings
+    /// 2. Disable navigation:
+    ///         "none"
+    /// 3. Enable navigation for single word paths, and some very common paths with spaces cases:
+    ///         "default"
+    /// 4. Enable navigation for most common paths with spaces cases:
+    ///         "advanced"
+    /// 5. Enable navigation for rare paths with spaces cases:
+    ///         "exhaustive"
+    "path_hyperlink_navigation": "default",
+    /// Regexes with 'path' named capture group for path hyperlink navigation.
+    /// The captured 'path' should include any optional line and column suffix.
+    /// Only processed if `path_hyperlink_navigation is "advanced" or higher.
+    "path_hyperlink_regexes": [],
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    "path_hyperlink_timeout": 100
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,

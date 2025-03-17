@@ -30,6 +30,7 @@ language.workspace = true
 log.workspace = true
 project.workspace = true
 task.workspace = true
+regex.workspace = true
 schemars.workspace = true
 search.workspace = true
 serde.workspace = true
@@ -47,6 +48,7 @@ zed_actions.workspace = true
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
