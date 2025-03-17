@@ -136,6 +136,7 @@ impl DebugAdapter for PythonDebugAdapter {
             "program": config.program,
             "subProcess": true,
             "cwd": config.cwd,
+            "redirectOutput": true,
         })
     }
 }
