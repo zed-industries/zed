@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    mem::take,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 use util::ResultExt;
 
 /// Represents an edit action to be performed on a file.
@@ -28,13 +32,14 @@ impl EditAction {
 #[derive(Debug)]
 pub struct EditActionParser {
     state: State,
-    action_source: Vec<u8>,
-    marker_ix: usize,
     line: usize,
     column: usize,
+    marker_ix: usize,
+    action_source: Vec<u8>,
     fence_start_offset: usize,
-    old_bytes: Vec<u8>,
-    new_bytes: Vec<u8>,
+    block_range: Range<usize>,
+    old_range: Range<usize>,
+    new_range: Range<usize>,
     errors: Vec<ParseError>,
 }
 
@@ -59,13 +64,14 @@ impl EditActionParser {
     pub fn new() -> Self {
         Self {
             state: State::Default,
+            line: 1,
+            column: 0,
             action_source: Vec::new(),
             fence_start_offset: 0,
             marker_ix: 0,
-            line: 1,
-            column: 0,
-            old_bytes: Vec::new(),
-            new_bytes: Vec::new(),
+            block_range: Range::default(),
+            old_range: Range::default(),
+            new_range: Range::default(),
             errors: Vec::new(),
         }
     }
@@ -99,10 +105,12 @@ impl EditActionParser {
                 self.column += 1;
             }
 
+            let action_offset = self.action_source.len();
+
             match &self.state {
-                Default => match match_marker(byte, FENCE, false, &mut self.marker_ix) {
+                Default => match self.match_marker(byte, FENCE, false) {
                     MarkerMatch::Complete => {
-                        self.fence_start_offset = self.action_source.len() + 1 - FENCE.len();
+                        self.fence_start_offset = action_offset + 1 - FENCE.len();
                         self.to_state(OpenFence);
                     }
                     MarkerMatch::Partial => {}
@@ -126,26 +134,14 @@ impl EditActionParser {
                     }
                 }
                 SearchBlock => {
-                    if collect_until_marker(
-                        byte,
-                        DIVIDER,
-                        NL_DIVIDER,
-                        true,
-                        &mut self.marker_ix,
-                        &mut self.old_bytes,
-                    ) {
+                    if self.extend_block_range(byte, DIVIDER, NL_DIVIDER) {
+                        self.old_range = take(&mut self.block_range);
                         self.to_state(ReplaceBlock);
                     }
                 }
                 ReplaceBlock => {
-                    if collect_until_marker(
-                        byte,
-                        REPLACE_MARKER,
-                        NL_REPLACE_MARKER,
-                        true,
-                        &mut self.marker_ix,
-                        &mut self.new_bytes,
-                    ) {
+                    if self.extend_block_range(byte, REPLACE_MARKER, NL_REPLACE_MARKER) {
+                        self.new_range = take(&mut self.block_range);
                         self.to_state(CloseFence);
                     }
                 }
@@ -177,42 +173,75 @@ impl EditActionParser {
     }
 
     fn action(&mut self) -> Option<(EditAction, String)> {
-        if self.old_bytes.is_empty() && self.new_bytes.is_empty() {
+        let old_range = take(&mut self.old_range);
+        let new_range = take(&mut self.new_range);
+
+        let action_source = take(&mut self.action_source);
+        let action_source = String::from_utf8(action_source).log_err()?;
+
+        let mut file_path_bytes = action_source[..self.fence_start_offset].to_owned();
+
+        if file_path_bytes.ends_with("\n") {
+            file_path_bytes.pop();
+            if file_path_bytes.ends_with("\r") {
+                file_path_bytes.pop();
+            }
+        }
+
+        let file_path = PathBuf::from(file_path_bytes);
+
+        if old_range.is_empty() && new_range.is_empty() {
             self.push_error(ParseErrorKind::NoOp);
             return None;
         }
 
-        let action_source = std::mem::take(&mut self.action_source);
-        let mut file_path_bytes = action_source[..self.fence_start_offset].to_vec();
-
-        if file_path_bytes.ends_with(b"\n") {
-            file_path_bytes.pop();
-            pop_carriage_return(&mut file_path_bytes);
-        }
-
-        let file_path = PathBuf::from(String::from_utf8(file_path_bytes).log_err()?);
-        let content = String::from_utf8(std::mem::take(&mut self.new_bytes)).log_err()?;
-
-        let source = String::from_utf8(action_source).log_err()?;
-
-        if self.old_bytes.is_empty() {
-            Some((EditAction::Write { file_path, content }, source))
-        } else {
-            let old = String::from_utf8(std::mem::take(&mut self.old_bytes)).log_err()?;
-
-            Some((
-                EditAction::Replace {
+        if old_range.is_empty() {
+            return Some((
+                EditAction::Write {
                     file_path,
-                    old,
-                    new: content,
+                    content: action_source[new_range].to_owned(),
                 },
-                source,
-            ))
+                action_source,
+            ));
         }
+
+        let old = action_source[old_range].to_owned();
+        let new = action_source[new_range].to_owned();
+
+        let action = EditAction::Replace {
+            file_path,
+            old,
+            new,
+        };
+
+        Some((action, action_source))
+    }
+
+    fn to_state(&mut self, state: State) {
+        self.state = state;
+        self.marker_ix = 0;
+    }
+
+    fn reset(&mut self) {
+        self.action_source.clear();
+        self.block_range = Range::default();
+        self.old_range = Range::default();
+        self.new_range = Range::default();
+        self.fence_start_offset = 0;
+        self.marker_ix = 0;
+        self.to_state(State::Default);
+    }
+
+    fn push_error(&mut self, kind: ParseErrorKind) {
+        self.errors.push(ParseError {
+            line: self.line,
+            column: self.column,
+            kind,
+        });
     }
 
     fn expect_marker(&mut self, byte: u8, marker: &'static [u8], trailing_newline: bool) -> bool {
-        match match_marker(byte, marker, trailing_newline, &mut self.marker_ix) {
+        match self.match_marker(byte, marker, trailing_newline) {
             MarkerMatch::Complete => true,
             MarkerMatch::Partial => false,
             MarkerMatch::None => {
@@ -226,24 +255,68 @@ impl EditActionParser {
         }
     }
 
-    fn to_state(&mut self, state: State) {
-        self.state = state;
-        self.marker_ix = 0;
+    fn extend_block_range(&mut self, byte: u8, marker: &[u8], nl_marker: &[u8]) -> bool {
+        let marker = if self.block_range.is_empty() {
+            // do not require another newline if block is empty
+            marker
+        } else {
+            nl_marker
+        };
+
+        let offset = self.action_source.len();
+
+        match self.match_marker(byte, marker, true) {
+            MarkerMatch::Complete => {
+                if self.action_source[self.block_range.clone()].ends_with(b"\r") {
+                    self.block_range.end -= 1;
+                }
+
+                true
+            }
+            MarkerMatch::Partial => false,
+            MarkerMatch::None => {
+                if self.marker_ix > 0 {
+                    self.marker_ix = 0;
+                    self.block_range.end = offset;
+
+                    // The beginning of marker might match current byte
+                    match self.match_marker(byte, marker, true) {
+                        MarkerMatch::Complete => return true,
+                        MarkerMatch::Partial => return false,
+                        MarkerMatch::None => { /* no match, keep collecting */ }
+                    }
+                }
+
+                if self.block_range.is_empty() {
+                    self.block_range.start = offset;
+                }
+                self.block_range.end = offset + 1;
+
+                false
+            }
+        }
     }
 
-    fn reset(&mut self) {
-        self.action_source.clear();
-        self.old_bytes.clear();
-        self.new_bytes.clear();
-        self.to_state(State::Default);
-    }
+    fn match_marker(&mut self, byte: u8, marker: &[u8], trailing_newline: bool) -> MarkerMatch {
+        if trailing_newline && self.marker_ix >= marker.len() {
+            if byte == b'\n' {
+                MarkerMatch::Complete
+            } else if byte == b'\r' {
+                MarkerMatch::Partial
+            } else {
+                MarkerMatch::None
+            }
+        } else if byte == marker[self.marker_ix] {
+            self.marker_ix += 1;
 
-    fn push_error(&mut self, kind: ParseErrorKind) {
-        self.errors.push(ParseError {
-            line: self.line,
-            column: self.column,
-            kind,
-        });
+            if self.marker_ix < marker.len() || trailing_newline {
+                MarkerMatch::Partial
+            } else {
+                MarkerMatch::Complete
+            }
+        } else {
+            MarkerMatch::None
+        }
     }
 }
 
@@ -252,80 +325,6 @@ enum MarkerMatch {
     None,
     Partial,
     Complete,
-}
-
-fn match_marker(
-    byte: u8,
-    marker: &[u8],
-    trailing_newline: bool,
-    marker_ix: &mut usize,
-) -> MarkerMatch {
-    if trailing_newline && *marker_ix >= marker.len() {
-        if byte == b'\n' {
-            MarkerMatch::Complete
-        } else if byte == b'\r' {
-            MarkerMatch::Partial
-        } else {
-            MarkerMatch::None
-        }
-    } else if byte == marker[*marker_ix] {
-        *marker_ix += 1;
-
-        if *marker_ix < marker.len() || trailing_newline {
-            MarkerMatch::Partial
-        } else {
-            MarkerMatch::Complete
-        }
-    } else {
-        MarkerMatch::None
-    }
-}
-
-fn collect_until_marker(
-    byte: u8,
-    marker: &[u8],
-    nl_marker: &[u8],
-    trailing_newline: bool,
-    marker_ix: &mut usize,
-    buf: &mut Vec<u8>,
-) -> bool {
-    let marker = if buf.is_empty() {
-        // do not require another newline if block is empty
-        marker
-    } else {
-        nl_marker
-    };
-
-    match match_marker(byte, marker, trailing_newline, marker_ix) {
-        MarkerMatch::Complete => {
-            pop_carriage_return(buf);
-            true
-        }
-        MarkerMatch::Partial => false,
-        MarkerMatch::None => {
-            if *marker_ix > 0 {
-                buf.extend_from_slice(&marker[..*marker_ix]);
-                *marker_ix = 0;
-
-                // The beginning of marker might match current byte
-                match match_marker(byte, marker, trailing_newline, marker_ix) {
-                    MarkerMatch::Complete => return true,
-                    MarkerMatch::Partial => return false,
-                    MarkerMatch::None => { /* no match, keep collecting */ }
-                }
-            }
-
-            buf.push(byte);
-
-            false
-        }
-    }
-}
-
-fn pop_carriage_return(buf: &mut Vec<u8>) {
-    if buf.ends_with(b"\r") {
-        buf.pop();
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -385,6 +384,7 @@ fn replacement() {}
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(input);
 
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
         assert_eq!(
             actions[0].0,
@@ -394,7 +394,6 @@ fn replacement() {}
                 new: "fn replacement() {}".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
     }
 
     #[test]
@@ -590,6 +589,8 @@ fn this_will_be_deleted() {
 
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(&input);
+
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
         assert_eq!(
             actions[0].0,
@@ -600,9 +601,9 @@ fn this_will_be_deleted() {
                 new: "".to_string(),
             }
         );
-        assert_eq!(parser.errors().len(), 0);
 
         let actions = parser.parse_chunk(&input.replace("\n", "\r\n"));
+        assert_no_errors(&parser);
         assert_eq!(actions.len(), 1);
         assert_eq!(
             actions[0].0,
@@ -698,7 +699,10 @@ fn replacement() {}"#;
         // Continue parsing
         let actions2 = parser.parse_chunk("original code\n=======\n");
         assert_eq!(parser.state, State::ReplaceBlock);
-        assert_eq!(parser.old_bytes, b"original code");
+        assert_eq!(
+            &parser.action_source[parser.old_range.clone()],
+            b"original code"
+        );
         assert_eq!(parser.errors().len(), 0);
 
         let actions3 = parser.parse_chunk("replacement code\n>>>>>>> REPLACE\n```\n");
@@ -706,8 +710,8 @@ fn replacement() {}"#;
         // After complete parsing, state should reset
         assert_eq!(parser.state, State::Default);
         assert_eq!(parser.action_source, b"\n");
-        assert!(parser.old_bytes.is_empty());
-        assert!(parser.new_bytes.is_empty());
+        assert!(parser.old_range.is_empty());
+        assert!(parser.new_range.is_empty());
 
         assert_eq!(actions1.len(), 0);
         assert_eq!(actions2.len(), 0);
@@ -923,5 +927,21 @@ fn replacement() {}
         let expected_error = r#"input:3:9: Expected marker "<<<<<<< SEARCH", found 'W'"#;
 
         assert_eq!(format!("{}", error), expected_error);
+    }
+
+    // helpers
+
+    fn assert_no_errors(parser: &EditActionParser) {
+        let errors = parser.errors();
+
+        assert!(
+            errors.is_empty(),
+            "Expected no errors, but found:\n\n{}",
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<String>>()
+                .join("\n")
+        );
     }
 }
