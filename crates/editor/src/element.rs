@@ -1488,7 +1488,7 @@ impl EditorElement {
         cx: &mut App,
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
-        scrollbar_width: Pixels,
+        scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
     ) -> Option<AnyElement> {
         match snapshot.mode {
             EditorMode::Full => {
@@ -1508,12 +1508,22 @@ impl EditorElement {
                     editor.render(window, cx).into_any_element()
                 });
 
+                let scrollbar_y_width = match scrollbars_layout.vertical {
+                    Some(scrollbar) => {
+                        if scrollbar.visible {
+                            scrollbar.hitbox.bounds.size.width
+                        } else {
+                            px(0.)
+                        }
+                    }
+                    None => px(0.),
+                };
                 let mut minimap_bounds = bounds;
                 minimap_bounds.size.width = px(100.);
                 minimap_bounds.origin.x =
-                    bounds.size.width - minimap_bounds.size.width - scrollbar_width;
+                    bounds.size.width - minimap_bounds.size.width - scrollbar_y_width;
                 _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
-                window.with_absolute_element_offset(minimap_bounds.origin, |window| {
+                window.with_element_offset(minimap_bounds.origin, |window| {
                     minimap_elem.prepaint(window, cx)
                 });
                 Some(minimap_elem)
@@ -7462,7 +7472,13 @@ impl Element for EditorElement {
                     });
 
                     let minimap = window.with_element_namespace("minimap", |window| {
-                        self.layout_minimap(window, cx, &snapshot, bounds, style.scrollbar_width)
+                        self.layout_minimap(
+                            window,
+                            cx,
+                            &snapshot,
+                            bounds,
+                            scrollbars_layout.clone(),
+                        )
                     });
 
                     let invisible_symbol_font_size = font_size / 2.;
