@@ -127,6 +127,7 @@ impl Tool for EditFilesTool {
 
 struct EditToolRequest {
     parser: EditActionParser,
+    output: String,
     changed_buffers: HashSet<Entity<language::Buffer>>,
     bad_searches: Vec<BadSearch>,
     project: Entity<Project>,
@@ -200,6 +201,8 @@ impl EditToolRequest {
 
             let mut request = Self {
                 parser: EditActionParser::new(),
+                // we start with the success header so we don't need to shift the output in the common case
+                output: Self::SUCCESS_OUTPUT_HEADER.to_string(),
                 changed_buffers: HashSet::default(),
                 bad_searches: Vec::new(),
                 action_log,
@@ -232,7 +235,11 @@ impl EditToolRequest {
         Ok(())
     }
 
-    async fn apply_action(&mut self, action: EditAction, cx: &mut AsyncApp) -> Result<()> {
+    async fn apply_action(
+        &mut self,
+        (action, source): (EditAction, String),
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
         let project_path = self.project.read_with(cx, |project, cx| {
             project
                 .find_project_path(action.file_path(), cx)
@@ -270,6 +277,7 @@ impl EditToolRequest {
             DiffResult::Diff(diff) => {
                 let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
 
+                write!(&mut self.output, "\n\n{}", source)?;
                 self.changed_buffers.insert(buffer);
             }
         }
@@ -323,31 +331,19 @@ impl EditToolRequest {
         anyhow::Ok(DiffResult::Diff(diff))
     }
 
+    const SUCCESS_OUTPUT_HEADER: &str = "Successfully applied. Here's a list of changes:";
+    const ERROR_OUTPUT_HEADER_NO_EDITS: &str = "I couldn't apply any edits!";
+    const ERROR_OUTPUT_HEADER_WITH_EDITS: &str =
+        "Errors occurred. First, here's a list of the edits we managed to apply:";
+
     async fn finalize(self, cx: &mut AsyncApp) -> Result<String> {
-        let mut answer = match self.changed_buffers.len() {
-            0 => "No files were edited.".to_string(),
-            1 => "Successfully edited ".to_string(),
-            _ => "Successfully edited these files:\n\n".to_string(),
-        };
+        let changed_buffer_count = self.changed_buffers.len();
 
         // Save each buffer once at the end
         for buffer in &self.changed_buffers {
-            let (path, save_task) = self.project.update(cx, |project, cx| {
-                let path = buffer
-                    .read(cx)
-                    .file()
-                    .map(|file| file.path().display().to_string());
-
-                let task = project.save_buffer(buffer.clone(), cx);
-
-                (path, task)
-            })?;
-
-            save_task.await?;
-
-            if let Some(path) = path {
-                writeln!(&mut answer, "{}", path)?;
-            }
+            self.project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                .await?;
         }
 
         self.action_log
@@ -359,45 +355,64 @@ impl EditToolRequest {
         let errors = self.parser.errors();
 
         if errors.is_empty() && self.bad_searches.is_empty() {
-            let answer = answer.trim_end().to_string();
-            Ok(answer)
+            if changed_buffer_count == 0 {
+                return Err(anyhow!(
+                    "The instructions didn't lead to any changes. You might need to consult the file contents first."
+                ));
+            }
+
+            Ok(self.output)
         } else {
+            let mut output = self.output;
+
+            if output.is_empty() {
+                output.replace_range(
+                    0..Self::SUCCESS_OUTPUT_HEADER.len(),
+                    Self::ERROR_OUTPUT_HEADER_NO_EDITS,
+                );
+            } else {
+                output.replace_range(
+                    0..Self::SUCCESS_OUTPUT_HEADER.len(),
+                    Self::ERROR_OUTPUT_HEADER_WITH_EDITS,
+                );
+            }
+
             if !self.bad_searches.is_empty() {
                 writeln!(
-                    &mut answer,
-                    "\nThese searches failed because they didn't match any strings:"
+                    &mut output,
+                    "\n\nThese searches failed because they didn't match any strings:"
                 )?;
 
                 for replace in self.bad_searches {
                     writeln!(
-                        &mut answer,
+                        &mut output,
                         "- '{}' does not appear in `{}`",
                         replace.search.replace("\r", "\\r").replace("\n", "\\n"),
                         replace.file_path
                     )?;
                 }
 
-                writeln!(&mut answer, "Make sure to use exact searches.")?;
+                write!(&mut output, "Make sure to use exact searches.")?;
             }
 
             if !errors.is_empty() {
                 writeln!(
-                    &mut answer,
-                    "\nThese SEARCH/REPLACE blocks failed to parse:"
+                    &mut output,
+                    "\n\nThese SEARCH/REPLACE blocks failed to parse:"
                 )?;
 
                 for error in errors {
-                    writeln!(&mut answer, "- {}", error)?;
+                    writeln!(&mut output, "- {}", error)?;
                 }
             }
 
             writeln!(
-                &mut answer,
-                "\nYou can fix errors by running the tool again. You can include instructions,\
+                &mut output,
+                "\nYou can fix errors by running the tool again. You can include instructions, \
                 but errors are part of the conversation so you don't need to repeat them."
             )?;
 
-            Err(anyhow!(answer.trim_end().to_string()))
+            Err(anyhow!(output))
         }
     }
 }
