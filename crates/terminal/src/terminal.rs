@@ -1205,8 +1205,11 @@ impl Terminal {
             return;
         }
 
+        #[cfg(not(target_os = "windows"))]
+        let mut key = keystroke.key.clone();
         // todo(windows)
         // match key instead of string
+        #[cfg(target_os = "windows")]
         let mut key = keystroke.key.unparse().to_string();
         if keystroke.modifiers.shift {
             key = key.to_uppercase();

@@ -474,7 +474,7 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
         let key = match keystroke.key.as_str() {
             "pageup" => "PageUp",
             "pagedown" => "PageDown",
-            key => &util::capitalize(key.unparse()),
+            key => &util::capitalize(key),
         };
         #[cfg(target_os = "windows")]
         let key = match &keystroke.key {

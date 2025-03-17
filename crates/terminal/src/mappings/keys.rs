@@ -1,6 +1,8 @@
 /// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
-use gpui::{KeyCodes, Keystroke};
+#[cfg(target_os = "windows")]
+use gpui::KeyCodes;
+use gpui::Keystroke;
 
 #[derive(Debug, PartialEq, Eq)]
 enum AlacModifiers {
@@ -48,7 +50,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
 
     // Manual Bindings including modifiers
     #[cfg(not(target_os = "windows"))]
-    let manual_esc_str = match (&keystroke.key, &modifiers) {
+    let manual_esc_str = match (keystroke.key.as_str(), &modifiers) {
         //Basic special keys
         ("tab", AlacModifiers::None) => Some("\x09".to_string()),
         ("escape", AlacModifiers::None) => Some("\x1b".to_string()),
@@ -438,10 +440,17 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
     // TODO:
     // We're setting text?
     let alt_meta_binding = if alt_is_meta && modifiers == AlacModifiers::Alt && is_ascii {
-        Some(format!(
-            "\x1b{}",
-            keystroke.key.to_output_string(keystroke.modifiers.shift)
-        ))
+        #[cfg(not(target_os = "windows"))]
+        {
+            Some(format!("\x1b{}", keystroke.key))
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Some(format!(
+                "\x1b{}",
+                keystroke.key.to_output_string(keystroke.modifiers.shift)
+            ))
+        }
     } else {
         None
     };

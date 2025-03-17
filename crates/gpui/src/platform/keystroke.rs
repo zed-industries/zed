@@ -6,6 +6,7 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt::Display};
+#[cfg(target_os = "windows")]
 use util::ResultExt;
 
 #[cfg(target_os = "windows")]
@@ -222,7 +223,7 @@ impl Keystroke {
             str.push_str("shift-");
         }
         #[cfg(not(target_os = "windows"))]
-        str.push_str(&self.key.as_str);
+        str.push_str(self.key.as_str());
         #[cfg(target_os = "windows")]
         str.push_str(self.key.unparse());
         str
@@ -377,6 +378,8 @@ fn is_empty_key(key: &KeyCodes) -> bool {
 impl std::fmt::Display for Keystroke {
     #[cfg(not(target_os = "windows"))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write;
+
         if self.modifiers.control {
             f.write_char('^')?;
         }
