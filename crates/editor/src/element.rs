@@ -1678,6 +1678,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> HashMap<DisplayRow, AnyElement> {
+        // Don't show inline diagnostics in minimap
+        if self.editor.read(cx).mode() == EditorMode::Minimap {
+            return HashMap::default();
+        }
         let max_severity = ProjectSettings::get_global(cx)
             .diagnostics
             .inline
