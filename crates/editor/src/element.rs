@@ -55,7 +55,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
 };
-use project::project_settings::{self, GitGutterSetting, ProjectSettings};
+use project::project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -4379,8 +4379,6 @@ impl EditorElement {
                 };
 
                 if let Some((hunk_bounds, background_color, corner_radii, status)) = hunk_to_paint {
-                    let unstaged = status.has_secondary_hunk();
-
                     // Flatten the background color with the editor color to prevent
                     // elements below transparent hunks from showing through
                     let flattened_background_color = cx
@@ -4389,7 +4387,7 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if unstaged {
+                    if !Self::diff_hunk_hollow(status, cx) {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -5622,6 +5620,18 @@ impl EditorElement {
             &[run],
         )
     }
+
+    fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
+        let unstaged = status.has_secondary_hunk();
+        let unstaged_hollow = ProjectSettings::get_global(cx)
+            .git
+            .hunk_style
+            .map_or(false, |style| {
+                matches!(style, GitHunkStyleSetting::UnstagedHollow)
+            });
+
+        unstaged == unstaged_hollow
+    }
 }
 
 fn header_jump_data(
@@ -6773,10 +6783,9 @@ impl Element for EditorElement {
                             }
                         };
 
-                        let unstaged = diff_status.has_secondary_hunk();
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
 
-                        let staged_highlight = LineHighlight {
+                        let hollow_highlight = LineHighlight {
                             background: (background_color.opacity(if is_light {
                                 0.08
                             } else {
@@ -6790,13 +6799,13 @@ impl Element for EditorElement {
                             }),
                         };
 
-                        let unstaged_highlight =
+                        let filled_highlight =
                             solid_background(background_color.opacity(hunk_opacity)).into();
 
-                        let background = if unstaged {
-                            unstaged_highlight
+                        let background = if Self::diff_hunk_hollow(diff_status, cx) {
+                            hollow_highlight
                         } else {
-                            staged_highlight
+                            filled_highlight
                         };
 
                         highlighted_rows
