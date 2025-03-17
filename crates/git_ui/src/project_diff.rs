@@ -919,12 +919,6 @@ impl Render for ProjectDiffToolbar {
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
-                                // don't actually disable the button so it's mashable
-                                .color(if button_states.stage {
-                                    Color::Default
-                                } else {
-                                    Color::Disabled
-                                })
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
@@ -936,11 +930,6 @@ impl Render for ProjectDiffToolbar {
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
-                                .color(if button_states.unstage {
-                                    Color::Default
-                                } else {
-                                    Color::Disabled
-                                })
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
