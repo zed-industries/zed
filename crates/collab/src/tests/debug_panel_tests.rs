@@ -1,5 +1,6 @@
 use call::ActiveCall;
-use dap::requests::{Disconnect, Initialize, Launch, StackTrace};
+use dap::requests::{Initialize, Launch, StackTrace};
+use dap::DebugRequestType;
 use dap::{requests::SetBreakpoints, SourceBreakpoint};
 use debugger_ui::debugger_panel::DebugPanel;
 use debugger_ui::session::DebugSession;
@@ -202,7 +203,7 @@ async fn test_debug_panel_item_opens_on_remote(
     remote_cx.run_until_parked();
 
     let task = host_project.update(host_cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(dap::test_config(DebugRequestType::Launch, None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -227,8 +228,6 @@ async fn test_debug_panel_item_opens_on_remote(
             })
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -287,7 +286,7 @@ async fn test_active_debug_panel_item_set_on_join_project(
     host_cx.run_until_parked();
 
     let task = host_project.update(host_cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(dap::test_config(DebugRequestType::Launch, None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -312,8 +311,6 @@ async fn test_active_debug_panel_item_set_on_join_project(
             })
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -416,8 +413,6 @@ async fn test_debug_panel_remote_button_presses(
     //         })
     //     })
     //     .await;
-
-    // client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     // client
     //     .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -789,8 +784,6 @@ async fn test_restart_stack_frame(_host_cx: &mut TestAppContext, _remote_cx: &mu
     //     })
     //     .await;
 
-    // client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
-
     // client
     //     .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
     //         reason: dap::StoppedEventReason::Pause,
@@ -865,7 +858,7 @@ async fn test_updated_breakpoints_send_to_dap(
     };
 
     let task = host_project.update(host_cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(dap::test_config(DebugRequestType::Launch, None, None), cx)
     });
 
     let session = task.await.unwrap();
@@ -918,8 +911,6 @@ async fn test_updated_breakpoints_send_to_dap(
             }
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -1279,8 +1270,6 @@ async fn test_module_list(
     //         );
     //     })
     // });
-
-    // client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     // let shutdown_client = host_project.update(host_cx, |project, cx| {
     //     project.dap_store().update(cx, |dap_store, cx| {
@@ -1721,8 +1710,6 @@ async fn test_module_list(
 //             variable_list.assert_visual_entries(first_visual_entries, cx);
 //         });
 
-//     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
-
 //     let shutdown_client = host_project.update(host_cx, |project, cx| {
 //         project.dap_store().update(cx, |dap_store, cx| {
 //             dap_store.shutdown_session(&session.read(cx).id(), cx)
@@ -1845,8 +1832,6 @@ async fn test_ignore_breakpoints(
     //         })
     //     })
     //     .await;
-
-    // client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     // client
     //     .fake_event(dap::messages::Events::Initialized(Some(
@@ -2217,8 +2202,6 @@ async fn test_debug_panel_console(_host_cx: &mut TestAppContext, _remote_cx: &mu
     //         })
     //     })
     //     .await;
-
-    // client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     // client
     //     .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {

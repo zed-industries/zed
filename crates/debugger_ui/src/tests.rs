@@ -6,7 +6,7 @@ use workspace::Workspace;
 
 use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
-// mod attach_modal; todo(debugger): enable this again
+mod attach_modal;
 mod console;
 mod debugger_panel;
 mod module_list;

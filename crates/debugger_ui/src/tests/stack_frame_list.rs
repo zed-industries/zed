@@ -4,7 +4,7 @@ use crate::{
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
-    requests::{Disconnect, StackTrace, Threads},
+    requests::{StackTrace, Threads},
     StackFrame,
 };
 use editor::{Editor, ToPoint as _};
@@ -51,7 +51,10 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -128,8 +131,6 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
             }
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -238,7 +239,10 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -315,8 +319,6 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             }
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -500,7 +502,10 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -687,8 +692,6 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             }
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {

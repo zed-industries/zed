@@ -49,23 +49,19 @@ pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Arc<dyn DebugAdapt
     }
 }
 
-fn default_attach_processes<'a>(
-    processes: &'a HashMap<Pid, Process>,
-) -> Vec<(&'a Pid, &'a Process)> {
-    processes
-        .iter()
-        .filter(|(pid, _)| pid.as_u32() == std::process::id())
-        .collect::<Vec<_>>()
-}
-
 pub fn attach_processes<'a>(
     kind: &DebugAdapterKind,
     processes: &'a HashMap<Pid, Process>,
 ) -> Vec<(&'a Pid, &'a Process)> {
     match kind {
+        #[cfg(any(test, feature = "test-support"))]
+        DebugAdapterKind::Fake(_) => processes
+            .iter()
+            .filter(|(pid, _)| pid.as_u32() == std::process::id())
+            .collect::<Vec<_>>(),
         DebugAdapterKind::Custom(_) => CustomDebugAdapter::attach_processes(processes),
         DebugAdapterKind::Javascript(_) => JsDebugAdapter::attach_processes(processes),
         DebugAdapterKind::Lldb => LldbDebugAdapter::attach_processes(processes),
-        _ => default_attach_processes(processes),
+        _ => processes.iter().collect::<Vec<_>>(),
     }
 }

@@ -4,8 +4,8 @@ use crate::{
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
-    requests::{Disconnect, Modules, StackTrace, Threads},
-    StoppedEvent,
+    requests::{Modules, StackTrace, Threads},
+    DebugRequestType, StoppedEvent,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
@@ -32,6 +32,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     let task = project.update(cx, |project, cx| {
         project.start_debug_session(
             dap::test_config(
+                DebugRequestType::Launch,
                 None,
                 Some(dap::Capabilities {
                     supports_modules_request: Some(true),
@@ -127,8 +128,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
             hit_breakpoint_ids: None,
         }))
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     cx.run_until_parked();
 

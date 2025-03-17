@@ -10,7 +10,7 @@ use crate::{
 };
 use collections::HashMap;
 use dap::{
-    requests::{Disconnect, Initialize, Launch, Scopes, StackTrace, Variables},
+    requests::{Initialize, Launch, Scopes, StackTrace, Variables},
     Scope, StackFrame, Variable,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -55,7 +55,10 @@ async fn test_basic_fetch_initial_scope_and_variables(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -178,8 +181,6 @@ async fn test_basic_fetch_initial_scope_and_variables(
         })
         .await;
 
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
-
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
             reason: dap::StoppedEventReason::Pause,
@@ -281,7 +282,10 @@ async fn test_fetch_variables_for_multiple_scopes(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -448,8 +452,6 @@ async fn test_fetch_variables_for_multiple_scopes(
         })
         .await;
 
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
-
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
             reason: dap::StoppedEventReason::Pause,
@@ -559,7 +561,10 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -757,8 +762,6 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
             }
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -1145,7 +1148,10 @@ async fn test_variable_list_only_sends_requests_when_rendering(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -1312,8 +1318,6 @@ async fn test_variable_list_only_sends_requests_when_rendering(
         })
         .await;
 
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
-
     let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, cx| {
         let state = item
             .mode()
@@ -1421,7 +1425,10 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(dap::test_config(None, None), cx)
+        project.start_debug_session(
+            dap::test_config(dap::DebugRequestType::Launch, None, None),
+            cx,
+        )
     });
 
     let session = task.await.unwrap();
@@ -1638,8 +1645,6 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
             }
         })
         .await;
-
-    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
