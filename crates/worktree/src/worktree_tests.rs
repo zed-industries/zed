@@ -845,9 +845,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     });
 }
 
-// TODO: Fix flaky test.
-// #[gpui::test]
-#[allow(unused)]
+#[gpui::test]
 async fn test_write_file(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2432,9 +2430,9 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 // you can't rename a directory which some program has already open. This is a
 // limitation of the Windows. See:
 // https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
-// TODO: Fix flaky test.
-// #[gpui::test]
-#[allow(unused)]
+// TODO: re-enable flaky test.
+//#[gpui::test]
+#[allow(dead_code)]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_file_status(cx: &mut TestAppContext) {
     init_test(cx);
@@ -2627,9 +2625,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
     });
 }
 
-// TODO: Fix flaky test.
-// #[gpui::test]
-#[allow(unused)]
+#[gpui::test]
 async fn test_git_repository_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2743,9 +2739,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     });
 }
 
-// TODO: Fix flaky test.
-// #[gpui::test]
-#[allow(unused)]
+#[gpui::test]
 async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -3541,8 +3535,8 @@ fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
     repo.cherrypick(commit, None).expect("Failed to cherrypick");
 }
 
-// TODO: Remove allow(unused) once flaky tests are reinstated
-#[allow(unused)]
+// TODO remove this once flaky test is fixed
+#[allow(dead_code)]
 #[track_caller]
 fn git_stash(repo: &mut git2::Repository) {
     use git2::Signature;
@@ -3552,8 +3546,8 @@ fn git_stash(repo: &mut git2::Repository) {
         .expect("Failed to stash");
 }
 
-// TODO: Remove allow(unused) once flaky tests are reinstated
-#[allow(unused)]
+// TODO remove this once flaky test is fixed
+#[allow(dead_code)]
 #[track_caller]
 fn git_reset(offset: usize, repo: &git2::Repository) {
     let head = repo.head().expect("Couldn't get repo head");
@@ -3586,6 +3580,7 @@ fn git_checkout(name: &str, repo: &git2::Repository) {
     repo.checkout_head(None).expect("Failed to check out head");
 }
 
+// TODO remove this once flaky test is fixed
 #[allow(dead_code)]
 #[track_caller]
 fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {

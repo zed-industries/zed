@@ -4096,6 +4096,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn widest_line_number(&self) -> u32 {
+        // widest_line_number is 0-based, so 1 is added to get the displayed line number.
         self.excerpts.summary().widest_line_number + 1
     }
 
