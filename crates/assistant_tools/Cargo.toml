@@ -38,5 +38,7 @@ rand.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
