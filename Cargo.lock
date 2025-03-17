@@ -6211,17 +6211,8 @@ dependencies = [
 name = "http_client_tls"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "bytes 1.10.1",
- "derive_more",
- "futures 0.3.31",
- "http 1.2.0",
- "log",
  "rustls 0.23.23",
  "rustls-platform-verifier",
- "serde",
- "serde_json",
- "url",
 ]
 
 [[package]]
