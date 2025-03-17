@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Github::new_default()
+        let parsed_remote = Github::public_instance()
             .parse_remote_url("git@github.com:zed-industries/zed.git")
             .unwrap();
 
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Github::new_default()
+        let parsed_remote = Github::public_instance()
             .parse_remote_url("https://github.com/zed-industries/zed.git")
             .unwrap();
 
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
-        let parsed_remote = Github::new_default()
+        let parsed_remote = Github::public_instance()
             .parse_remote_url("https://jlannister@github.com/some-org/some-repo.git")
             .unwrap();
 
@@ -365,7 +365,7 @@ mod tests {
             owner: "zed-industries".into(),
             repo: "zed".into(),
         };
-        let permalink = Github::new_default().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_build_github_permalink() {
-        let permalink = Github::new_default().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn test_build_github_permalink_with_single_line_selection() {
-        let permalink = Github::new_default().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_build_github_permalink_with_multi_line_selection() {
-        let permalink = Github::new_default().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -439,7 +439,7 @@ mod tests {
             repo: "zed".into(),
         };
 
-        let github = Github::new_default();
+        let github = Github::public_instance();
         let message = "This does not contain a pull request";
         assert!(github.extract_pull_request(&remote, message).is_none());
 

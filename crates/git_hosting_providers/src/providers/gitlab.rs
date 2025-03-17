@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Gitlab::new_default()
+        let parsed_remote = Gitlab::public_instance()
             .parse_remote_url("git@gitlab.com:zed-industries/zed.git")
             .unwrap();
 
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Gitlab::new_default()
+        let parsed_remote = Gitlab::public_instance()
             .parse_remote_url("https://gitlab.com/zed-industries/zed.git")
             .unwrap();
 
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink() {
-        let permalink = Gitlab::new_default().build_permalink(
+        let permalink = Gitlab::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink_with_single_line_selection() {
-        let permalink = Gitlab::new_default().build_permalink(
+        let permalink = Gitlab::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink_with_multi_line_selection() {
-        let permalink = Gitlab::new_default().build_permalink(
+        let permalink = Gitlab::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),

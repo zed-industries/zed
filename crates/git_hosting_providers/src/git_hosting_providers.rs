@@ -15,12 +15,12 @@ pub use crate::providers::*;
 /// Initializes the Git hosting providers.
 pub fn init(cx: &mut App) {
     let provider_registry = GitHostingProviderRegistry::global(cx);
-    provider_registry.register_hosting_provider(Arc::new(Bitbucket::new_default()));
+    provider_registry.register_hosting_provider(Arc::new(Bitbucket::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Chromium));
     provider_registry.register_hosting_provider(Arc::new(Codeberg));
     provider_registry.register_hosting_provider(Arc::new(Gitee));
-    provider_registry.register_hosting_provider(Arc::new(Github::new_default()));
-    provider_registry.register_hosting_provider(Arc::new(Gitlab::new_default()));
+    provider_registry.register_hosting_provider(Arc::new(Github::public_instance()));
+    provider_registry.register_hosting_provider(Arc::new(Gitlab::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Sourcehut));
 
     GitProviderSettings::register(cx);

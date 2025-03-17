@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Bitbucket::new_default()
+        let parsed_remote = Bitbucket::public_instance()
             .parse_remote_url("git@bitbucket.org:zed-industries/zed.git")
             .unwrap();
 
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Bitbucket::new_default()
+        let parsed_remote = Bitbucket::public_instance()
             .parse_remote_url("https://bitbucket.org/zed-industries/zed.git")
             .unwrap();
 
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
-        let parsed_remote = Bitbucket::new_default()
+        let parsed_remote = Bitbucket::public_instance()
             .parse_remote_url("https://thorstenballzed@bitbucket.org/zed-industries/zed.git")
             .unwrap();
 
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink() {
-        let permalink = Bitbucket::new_default().build_permalink(
+        let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink_with_single_line_selection() {
-        let permalink = Bitbucket::new_default().build_permalink(
+        let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink_with_multi_line_selection() {
-        let permalink = Bitbucket::new_default().build_permalink(
+        let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
