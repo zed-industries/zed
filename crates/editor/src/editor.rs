@@ -6511,15 +6511,20 @@ impl Editor {
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.key.unparse().to_string())
+                #[cfg(not(target_os = "windows"))]
+                let key_string = accept_keystroke.key.clone();
+                #[cfg(target_os = "windows")]
+                let key_string = accept_keystroke.key.unparse().to_string();
+                parent.child(key_string)
             })
             .when(!is_platform_style_mac, |parent| {
+                #[cfg(not(target_os = "windows"))]
+                let key_str = &accept_keystroke.key;
+                #[cfg(target_os = "windows")]
+                let key_str = &accept_keystroke.key.display();
                 parent.child(
-                    Key::new(
-                        util::capitalize(accept_keystroke.key.unparse()),
-                        Some(Color::Default),
-                    )
-                    .size(Some(IconSize::XSmall.rems().into())),
+                    Key::new(util::capitalize(key_str), Some(Color::Default))
+                        .size(Some(IconSize::XSmall.rems().into())),
                 )
             })
             .into_any()
