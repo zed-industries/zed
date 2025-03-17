@@ -2082,7 +2082,6 @@ impl Window {
             None
         })
     }
-
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
