@@ -128,6 +128,10 @@ impl BreakpointStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
+        if message.payload.breakpoints.is_empty() {
+            return Ok(());
+        }
+
         let buffer = this
             .update(&mut cx, |this, cx| {
                 let path =
@@ -155,6 +159,7 @@ impl BreakpointStore {
                     Some((anchor, breakpoint))
                 })
                 .collect();
+
             cx.notify();
         })?;
 
@@ -190,6 +195,7 @@ impl BreakpointStore {
         .ok_or_else(|| anyhow!("Anchor deserialization failed"))?;
         let breakpoint = Breakpoint::from_proto(breakpoint)
             .ok_or_else(|| anyhow!("Could not deserialize breakpoint"))?;
+
         breakpoints.update(&mut cx, |this, cx| {
             this.toggle_breakpoint(
                 buffer,
@@ -282,6 +288,10 @@ impl BreakpointStore {
                 }
             }
         }
+
+        if breakpoint_set.breakpoints.is_empty() {
+            self.breakpoints.remove(&abs_path);
+        }
         if let BreakpointStoreMode::Remote(remote) = &self.mode {
             if let Some(breakpoint) = breakpoint.1.to_proto(&abs_path, &breakpoint.0) {
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
@@ -292,18 +302,23 @@ impl BreakpointStore {
                 .detach();
             }
         } else if let Some((client, project_id)) = &self.downstream_client {
+            let breakpoints = self
+                .breakpoints
+                .get(&abs_path)
+                .map(|breakpoint_set| {
+                    breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .filter_map(|(anchor, bp)| bp.to_proto(&abs_path, anchor))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             let _ = client.send(proto::BreakpointsForFile {
                 project_id: *project_id,
                 path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
-                breakpoints: breakpoint_set
-                    .breakpoints
-                    .iter()
-                    .filter_map(|(anchor, bp)| bp.to_proto(&abs_path, anchor))
-                    .collect(),
+                breakpoints,
             });
-        }
-        if breakpoint_set.breakpoints.is_empty() {
-            self.breakpoints.remove(&abs_path);
         }
 
         cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
