@@ -3546,7 +3546,7 @@ impl BackgroundScannerState {
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
-        log::info!("insert git reposiutory for {dot_git_path:?}");
+        log::info!("insert git repository for {dot_git_path:?}");
         let work_dir_id = self
             .snapshot
             .entry_for_path(work_directory.path_key().0)

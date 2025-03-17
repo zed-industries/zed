@@ -748,7 +748,7 @@ impl GitStore {
             if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                 let recv = repo.update(cx, |repo, cx| {
                     log::debug!("updating index text for buffer {}", path.display());
-                    repo.set_index_text(
+                    repo.spawn_set_index_text_job(
                         path,
                         new_index_text.as_ref().map(|rope| rope.to_string()),
                         cx,
@@ -824,13 +824,14 @@ impl GitStore {
 
             let mut diff_bases_changes_by_buffer = Vec::new();
             for (buffer, path, current_index_text, current_head_text) in diff_state_updates {
-                log::debug!("reloading git state for buffer {}", path.display());
                 let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
                     continue;
                 };
                 let Some(relative_path) = local_repo.relativize(&path).ok() else {
                     continue;
                 };
+
+                log::debug!("reloading git state for buffer {}", path.display());
                 let index_text = if current_index_text.is_some() {
                     local_repo
                         .repo()
@@ -1217,7 +1218,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.set_index_text(
+                repository_handle.spawn_set_index_text_job(
                     RepoPath::from_str(&envelope.payload.path),
                     envelope.payload.text,
                     cx,
@@ -2703,7 +2704,7 @@ impl Repository {
         })
     }
 
-    fn set_index_text(
+    fn spawn_set_index_text_job(
         &self,
         path: RepoPath,
         content: Option<String>,
