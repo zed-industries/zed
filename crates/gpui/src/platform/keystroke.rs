@@ -167,7 +167,7 @@ impl Keystroke {
             keystroke: source.to_owned(),
         })?;
         #[cfg(not(target_os = "windows"))]
-        let key = perform_mapping(key, char_based_matching, key_equivalents)?;
+        let key = perform_mapping(key, char_based_matching, key_equivalents);
         #[cfg(target_os = "windows")]
         let key = perform_mapping(
             source,
@@ -221,6 +221,9 @@ impl Keystroke {
         if self.modifiers.shift {
             str.push_str("shift-");
         }
+        #[cfg(not(target_os = "windows"))]
+        str.push_str(&self.key.as_str);
+        #[cfg(target_os = "windows")]
         str.push_str(self.key.unparse());
         str
     }
