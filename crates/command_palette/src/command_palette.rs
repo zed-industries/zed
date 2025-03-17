@@ -11,7 +11,6 @@ use client::parse_zed_link;
 use command_palette_hooks::{
     CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
 };
-use db::anyhow;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -240,7 +239,10 @@ impl CommandPaletteDelegate {
             self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
         }
     }
-
+    ///
+    /// Hit count for each command in the palette.
+    /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
+    /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
     fn hit_counts(&self) -> HashMap<String, u16> {
         if let Ok(commands) = COMMAND_PALETTE_HISTORY.list_commands_used() {
             commands
@@ -290,17 +292,12 @@ impl PickerDelegate for CommandPaletteDelegate {
         let (mut tx, mut rx) = postage::dispatch::channel(1);
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
+            let hit_counts = self.hit_counts();
             let executor = cx.background_executor().clone();
             let query = normalize_query(query.as_str());
-            let hit_counts = self.hit_counts();
             async move {
                 commands.sort_by_key(|action| {
                     (
-                        // Ok, so what do we do here? Grab everything from the SQLite database
-                        // Reverse(stored_hit_counts.binary_search(|x| x.command_name == action.name).unwrap_or(default)),
-                        // This seems problematic. I think I need to go back to a list approach
-                        // - Limit by a lot
-                        // - Try a filtration thing?
                         Reverse(hit_counts.get(&action.name).cloned()),
                         action.name.clone(),
                     )
@@ -401,10 +398,9 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.matches.clear();
         self.commands.clear();
         let command_name = command.name.clone();
-        cx.background_spawn(async move {
-            COMMAND_PALETTE_HISTORY.write_command(command_name).await?;
-            anyhow::Ok(())
-        })
+        cx.background_spawn(
+            async move { COMMAND_PALETTE_HISTORY.write_command(command_name).await },
+        )
         .detach_and_log_err(cx);
         let action = command.action;
         window.focus(&self.previous_focus_handle);
