@@ -371,28 +371,26 @@ impl MarkdownPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let file_location = Self::get_folder_for_active_editor(&editor.read(cx), cx);
-        
-        if let Some(folder_path) = file_location {
-            let content = editor.read(cx).buffer().read(cx).snapshot(cx).text();
-            
-            let image_regex = regex::Regex::new(r"!\[.*?\]\((.*?)\)").unwrap();
-            
-            for cap in image_regex.captures_iter(&content) {
-                if let Some(image_path_match) = cap.get(1) {
-                    let image_path_str = image_path_match.as_str();
-                    
-                    if image_path_str.starts_with("http") {
-                        continue;
-                    }
-                    
-                    let image_path = folder_path.join(image_path_str);
-                    
-                    if image_path.exists() {
-                        let resource = gpui::Resource::Path(Arc::from(image_path.as_path()));
-                        window.remove_asset::<gpui::ImgResourceLoader>(&resource, cx);
-                    }
+        let Some(folder_path) = Self::get_folder_for_active_editor(&editor.read(cx), cx) else {
+            return;
+        };
+
+        let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+            return;
+        };
+
+        let text = buffer.read(cx).text();
+        let image_regex = Regex::new(r"!\[.*?\]\((.*?)\)").unwrap();
+
+        for capture in image_regex.captures_iter(&text) {
+            if let Some(image_path_str) = capture.get(1).map(|m| m.as_str()) {
+                if image_path_str.starts_with("http") {
+                    continue;
                 }
+                
+                let image_path = folder_path.join(image_path_str);
+                let resource = gpui::Resource::Path(Arc::from(image_path.as_path()));
+                cx.remove_asset::<gpui::ImgResourceLoader>(&resource);
             }
         }
     }
