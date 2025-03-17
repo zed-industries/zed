@@ -35,7 +35,8 @@ impl Gitlab {
         }
 
         // TODO: detecting self hosted instances by checking whether "gitlab" is in the url or not
-        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more information.
+        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
+        // information.
         if !host.contains("gitlab") {
             bail!("not a GitLab URL");
         }
