@@ -1382,6 +1382,26 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+### Gutter Debounce
+
+- Description: Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+- Setting: `gutter_debounce`
+- Default: `null`
+
+**Options**
+
+`integer` values representing milliseconds
+
+Example:
+
+```json
+{
+  "git": {
+    "gutter_debounce": 100
+  }
+}
+```
+
 ### Inline Git Blame
 
 - Description: Whether or not to show git blame information inline, on the currently focused line.
