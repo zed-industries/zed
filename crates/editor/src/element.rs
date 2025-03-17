@@ -1499,6 +1499,7 @@ impl EditorElement {
                 editor.mode = EditorMode::Minimap;
                 editor.set_text_style_refinement(TextStyleRefinement {
                     font_size: Some(px(2.).into()),
+                    font_weight: Some(gpui::FontWeight(900.)),
                     ..Default::default()
                 });
 
@@ -1518,10 +1519,15 @@ impl EditorElement {
                     }
                     None => px(0.),
                 };
-                let mut minimap_bounds = bounds;
-                minimap_bounds.size.width = px(100.);
-                minimap_bounds.origin.x =
-                    bounds.size.width - minimap_bounds.size.width - scrollbar_y_width;
+                let mut bottom_right = bounds.bottom_right();
+                bottom_right.x -= scrollbar_y_width;
+                let minimap_bounds = Bounds::from_corners(
+                    point(
+                        bounds.size.width - px(100.) - scrollbar_y_width,
+                        bounds.origin.y,
+                    ),
+                    bottom_right,
+                );
                 _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
                 window.with_element_offset(minimap_bounds.origin, |window| {
                     minimap_elem.prepaint(window, cx)
@@ -6661,6 +6667,7 @@ impl Element for EditorElement {
                     let mut snapshot = self
                         .editor
                         .update(cx, |editor, cx| editor.snapshot(window, cx));
+
                     let style = self.style.clone();
 
                     let font_id = window.text_system().resolve_font(&style.text.font());
@@ -6776,6 +6783,11 @@ impl Element for EditorElement {
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
+
+                    // Minimap cannot scroll horizontally
+                    if snapshot.mode == EditorMode::Minimap {
+                        scroll_position.x = 0.;
+                    }
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
                     let start_row = DisplayRow(scroll_position.y as u32);
