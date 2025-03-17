@@ -1799,6 +1799,9 @@ impl LocalLspStore {
         settings: &LanguageSettings,
         cx: &mut AsyncApp,
     ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
+        let logger = zlog::scoped!("lsp_format");
+        zlog::info!(logger, "Formatting via LSP");
+
         let uri = lsp::Url::from_file_path(abs_path)
             .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
@@ -1808,6 +1811,8 @@ impl LocalLspStore {
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+            let _timer =
+                zlog::time!(logger, "format-full").warn_if_gt(std::time::Duration::from_millis(0));
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
@@ -1816,6 +1821,8 @@ impl LocalLspStore {
                 })
                 .await?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+            let _timer =
+                zlog::time!(logger, "format-range").warn_if_gt(std::time::Duration::from_millis(0));
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
             language_server
