@@ -2039,7 +2039,9 @@ impl Repository {
 
             let mut path = PathBuf::new();
             path = path.join(worktree_name);
-            path = path.join(project_path.path);
+            if project_path.path.components().count() > 0 {
+                path = path.join(project_path.path);
+            }
             Some(path.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| self.repository_entry.work_directory.display_name())

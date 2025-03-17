@@ -127,18 +127,13 @@ const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(
-        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
-            workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
-                workspace.toggle_panel_focus::<GitPanel>(window, cx);
-            });
-            workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
-                CommitModal::toggle(workspace, window, cx)
-            });
-        },
-    )
-    .detach();
+pub fn register(workspace: &mut Workspace) {
+    workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+        workspace.toggle_panel_focus::<GitPanel>(window, cx);
+    });
+    workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
+        CommitModal::toggle(workspace, window, cx)
+    });
 }
 
 #[derive(Debug, Clone)]
@@ -4087,7 +4082,7 @@ impl RenderOnce for PanelRepoFooter {
                 let project = project.clone();
                 move |window, cx| {
                     let project = project.clone()?;
-                    Some(cx.new(|cx| RepositorySelector::new(project, window, cx)))
+                    Some(cx.new(|cx| RepositorySelector::new(project, rems(16.), window, cx)))
                 }
             })
             .trigger_with_tooltip(

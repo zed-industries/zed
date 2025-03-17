@@ -54,16 +54,6 @@ impl ModalContainerProperties {
     }
 }
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        CommitModal::register(workspace, window, cx)
-    })
-    .detach();
-}
-
 pub struct CommitModal {
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
@@ -108,7 +98,7 @@ struct RestoreDock {
 }
 
 impl CommitModal {
-    pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
+    pub fn register(workspace: &mut Workspace) {
         workspace.register_action(|workspace, _: &Commit, window, cx| {
             CommitModal::toggle(workspace, window, cx);
         });

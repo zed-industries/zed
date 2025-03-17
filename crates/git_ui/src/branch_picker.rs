@@ -17,13 +17,10 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
-        workspace.register_action(open);
-        workspace.register_action(switch);
-        workspace.register_action(checkout_branch);
-    })
-    .detach();
+pub fn register(workspace: &mut Workspace) {
+    workspace.register_action(open);
+    workspace.register_action(switch);
+    workspace.register_action(checkout_branch);
 }
 
 pub fn checkout_branch(

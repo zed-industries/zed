@@ -66,16 +66,11 @@ const TRACKED_NAMESPACE: &'static str = "1";
 const NEW_NAMESPACE: &'static str = "2";
 
 impl ProjectDiff {
-    pub(crate) fn register(
-        workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        cx: &mut Context<Workspace>,
-    ) {
+    pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
-
         workspace::register_serializable_item::<ProjectDiff>(cx);
     }
 
