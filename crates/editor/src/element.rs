@@ -1492,14 +1492,20 @@ impl EditorElement {
     ) -> Option<AnyElement> {
         match snapshot.mode {
             EditorMode::Full => {
-                let mut minimap_elem = self.editor.update(cx, |editor, cx| {
-                    let mut editor_clone = editor.clone(window, cx);
-                    editor_clone.mode = EditorMode::Minimap;
-                    editor_clone.set_text_style_refinement(TextStyleRefinement {
-                        font_size: Some(px(1.).into()),
-                        ..Default::default()
-                    });
-                    editor_clone.render(window, cx).into_any_element()
+                let mut editor = self
+                    .editor
+                    .update(cx, |editor, cx| editor.clone(window, cx));
+
+                editor.mode = EditorMode::Minimap;
+                editor.set_text_style_refinement(TextStyleRefinement {
+                    font_size: Some(px(1.).into()),
+                    ..Default::default()
+                });
+
+                let editor_entity = cx.new(|_| editor);
+
+                let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
+                    editor.render(window, cx).into_any_element()
                 });
 
                 let mut minimap_bounds = bounds.clone();
