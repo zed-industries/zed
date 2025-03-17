@@ -468,13 +468,9 @@ impl DapStore {
                 kind: config.kind,
                 request: match &args.request {
                     StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
-                    StartDebuggingRequestArgumentsRequest::Attach => DebugRequestType::Attach(
-                        if let DebugRequestType::Attach(attach_config) = &config.request {
-                            attach_config.clone()
-                        } else {
-                            AttachConfig::default()
-                        },
-                    ),
+                    StartDebuggingRequestArgumentsRequest::Attach => {
+                        DebugRequestType::Attach(AttachConfig::default())
+                    }
                 },
                 program: config.program,
                 cwd: config.cwd,

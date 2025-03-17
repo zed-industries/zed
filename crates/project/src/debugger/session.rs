@@ -2,11 +2,12 @@ use crate::project_settings::ProjectSettings;
 
 use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason};
 use super::dap_command::{
-    self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
-    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
-    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
-    SetVariableValueCommand, StackTraceCommand, StepBackCommand, StepCommand, StepInCommand,
-    StepOutCommand, TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
+    self, Attach, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand,
+    EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
+    ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
+    ScopesCommand, SetVariableValueCommand, StackTraceCommand, StepBackCommand, StepCommand,
+    StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand, ThreadsCommand,
+    VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -380,17 +381,8 @@ impl LocalMode {
             dap::DebugRequestType::Launch => {
                 self.request(Launch { raw }, cx.background_executor().clone())
             }
-            dap::DebugRequestType::Attach(attach_config) => {
-                if attach_config.process_id.is_none() {
-                    return Task::ready(Err(anyhow!(
-                        "Can't start a attach debug session without a process id"
-                    )));
-                }
-
-                self.request(
-                    super::dap_command::Attach { raw },
-                    cx.background_executor().clone(),
-                )
+            dap::DebugRequestType::Attach(_) => {
+                self.request(Attach { raw }, cx.background_executor().clone())
             }
         };
 
