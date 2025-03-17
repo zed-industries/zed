@@ -3784,7 +3784,7 @@ impl Render for GitPanel {
             }))
             .size_full()
             .overflow_hidden()
-            .bg(ElevationIndex::Surface.bg(cx))
+            .bg(cx.theme().colors().panel_background)
             .child(
                 v_flex()
                     .size_full()
