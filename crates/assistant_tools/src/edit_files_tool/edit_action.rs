@@ -32,7 +32,7 @@ pub struct EditActionParser {
     marker_ix: usize,
     line: usize,
     column: usize,
-    file_path_len: usize,
+    fence_start_offset: usize,
     old_bytes: Vec<u8>,
     new_bytes: Vec<u8>,
     errors: Vec<ParseError>,
@@ -60,7 +60,7 @@ impl EditActionParser {
         Self {
             state: State::Default,
             action_source: Vec::new(),
-            file_path_len: 0,
+            fence_start_offset: 0,
             marker_ix: 0,
             line: 1,
             column: 0,
@@ -102,7 +102,7 @@ impl EditActionParser {
             match &self.state {
                 Default => match match_marker(byte, FENCE, false, &mut self.marker_ix) {
                     MarkerMatch::Complete => {
-                        self.file_path_len = self.action_source.len() - FENCE.len();
+                        self.fence_start_offset = self.action_source.len() + 1 - FENCE.len();
                         self.to_state(OpenFence);
                     }
                     MarkerMatch::Partial => {}
@@ -183,7 +183,7 @@ impl EditActionParser {
         }
 
         let action_source = std::mem::take(&mut self.action_source);
-        let mut file_path_bytes = action_source[..self.file_path_len].to_vec();
+        let mut file_path_bytes = action_source[..self.fence_start_offset].to_vec();
 
         if file_path_bytes.ends_with(b"\n") {
             file_path_bytes.pop();
