@@ -50,7 +50,7 @@ impl GitHostingProvider for Bitbucket {
         let url = RemoteUrl::from_str(url).ok()?;
 
         let host = url.host_str()?;
-        if host != self.base_url.host_str()? {
+        if host != "bitbucket.org" {
             return None;
         }
 
