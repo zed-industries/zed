@@ -2135,7 +2135,7 @@ impl EditorElement {
 
         let scroll_top = scroll_position.y * line_height;
 
-        let max_line_number_length = 1 + self
+        let max_line_number_length = self
             .editor
             .read(cx)
             .buffer()
@@ -2718,7 +2718,7 @@ impl EditorElement {
         for_excerpt: &ExcerptInfo,
         is_folded: bool,
         is_selected: bool,
-        _is_sticky: bool,
+        is_sticky: bool,
         jump_data: JumpData,
         window: &mut Window,
         cx: &mut App,
@@ -2753,8 +2753,7 @@ impl EditorElement {
         let colors = cx.theme().colors();
 
         div()
-            .px_2()
-            .pt_2()
+            .p_1()
             .w_full()
             .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
             .child(
@@ -2765,7 +2764,7 @@ impl EditorElement {
                     .pl_0p5()
                     .pr_5()
                     .rounded_sm()
-                    // .when(is_sticky, |el| el.shadow_md())
+                    .when(is_sticky, |el| el.shadow_md())
                     .border_1()
                     .map(|div| {
                         let border_color = if is_selected
@@ -2793,7 +2792,7 @@ impl EditorElement {
                                     ButtonLike::new("toggle-buffer-fold")
                                         .style(ui::ButtonStyle::Transparent)
                                         .size(ButtonSize::Large)
-                                        .width(px(30.).into())
+                                        .width(px(24.).into())
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
