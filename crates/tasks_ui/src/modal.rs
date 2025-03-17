@@ -333,7 +333,6 @@ impl PickerDelegate for TasksModalDelegate {
                     ),
                     TaskType::Debug(_) => {
                         let Some(config) = task.resolved_debug_adapter_config() else {
-                            // debug_panic!("Attempted to start a debug task without a resolved debug adapter config");
                             return;
                         };
                         let project = workspace.project().clone();
@@ -342,11 +341,10 @@ impl PickerDelegate for TasksModalDelegate {
                             DebugRequestType::Attach(attach_config)
                                 if attach_config.process_id.is_none() =>
                             {
-                                let debug_config = config.clone();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     debugger_ui::attach_modal::AttachModal::new(
                                         project,
-                                        debug_config,
+                                        config.clone(),
                                         window,
                                         cx,
                                     )

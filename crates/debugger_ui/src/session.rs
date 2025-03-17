@@ -77,7 +77,7 @@ impl DebugSession {
             .and_then(|tree| tree.read(cx).abs_path().to_str().map(|str| str.to_string()))
             .unwrap_or_default();
 
-        let inert = cx.new(|cx| InertState::new(&default_cwd, window, cx));
+        let inert = cx.new(|cx| InertState::new(workspace.clone(), &default_cwd, window, cx));
 
         let project = project.read(cx);
         let dap_store = project.dap_store().downgrade();

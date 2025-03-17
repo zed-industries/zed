@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use dap::{DebugAdapterConfig, DebugAdapterKind, DebugRequestType};
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle};
+use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity};
 use settings::Settings as _;
 use task::TCPHost;
 use theme::ThemeSettings;
@@ -11,16 +11,25 @@ use ui::{
     Context, ContextMenu, Disableable, DropdownMenu, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, Styled, Window,
 };
+use workspace::Workspace;
+
+use crate::attach_modal::AttachModal;
 
 pub(crate) struct InertState {
     focus_handle: FocusHandle,
     selected_debugger: Option<SharedString>,
     program_editor: Entity<Editor>,
     cwd_editor: Entity<Editor>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl InertState {
-    pub(super) fn new(default_cwd: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        workspace: WeakEntity<Workspace>,
+        default_cwd: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let program_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Program path", cx);
@@ -33,10 +42,11 @@ impl InertState {
             editor
         });
         Self {
-            focus_handle: cx.focus_handle(),
-            selected_debugger: None,
-            program_editor,
+            workspace,
             cwd_editor,
+            program_editor,
+            selected_debugger: None,
+            focus_handle: cx.focus_handle(),
         }
     }
 }
@@ -132,23 +142,12 @@ impl Render for InertState {
                                         });
                                     })),
                             )
-                            .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled).disabled(disable_buttons).on_click(cx.listener(|this, _, _, cx| {
-                                let program = this.program_editor.read(cx).text(cx).parse::<u32>().unwrap_or(0);
-                                let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
-                                let kind = kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| unimplemented!("Automatic selection of a debugger based on users project")));
-                                cx.emit(InertEvent::Spawned {
-                                    config: DebugAdapterConfig {
-                                        label: "hard coded attach".into(),
-                                        kind,
-                                        request: DebugRequestType::Attach(task::AttachConfig { process_id: Some(program) }),
-                                        program: None,
-                                        cwd: Some(cwd),
-                                        initialize_args: None,
-                                        supports_attach: true,
-                                    },
-                                });
-                            }))))
-                    ),
+                            .child(Button::new("attach-dap", "Attach")
+                                .style(ButtonStyle::Filled)
+                                .disabled(disable_buttons)
+                                .on_click(cx.listener(|this, _, window, cx| this.attach(window, cx)))
+                            ))
+                    )
             )
     }
 }
@@ -187,5 +186,34 @@ impl InertState {
                 ..Default::default()
             },
         )
+    }
+
+    fn attach(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let process_id = self.program_editor.read(cx).text(cx).parse::<u32>().ok();
+        let cwd = PathBuf::from(self.cwd_editor.read(cx).text(cx));
+        let kind = kind_for_label(self.selected_debugger.as_deref().unwrap_or_else(|| {
+            unimplemented!("Automatic selection of a debugger based on users project")
+        }));
+
+        let config = DebugAdapterConfig {
+            label: "hard coded attach".into(),
+            kind,
+            request: DebugRequestType::Attach(task::AttachConfig { process_id }),
+            program: None,
+            cwd: Some(cwd),
+            initialize_args: None,
+            supports_attach: true,
+        };
+
+        if process_id.is_some() {
+            cx.emit(InertEvent::Spawned { config });
+        } else {
+            let _ = self.workspace.update(cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    AttachModal::new(project, config, window, cx)
+                });
+            });
+        }
     }
 }
