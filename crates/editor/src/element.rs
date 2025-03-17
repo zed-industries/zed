@@ -2640,7 +2640,7 @@ impl EditorElement {
             }
 
             Block::ExcerptBoundary {
-                next_excerpt,
+                excerpt,
                 height,
                 starts_new_buffer,
                 ..
@@ -2648,40 +2648,31 @@ impl EditorElement {
                 let color = cx.theme().colors().clone();
                 let mut result = v_flex().id(block_id).w_full();
 
-                if let Some(next_excerpt) = next_excerpt {
-                    let jump_data =
-                        header_jump_data(snapshot, block_row_start, *height, next_excerpt);
+                let jump_data = header_jump_data(snapshot, block_row_start, *height, excerpt);
 
-                    if *starts_new_buffer {
-                        if sticky_header_excerpt_id != Some(next_excerpt.id) {
-                            let selected = selected_buffer_ids.contains(&next_excerpt.buffer_id);
+                if *starts_new_buffer {
+                    if sticky_header_excerpt_id != Some(excerpt.id) {
+                        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
-                            result = result.child(self.render_buffer_header(
-                                next_excerpt,
-                                false,
-                                selected,
-                                false,
-                                jump_data,
-                                window,
-                                cx,
-                            ));
-                        } else {
-                            result = result
-                                .child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
-                        }
+                        result = result.child(self.render_buffer_header(
+                            excerpt, false, selected, false, jump_data, window, cx,
+                        ));
                     } else {
-                        result = result.child(
-                            h_flex().relative().child(
-                                div()
-                                    .top(line_height / 2.)
-                                    .absolute()
-                                    .w_full()
-                                    .h_px()
-                                    .bg(color.border_variant),
-                            ),
-                        );
-                    };
-                }
+                        result =
+                            result.child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
+                    }
+                } else {
+                    result = result.child(
+                        h_flex().relative().child(
+                            div()
+                                .top(line_height / 2.)
+                                .absolute()
+                                .w_full()
+                                .h_px()
+                                .bg(color.border_variant),
+                        ),
+                    );
+                };
 
                 result.into_any()
             }
@@ -2972,6 +2963,7 @@ impl EditorElement {
                 element,
                 available_space: size(AvailableSpace::MinContent, element_size.height.into()),
                 style: BlockStyle::Fixed,
+                is_buffer_header: block.is_buffer_header(),
             });
         }
 
@@ -3022,6 +3014,7 @@ impl EditorElement {
                 element,
                 available_space: size(width.into(), element_size.height.into()),
                 style,
+                is_buffer_header: block.is_buffer_header(),
             });
         }
 
@@ -3072,6 +3065,7 @@ impl EditorElement {
                             element,
                             available_space: size(width, element_size.height.into()),
                             style,
+                            is_buffer_header: block.is_buffer_header(),
                         });
                     }
                 }
@@ -3133,15 +3127,13 @@ impl EditorElement {
 
     fn layout_sticky_buffer_header(
         &self,
-        StickyHeaderExcerpt {
-            excerpt,
-            next_buffer_row,
-        }: StickyHeaderExcerpt<'_>,
+        StickyHeaderExcerpt { excerpt }: StickyHeaderExcerpt<'_>,
         scroll_position: f32,
         line_height: Pixels,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         selected_buffer_ids: &Vec<BufferId>,
+        blocks: &[BlockLayout],
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -3177,17 +3169,23 @@ impl EditorElement {
             .into_any_element();
 
         let mut origin = hitbox.origin;
+        // Move floating header up to avoid colliding with the next buffer header.
+        for block in blocks.iter() {
+            if !block.is_buffer_header {
+                continue;
+            }
 
-        if let Some(next_buffer_row) = next_buffer_row {
-            // Push up the sticky header when the excerpt is getting close to the top of the viewport
+            let Some(display_row) = block.row.filter(|row| row.0 > scroll_position as u32) else {
+                continue;
+            };
 
-            let max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
-
+            let max_row = display_row.0.saturating_sub(FILE_HEADER_HEIGHT);
             let offset = scroll_position - max_row as f32;
 
             if offset > 0.0 {
                 origin.y -= Pixels(offset) * line_height;
             }
+            break;
         }
 
         let size = size(
@@ -7043,6 +7041,7 @@ impl Element for EditorElement {
                                 &snapshot,
                                 &hitbox,
                                 &selected_buffer_ids,
+                                &blocks,
                                 window,
                                 cx,
                             )
@@ -7926,6 +7925,7 @@ struct BlockLayout {
     element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,
+    is_buffer_header: bool,
 }
 
 pub fn layout_line(
