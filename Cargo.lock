@@ -5507,7 +5507,6 @@ dependencies = [
  "regex",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "url",

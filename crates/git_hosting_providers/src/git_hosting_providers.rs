@@ -1,4 +1,5 @@
 mod providers;
+mod settings;
 
 use std::sync::Arc;
 
@@ -6,11 +7,12 @@ use anyhow::{anyhow, Result};
 use git::repository::GitRepository;
 use git::GitHostingProviderRegistry;
 use gpui::App;
-use settings::Settings;
+use ::settings::Settings as _;
 use url::Url;
 use util::maybe;
 
 pub use crate::providers::*;
+pub use crate::settings::*;
 
 /// Initializes the Git hosting providers.
 pub fn init(cx: &mut App) {
@@ -92,62 +94,10 @@ pub fn get_host_from_git_remote_url(remote_url: &str) -> Result<String> {
     .ok_or_else(|| anyhow!("URL has no host"))
 }
 
-/// Configuration for a custom Git hosting provider
-#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct GitProviderConfig {
-    /// Domain name for the provider (e.g., "code.corp.big.com")
-    #[serde(default)]
-    pub domain: String,
-
-    /// The type of provider to use (must match a provider_type value)
-    /// Examples: "github", "gitlab", "bitbucket"
-    #[serde(rename = "type", default)]
-    pub provider_type: String,
-
-    /// Display name for the provider (e.g., "Corporate GitHub")
-    #[serde(default)]
-    pub name: String,
-}
-
-impl GitProviderConfig {
-    /// Validates that all required fields are present
-    pub fn is_valid(&self) -> bool {
-        !self.domain.is_empty() && !self.provider_type.is_empty() && !self.name.is_empty()
-    }
-}
-
-#[derive(
-    Default, Clone, serde_derive::Serialize, serde_derive::Deserialize, schemars::JsonSchema,
-)]
-pub struct GitProviderSettings {
-    /// List of custom Git providers
-    #[serde(default)]
-    pub providers: Option<Vec<GitProviderConfig>>,
-}
-
-impl Settings for GitProviderSettings {
-    const KEY: Option<&'static str> = Some("git_providers");
-    type FileContent = Self;
-
-    fn load(sources: settings::SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let settings: Self = sources.json_merge()?;
-        let default_providers: Vec<GitProviderConfig> = vec![];
-        Ok(Self {
-            providers: Some(
-                settings
-                    .providers
-                    .ok_or_else(|| Some(default_providers))
-                    .unwrap(),
-            ),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
-
     use super::get_host_from_git_remote_url;
-    use crate::GitProviderConfig;
+    use crate::settings::GitProviderConfig;
     use pretty_assertions::assert_eq;
 
     #[test]
