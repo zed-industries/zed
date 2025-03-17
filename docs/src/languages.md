@@ -1,8 +1,9 @@
 # Language Support in Zed
 
 Zed supports hundreds of programming languages and text formats.
+Some work out-of-the box and others rely on 3rd party extensions.
 
-> Note that those marked with * are natively built into Zed, and available without having to install additional extensions.
+> The ones included out-of-the-box, natively built into Zed, are marked *.
 
 ## Languages with Documentation
 
