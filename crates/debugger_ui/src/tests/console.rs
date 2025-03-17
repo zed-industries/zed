@@ -4,7 +4,6 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
 use tests::{init_test, init_test_workspace};
-use unindent::Unindent as _;
 
 #[gpui::test]
 async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestAppContext) {
