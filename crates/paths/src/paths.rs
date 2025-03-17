@@ -19,18 +19,7 @@ pub fn remote_server_dir_relative() -> &'static Path {
 /// Sets a custom directory for all user data, overriding the default support directory.
 pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     CUSTOM_DATA_DIR.get_or_init(|| {
-        let path = if cfg!(target_os = "windows") && (dir.contains(r"\") || dir.starts_with(r"\\")) {
-            // Windows absolute path (e.g., "C:\path" or "\\network\path")
-            PathBuf::from(dir)
-        } else if dir.starts_with("./") || dir.starts_with("../") || (!dir.starts_with("/") && !cfg!(target_os = "windows")) {
-            // Relative path on any OS (Linux/macOS: no leading "/", Windows: no drive letter or UNC)
-            std::env::current_dir()
-                .expect("failed to determine current directory")
-                .join(dir)
-        } else {
-            // Absolute path (Linux/macOS: "/path", Windows: assumed relative unless drive letter/UNC)
-            PathBuf::from(dir)
-        };
+        let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
         path
     })
