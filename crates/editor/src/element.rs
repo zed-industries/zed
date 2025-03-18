@@ -2132,9 +2132,6 @@ impl EditorElement {
     ) -> Vec<Option<(AnyElement, gpui::Point<Pixels>)>> {
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
-        let icon_size = editor_font_size.round();
-        let button_h_padding = ((icon_size - px(1.0)) / 2.0).round() - px(2.0);
-
         let scroll_top = scroll_position.y * line_height;
 
         let max_line_number_length = self
