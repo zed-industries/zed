@@ -4527,7 +4527,10 @@ impl Project {
         self.git_store.read(cx).active_repository()
     }
 
-    pub fn all_repositories(&self, cx: &App) -> Vec<Entity<Repository>> {
+    pub fn all_repositories<'a>(
+        &self,
+        cx: &'a App,
+    ) -> &'a HashMap<ProjectEntryId, Entity<Repository>> {
         self.git_store.read(cx).all_repositories()
     }
 

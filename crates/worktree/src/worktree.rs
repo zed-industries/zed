@@ -1626,7 +1626,7 @@ impl LocalWorktree {
                         Ordering::Less => {
                             if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
                                 changes.push((
-                                    entry.path.clone(),
+                                    entry.clone(),
                                     GitRepositoryChange {
                                         old_repository: None,
                                     },
@@ -1644,7 +1644,7 @@ impl LocalWorktree {
                                         .get(&PathKey(entry.path.clone()), &())
                                         .cloned();
                                     changes.push((
-                                        entry.path.clone(),
+                                        entry.clone(),
                                         GitRepositoryChange {
                                             old_repository: old_repo,
                                         },
@@ -1661,7 +1661,7 @@ impl LocalWorktree {
                                     .get(&PathKey(entry.path.clone()), &())
                                     .cloned();
                                 changes.push((
-                                    entry.path.clone(),
+                                    entry.clone(),
                                     GitRepositoryChange {
                                         old_repository: old_repo,
                                     },
@@ -1674,7 +1674,7 @@ impl LocalWorktree {
                 (Some((entry_id, _)), None) => {
                     if let Some(entry) = new_snapshot.entry_for_id(entry_id) {
                         changes.push((
-                            entry.path.clone(),
+                            entry.clone(),
                             GitRepositoryChange {
                                 old_repository: None,
                             },
@@ -1689,7 +1689,7 @@ impl LocalWorktree {
                             .get(&PathKey(entry.path.clone()), &())
                             .cloned();
                         changes.push((
-                            entry.path.clone(),
+                            entry.clone(),
                             GitRepositoryChange {
                                 old_repository: old_repo,
                             },
@@ -3060,8 +3060,8 @@ impl LocalSnapshot {
             }
         }
 
-        for (work_dir_path, change) in repo_changes.iter() {
-            let new_repo = self.repositories.get(&PathKey(work_dir_path.clone()), &());
+        for (entry, change) in repo_changes.iter() {
+            let new_repo = self.repositories.get(&PathKey(entry.path.clone()), &());
             match (&change.old_repository, new_repo) {
                 (Some(old_repo), Some(new_repo)) => {
                     updated_repositories.push(new_repo.build_update(old_repo));
@@ -3955,7 +3955,7 @@ pub struct GitRepositoryChange {
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
-pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
+pub type UpdatedGitRepositoriesSet = Arc<[(Entry, GitRepositoryChange)]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
