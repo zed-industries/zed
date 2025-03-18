@@ -605,20 +605,9 @@ impl GitStore {
                             }
                             // Update the statuses and merge message but keep everything else.
                             let existing_handle = handle.clone();
-                            existing_handle.update(cx, |existing_handle, cx| {
+                            existing_handle.update(cx, |existing_handle, _| {
                                 existing_handle.repository_entry = repo.clone();
-                                if matches!(git_repo, GitRepo::Local { .. })
-                                    && existing_handle.merge_message != merge_message
-                                {
-                                    if let (Some(merge_message), Some(buffer)) =
-                                        (&merge_message, &existing_handle.commit_message_buffer)
-                                    {
-                                        buffer.update(cx, |buffer, cx| {
-                                            if buffer.is_empty() {
-                                                buffer.set_text(merge_message.as_str(), cx);
-                                            }
-                                        })
-                                    }
+                                if matches!(git_repo, GitRepo::Local { .. }) {
                                     existing_handle.merge_message = merge_message;
                                 }
                             });
