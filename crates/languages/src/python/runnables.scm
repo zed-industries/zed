@@ -93,7 +93,7 @@
                 (string) @_rhs
             )
             (#eq? @_lhs "__name__")
-            (#eq? @_rhs "\"__main__\"")
+            (#match? @_rhs "^[\"']__main__[\"']$")
             (#set! tag python-module-main-method)
         )
     )
