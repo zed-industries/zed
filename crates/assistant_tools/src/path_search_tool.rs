@@ -30,7 +30,7 @@ pub struct PathSearchToolInput {
     pub offset: Option<usize>,
 }
 
-const RESULTS_PER_PAGE: usize = 20;
+const RESULTS_PER_PAGE: usize = 50;
 
 pub struct PathSearchTool;
 
