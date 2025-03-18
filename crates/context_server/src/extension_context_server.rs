@@ -41,16 +41,15 @@ impl ExtensionContextServerProxy for ContextServerFactoryRegistryProxy {
 
                             let id = id.clone();
                             let extension = extension.clone();
-                            cx.spawn(|mut cx| async move {
-                                let extension_project =
-                                    project.update(&mut cx, |project, cx| {
-                                        Arc::new(ExtensionProject {
-                                            worktree_ids: project
-                                                .visible_worktrees(cx)
-                                                .map(|worktree| worktree.read(cx).id().to_proto())
-                                                .collect(),
-                                        })
-                                    })?;
+                            cx.spawn(async move |cx| {
+                                let extension_project = project.update(cx, |project, cx| {
+                                    Arc::new(ExtensionProject {
+                                        worktree_ids: project
+                                            .visible_worktrees(cx)
+                                            .map(|worktree| worktree.read(cx).id().to_proto())
+                                            .collect(),
+                                    })
+                                })?;
 
                                 let command = extension
                                     .context_server_command(id.clone(), extension_project)

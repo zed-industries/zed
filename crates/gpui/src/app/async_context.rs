@@ -8,7 +8,7 @@ use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
 
-use super::Context;
+use super::{Context, WeakEntity};
 
 /// An async-friendly version of [App] with a static lifetime so it can be held across `await` points in async code.
 /// You're provided with an instance when calling [App::spawn], and you can also create one with [App::to_async].
@@ -231,6 +231,19 @@ impl AsyncApp {
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app = app.borrow_mut();
         Ok(app.update(|cx| cx.update_global(update)))
+    }
+
+    /// Run something using this entity and cx, when the returned struct is dropped
+    pub fn on_drop<T: 'static>(
+        &self,
+        entity: &WeakEntity<T>,
+        f: impl FnOnce(&mut T, &mut Context<T>) + 'static,
+    ) -> util::Deferred<impl FnOnce()> {
+        let entity = entity.clone();
+        let mut cx = self.clone();
+        util::defer(move || {
+            entity.update(&mut cx, f).ok();
+        })
     }
 }
 

@@ -12,6 +12,7 @@ use std::{
     future::Future,
     sync::Arc,
 };
+use util::Deferred;
 
 use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
@@ -222,6 +223,18 @@ impl<'a, T: 'static> Context<'a, T> {
         move |e: &E, window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
+    }
+
+    /// Run something using this entity and cx, when the returned struct is dropped
+    pub fn on_drop(
+        &self,
+        f: impl FnOnce(&mut T, &mut Context<T>) + 'static,
+    ) -> Deferred<impl FnOnce()> {
+        let this = self.weak_entity();
+        let mut cx = self.to_async();
+        util::defer(move || {
+            this.update(&mut cx, f).ok();
+        })
     }
 
     /// Focus the given view in the given window. View type is required to implement Focusable.
