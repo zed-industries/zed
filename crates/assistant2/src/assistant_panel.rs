@@ -112,15 +112,12 @@ impl AssistantPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
-            log::info!("[assistant2-debug] initializing ThreadStore");
             let thread_store = workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
             })??;
-            log::info!("[assistant2-debug] finished initializing ThreadStore");
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
-            log::info!("[assistant2-debug] initializing ContextStore");
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
                     let project = workspace.project().clone();
@@ -132,7 +129,6 @@ impl AssistantPanel {
                     )
                 })?
                 .await?;
-            log::info!("[assistant2-debug] finished initializing ContextStore");
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
                 cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
@@ -147,7 +143,6 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        log::info!("[assistant2-debug] AssistantPanel::new");
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
