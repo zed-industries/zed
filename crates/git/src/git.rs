@@ -53,6 +53,7 @@ actions!(
         ForcePush,
         Pull,
         Fetch,
+        FetchFrom,
         Commit,
         ExpandCommitEditor,
         GenerateCommitMessage,

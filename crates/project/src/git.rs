@@ -14,7 +14,7 @@ use futures::{
     future::{OptionFuture, Shared},
     FutureExt as _, StreamExt as _,
 };
-use git::repository::DiffType;
+use git::repository::{DiffType, FetchOptions};
 use git::{
     repository::{
         Branch, CommitDetails, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
@@ -1052,6 +1052,7 @@ impl GitStore {
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let fetch_options = FetchOptions::from_proto(envelope.payload.fetch_options);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -1065,7 +1066,7 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(askpass, cx)
+                repository_handle.fetch(fetch_options, askpass, cx)
             })?
             .await??;
 
@@ -2539,6 +2540,7 @@ impl Repository {
 
     pub fn fetch(
         &mut self,
+        fetch_options: FetchOptions,
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
@@ -2552,7 +2554,7 @@ impl Repository {
                 GitRepo::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
-                    git_repository.fetch(askpass, env, cx).await
+                    git_repository.fetch(fetch_options, askpass, env, cx).await
                 }
                 GitRepo::Remote {
                     project_id,
@@ -2572,6 +2574,7 @@ impl Repository {
                             worktree_id: worktree_id.to_proto(),
                             work_directory_id: work_directory_id.to_proto(),
                             askpass_id,
+                            fetch_options: fetch_options.to_proto(),
                         })
                         .await
                         .context("sending fetch request")?;

@@ -150,6 +150,46 @@ pub enum ResetMode {
     Mixed,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum FetchOptions {
+    All,
+    Remote(Remote),
+}
+
+impl FetchOptions {
+    pub fn to_proto(&self) -> String {
+        match self {
+            FetchOptions::All => "--all".to_string(),
+            FetchOptions::Remote(remote) => remote.clone().name.into(),
+        }
+    }
+
+    pub fn from_proto(remote_name: String) -> Self {
+        match remote_name {
+            val if val.eq("--all") => Self::All,
+            _ => Self::Remote(Remote {
+                name: remote_name.into(),
+            }),
+        }
+    }
+
+    pub fn name(&self) -> SharedString {
+        match self {
+            Self::All => "all".into(),
+            Self::Remote(remote) => remote.name.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for FetchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchOptions::All => write!(f, "--all"),
+            FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
+        }
+    }
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -270,6 +310,7 @@ pub trait GitRepository: Send + Sync {
 
     fn fetch(
         &self,
+        fetch_options: FetchOptions,
         askpass: AskPassSession,
         env: HashMap<String, String>,
         cx: AsyncApp,
@@ -891,12 +932,14 @@ impl GitRepository for RealGitRepository {
 
     fn fetch(
         &self,
+        fetch_options: FetchOptions,
         ask_pass: AskPassSession,
         env: HashMap<String, String>,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
-        async {
+        let remote_name = format!("{}", fetch_options);
+        async move {
             let mut command = new_smol_command("git");
             command
                 .envs(env)
@@ -904,7 +947,7 @@ impl GitRepository for RealGitRepository {
                 .env("SSH_ASKPASS", ask_pass.script_path())
                 .env("SSH_ASKPASS_REQUIRE", "force")
                 .current_dir(&working_directory?)
-                .args(["fetch", "--all"])
+                .args(["fetch", &remote_name])
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
             let git_process = command.spawn()?;

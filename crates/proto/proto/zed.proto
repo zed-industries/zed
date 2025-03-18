@@ -2882,6 +2882,7 @@ message Fetch {
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
     uint64 askpass_id = 4;
+    string fetch_options = 5;
 }
 
 message GetRemotes {

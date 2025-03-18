@@ -21,8 +21,8 @@ use editor::{
 };
 use futures::StreamExt as _;
 use git::repository::{
-    Branch, CommitDetails, CommitSummary, DiffType, PushOptions, Remote, RemoteCommandOutput,
-    ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    Branch, CommitDetails, CommitSummary, DiffType, FetchOptions, PushOptions, Remote,
+    RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::status::StageStatus;
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
@@ -1725,6 +1725,90 @@ impl GitPanel {
         cx.notify();
     }
 
+    fn get_fetch_options(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = anyhow::Result<Option<FetchOptions>>> {
+        let repo = self.active_repository.clone();
+        let workspace = self.workspace.clone();
+        let mut cx = window.to_async(cx);
+        async move {
+            let Some(repo) = repo else {
+                return Err(anyhow::anyhow!("No active repository"));
+            };
+            let remotes: Vec<Remote> = repo
+                .update(&mut cx, |repo, _| repo.get_remotes(None))?
+                .await??;
+
+            let mut remotes: Vec<_> = remotes
+                .into_iter()
+                .map(|remotes| FetchOptions::Remote(remotes))
+                .collect();
+            remotes.push(FetchOptions::All);
+            let selection = cx
+                .update(|window, cx| {
+                    picker_prompt::prompt(
+                        "Pick which remote to fetch",
+                        remotes.iter().map(|r| r.name()).collect(),
+                        workspace,
+                        window,
+                        cx,
+                    )
+                })?
+                .await;
+            Ok(selection.map(|selection| remotes[selection].clone()))
+        }
+    }
+
+    pub(crate) fn fetch_from(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_push_and_pull(cx) {
+            return;
+        }
+
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        telemetry::event!("Git Fetched From");
+        let guard = self.start_remote_operation();
+        let askpass = self.askpass_delegate("git fetch from", window, cx);
+        let this = cx.weak_entity();
+        let fetch_options = self.get_fetch_options(window, cx);
+        window
+            .spawn(cx, |mut cx| async move {
+                let fetch_options = match fetch_options.await {
+                    Ok(Some(fetch_options)) => fetch_options,
+                    Ok(None) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::error!("Failed to get remote: {}", e);
+                        return Ok(());
+                    }
+                };
+                let fetch =
+                    repo.update(&mut cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
+
+                let remote_message = fetch.await?;
+                drop(guard);
+                this.update(&mut cx, |this, cx| {
+                    let action = RemoteAction::Fetch;
+                    match remote_message {
+                        Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                        Err(e) => {
+                            log::error!("Error while fetching {:?}", e);
+                            this.show_error_toast(action.name(), e, cx)
+                        }
+                    }
+
+                    anyhow::Ok(())
+                })
+                .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+    }
+
     pub(crate) fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_push_and_pull(cx) {
             return;
@@ -1739,7 +1823,9 @@ impl GitPanel {
         let this = cx.weak_entity();
         window
             .spawn(cx, |mut cx| async move {
-                let fetch = repo.update(&mut cx, |repo, cx| repo.fetch(askpass, cx))?;
+                let fetch = repo.update(&mut cx, |repo, cx| {
+                    repo.fetch(FetchOptions::All, askpass, cx)
+                })?;
 
                 let remote_message = fetch.await?;
                 drop(guard);
@@ -2018,7 +2104,7 @@ impl GitPanel {
                 return Err(anyhow::anyhow!("No active repository"));
             };
 
-            let mut current_remotes: Vec<Remote> = repo
+            let current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
                     let Some(current_branch) = repo.current_branch() else {
                         return Err(anyhow::anyhow!("No active branch"));
@@ -2028,31 +2114,25 @@ impl GitPanel {
                 })??
                 .await??;
 
-            if current_remotes.len() == 0 {
-                return Err(anyhow::anyhow!("No active remote"));
-            } else if current_remotes.len() == 1 {
-                return Ok(Some(current_remotes.pop().unwrap()));
-            } else {
-                let current_remotes: Vec<_> = current_remotes
-                    .into_iter()
-                    .map(|remotes| remotes.name)
-                    .collect();
-                let selection = cx
-                    .update(|window, cx| {
-                        picker_prompt::prompt(
-                            "Pick which remote to push to",
-                            current_remotes.clone(),
-                            workspace,
-                            window,
-                            cx,
-                        )
-                    })?
-                    .await;
+            let current_remotes: Vec<_> = current_remotes
+                .into_iter()
+                .map(|remotes| remotes.name)
+                .collect();
+            let selection = cx
+                .update(|window, cx| {
+                    picker_prompt::prompt(
+                        "Pick which remote to push to",
+                        current_remotes.clone(),
+                        workspace,
+                        window,
+                        cx,
+                    )
+                })?
+                .await;
 
-                Ok(selection.map(|selection| Remote {
-                    name: current_remotes[selection].clone(),
-                }))
-            }
+            Ok(selection.map(|selection| Remote {
+                name: current_remotes[selection].clone(),
+            }))
         }
     }
 
