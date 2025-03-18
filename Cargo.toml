@@ -659,7 +659,7 @@ real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1
 
 [profile.dev]
 split-debuginfo = "unpacked"
-debug = true
+debug = "limited"
 codegen-units = 16
 
 [profile.dev.package]
