@@ -46,8 +46,7 @@ impl<'a, T: 'static> Context<'a, T> {
         self.entity_state.clone()
     }
 
-    /// Arranges for the given function to be called whenever [`Context::notify`] is
-    /// called with the given entity.
+    /// Registers a callback to be invoked when the given entity calls [`Context::notify`].
     pub fn observe<W>(
         &mut self,
         entity: &Entity<W>,
@@ -64,6 +63,34 @@ impl<'a, T: 'static> Context<'a, T> {
                 true
             } else {
                 false
+            }
+        })
+    }
+
+    /// Registers an async callback to be invoked when the given entity calls [`Context::notify`].
+    /// If there are `notify` calls while the async callback is running, it is run again.
+    pub fn observe_async<W, Fut>(
+        &mut self,
+        entity: &Entity<W>,
+        mut on_notify: impl FnMut(&mut T, Entity<W>, &mut Context<'_, T>) -> Fut + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+        W: 'static,
+        Fut: 'static + Future<Output = ()>,
+    {
+        let this = self.weak_entity();
+        self.app.observe_async_internal(entity, move |e, cx| {
+            let future = this
+                .upgrade()
+                .map(|this| this.update(cx, |this, cx| on_notify(this, e, cx)));
+            async move {
+                if let Some(future) = future {
+                    future.await;
+                    true
+                } else {
+                    false
+                }
             }
         })
     }
