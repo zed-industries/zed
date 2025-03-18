@@ -1086,7 +1086,7 @@ pub enum MultibufferSelectionMode {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RewrapOptions {
     pub override_language_settings: bool,
-    pub preserve_existing_newlines: bool,
+    pub preserve_existing_whitespace: bool,
 }
 
 impl Editor {
@@ -3208,7 +3208,7 @@ impl Editor {
                     this.rewrap_impl(
                         RewrapOptions {
                             override_language_settings: true,
-                            preserve_existing_newlines: true,
+                            preserve_existing_whitespace: true,
                         },
                         cx,
                     )
@@ -8791,7 +8791,7 @@ impl Editor {
                 lines_without_prefixes.join("\n"),
                 wrap_column,
                 tab_size,
-                options.preserve_existing_newlines,
+                options.preserve_existing_whitespace,
             );
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
