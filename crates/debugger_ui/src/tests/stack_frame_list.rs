@@ -13,6 +13,7 @@ use project::{FakeFs, Project};
 use serde_json::json;
 use std::sync::Arc;
 use unindent::Unindent as _;
+use util::path;
 
 #[gpui::test]
 async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
