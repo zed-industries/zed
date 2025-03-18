@@ -232,7 +232,7 @@ impl AssistantConfiguration {
                             return parent;
                         }
 
-                        parent.child(v_flex().gap_1().children(tools.into_iter().enumerate().map(
+                        parent.child(v_flex().children(tools.into_iter().enumerate().map(
                             |(ix, tool)| {
                                 h_flex()
                                     .px_2()
