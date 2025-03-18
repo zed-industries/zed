@@ -1592,8 +1592,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .unwrap();
 
-    executor.run_until_parked();
-
     // Client B joins the project
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
