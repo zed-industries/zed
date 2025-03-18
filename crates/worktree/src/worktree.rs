@@ -76,9 +76,6 @@ use util::{
 };
 pub use worktree_settings::WorktreeSettings;
 
-#[cfg(feature = "test-support")]
-pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
-#[cfg(not(feature = "test-support"))]
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// A set of local or remote files that are being opened as part of a project.
