@@ -4,13 +4,6 @@ use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::{OffsetRangeExt, Point};
 
-fn matches_regex(text: String, pattern: &str) -> bool {
-    // Safely check if pattern exists in text
-    if pattern.is_empty() {
-        return false;
-    }
-    text.contains(pattern)
-}
 
 fn find_matches(text: String, pattern: &str) -> Vec<(usize, usize)> {
     let mut matches = Vec::new();
@@ -89,6 +82,10 @@ impl Tool for RegexSearchTool {
         let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
             Ok(input) => (input.offset.unwrap_or(0), input.regex),
             Err(err) => return Task::ready(Err(anyhow!(err))),
+        };
+
+        if regex.is_empty() {
+            return Task::ready(Err(anyhow!("Empty regex pattern is not allowed")));
         };
 
         let query = match SearchQuery::regex(
@@ -175,7 +172,7 @@ impl Tool for RegexSearchTool {
                                     let line_range = Point::new(row, 0)..Point::new(row, line_len);
                                     let line_text = buffer.text_for_range(line_range).collect::<String>();
 
-                                    if matches_regex(line_text.clone(), &regex) {
+                                    if line_text.contains(&regex) {
                                         if skips_remaining == 0 {
                                             // Show each match in the long line with limited context
                                             for (match_start, match_end) in find_matches(line_text.clone(), &regex) {
@@ -207,7 +204,7 @@ impl Tool for RegexSearchTool {
                                 let line_range = Point::new(row, 0)..Point::new(row, line_len);
                                 let line_text = buffer.text_for_range(line_range).collect::<String>();
 
-                                if matches_regex(line_text.clone(), &regex) {
+                                if line_text.contains(&regex) {
                                     if skips_remaining > 0 {
                                         skips_remaining -= 1;
                                         row += 1;
@@ -262,20 +259,6 @@ impl Tool for RegexSearchTool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_matches_regex() {
-        // Test basic pattern matching
-        assert!(matches_regex("hello world".to_string(), "world"));
-        assert!(!matches_regex("hello world".to_string(), "universe"));
-
-        // Test empty cases
-        assert!(!matches_regex("hello world".to_string(), ""));
-        assert!(!matches_regex("".to_string(), "pattern"));
-
-        // Test case sensitivity
-        assert!(matches_regex("Hello World".to_string(), "World"));
-        assert!(!matches_regex("Hello World".to_string(), "world"));
-    }
 
     #[test]
     fn test_find_matches() {
