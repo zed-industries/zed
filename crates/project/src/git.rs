@@ -2177,7 +2177,6 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        let merge_message = self.merge_message.clone();
         cx.spawn(|repository, mut cx| async move {
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
