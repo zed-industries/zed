@@ -7,7 +7,7 @@ use gpui::{
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, Window,
 };
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -17,13 +17,10 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
-        workspace.register_action(open);
-        workspace.register_action(switch);
-        workspace.register_action(checkout_branch);
-    })
-    .detach();
+pub fn register(workspace: &mut Workspace) {
+    workspace.register_action(open);
+    workspace.register_action(switch);
+    workspace.register_action(checkout_branch);
 }
 
 pub fn checkout_branch(
@@ -205,9 +202,9 @@ impl BranchListDelegate {
             return;
         };
         cx.spawn(|_, cx| async move {
-            cx.update(|cx| repo.read(cx).create_branch(&new_branch_name))?
+            cx.update(|cx| repo.read(cx).create_branch(new_branch_name.to_string()))?
                 .await??;
-            cx.update(|cx| repo.read(cx).change_branch(&new_branch_name))?
+            cx.update(|cx| repo.read(cx).change_branch(new_branch_name.to_string()))?
                 .await??;
             Ok(())
         })
@@ -223,6 +220,13 @@ impl PickerDelegate for BranchListDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select branch...".into()
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        match self.style {
+            BranchListStyle::Modal => PickerEditorPosition::Start,
+            BranchListStyle::Popover => PickerEditorPosition::End,
+        }
     }
 
     fn match_count(&self) -> usize {
@@ -358,7 +362,7 @@ impl PickerDelegate for BranchListDelegate {
                     let cx = cx.to_async();
 
                     anyhow::Ok(async move {
-                        cx.update(|cx| repo.read(cx).change_branch(&branch.name))?
+                        cx.update(|cx| repo.read(cx).change_branch(branch.name.to_string()))?
                             .await?
                     })
                 })??;
@@ -434,6 +438,7 @@ impl PickerDelegate for BranchListDelegate {
                                             "Create branch \"{}\"…",
                                             entry.branch.name
                                         ))
+                                        .single_line()
                                         .into_any_element()
                                     } else {
                                         HighlightedLabel::new(

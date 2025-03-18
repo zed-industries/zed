@@ -11,7 +11,7 @@ use language_model::{
 };
 
 use crate::thread::MessageId;
-use crate::thread_store::SavedMessage;
+use crate::thread_store::SerializedMessage;
 
 #[derive(Debug)]
 pub struct ToolUse {
@@ -46,11 +46,11 @@ impl ToolUseState {
         }
     }
 
-    /// Constructs a [`ToolUseState`] from the given list of [`SavedMessage`]s.
+    /// Constructs a [`ToolUseState`] from the given list of [`SerializedMessage`]s.
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
-    pub fn from_saved_messages(
-        messages: &[SavedMessage],
+    pub fn from_serialized_messages(
+        messages: &[SerializedMessage],
         mut filter_by_tool_name: impl FnMut(&str) -> bool,
     ) -> Self {
         let mut this = Self::new();
@@ -118,6 +118,22 @@ impl ToolUseState {
         this
     }
 
+    pub fn cancel_pending(&mut self) -> Vec<PendingToolUse> {
+        let mut pending_tools = Vec::new();
+        for (tool_use_id, tool_use) in self.pending_tool_uses_by_id.drain() {
+            self.tool_results.insert(
+                tool_use_id.clone(),
+                LanguageModelToolResult {
+                    tool_use_id,
+                    content: "Tool canceled by user".into(),
+                    is_error: true,
+                },
+            );
+            pending_tools.push(tool_use.clone());
+        }
+        pending_tools
+    }
+
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
     }
@@ -182,6 +198,13 @@ impl ToolUseState {
             .map_or(false, |results| !results.is_empty())
     }
 
+    pub fn tool_result(
+        &self,
+        tool_use_id: &LanguageModelToolUseId,
+    ) -> Option<&LanguageModelToolResult> {
+        self.tool_results.get(tool_use_id)
+    }
+
     pub fn request_tool_use(
         &mut self,
         assistant_message_id: MessageId,
@@ -226,12 +249,12 @@ impl ToolUseState {
         output: Result<String>,
     ) -> Option<PendingToolUse> {
         match output {
-            Ok(output) => {
+            Ok(tool_result) => {
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        content: output.into(),
+                        content: tool_result.into(),
                         is_error: false,
                     },
                 );

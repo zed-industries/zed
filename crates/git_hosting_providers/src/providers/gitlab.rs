@@ -17,15 +17,22 @@ pub struct Gitlab {
 }
 
 impl Gitlab {
-    pub fn new() -> Self {
+    pub fn new(name: impl Into<String>, base_url: Url) -> Self {
         Self {
-            name: "GitLab".to_string(),
-            base_url: Url::parse("https://gitlab.com").unwrap(),
+            name: name.into(),
+            base_url,
         }
+    }
+
+    pub fn public_instance() -> Self {
+        Self::new("GitLab", Url::parse("https://gitlab.com").unwrap())
     }
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
         let host = get_host_from_git_remote_url(remote_url)?;
+        if host == "gitlab.com" {
+            bail!("the GitLab instance is not self-hosted");
+        }
 
         // TODO: detecting self hosted instances by checking whether "gitlab" is in the url or not
         // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
@@ -34,10 +41,10 @@ impl Gitlab {
             bail!("not a GitLab URL");
         }
 
-        Ok(Self {
-            name: "GitLab Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", host))?,
-        })
+        Ok(Self::new(
+            "GitLab Self-Hosted",
+            Url::parse(&format!("https://{}", host))?,
+        ))
     }
 }
 
@@ -124,8 +131,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_invalid_self_hosted_remote_url() {
+        let remote_url = "https://gitlab.com/zed-industries/zed.git";
+        let github = Gitlab::from_remote_url(remote_url);
+        assert!(github.is_err());
+    }
+
+    #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Gitlab::new()
+        let parsed_remote = Gitlab::public_instance()
             .parse_remote_url("git@gitlab.com:zed-industries/zed.git")
             .unwrap();
 
@@ -140,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Gitlab::new()
+        let parsed_remote = Gitlab::public_instance()
             .parse_remote_url("https://gitlab.com/zed-industries/zed.git")
             .unwrap();
 
@@ -190,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink() {
-        let permalink = Gitlab::new().build_permalink(
+        let permalink = Gitlab::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -208,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink_with_single_line_selection() {
-        let permalink = Gitlab::new().build_permalink(
+        let permalink = Gitlab::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -226,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_permalink_with_multi_line_selection() {
-        let permalink = Gitlab::new().build_permalink(
+        let permalink = Gitlab::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),

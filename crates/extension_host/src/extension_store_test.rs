@@ -714,6 +714,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
+        .unwrap()
         .into_iter()
         .map(|c| c.label.text)
         .collect::<Vec<_>>();
@@ -780,6 +781,7 @@ fn init_test(cx: &mut TestAppContext) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         release_channel::init(SemanticVersion::default(), cx);
+        extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
         ExtensionSettings::register(cx);

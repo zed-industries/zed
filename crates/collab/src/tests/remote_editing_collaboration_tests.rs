@@ -294,7 +294,7 @@ async fn test_ssh_collaboration_git_branches(
 
     assert_eq!(&branches_b, &branches_set);
 
-    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch))
+    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
         .await
         .unwrap()
         .unwrap();
@@ -316,15 +316,23 @@ async fn test_ssh_collaboration_git_branches(
     assert_eq!(server_branch.name, branches[2]);
 
     // Also try creating a new branch
-    cx_b.update(|cx| repo_b.read(cx).create_branch("totally-new-branch"))
-        .await
-        .unwrap()
-        .unwrap();
+    cx_b.update(|cx| {
+        repo_b
+            .read(cx)
+            .create_branch("totally-new-branch".to_string())
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
-    cx_b.update(|cx| repo_b.read(cx).change_branch("totally-new-branch"))
-        .await
-        .unwrap()
-        .unwrap();
+    cx_b.update(|cx| {
+        repo_b
+            .read(cx)
+            .change_branch("totally-new-branch".to_string())
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     executor.run_until_parked();
 

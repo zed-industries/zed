@@ -127,18 +127,13 @@ const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(
-        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
-            workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
-                workspace.toggle_panel_focus::<GitPanel>(window, cx);
-            });
-            workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
-                CommitModal::toggle(workspace, window, cx)
-            });
-        },
-    )
-    .detach();
+pub fn register(workspace: &mut Workspace) {
+    workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+        workspace.toggle_panel_focus::<GitPanel>(window, cx);
+    });
+    workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
+        CommitModal::toggle(workspace, window, cx)
+    });
 }
 
 #[derive(Debug, Clone)]
@@ -358,7 +353,6 @@ pub(crate) fn commit_message_editor(
         EditorMode::AutoHeight { max_lines },
         buffer,
         None,
-        false,
         window,
         cx,
     );
@@ -367,6 +361,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
+    commit_editor.set_hard_wrap(Some(72), cx);
     let placeholder = placeholder.unwrap_or("Enter commit message");
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -702,7 +697,10 @@ impl GitPanel {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
 
-        if self.is_focused(window, cx) {
+        if window
+            .focused(cx)
+            .map_or(false, |focused| self.focus_handle == focused)
+        {
             dispatch_context.add("menu");
             dispatch_context.add("ChangesList");
         }
@@ -712,12 +710,6 @@ impl GitPanel {
         }
 
         dispatch_context
-    }
-
-    fn is_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
-        window
-            .focused(cx)
-            .map_or(false, |focused| self.focus_handle == focused)
     }
 
     fn close_panel(&mut self, _: &Close, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1504,15 +1496,17 @@ impl GitPanel {
         telemetry::event!("Git Uncommitted");
 
         let confirmation = self.check_for_pushed_commits(window, cx);
-        let prior_head = self.load_commit_details("HEAD", cx);
+        let prior_head = self.load_commit_details("HEAD".to_string(), cx);
 
         let task = cx.spawn_in(window, |this, mut cx| async move {
             let result = maybe!(async {
                 if let Ok(true) = confirmation.await {
                     let prior_head = prior_head.await?;
 
-                    repo.update(&mut cx, |repo, cx| repo.reset("HEAD^", ResetMode::Soft, cx))?
-                        .await??;
+                    repo.update(&mut cx, |repo, cx| {
+                        repo.reset("HEAD^".to_string(), ResetMode::Soft, cx)
+                    })?
+                    .await??;
 
                     Ok(Some(prior_head))
                 } else {
@@ -2007,7 +2001,7 @@ impl GitPanel {
     }
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
-        crate::can_push_and_pull(&self.project, cx)
+        !self.project.read(cx).is_via_collab()
     }
 
     fn get_current_remote(
@@ -2243,7 +2237,14 @@ impl GitPanel {
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
         self.single_staged_entry.take();
-        self.single_staged_entry.take();
+        self.conflicted_count = 0;
+        self.conflicted_staged_count = 0;
+        self.new_count = 0;
+        self.tracked_count = 0;
+        self.new_staged_count = 0;
+        self.tracked_staged_count = 0;
+        self.entry_count = 0;
+
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
@@ -2823,6 +2824,36 @@ impl GitPanel {
         )
     }
 
+    pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let branch = self
+            .active_repository
+            .as_ref()?
+            .read(cx)
+            .current_branch()
+            .cloned();
+        if !self.can_push_and_pull(cx) {
+            return None;
+        }
+        let spinner = self.render_spinner();
+        Some(
+            h_flex()
+                .gap_1()
+                .flex_shrink_0()
+                .children(spinner)
+                .when_some(branch, |this, branch| {
+                    let focus_handle = Some(self.focus_handle(cx));
+
+                    this.children(render_remote_button(
+                        "remote-button",
+                        &branch,
+                        focus_handle,
+                        true,
+                    ))
+                })
+                .into_any_element(),
+        )
+    }
+
     pub fn render_footer(
         &self,
         window: &mut Window,
@@ -2862,12 +2893,7 @@ impl GitPanel {
         });
 
         let footer = v_flex()
-            .child(PanelRepoFooter::new(
-                "footer-button",
-                display_name,
-                branch,
-                Some(git_panel),
-            ))
+            .child(PanelRepoFooter::new(display_name, branch, Some(git_panel)))
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
@@ -3048,21 +3074,24 @@ impl GitPanel {
                             "No Git repositories"
                         },
                     ))
-                    .children(self.active_repository.is_none().then(|| {
-                        h_flex().w_full().justify_around().child(
-                            panel_filled_button("Initialize Repository")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "git init",
-                                    &git::Init,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(move |_, _, cx| {
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(&git::Init);
-                                    })
-                                }),
-                        )
-                    }))
+                    .children({
+                        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+                        (worktree_count > 0 && self.active_repository.is_none()).then(|| {
+                            h_flex().w_full().justify_around().child(
+                                panel_filled_button("Initialize Repository")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "git init",
+                                        &git::Init,
+                                        &self.focus_handle,
+                                    ))
+                                    .on_click(move |_, _, cx| {
+                                        cx.defer(move |cx| {
+                                            cx.dispatch_action(&git::Init);
+                                        })
+                                    }),
+                            )
+                        })
+                    })
                     .text_ui_sm(cx)
                     .mx_auto()
                     .text_color(Color::Placeholder.color(cx)),
@@ -3404,7 +3433,7 @@ impl GitPanel {
 
     fn load_commit_details(
         &self,
-        sha: &str,
+        sha: String,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<CommitDetails>> {
         let Some(repo) = self.active_repository.clone() else {
@@ -3634,7 +3663,11 @@ impl GitPanel {
                         Checkbox::new(checkbox_id, is_staged)
                             .disabled(!has_write_access)
                             .fill()
-                            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
+                            .placeholder(
+                                !self.has_staged_changes()
+                                    && !self.has_conflicts()
+                                    && !entry.status.is_created(),
+                            )
                             .elevation(ElevationIndex::Surface)
                             .on_click({
                                 let entry = entry.clone();
@@ -3798,7 +3831,7 @@ impl Render for GitPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(Corner::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -3807,8 +3840,12 @@ impl Render for GitPanel {
 }
 
 impl Focusable for GitPanel {
-    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        if self.entries.is_empty() {
+            self.commit_editor.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
@@ -3906,7 +3943,7 @@ impl GitPanelMessageTooltip {
             cx.spawn_in(window, |this, mut cx| async move {
                 let details = git_panel
                     .update(&mut cx, |git_panel, cx| {
-                        git_panel.load_commit_details(&sha, cx)
+                        git_panel.load_commit_details(sha.to_string(), cx)
                     })?
                     .await?;
 
@@ -3949,7 +3986,6 @@ impl Render for GitPanelMessageTooltip {
 #[derive(IntoElement, IntoComponent)]
 #[component(scope = "Version Control")]
 pub struct PanelRepoFooter {
-    id: SharedString,
     active_repository: SharedString,
     branch: Option<Branch>,
     // Getting a GitPanel in previews will be difficult.
@@ -3960,26 +3996,19 @@ pub struct PanelRepoFooter {
 
 impl PanelRepoFooter {
     pub fn new(
-        id: impl Into<SharedString>,
         active_repository: SharedString,
         branch: Option<Branch>,
         git_panel: Option<Entity<GitPanel>>,
     ) -> Self {
         Self {
-            id: id.into(),
             active_repository,
             branch,
             git_panel,
         }
     }
 
-    pub fn new_preview(
-        id: impl Into<SharedString>,
-        active_repository: SharedString,
-        branch: Option<Branch>,
-    ) -> Self {
+    pub fn new_preview(active_repository: SharedString, branch: Option<Branch>) -> Self {
         Self {
-            id: id.into(),
             active_repository,
             branch,
             git_panel: None,
@@ -4060,14 +4089,14 @@ impl RenderOnce for PanelRepoFooter {
                 let project = project.clone();
                 move |window, cx| {
                     let project = project.clone()?;
-                    Some(cx.new(|cx| RepositorySelector::new(project, window, cx)))
+                    Some(cx.new(|cx| RepositorySelector::new(project, rems(16.), window, cx)))
                 }
             })
             .trigger_with_tooltip(
                 repo_selector_trigger.disabled(single_repo).truncate(true),
                 Tooltip::text("Switch active repository"),
             )
-            .attach(gpui::Corner::BottomLeft)
+            .anchor(Corner::BottomLeft)
             .into_any_element();
 
         let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
@@ -4089,16 +4118,11 @@ impl RenderOnce for PanelRepoFooter {
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
             )
-            .anchor(Corner::TopLeft)
+            .anchor(Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
             });
-
-        let spinner = self
-            .git_panel
-            .as_ref()
-            .and_then(|git_panel| git_panel.read(cx).render_spinner());
 
         h_flex()
             .w_full()
@@ -4134,28 +4158,11 @@ impl RenderOnce for PanelRepoFooter {
                     })
                     .child(branch_selector),
             )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_shrink_0()
-                    .children(spinner)
-                    .when_some(branch, |this, branch| {
-                        let mut focus_handle = None;
-                        if let Some(git_panel) = self.git_panel.as_ref() {
-                            if !git_panel.read(cx).can_push_and_pull(cx) {
-                                return this;
-                            }
-                            focus_handle = Some(git_panel.focus_handle(cx));
-                        }
-
-                        this.children(render_remote_button(
-                            self.id.clone(),
-                            &branch,
-                            focus_handle,
-                            true,
-                        ))
-                    }),
-            )
+            .children(if let Some(git_panel) = self.git_panel {
+                git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
+            } else {
+                None
+            })
     }
 }
 
@@ -4246,7 +4253,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "no-branch",
                                 active_repository(1).clone(),
                                 None,
                             ))
@@ -4259,7 +4265,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "unknown-upstream",
                                 active_repository(2).clone(),
                                 Some(branch(unknown_upstream)),
                             ))
@@ -4272,7 +4277,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "no-remote-upstream",
                                 active_repository(3).clone(),
                                 Some(branch(no_remote_upstream)),
                             ))
@@ -4285,7 +4289,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "not-ahead-or-behind",
                                 active_repository(4).clone(),
                                 Some(branch(not_ahead_or_behind_upstream)),
                             ))
@@ -4298,7 +4301,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "behind-remote",
                                 active_repository(5).clone(),
                                 Some(branch(behind_upstream)),
                             ))
@@ -4311,7 +4313,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "ahead-of-remote",
                                 active_repository(6).clone(),
                                 Some(branch(ahead_of_upstream)),
                             ))
@@ -4324,7 +4325,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "ahead-and-behind",
                                 active_repository(7).clone(),
                                 Some(branch(ahead_and_behind_upstream)),
                             ))
@@ -4344,7 +4344,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "short-branch",
                                 SharedString::from("zed"),
                                 Some(custom("main", behind_upstream)),
                             ))
@@ -4357,7 +4356,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "long-branch",
                                 SharedString::from("zed"),
                                 Some(custom(
                                     "redesign-and-update-git-ui-list-entry-style",
@@ -4373,7 +4371,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "long-repo",
                                 SharedString::from("zed-industries-community-examples"),
                                 Some(custom("gpui", ahead_of_upstream)),
                             ))
@@ -4386,7 +4383,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "long-repo-and-branch",
                                 SharedString::from("zed-industries-community-examples"),
                                 Some(custom(
                                     "redesign-and-update-git-ui-list-entry-style",
@@ -4402,7 +4398,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "uppercase-repo",
                                 SharedString::from("LICENSES"),
                                 Some(custom("main", ahead_of_upstream)),
                             ))
@@ -4415,7 +4410,6 @@ impl ComponentPreview for PanelRepoFooter {
                             .w(example_width)
                             .overflow_hidden()
                             .child(PanelRepoFooter::new_preview(
-                                "uppercase-branch",
                                 SharedString::from("zed"),
                                 Some(custom("update-README", behind_upstream)),
                             ))

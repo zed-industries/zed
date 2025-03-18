@@ -9,14 +9,33 @@ use project::{
 };
 use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
+use workspace::{ModalView, Workspace};
+
+pub fn register(workspace: &mut Workspace) {
+    workspace.register_action(open);
+}
+
+pub fn open(
+    workspace: &mut Workspace,
+    _: &zed_actions::git::SelectRepo,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project().clone();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RepositorySelector::new(project, rems(34.), window, cx)
+    })
+}
 
 pub struct RepositorySelector {
+    width: Rems,
     picker: Entity<Picker<RepositorySelectorDelegate>>,
 }
 
 impl RepositorySelector {
     pub fn new(
         project_handle: Entity<Project>,
+        width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -48,7 +67,7 @@ impl RepositorySelector {
                 .max_height(Some(rems(20.).into()))
         });
 
-        RepositorySelector { picker }
+        RepositorySelector { picker, width }
     }
 }
 
@@ -91,9 +110,11 @@ impl Focusable for RepositorySelector {
 
 impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.picker.clone()
+        div().w(self.width).child(self.picker.clone())
     }
 }
+
+impl ModalView for RepositorySelector {}
 
 pub struct RepositorySelectorDelegate {
     project: WeakEntity<Project>,

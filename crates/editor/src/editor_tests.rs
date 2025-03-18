@@ -16,7 +16,8 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent, PrettierSettings,
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        LanguageSettingsContent, PrettierSettings,
     },
     BracketPairConfig,
     Capability::ReadWrite,
@@ -30,7 +31,7 @@ use pretty_assertions::{assert_eq, assert_ne};
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
 use serde_json::{self, json};
-use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
+use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
     iter,
     sync::atomic::{self, AtomicUsize},
@@ -4738,6 +4739,31 @@ async fn test_rewrap(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_hard_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, cx| {
+        editor.set_hard_wrap(Some(14), cx);
+    });
+
+    cx.set_state(indoc!(
+        "
+        one two three ˇ
+        "
+    ));
+    cx.simulate_input("four");
+    cx.run_until_parked();
+
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        fourˇ
+        "
+    ));
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -6331,12 +6357,29 @@ async fn test_autoclose_and_auto_surround_pairs(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| editor.handle_input("{", window, cx));
     cx.assert_editor_state("{«aˇ»} b");
 
-    // Autclose pair where the start and end characters are the same
+    // Autoclose when not immediately after a word character
+    cx.set_state("a ˇ");
+    cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
+    cx.assert_editor_state("a \"ˇ\"");
+
+    // Autoclose pair where the start and end characters are the same
+    cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
+    cx.assert_editor_state("a \"\"ˇ");
+
+    // Don't autoclose when immediately after a word character
     cx.set_state("aˇ");
     cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
-    cx.assert_editor_state("a\"ˇ\"");
+    cx.assert_editor_state("a\"ˇ");
+
+    // Do autoclose when after a non-word character
+    cx.set_state("{ˇ");
     cx.update_editor(|editor, window, cx| editor.handle_input("\"", window, cx));
-    cx.assert_editor_state("a\"\"ˇ");
+    cx.assert_editor_state("{\"ˇ\"");
+
+    // Non identical pairs autoclose regardless of preceding character
+    cx.set_state("aˇ");
+    cx.update_editor(|editor, window, cx| editor.handle_input("{", window, cx));
+    cx.assert_editor_state("a{ˇ}");
 
     // Don't autoclose pair if autoclose is disabled
     cx.set_state("ˇ");
@@ -7650,7 +7693,6 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -9167,6 +9209,225 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.assert_editor_state("editor.closeˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_words_completion(cx: &mut TestAppContext) {
+    let lsp_fetch_timeout_ms = 10;
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Fallback,
+            lsp: true,
+            lsp_fetch_timeout_ms: 10,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let throttle_completions = Arc::new(AtomicBool::new(false));
+
+    let lsp_throttle_completions = throttle_completions.clone();
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, cx| {
+                let lsp_throttle_completions = lsp_throttle_completions.clone();
+                async move {
+                    if lsp_throttle_completions.load(atomic::Ordering::Acquire) {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(lsp_fetch_timeout_ms * 10))
+                            .await;
+                    }
+                    Ok(Some(lsp::CompletionResponse::Array(vec![
+                        lsp::CompletionItem {
+                            label: "first".into(),
+                            ..lsp::CompletionItem::default()
+                        },
+                        lsp::CompletionItem {
+                            label: "last".into(),
+                            ..lsp::CompletionItem::default()
+                        },
+                    ])))
+                }
+            });
+
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["first", "last"],
+                "When LSP server is fast to reply, no fallback word completions are used"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+        editor.cancel(&Cancel, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| !editor.context_menu_visible())
+        .await;
+
+    throttle_completions.store(true, atomic::Ordering::Release);
+    cx.simulate_keystroke(".");
+    cx.executor()
+        .advance_clock(Duration::from_millis(lsp_fetch_timeout_ms * 2));
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(&menu), &["one", "three", "two"],
+                "When LSP server is slow, document words can be shown instead, if configured accordingly");
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "first".into(),
+                        ..lsp::CompletionItem::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "last".into(),
+                        ..lsp::CompletionItem::default()
+                    },
+                ])))
+            });
+
+    cx.set_state(indoc! {"ˇ
+        first
+        last
+        second
+    "});
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["first", "last", "second"],
+                "Word completions that has the same edit as the any of the LSP ones, should not be proposed"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+        editor.cancel(&Cancel, window, cx);
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Fallback,
+            lsp: false,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    cx.set_state(indoc! {"ˇ
+        0_usize
+        let
+        33
+        4.5f32
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["let"],
+                "With no digits in the completion query, no digits should be in the word completions"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+        editor.cancel(&Cancel, window, cx);
+    });
+
+    cx.set_state(indoc! {"3ˇ
+        0_usize
+        let
+        3
+        33.35f32
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(&menu), &["33", "35f32"], "The digit is in the completion query, \
+                return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
 }
 
 #[gpui::test]
@@ -13317,7 +13578,6 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -13800,9 +14060,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::Full, multi_buffer, None, true, window, cx)
-    });
+    let editor =
+        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             for (buffer, diff_base) in [
@@ -13921,9 +14180,8 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::Full, multi_buffer, None, true, window, cx)
-    });
+    let editor =
+        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
@@ -15479,14 +15737,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     });
 
     let editor = cx.add_window(|window, cx| {
-        Editor::new(
-            EditorMode::Full,
-            multibuffer,
-            Some(project),
-            true,
-            window,
-            cx,
-        )
+        Editor::new(EditorMode::Full, multibuffer, Some(project), window, cx)
     });
     cx.run_until_parked();
 
@@ -15505,9 +15756,9 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     assert_eq!(
         hunks,
         [
-            DisplayRow(3)..DisplayRow(5),
-            DisplayRow(10)..DisplayRow(12),
-            DisplayRow(17)..DisplayRow(19),
+            DisplayRow(2)..DisplayRow(4),
+            DisplayRow(7)..DisplayRow(9),
+            DisplayRow(12)..DisplayRow(14),
         ]
     );
 }
@@ -15938,7 +16189,6 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -16093,7 +16343,6 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer.clone(),
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -16101,7 +16350,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\naaaa\nbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
     );
 
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -16109,7 +16358,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After folding the first buffer, its text should not be displayed"
     );
 
@@ -16118,7 +16367,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After folding the second buffer, its text should not be displayed"
     );
 
@@ -16143,7 +16392,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
         "After unfolding the second buffer, its text should be displayed"
     );
 
@@ -16165,7 +16414,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
@@ -16174,7 +16423,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After unfolding the all buffers, all original text should be displayed"
     );
 }
@@ -16260,13 +16509,12 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
     });
 
-    let full_text = "\n\n\n1111\n2222\n3333\n\n\n\n\n4444\n5555\n6666\n\n\n\n\n7777\n8888\n9999\n";
+    let full_text = "\n\n1111\n2222\n3333\n\n\n4444\n5555\n6666\n\n\n7777\n8888\n9999";
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
@@ -16277,7 +16525,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n4444\n5555\n6666\n\n\n\n\n7777\n8888\n9999\n",
+        "\n\n\n\n4444\n5555\n6666\n\n\n7777\n8888\n9999",
         "After folding the first buffer, its text should not be displayed"
     );
 
@@ -16287,7 +16535,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n\n\n7777\n8888\n9999\n",
+        "\n\n\n\n\n\n7777\n8888\n9999",
         "After folding the second buffer, its text should not be displayed"
     );
 
@@ -16305,7 +16553,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "\n\n\n\n4444\n5555\n6666\n\n",
         "After unfolding the second buffer, its text should be displayed"
     );
 
@@ -16314,7 +16562,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n1111\n2222\n3333\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "\n\n1111\n2222\n3333\n\n\n4444\n5555\n6666\n\n",
         "After unfolding the first buffer, its text should be displayed"
     );
 
@@ -16380,7 +16628,6 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -16399,7 +16646,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         editor.change_selections(None, window, cx, |s| s.select_ranges(Some(highlight_range)));
     });
 
-    let full_text = format!("\n\n\n{sample_text}\n");
+    let full_text = format!("\n\n{sample_text}");
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
@@ -16428,14 +16675,7 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
             ],
             cx,
         );
-        let mut editor = Editor::new(
-            EditorMode::Full,
-            multi_buffer.clone(),
-            None,
-            true,
-            window,
-            cx,
-        );
+        let mut editor = Editor::new(EditorMode::Full, multi_buffer.clone(), None, window, cx);
 
         let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
         // fold all but the second buffer, so that we test navigating between two
@@ -16747,7 +16987,7 @@ async fn assert_highlighted_edits(
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);
-        Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+        Editor::new(EditorMode::Full, buffer, None, window, cx)
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
@@ -16991,6 +17231,187 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
         ˇ
         </span>
     "});
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    )));
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["_the/command".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| {
+            p.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let anchor = buffer_snapshot.anchor_at(0, text::Bias::Left);
+    drop(buffer_snapshot);
+    let actions = cx
+        .update_window(*workspace, |_, window, cx| {
+            project.code_actions(&buffer, anchor..anchor, window, cx)
+        })
+        .unwrap();
+
+    fake_server
+        .handle_request::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+            Ok(Some(vec![
+                lsp::CodeLens {
+                    range: lsp::Range::default(),
+                    command: Some(lsp::Command {
+                        title: "Code lens command".to_owned(),
+                        command: "_the/command".to_owned(),
+                        arguments: None,
+                    }),
+                    data: None,
+                },
+                lsp::CodeLens {
+                    range: lsp::Range::default(),
+                    command: Some(lsp::Command {
+                        title: "Command not in capabilities".to_owned(),
+                        command: "not in capabilities".to_owned(),
+                        arguments: None,
+                    }),
+                    data: None,
+                },
+                lsp::CodeLens {
+                    range: lsp::Range {
+                        start: lsp::Position {
+                            line: 1,
+                            character: 1,
+                        },
+                        end: lsp::Position {
+                            line: 1,
+                            character: 1,
+                        },
+                    },
+                    command: Some(lsp::Command {
+                        title: "Command not in range".to_owned(),
+                        command: "_the/command".to_owned(),
+                        arguments: None,
+                    }),
+                    data: None,
+                },
+            ]))
+        })
+        .next()
+        .await;
+
+    let actions = actions.await.unwrap();
+    assert_eq!(
+        actions.len(),
+        1,
+        "Should have only one valid action for the 0..0 range"
+    );
+    let action = actions[0].clone();
+    let apply = project.update(cx, |project, cx| {
+        project.apply_code_action(buffer.clone(), action, true, cx)
+    });
+
+    // Resolving the code action does not populate its edits. In absence of
+    // edits, we must execute the given command.
+    fake_server.handle_request::<lsp::request::CodeLensResolve, _, _>(|mut lens, _| async move {
+        let lens_command = lens.command.as_mut().expect("should have a command");
+        assert_eq!(lens_command.title, "Code lens command");
+        lens_command.arguments = Some(vec![json!("the-argument")]);
+        Ok(lens)
+    });
+
+    // While executing the command, the language server sends the editor
+    // a `workspaceEdit` request.
+    fake_server
+        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+            let fake = fake_server.clone();
+            move |params, _| {
+                assert_eq!(params.command, "_the/command");
+                let fake = fake.clone();
+                async move {
+                    fake.server
+                        .request::<lsp::request::ApplyWorkspaceEdit>(
+                            lsp::ApplyWorkspaceEditParams {
+                                label: None,
+                                edit: lsp::WorkspaceEdit {
+                                    changes: Some(
+                                        [(
+                                            lsp::Url::from_file_path(path!("/dir/a.ts")).unwrap(),
+                                            vec![lsp::TextEdit {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 0),
+                                                ),
+                                                new_text: "X".into(),
+                                            }],
+                                        )]
+                                        .into_iter()
+                                        .collect(),
+                                    ),
+                                    ..Default::default()
+                                },
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    Ok(Some(json!(null)))
+                }
+            }
+        })
+        .next()
+        .await;
+
+    // Applying the code lens command returns a project transaction containing the edits
+    // sent by the language server in its `workspaceEdit` request.
+    let transaction = apply.await.unwrap();
+    assert!(transaction.0.contains_key(&buffer));
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "Xa");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "a");
+    });
 }
 
 mod autoclose_tags {
