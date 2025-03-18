@@ -10,7 +10,7 @@ use editor::{CompletionProvider, Editor, ExcerptId};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, WorktreeId};
+use project::{Completion, CompletionIntent, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
@@ -44,9 +44,11 @@ impl ContextPickerCompletionProvider {
     }
 
     fn default_completions(
+        excerpt_id: ExcerptId,
         range_to_replace: Range<Anchor>,
         context_store: Entity<ContextStore>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        editor: Entity<Editor>,
         workspace: Entity<Workspace>,
         cx: &App,
     ) -> Vec<Completion> {
@@ -60,44 +62,28 @@ impl ContextPickerCompletionProvider {
                 cx,
             )
             .iter()
-            .filter_map(|entry| {
-                let (mode, mention_argument, label) = match entry {
-                    super::RecentEntry::File {
-                        project_path,
-                        path_prefix: _,
-                    } => {
-                        let full_path = Self::full_path_for_entry(
-                            project_path.worktree_id,
-                            &project_path.path,
-                            workspace.clone(),
-                            cx,
-                        )?;
-                        let label = Self::build_code_label_for_full_path(
-                            project_path.worktree_id,
-                            &project_path.path,
-                            workspace.clone(),
-                            cx,
-                        )?;
-                        (
-                            ContextPickerMode::File,
-                            full_path.to_string_lossy().to_string(),
-                            label,
-                        )
-                    }
-                    super::RecentEntry::Thread(thread_context_entry) => (
-                        ContextPickerMode::Thread,
-                        thread_context_entry.summary.to_string(),
-                        CodeLabel::plain(thread_context_entry.summary.to_string(), None),
-                    ),
-                };
-                Some(Completion {
-                    old_range: range_to_replace.clone(),
-                    new_text: format!("@{} {}", mode.mention_prefix(), mention_argument),
-                    label,
-                    documentation: None,
-                    source: project::CompletionSource::Custom,
-                    confirm: None,
-                })
+            .filter_map(|entry| match entry {
+                super::RecentEntry::File {
+                    project_path,
+                    path_prefix: _,
+                } => Self::completion_for_path(
+                    project_path.worktree_id,
+                    &project_path.path,
+                    false,
+                    excerpt_id,
+                    range_to_replace.clone(),
+                    editor.clone(),
+                    workspace.clone(),
+                    cx,
+                ),
+                super::RecentEntry::Thread(thread_context_entry) => {
+                    Some(Self::completion_for_thread(
+                        thread_context_entry.summary.clone(),
+                        excerpt_id,
+                        range_to_replace.clone(),
+                        editor.clone(),
+                    ))
+                }
             }),
         );
 
@@ -174,6 +160,65 @@ impl ContextPickerCompletionProvider {
 
         Some(label)
     }
+
+    fn completion_for_thread(
+        thread_summary: SharedString,
+        excerpt_id: ExcerptId,
+        range_to_replace: Range<Anchor>,
+        editor: Entity<Editor>,
+    ) -> Completion {
+        Completion {
+            old_range: range_to_replace.clone(),
+            new_text: format!("@thread {}", thread_summary),
+            label: CodeLabel::plain(thread_summary.to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            confirm: Some(insert_crease_callback(
+                IconName::MessageCircle,
+                thread_summary.clone(),
+                excerpt_id,
+                range_to_replace.clone(),
+                editor.clone(),
+            )),
+        }
+    }
+
+    fn completion_for_path(
+        worktree_id: WorktreeId,
+        path: &Path,
+        is_directory: bool,
+        excerpt_id: ExcerptId,
+        range_to_replace: Range<Anchor>,
+        editor: Entity<Editor>,
+        workspace: Entity<Workspace>,
+        cx: &App,
+    ) -> Option<Completion> {
+        let label =
+            Self::build_code_label_for_full_path(worktree_id, &path, workspace.clone(), cx)?;
+        let full_path = Self::full_path_for_entry(worktree_id, &path, workspace.clone(), cx)?;
+
+        Some(Completion {
+            old_range: range_to_replace.clone(),
+            new_text: format!("@file {}", full_path.to_string_lossy()),
+            label,
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            confirm: Some(insert_crease_callback(
+                if is_directory {
+                    IconName::Folder
+                } else {
+                    IconName::File
+                },
+                path.file_name()
+                    .map(|file_name| file_name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "untitled".to_string())
+                    .into(),
+                excerpt_id,
+                range_to_replace,
+                editor,
+            )),
+        })
+    }
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {
@@ -236,33 +281,19 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
                     completions.reserve(path_matches.len());
                     cx.update(|cx| {
-                        for path_match in path_matches {
-                            let Some(label) = Self::build_code_label_for_full_path(
-                                WorktreeId::from_usize(path_match.worktree_id),
-                                &path_match.path,
+                        completions.extend(path_matches.iter().filter_map(|mat| {
+                            let editor = editor.upgrade()?;
+                            Self::completion_for_path(
+                                WorktreeId::from_usize(mat.worktree_id),
+                                &mat.path,
+                                mat.is_dir,
+                                excerpt_id,
+                                range_to_replace.clone(),
+                                editor.clone(),
                                 workspace.clone(),
                                 cx,
-                            ) else {
-                                continue;
-                            };
-                            let Some(full_path) = Self::full_path_for_entry(
-                                WorktreeId::from_usize(path_match.worktree_id),
-                                &path_match.path,
-                                workspace.clone(),
-                                cx,
-                            ) else {
-                                continue;
-                            };
-
-                            completions.push(Completion {
-                                old_range: range_to_replace.clone(),
-                                new_text: format!("@file {}", full_path.to_string_lossy()),
-                                label,
-                                documentation: None,
-                                source: project::CompletionSource::Custom,
-                                confirm: None,
-                            });
-                        }
+                            )
+                        }));
                     })?;
                 }
                 Some(ContextPickerMode::Fetch) => {}
@@ -281,63 +312,28 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             })?
                             .await;
                         for thread in threads {
-                            completions.push(Completion {
-                                old_range: range_to_replace.clone(),
-                                new_text: format!("@thread {}", thread.summary),
-                                label: CodeLabel::plain(thread.summary.to_string(), None),
-                                documentation: None,
-                                source: project::CompletionSource::Custom,
-                                confirm: Some(Arc::new({
-                                    let editor = editor.clone();
-                                    let range_to_replace = range_to_replace.clone();
-                                    move |_, window, cx| {
-                                        let editor = editor.clone();
-                                        let range_to_replace = range_to_replace.clone();
-                                        let thread_summary = thread.summary.clone();
-                                        {
-                                            window.defer(cx, move |window, cx| {
-                                                let snapshot =
-                                                    editor.read(cx).buffer().read(cx).snapshot(cx);
-
-                                                if let Some((start, end)) = snapshot
-                                                    .anchor_in_excerpt(
-                                                        excerpt_id,
-                                                        range_to_replace.start.clone(),
-                                                    )
-                                                    .zip(snapshot.anchor_in_excerpt(
-                                                        excerpt_id,
-                                                        range_to_replace.end.clone(),
-                                                    ))
-                                                {
-                                                    // crate::context_picker::insert_crease_for_mention(
-                                                    //     thread_summary.clone(),
-                                                    //     IconSource::Svg(
-                                                    //         IconName::MessageCircle.path().into(),
-                                                    //     ),
-                                                    //     start..end,
-                                                    //     editor.clone(),
-                                                    //     window,
-                                                    //     cx,
-                                                    // );
-                                                }
-                                            });
-                                            true
-                                        }
-                                    }
-                                })),
-                            });
+                            completions.push(Self::completion_for_thread(
+                                thread.summary.clone(),
+                                excerpt_id,
+                                range_to_replace.clone(),
+                                editor.clone(),
+                            ));
                         }
                     }
                 }
                 None => {
                     cx.update(|cx| {
-                        completions.extend(Self::default_completions(
-                            range_to_replace.clone(),
-                            context_store.clone(),
-                            thread_store.clone(),
-                            workspace.clone(),
-                            cx,
-                        ));
+                        if let Some(editor) = editor.upgrade() {
+                            completions.extend(Self::default_completions(
+                                excerpt_id,
+                                range_to_replace.clone(),
+                                context_store.clone(),
+                                thread_store.clone(),
+                                editor,
+                                workspace.clone(),
+                                cx,
+                            ));
+                        }
                     })?;
                 }
             }
@@ -379,24 +375,42 @@ impl CompletionProvider for ContextPickerCompletionProvider {
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum MentionCategory {
-    File,
-    Fetch,
-    Thread,
-}
+fn insert_crease_callback(
+    crease_icon: IconName,
+    crease_text: SharedString,
+    excerpt_id: ExcerptId,
+    range_to_replace: Range<Anchor>,
+    editor: Entity<Editor>,
+) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
+    Arc::new({
+        let editor = editor.clone();
+        let range_to_replace = range_to_replace.clone();
+        move |_, window, cx| {
+            let editor = editor.clone();
+            let range_to_replace = range_to_replace.clone();
+            let crease_text = crease_text.clone();
+            {
+                window.defer(cx, move |window, cx| {
+                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
 
-impl TryFrom<&str> for MentionCategory {
-    type Error = ();
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "file" => Ok(MentionCategory::File),
-            "fetch" => Ok(MentionCategory::Fetch),
-            "thread" => Ok(MentionCategory::Thread),
-            _ => Err(()),
+                    if let Some((start, end)) = snapshot
+                        .anchor_in_excerpt(excerpt_id, range_to_replace.start.clone())
+                        .zip(snapshot.anchor_in_excerpt(excerpt_id, range_to_replace.end.clone()))
+                    {
+                        crate::context_picker::insert_crease_for_mention(
+                            crease_text.clone(),
+                            crease_icon.clone(),
+                            start..end,
+                            editor.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                });
+                false
+            }
         }
-    }
+    })
 }
 
 #[derive(Debug, Default, PartialEq)]

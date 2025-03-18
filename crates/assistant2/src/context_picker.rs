@@ -3,16 +3,24 @@ mod fetch_context_picker;
 mod file_context_picker;
 mod thread_context_picker;
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use editor::Editor;
+use editor::actions::FoldAt;
+use editor::display_map::{Crease, FoldId};
+use editor::{Anchor, AnchorRangeExt as _, Editor, FoldPlaceholder, ToPoint as _};
 use file_context_picker::render_file_context_entry;
-use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
+use gpui::{
+    App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
+};
+use multi_buffer::MultiBufferRow;
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
-use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
+use ui::{
+    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor,
+};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
 pub use crate::context_picker::completion_provider::ContextPickerCompletionProvider;
@@ -522,4 +530,121 @@ fn recent_context_picker_entries(
     }
 
     recent
+}
+
+pub(crate) fn insert_crease_for_mention(
+    crease_label: SharedString,
+    crease_icon: IconName,
+    crease_range: Range<Anchor>,
+    editor_entity: Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    editor_entity.update(cx, |editor, cx| {
+        let placeholder = FoldPlaceholder {
+            render: render_fold_icon_button(crease_icon, crease_label, editor_entity.downgrade()),
+            ..Default::default()
+        };
+
+        let render_trailer =
+            move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
+
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let buffer_row = MultiBufferRow(crease_range.start.to_point(&buffer).row);
+
+        let crease = Crease::inline(
+            crease_range,
+            placeholder.clone(),
+            fold_toggle("mention"),
+            render_trailer,
+        );
+
+        editor.insert_creases(vec![crease], cx);
+        editor.fold_at(&FoldAt { buffer_row }, window, cx);
+    });
+}
+
+fn render_fold_icon_button(
+    icon: IconName,
+    label: SharedString,
+    editor: WeakEntity<Editor>,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new({
+        let icon = icon.clone();
+        move |fold_id, fold_range, cx| {
+            let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
+                editor.update(cx, |editor, cx| {
+                    let snapshot = editor
+                        .buffer()
+                        .update(cx, |multi_buffer, cx| multi_buffer.snapshot(cx));
+
+                    let is_in_pending_selection = || {
+                        editor
+                            .selections
+                            .pending
+                            .as_ref()
+                            .is_some_and(|pending_selection| {
+                                pending_selection
+                                    .selection
+                                    .range()
+                                    .includes(&fold_range, &snapshot)
+                            })
+                    };
+
+                    let mut is_in_complete_selection = || {
+                        editor
+                            .selections
+                            .disjoint_in_range::<usize>(fold_range.clone(), cx)
+                            .into_iter()
+                            .any(|selection| {
+                                // This is needed to cover a corner case, if we just check for an existing
+                                // selection in the fold range, having a cursor at the start of the fold
+                                // marks it as selected. Non-empty selections don't cause this.
+                                let length = selection.end - selection.start;
+                                length > 0
+                            })
+                    };
+
+                    is_in_pending_selection() || is_in_complete_selection()
+                })
+            });
+
+            ButtonLike::new(fold_id)
+                .style(ButtonStyle::Filled)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(is_in_text_selection)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(icon.clone())
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new(label.clone())
+                                .size(LabelSize::Small)
+                                .single_line(),
+                        ),
+                )
+                .into_any_element()
+        }
+    })
+}
+
+fn fold_toggle(
+    name: &'static str,
+) -> impl Fn(
+    MultiBufferRow,
+    bool,
+    Arc<dyn Fn(bool, &mut Window, &mut App) + Send + Sync>,
+    &mut Window,
+    &mut App,
+) -> AnyElement {
+    move |row, is_folded, fold, _window, _cx| {
+        Disclosure::new((name, row.0 as u64), !is_folded)
+            .toggle_state(is_folded)
+            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
+            .into_any_element()
+    }
 }

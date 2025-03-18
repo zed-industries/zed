@@ -570,6 +570,7 @@ impl Render for MessageEditor {
                                         background: bg_color,
                                         local_player: cx.theme().players().local(),
                                         text: text_style,
+                                        syntax: cx.theme().syntax().clone(),
                                         ..Default::default()
                                     },
                                 )
