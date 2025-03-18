@@ -104,9 +104,10 @@ use language::{
         WordsCompletionMode,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
-    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiagnosticEntry, DiffOptions,
+    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    WordsQuery,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -632,7 +633,7 @@ pub struct Editor {
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
-    active_diagnostics: Option<ActiveDiagnosticGroup>,
+    active_diagnostics: Option<ActiveDiagnostics>,
     show_inline_diagnostics: bool,
     inline_diagnostics_update: Task<()>,
     inline_diagnostics_enabled: bool,
@@ -995,12 +996,15 @@ struct RegisteredInlineCompletionProvider {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ActiveDiagnosticGroup {
-    primary_range: Range<Anchor>,
-    primary_message: String,
-    group_id: usize,
-    blocks: HashMap<CustomBlockId, Diagnostic>,
-    is_valid: bool,
+pub(crate) enum ActiveDiagnostics {
+    Group {
+        primary_range: Range<Anchor>,
+        primary_message: String,
+        group_id: usize,
+        blocks: HashMap<CustomBlockId, Diagnostic>,
+        is_valid: bool,
+    },
+    All(HashMap<BufferId, HashSet<CustomBlockId>>),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -11634,20 +11638,49 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest::<usize>(cx);
 
+        if let Some(ActiveDiagnostics::All(_)) = self.active_diagnostics.as_ref() {
+            let next_diagnostic = match direction {
+                Direction::Next => buffer
+                    .diagnostics_in_range(selection.head()..buffer.len())
+                    .chain(buffer.diagnostics_in_range(0..selection.head()))
+                    .next(),
+                // TODO: Don't collect here, build a reversed diagnostics in range
+                Direction::Prev => buffer
+                    .diagnostics_in_range(0..selection.head())
+                    .collect::<Vec<_>>()
+                    .pop()
+                    .or_else(|| {
+                        buffer
+                            .diagnostics_in_range(selection.head()..buffer.len())
+                            .collect::<Vec<_>>()
+                            .pop()
+                    }),
+            };
+
+            if let Some(next_diagnostic) = next_diagnostic {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([next_diagnostic.range.start..next_diagnostic.range.start]);
+                })
+            }
+            return;
+        }
+
         // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let Some(buffer_id) = popover.local_diagnostic.range.start.buffer_id else {
                     return;
                 };
-                self.activate_diagnostics(
+                self.activate_diagnostic_group(
                     buffer_id,
                     popover.local_diagnostic.diagnostic.group_id,
                     window,
                     cx,
                 );
-                if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
-                    let primary_range_start = active_diagnostics.primary_range.start;
+                if let Some(ActiveDiagnostics::Group { primary_range, .. }) =
+                    self.active_diagnostics.as_ref()
+                {
+                    let primary_range_start = primary_range.start;
                     self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         let mut new_selection = s.newest_anchor().clone();
                         new_selection.collapse_to(primary_range_start, SelectionGoal::None);
@@ -11659,16 +11692,18 @@ impl Editor {
             }
         }
 
-        let active_group_id = self
-            .active_diagnostics
-            .as_ref()
-            .map(|active_group| active_group.group_id);
-        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
-            active_diagnostics
-                .primary_range
-                .to_offset(&buffer)
-                .to_inclusive()
-        });
+        let (active_group_id, active_primary_range) = match self.active_diagnostics.as_ref() {
+            Some(ActiveDiagnostics::Group {
+                group_id,
+                primary_range,
+                ..
+            }) => (
+                Some(*group_id),
+                Some(primary_range.to_offset(&buffer).to_inclusive()),
+            ),
+            _ => (None, None),
+        };
+
         let search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
             if active_primary_range.contains(&selection.head()) {
                 *active_primary_range.start()
@@ -11751,7 +11786,7 @@ impl Editor {
             let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
                 return;
             };
-            self.activate_diagnostics(buffer_id, group_id, window, cx);
+            self.activate_diagnostic_group(buffer_id, group_id, window, cx);
             if self.active_diagnostics.is_some() {
                 self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.select(vec![Selection {
@@ -12965,27 +13000,39 @@ impl Editor {
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut Context<Editor>) {
-        if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
+        if let Some(ActiveDiagnostics::Group {
+            primary_range,
+            is_valid: was_valid,
+            primary_message,
+            blocks,
+            ..
+        }) = self.active_diagnostics.as_mut()
+        {
             let buffer = self.buffer.read(cx).snapshot(cx);
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
-            let primary_range_end = active_diagnostics.primary_range.end.to_offset(&buffer);
+            let primary_range_start = primary_range.start.to_offset(&buffer);
+            let primary_range_end = primary_range.end.to_offset(&buffer);
             let is_valid = buffer
                 .diagnostics_in_range::<usize>(primary_range_start..primary_range_end)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.primary_message
+                        && entry.diagnostic.message == *primary_message
                 });
 
-            if is_valid != active_diagnostics.is_valid {
-                active_diagnostics.is_valid = is_valid;
+            if is_valid != *was_valid {
+                *was_valid = is_valid;
                 if is_valid {
                     let mut new_styles = HashMap::default();
-                    for (block_id, diagnostic) in &active_diagnostics.blocks {
+                    for (block_id, diagnostic) in blocks {
                         new_styles.insert(
                             *block_id,
-                            diagnostic_block_renderer(diagnostic.clone(), None, true),
+                            diagnostic_block_renderer(
+                                diagnostic.clone(),
+                                None,
+                                true,
+                                cx.entity().downgrade(),
+                            ),
                         );
                     }
                     self.display_map.update(cx, |display_map, _cx| {
@@ -12998,20 +13045,28 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(
+    fn activate_diagnostic_group(
         &mut self,
         buffer_id: BufferId,
         group_id: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.active_diagnostics, Some(ActiveDiagnostics::All(_))) {
+            return;
+        }
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
+        let editor = cx.entity().downgrade();
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
 
             let mut primary_range = None;
             let mut primary_message = None;
+            dbg!(buffer
+                .diagnostic_group(buffer_id, group_id)
+                .collect::<Vec<_>>());
+
             let diagnostic_group = buffer
                 .diagnostic_group(buffer_id, group_id)
                 .filter_map(|entry| {
@@ -13044,7 +13099,12 @@ impl Editor {
                                 buffer.anchor_after(entry.range.start),
                             ),
                             height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, None, true),
+                            render: diagnostic_block_renderer(
+                                diagnostic,
+                                None,
+                                true,
+                                editor.clone(),
+                            ),
                             priority: 0,
                         }
                     }),
@@ -13054,7 +13114,7 @@ impl Editor {
                 .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
                 .collect();
 
-            Some(ActiveDiagnosticGroup {
+            Some(ActiveDiagnostics::Group {
                 primary_range: buffer.anchor_before(primary_range.start)
                     ..buffer.anchor_after(primary_range.end),
                 primary_message,
@@ -13066,11 +13126,58 @@ impl Editor {
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut Context<Self>) {
-        if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
+        if let Some(ActiveDiagnostics::Group { blocks, .. }) = self.active_diagnostics.take() {
             self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(active_diagnostic_group.blocks.into_keys().collect(), cx);
+                display_map.remove_blocks(blocks.into_keys().collect(), cx);
             });
             cx.notify();
+        }
+    }
+
+    pub fn set_diagnostics_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        entries: impl Iterator<Item = DiagnosticEntry<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ActiveDiagnostics::All(diagnostics_by_buffer)) =
+            self.active_diagnostics.as_mut()
+        {
+            if let Some(old_blocks) = diagnostics_by_buffer.remove(&buffer_id) {
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_blocks(old_blocks, cx);
+                });
+            }
+        } else {
+            self.dismiss_diagnostics(cx);
+        }
+
+        let editor = cx.entity().downgrade();
+        let block_ids = self.display_map.update(cx, |display_map, cx| {
+            display_map.insert_blocks(
+                entries.map(|entry| {
+                    let diagnostic = entry.diagnostic.clone();
+                    let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
+                    BlockProperties {
+                        style: BlockStyle::Fixed,
+                        placement: BlockPlacement::Below(entry.range.start),
+                        height: message_height,
+                        render: diagnostic_block_renderer(diagnostic, None, true, editor.clone()),
+                        priority: 0,
+                    }
+                }),
+                cx,
+            )
+        });
+
+        if !matches!(self.active_diagnostics, Some(ActiveDiagnostics::All(_))) {
+            self.active_diagnostics = Some(ActiveDiagnostics::All(HashMap::default()))
+        }
+
+        if let Some(ActiveDiagnostics::All(diagnostics_by_buffer)) =
+            self.active_diagnostics.as_mut()
+        {
+            diagnostics_by_buffer.insert(buffer_id, block_ids.into_iter().collect());
         }
     }
 
@@ -13728,16 +13835,16 @@ impl Editor {
 
         cx.notify();
 
-        if let Some(active_diagnostics) = self.active_diagnostics.take() {
-            // Clear diagnostics block when folding a range that contains it.
-            let snapshot = self.snapshot(window, cx);
-            if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
-                drop(snapshot);
-                self.active_diagnostics = Some(active_diagnostics);
-                self.dismiss_diagnostics(cx);
-            } else {
-                self.active_diagnostics = Some(active_diagnostics);
-            }
+        let Some(ActiveDiagnostics::Group { primary_range, .. }) = self.active_diagnostics.as_ref()
+        else {
+            return;
+        };
+
+        // Clear diagnostics block when folding a range that contains it.
+        let snapshot = self.snapshot(window, cx);
+        if snapshot.intersects_fold(primary_range.start) {
+            drop(snapshot);
+            self.dismiss_diagnostics(cx);
         }
 
         self.scrollbar_marker_state.dirty = true;
@@ -18272,6 +18379,7 @@ pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
     max_message_rows: Option<u8>,
     allow_closing: bool,
+    editor: WeakEntity<Editor>,
 ) -> RenderBlock {
     let (text_without_backticks, code_ranges) =
         highlight_diagnostic_message(&diagnostic, max_message_rows);
@@ -18346,6 +18454,17 @@ pub fn diagnostic_block_renderer(
                     .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
                     .flex_shrink(),
             )
+            .on_click(move |_, window, cx| {
+                // editor
+                //     .update(cx, |editor, cx| {
+                //         editor
+                //             .buffer
+                //             .read(cx)
+                //             .snapshot(cx)
+                //             .diagnostic_group(buffer_id, group_id)
+                //     })
+                //     .ok();
+            })
             .child(buttons(&diagnostic))
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_default_highlights(

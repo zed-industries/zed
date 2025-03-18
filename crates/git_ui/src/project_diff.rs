@@ -409,7 +409,7 @@ impl ProjectDiff {
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
-            let is_newly_added = multibuffer.set_excerpts_for_path(
+            let (_, is_newly_added) = multibuffer.set_ranges_for_path(
                 path_key.clone(),
                 buffer,
                 diff_hunk_ranges,

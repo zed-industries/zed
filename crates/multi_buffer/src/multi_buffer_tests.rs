@@ -1591,7 +1591,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path1.clone(),
             buf1.clone(),
             vec![
@@ -1629,7 +1629,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
     buf1.update(cx, |buffer, cx| buffer.edit([(0..5, "")], None, cx));
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path1.clone(),
             buf1.clone(),
             vec![
@@ -1706,7 +1706,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path1.clone(),
             buf1.clone(),
             vec![Point::row_range(0..1)],
@@ -1729,13 +1729,13 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
+        multibuffer.set_ranges_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
     });
 
     assert_excerpts_match(&multibuffer, cx, "");
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path1.clone(),
             buf1.clone(),
             vec![Point::row_range(0..1), Point::row_range(7..8)],
@@ -1760,7 +1760,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path1.clone(),
             buf1.clone(),
             vec![Point::row_range(0..1), Point::row_range(5..6)],
@@ -1785,7 +1785,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path2.clone(),
             buf2.clone(),
             vec![Point::row_range(2..3)],
@@ -1817,11 +1817,11 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
+        multibuffer.set_ranges_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path1.clone(),
             buf1.clone(),
             vec![Point::row_range(3..4)],
@@ -1851,7 +1851,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
+        multibuffer.set_ranges_for_path(
             path1.clone(),
             buf1.clone(),
             vec![Point::row_range(3..4)],

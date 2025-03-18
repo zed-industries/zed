@@ -2032,6 +2032,7 @@ message Diagnostic {
         Hint = 4;
     }
     optional string data = 12;
+    Severity group_severity = 13;
 }
 
 message Operation {

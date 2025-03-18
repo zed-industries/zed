@@ -203,13 +203,8 @@ pub fn serialize_diagnostics<'a>(
             start: Some(serialize_anchor(&entry.range.start)),
             end: Some(serialize_anchor(&entry.range.end)),
             message: entry.diagnostic.message.clone(),
-            severity: match entry.diagnostic.severity {
-                DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
-                DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
-                DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
-                DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
-                _ => proto::diagnostic::Severity::None,
-            } as i32,
+            severity: serialize_severity(entry.diagnostic.severity),
+            group_severity: serialize_severity(entry.diagnostic.group_severity),
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
             is_valid: true,
@@ -394,6 +389,26 @@ pub fn deserialize_selection(selection: proto::Selection) -> Option<Selection<An
     })
 }
 
+fn serialize_severity(severity: DiagnosticSeverity) -> i32 {
+    match severity {
+        DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error as i32,
+        DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning as i32,
+        DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information as i32,
+        DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint as i32,
+        _ => proto::diagnostic::Severity::None as i32,
+    }
+}
+
+fn deserialize_severity(severity: i32) -> Option<DiagnosticSeverity> {
+    match proto::diagnostic::Severity::from_i32(severity)? {
+        proto::diagnostic::Severity::Error => Some(DiagnosticSeverity::ERROR),
+        proto::diagnostic::Severity::Warning => Some(DiagnosticSeverity::WARNING),
+        proto::diagnostic::Severity::Information => Some(DiagnosticSeverity::INFORMATION),
+        proto::diagnostic::Severity::Hint => Some(DiagnosticSeverity::HINT),
+        proto::diagnostic::Severity::None => None,
+    }
+}
+
 /// Deserializes a list of diagnostics from the RPC representation.
 pub fn deserialize_diagnostics(
     diagnostics: Vec<proto::Diagnostic>,
@@ -406,17 +421,16 @@ pub fn deserialize_diagnostics(
             } else {
                 None
             };
+            let severity = deserialize_severity(diagnostic.severity)?;
+            let group_severity =
+                deserialize_severity(diagnostic.group_severity).unwrap_or(severity);
+
             Some(DiagnosticEntry {
                 range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
                 diagnostic: Diagnostic {
                     source: diagnostic.source,
-                    severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)? {
-                        proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
-                        proto::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
-                        proto::diagnostic::Severity::Information => DiagnosticSeverity::INFORMATION,
-                        proto::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
-                        proto::diagnostic::Severity::None => return None,
-                    },
+                    severity,
+                    group_severity,
                     message: diagnostic.message,
                     group_id: diagnostic.group_id as usize,
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),

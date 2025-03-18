@@ -7929,6 +7929,7 @@ impl LspStore {
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        dbg!(&params);
         if !self.mode.is_local() {
             anyhow::bail!("called update_diagnostics on remote");
         }
@@ -7940,6 +7941,8 @@ impl LspStore {
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
         let mut supporting_diagnostics = HashMap::default();
+
+        let mut severity_by_group_id = HashMap::default();
 
         // Ensure that primary diagnostics are always the most severe
         params.diagnostics.sort_by_key(|item| item.severity);
@@ -7977,15 +7980,18 @@ impl LspStore {
                 sources_by_group_id.insert(group_id, source);
                 primary_diagnostic_group_ids
                     .insert((source, diagnostic.code.clone(), range.clone()), group_id);
+                let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR);
+                severity_by_group_id.insert(group_id, severity);
 
                 diagnostics.push(DiagnosticEntry {
                     range,
                     diagnostic: Diagnostic {
                         source: diagnostic.source.clone(),
                         code: diagnostic.code.clone(),
-                        severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                        severity,
                         message: diagnostic.message.trim().to_string(),
                         group_id,
+                        group_severity: severity,
                         is_primary: true,
                         is_disk_based,
                         is_unnecessary,
@@ -8002,6 +8008,7 @@ impl LspStore {
                                     source: diagnostic.source.clone(),
                                     code: diagnostic.code.clone(),
                                     severity: DiagnosticSeverity::INFORMATION,
+                                    group_severity: severity, // We will reassign this to the primary diagnostic's severity in a second pass
                                     message: info.message.trim().to_string(),
                                     group_id,
                                     is_primary: false,
@@ -8029,6 +8036,9 @@ impl LspStore {
                         diagnostic.severity = severity;
                     }
                     diagnostic.is_unnecessary = is_unnecessary;
+                    if let Some(severity) = severity_by_group_id.get(&diagnostic.group_id) {
+                        diagnostic.group_severity = *severity;
+                    }
                 }
             }
         }

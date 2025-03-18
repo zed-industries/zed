@@ -1631,12 +1631,14 @@ impl EditorElement {
                 project_settings::DiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
             });
 
-        let active_diagnostics_group = self
-            .editor
-            .read(cx)
-            .active_diagnostics
-            .as_ref()
-            .map(|active_diagnostics| active_diagnostics.group_id);
+        let active_diagnostics_group =
+            if let Some(crate::ActiveDiagnostics::Group { group_id, .. }) =
+                self.editor.read(cx).active_diagnostics.as_ref()
+            {
+                Some(*group_id)
+            } else {
+                None
+            };
 
         let diagnostics_by_rows = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
