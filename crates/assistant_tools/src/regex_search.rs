@@ -61,7 +61,7 @@ impl Tool for RegexSearchTool {
         };
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             futures::pin_mut!(results);
 
             let mut output = String::new();
@@ -72,7 +72,7 @@ impl Tool for RegexSearchTool {
                     continue;
                 }
 
-                buffer.read_with(&cx, |buffer, cx| {
+                buffer.read_with(cx, |buffer, cx| {
                     if let Some(path) = buffer.file().map(|file| file.full_path(cx)) {
                         writeln!(output, "### Found matches in {}:\n", path.display()).unwrap();
                         let mut ranges = ranges

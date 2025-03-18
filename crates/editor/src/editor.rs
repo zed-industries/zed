@@ -177,7 +177,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemHandle, PreviewTabsSettings},
     ItemId, RestoreOnStartupBehavior,
@@ -1658,9 +1658,9 @@ impl Editor {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
 
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
                 workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
@@ -1696,9 +1696,9 @@ impl Editor {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
 
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
-            workspace.update_in(&mut cx, move |workspace, window, cx| {
+            workspace.update_in(cx, move |workspace, window, cx| {
                 workspace.split_item(
                     direction,
                     Box::new(
@@ -2126,12 +2126,12 @@ impl Editor {
                     drop(context_menu);
 
                     let query = Self::completion_query(buffer, cursor_position);
-                    cx.spawn(move |this, mut cx| async move {
+                    cx.spawn(async move |this, cx| {
                         completion_menu
                             .filter(query.as_deref(), cx.background_executor().clone())
                             .await;
 
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             let mut context_menu = this.context_menu.borrow_mut();
                             let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref()
                             else {
@@ -3960,16 +3960,16 @@ impl Editor {
                 cx,
             )
         });
-        Some(cx.spawn_in(window, |editor, mut cx| async move {
+        Some(cx.spawn_in(window, async move |editor, cx| {
             if let Some(transaction) = on_type_formatting.await? {
                 if push_to_client_history {
                     buffer
-                        .update(&mut cx, |buffer, _| {
+                        .update(cx, |buffer, _| {
                             buffer.push_transaction(transaction, Instant::now());
                         })
                         .ok();
                 }
-                editor.update(&mut cx, |editor, cx| {
+                editor.update(cx, |editor, cx| {
                     editor.refresh_document_highlights(cx);
                 })?;
             }
@@ -4078,9 +4078,9 @@ impl Editor {
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
-        let task = cx.spawn_in(window, |editor, mut cx| {
+        let task = cx.spawn_in(window, async move |editor, mut cx| {
             async move {
-                editor.update(&mut cx, |this, _| {
+                editor.update(cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
                 let mut completions = completions.await.log_err().unwrap_or_default();
@@ -4150,7 +4150,7 @@ impl Editor {
                     menu.visible().then_some(menu)
                 };
 
-                editor.update_in(&mut cx, |editor, window, cx| {
+                editor.update_in(cx, |editor, window, cx| {
                     match editor.context_menu.borrow().as_ref() {
                         None => {}
                         Some(CodeContextMenu::Completions(prev_menu)) => {
@@ -4191,6 +4191,7 @@ impl Editor {
                 Ok::<_, anyhow::Error>(())
             }
             .log_err()
+            .await
         });
 
         self.completion_tasks.push((id, task));
@@ -4433,13 +4434,13 @@ impl Editor {
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
-        cx.spawn_in(window, |editor, mut cx| async move {
+        cx.spawn_in(window, async move |editor, cx| {
             while let Some(prev_task) = task {
                 prev_task.await.log_err();
-                task = editor.update(&mut cx, |this, _| this.code_actions_task.take())?;
+                task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
 
-            let spawned_test_task = editor.update_in(&mut cx, |editor, window, cx| {
+            let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
                 if editor.focus_handle.is_focused(window) {
                     let multibuffer_point = action
                         .deployed_from_indicator
@@ -4488,7 +4489,7 @@ impl Editor {
                                 Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
-                    Some(cx.spawn_in(window, |editor, mut cx| async move {
+                    Some(cx.spawn_in(window, async move |editor, cx| {
                         let task_context = match task_context {
                             Some(task_context) => task_context.await,
                             None => None,
@@ -4509,7 +4510,7 @@ impl Editor {
                             && code_actions
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
-                        if let Ok(task) = editor.update_in(&mut cx, |editor, window, cx| {
+                        if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
@@ -4592,7 +4593,7 @@ impl Editor {
                 let apply_code_action =
                     provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
                 let workspace = workspace.downgrade();
-                Some(cx.spawn_in(window, |editor, cx| async move {
+                Some(cx.spawn_in(window, async move |editor, cx| {
                     let project_transaction = apply_code_action.await?;
                     Self::open_project_transaction(
                         &editor,
@@ -4612,7 +4613,7 @@ impl Editor {
         workspace: WeakEntity<Workspace>,
         transaction: ProjectTransaction,
         title: String,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
         cx.update(|_, cx| {
@@ -4626,7 +4627,7 @@ impl Editor {
 
         if let Some((buffer, transaction)) = entries.first() {
             if entries.len() == 1 {
-                let excerpt = this.update(&mut cx, |editor, cx| {
+                let excerpt = this.update(cx, |editor, cx| {
                     editor
                         .buffer()
                         .read(cx)
@@ -4634,7 +4635,7 @@ impl Editor {
                 })?;
                 if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
                     if excerpted_buffer == *buffer {
-                        let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
+                        let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
                             let excerpt_range = excerpt_range.to_offset(buffer);
                             buffer
                                 .edited_ranges_for_transaction::<usize>(transaction)
@@ -4674,7 +4675,7 @@ impl Editor {
             multibuffer
         })?;
 
-        workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let project = workspace.project().clone();
             let editor =
                 cx.new(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), window, cx));
@@ -4737,12 +4738,12 @@ impl Editor {
             return None;
         }
 
-        self.code_actions_task = Some(cx.spawn_in(window, |this, mut cx| async move {
+        self.code_actions_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let (providers, tasks) = this.update_in(&mut cx, |this, window, cx| {
+            let (providers, tasks) = this.update_in(cx, |this, window, cx| {
                 let providers = this.code_action_providers.clone();
                 let tasks = this
                     .code_action_providers
@@ -4767,7 +4768,7 @@ impl Editor {
                 }
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.available_code_actions = if actions.is_empty() {
                     None
                 } else {
@@ -4790,10 +4791,10 @@ impl Editor {
             self.show_git_blame_inline = false;
 
             self.show_git_blame_inline_delay_task =
-                Some(cx.spawn_in(window, |this, mut cx| async move {
+                Some(cx.spawn_in(window, async move |this, cx| {
                     cx.background_executor().timer(delay).await;
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.show_git_blame_inline = true;
                         cx.notify();
                     })
@@ -4818,7 +4819,7 @@ impl Editor {
             return None;
         }
         let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
-        self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
+        self.document_highlights_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
                 .await;
@@ -4836,7 +4837,7 @@ impl Editor {
             };
 
             if let Some(highlights) = highlights {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.pending_rename.is_some() {
                         return;
                     }
@@ -4926,12 +4927,12 @@ impl Editor {
             return;
         }
         let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
-        self.selection_highlight_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+        self.selection_highlight_task = Some(cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
                 .await;
             let Some(Some(matches_task)) = editor
-                .update_in(&mut cx, |editor, _, cx| {
+                .update_in(cx, |editor, _, cx| {
                     if editor.selections.count() != 1 || editor.selections.line_mode {
                         editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                         return None;
@@ -4996,7 +4997,7 @@ impl Editor {
             };
             let matches = matches_task.await;
             editor
-                .update_in(&mut cx, |editor, _, cx| {
+                .update_in(cx, |editor, _, cx| {
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                     if !matches.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
@@ -5219,9 +5220,9 @@ impl Editor {
     fn show_cursor_names(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_cursor_names = true;
         cx.notify();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(CURSORS_VISIBLE_FOR).await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.show_cursor_names = false;
                 cx.notify()
             })
@@ -5895,7 +5896,7 @@ impl Editor {
 
         let reveal_strategy = action.reveal;
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             let context = task_context.await?;
             let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
 
@@ -5903,7 +5904,7 @@ impl Editor {
             resolved.reveal = reveal_strategy;
 
             workspace
-                .update(&mut cx, |workspace, cx| {
+                .update(cx, |workspace, cx| {
                     workspace::tasks::schedule_resolved_task(
                         workspace,
                         task_source_kind,
@@ -11217,19 +11218,19 @@ impl Editor {
             return Task::ready(());
         }
         let project = self.project.as_ref().map(Entity::downgrade);
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
                 return;
             };
-            let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
+            let Ok(display_snapshot) = this.update(cx, |this, cx| {
                 this.display_map.update(cx, |map, cx| map.snapshot(cx))
             }) else {
                 return;
             };
 
             let hide_runnables = project
-                .update(&mut cx, |project, cx| {
+                .update(cx, |project, cx| {
                     // Do not display any test indicators in non-dev server remote projects.
                     project.is_via_collab() && project.ssh_connection_string(cx).is_none()
                 })
@@ -11247,7 +11248,7 @@ impl Editor {
                     .await;
 
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.clear_tasks();
                 for (key, value) in rows {
                     this.insert_tasks(key, value);
@@ -11809,11 +11810,11 @@ impl Editor {
     ) -> Task<Result<Navigated>> {
         let definition =
             self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx);
-        cx.spawn_in(window, |editor, mut cx| async move {
+        cx.spawn_in(window, async move |editor, cx| {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
-            match editor.update_in(&mut cx, |editor, window, cx| {
+            match editor.update_in(cx, |editor, window, cx| {
                 editor.find_all_references(&FindAllReferences, window, cx)
             })? {
                 Some(references) => references.await,
@@ -11907,10 +11908,10 @@ impl Editor {
             return Task::ready(Ok(Navigated::No));
         };
 
-        cx.spawn_in(window, |editor, mut cx| async move {
+        cx.spawn_in(window, async move |editor, cx| {
             let definitions = definitions.await?;
             let navigated = editor
-                .update_in(&mut cx, |editor, window, cx| {
+                .update_in(cx, |editor, window, cx| {
                     editor.navigate_to_hover_links(
                         Some(kind),
                         definitions
@@ -11950,7 +11951,7 @@ impl Editor {
             None
         };
 
-        let url_finder = cx.spawn_in(window, |editor, mut cx| async move {
+        let url_finder = cx.spawn_in(window, async move |editor, cx| {
             let url = if let Some(end_pos) = end_position {
                 find_url_from_range(&buffer, start_position..end_pos, cx.clone())
             } else {
@@ -11958,7 +11959,7 @@ impl Editor {
             };
 
             if let Some(url) = url {
-                editor.update(&mut cx, |_, cx| {
+                editor.update(cx, |_, cx| {
                     cx.open_url(&url);
                 })
             } else {
@@ -11989,12 +11990,12 @@ impl Editor {
 
         let project = self.project.clone();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            let result = find_file(&buffer, project, buffer_position, &mut cx).await;
+        cx.spawn_in(window, async move |_, cx| {
+            let result = find_file(&buffer, project, buffer_position, cx).await;
 
             if let Some((_, path)) = result {
                 workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
+                    .update_in(cx, |workspace, window, cx| {
                         workspace.open_resolved_path(path, window, cx)
                     })?
                     .await?;
@@ -12039,9 +12040,9 @@ impl Editor {
                 }
                 HoverLink::File(path) => {
                     if let Some(workspace) = self.workspace() {
-                        cx.spawn_in(window, |_, mut cx| async move {
+                        cx.spawn_in(window, async move |_, cx| {
                             workspace
-                                .update_in(&mut cx, |workspace, window, cx| {
+                                .update_in(cx, |workspace, window, cx| {
                                     workspace.open_resolved_path(path, window, cx)
                                 })?
                                 .await
@@ -12052,14 +12053,14 @@ impl Editor {
                     }
                 }
             };
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 let target = match target_task.await.context("target resolution task")? {
                     TargetTaskResult::AlreadyNavigated => return Ok(Navigated::Yes),
                     TargetTaskResult::Location(None) => return Ok(Navigated::No),
                     TargetTaskResult::Location(Some(target)) => target,
                 };
 
-                editor.update_in(&mut cx, |editor, window, cx| {
+                editor.update_in(cx, |editor, window, cx| {
                     let Some(workspace) = editor.workspace() else {
                         return Navigated::No;
                     };
@@ -12105,9 +12106,9 @@ impl Editor {
                 })
             })
         } else if !definitions.is_empty() {
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 let (title, location_tasks, workspace) = editor
-                    .update_in(&mut cx, |editor, window, cx| {
+                    .update_in(cx, |editor, window, cx| {
                         let tab_kind = match kind {
                             Some(GotoDefinitionKind::Implementation) => "Implementations",
                             _ => "Definitions",
@@ -12155,7 +12156,7 @@ impl Editor {
                     return Ok(Navigated::No);
                 };
                 let opened = workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
+                    .update_in(cx, |workspace, window, cx| {
                         Self::open_locations_in_multibuffer(
                             workspace,
                             locations,
@@ -12186,8 +12187,8 @@ impl Editor {
             return Task::ready(Ok(None));
         };
 
-        cx.spawn_in(window, move |editor, mut cx| async move {
-            let location_task = editor.update(&mut cx, |_, cx| {
+        cx.spawn_in(window, async move |editor, cx| {
+            let location_task = editor.update(cx, |_, cx| {
                 project.update(cx, |project, cx| {
                     let language_server_name = project
                         .language_server_statuses(cx)
@@ -12206,7 +12207,7 @@ impl Editor {
             let location = match location_task {
                 Some(task) => Some({
                     let target_buffer_handle = task.await.context("open local buffer")?;
-                    let range = target_buffer_handle.update(&mut cx, |target_buffer, _| {
+                    let range = target_buffer_handle.update(cx, |target_buffer, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -12264,21 +12265,13 @@ impl Editor {
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn_in(window, |editor, mut cx| async move {
-            let _cleanup = defer({
-                let mut cx = cx.clone();
-                move || {
-                    let _ = editor.update(&mut cx, |editor, _| {
-                        if let Ok(i) =
-                            editor
-                                .find_all_references_task_sources
-                                .binary_search_by(|anchor| {
-                                    anchor.cmp(&head_anchor, &multi_buffer_snapshot)
-                                })
-                        {
-                            editor.find_all_references_task_sources.remove(i);
-                        }
-                    });
+        Some(cx.spawn_in(window, async move |editor, cx| {
+            let _cleanup = cx.on_drop(&editor, move |editor, _| {
+                if let Ok(i) = editor
+                    .find_all_references_task_sources
+                    .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
+                {
+                    editor.find_all_references_task_sources.remove(i);
                 }
             });
 
@@ -12287,7 +12280,7 @@ impl Editor {
                 return anyhow::Ok(Navigated::No);
             }
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let title = locations
                     .first()
                     .as_ref()
@@ -12443,11 +12436,11 @@ impl Editor {
             .unwrap_or_else(|| Task::ready(Ok(None)));
         drop(snapshot);
 
-        Some(cx.spawn_in(window, |this, mut cx| async move {
+        Some(cx.spawn_in(window, async move |this, cx| {
             let rename_range = if let Some(range) = prepare_rename.await? {
                 Some(range)
             } else {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let buffer = this.buffer.read(cx).snapshot(cx);
                     let mut buffer_highlights = this
                         .document_highlights_for_position(selection.head(), &buffer)
@@ -12461,7 +12454,7 @@ impl Editor {
                 })?
             };
             if let Some(rename_range) = rename_range {
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     let snapshot = cursor_buffer.read(cx).snapshot();
                     let rename_buffer_range = rename_range.to_offset(&snapshot);
                     let cursor_offset_in_rename_range =
@@ -12634,18 +12627,18 @@ impl Editor {
             cx,
         )?;
 
-        Some(cx.spawn_in(window, |editor, mut cx| async move {
+        Some(cx.spawn_in(window, async move |editor, cx| {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
                 &editor,
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
-                cx.clone(),
+                cx,
             )
             .await?;
 
-            editor.update(&mut cx, |editor, cx| {
+            editor.update(cx, |editor, cx| {
                 editor.refresh_document_highlights(cx);
             })?;
             Ok(())
@@ -12792,7 +12785,7 @@ impl Editor {
             project.format(buffers, target, true, trigger, cx)
         });
 
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             let transaction = futures::select_biased! {
                 () = timeout => {
                     log::warn!("timed out waiting for formatting");
@@ -12802,7 +12795,7 @@ impl Editor {
             };
 
             buffer
-                .update(&mut cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !buffer.is_singleton() {
                             buffer.push_transaction(&transaction.0, cx);
@@ -12847,7 +12840,7 @@ impl Editor {
         let apply_action = project.update(cx, |project, cx| {
             project.apply_code_action_kind(buffers, kind, true, cx)
         });
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             let transaction = futures::select_biased! {
                 () = timeout => {
                     log::warn!("timed out waiting for executing code action");
@@ -12856,7 +12849,7 @@ impl Editor {
                 transaction = apply_action.log_err().fuse() => transaction,
             };
             buffer
-                .update(&mut cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     // check if we need this
                     if let Some(transaction) = transaction {
                         if !buffer.is_singleton() {
@@ -13071,12 +13064,12 @@ impl Editor {
         } else {
             None
         };
-        self.inline_diagnostics_update = cx.spawn_in(window, |editor, mut cx| async move {
+        self.inline_diagnostics_update = cx.spawn_in(window, async move |editor, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
             let Some(snapshot) = editor
-                .update(&mut cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
                 .ok()
             else {
                 return;
@@ -13117,7 +13110,7 @@ impl Editor {
                 .await;
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     editor.inline_diagnostics = new_inline_diagnostics;
                     cx.notify();
                 })
@@ -13418,9 +13411,9 @@ impl Editor {
 
             self.fold_creases(fold_ranges, true, window, cx);
         } else {
-            self.toggle_fold_multiple_buffers = cx.spawn_in(window, |editor, mut cx| async move {
+            self.toggle_fold_multiple_buffers = cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update_in(&mut cx, |editor, _, cx| {
+                    .update_in(cx, |editor, _, cx| {
                         for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
                             editor.fold_buffer(buffer_id, cx);
                         }
@@ -13594,9 +13587,9 @@ impl Editor {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             self.unfold_ranges(&[0..display_map.buffer_snapshot.len()], true, true, cx);
         } else {
-            self.toggle_fold_multiple_buffers = cx.spawn(|editor, mut cx| async move {
+            self.toggle_fold_multiple_buffers = cx.spawn(async move |editor, cx| {
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
                             editor.unfold_buffer(buffer_id, cx);
                         }
@@ -13883,9 +13876,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             task.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
                 let chunk_by = this
                     .diff_hunks_in_ranges(&ranges, &snapshot)
@@ -14781,34 +14774,32 @@ impl Editor {
         let permalink_task = self.get_permalink_to_line(cx);
         let workspace = self.workspace();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            match permalink_task.await {
-                Ok(permalink) => {
-                    cx.update(|_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
-                    })
-                    .ok();
-                }
-                Err(err) => {
-                    let message = format!("Failed to copy permalink: {err}");
+        cx.spawn_in(window, async move |_, cx| match permalink_task.await {
+            Ok(permalink) => {
+                cx.update(|_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
+                })
+                .ok();
+            }
+            Err(err) => {
+                let message = format!("Failed to copy permalink: {err}");
 
-                    Err::<(), anyhow::Error>(err).log_err();
+                Err::<(), anyhow::Error>(err).log_err();
 
-                    if let Some(workspace) = workspace {
-                        workspace
-                            .update_in(&mut cx, |workspace, _, cx| {
-                                struct CopyPermalinkToLine;
+                if let Some(workspace) = workspace {
+                    workspace
+                        .update_in(cx, |workspace, _, cx| {
+                            struct CopyPermalinkToLine;
 
-                                workspace.show_toast(
-                                    Toast::new(
-                                        NotificationId::unique::<CopyPermalinkToLine>(),
-                                        message,
-                                    ),
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    }
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<CopyPermalinkToLine>(),
+                                    message,
+                                ),
+                                cx,
+                            )
+                        })
+                        .ok();
                 }
             }
         })
@@ -14838,34 +14829,32 @@ impl Editor {
         let permalink_task = self.get_permalink_to_line(cx);
         let workspace = self.workspace();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            match permalink_task.await {
-                Ok(permalink) => {
-                    cx.update(|_, cx| {
-                        cx.open_url(permalink.as_ref());
-                    })
-                    .ok();
-                }
-                Err(err) => {
-                    let message = format!("Failed to open permalink: {err}");
+        cx.spawn_in(window, async move |_, cx| match permalink_task.await {
+            Ok(permalink) => {
+                cx.update(|_, cx| {
+                    cx.open_url(permalink.as_ref());
+                })
+                .ok();
+            }
+            Err(err) => {
+                let message = format!("Failed to open permalink: {err}");
 
-                    Err::<(), anyhow::Error>(err).log_err();
+                Err::<(), anyhow::Error>(err).log_err();
 
-                    if let Some(workspace) = workspace {
-                        workspace
-                            .update(&mut cx, |workspace, cx| {
-                                struct OpenPermalinkToLine;
+                if let Some(workspace) = workspace {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            struct OpenPermalinkToLine;
 
-                                workspace.show_toast(
-                                    Toast::new(
-                                        NotificationId::unique::<OpenPermalinkToLine>(),
-                                        message,
-                                    ),
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    }
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<OpenPermalinkToLine>(),
+                                    message,
+                                ),
+                                cx,
+                            )
+                        })
+                        .ok();
                 }
             }
         })
@@ -14937,8 +14926,8 @@ impl Editor {
 
         let title = multibuffer.title(cx).to_string();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+        cx.spawn_in(window, async move |_, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
@@ -16326,12 +16315,12 @@ impl Editor {
             }
             tasks
         });
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             for (buffer, task) in save_tasks {
                 let result = task.await;
                 if result.is_err() {
                     let Some(path) = buffer
-                        .read_with(&cx, |buffer, cx| buffer.project_path(cx))
+                        .read_with(cx, |buffer, cx| buffer.project_path(cx))
                         .ok()
                     else {
                         continue;
@@ -16530,10 +16519,10 @@ fn get_uncommitted_diff_for_buffer(
             tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
         }
     });
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let diffs = future::join_all(tasks).await;
         buffer
-            .update(&mut cx, |buffer, cx| {
+            .update(cx, |buffer, cx| {
                 for diff in diffs.into_iter().flatten() {
                     buffer.add_diff(diff, cx);
                 }
@@ -17310,13 +17299,13 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             let buffer = buffer.clone();
             let task = project.prepare_rename(buffer.clone(), position, cx);
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(async move |_, cx| {
                 Ok(match task.await? {
                     PrepareRenameResponse::Success(range) => Some(range),
                     PrepareRenameResponse::InvalidPosition => None,
                     PrepareRenameResponse::OnlyUnpreparedRenameSupported => {
                         // Fallback on using TreeSitter info to determine identifier range
-                        buffer.update(&mut cx, |buffer, _| {
+                        buffer.update(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
                             let (range, kind) = snapshot.surrounding_word(position);
                             if kind != Some(CharKind::Word) {
