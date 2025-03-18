@@ -644,6 +644,24 @@ impl Thread {
                                     };
                                 }
                             }
+                            LanguageModelCompletionEvent::Thinking(chunk) => {
+                                if let Some(last_message) = thread.messages.last_mut() {
+                                    if last_message.role == Role::Assistant {
+                                        last_message.text.push_str(&chunk);
+                                        cx.emit(ThreadEvent::StreamedAssistantText(
+                                            last_message.id,
+                                            chunk,
+                                        ));
+                                    } else {
+                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
+                                        // of a new Assistant response.
+                                        //
+                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
+                                        // will result in duplicating the text of the chunk in the rendered Markdown.
+                                        thread.insert_message(Role::Assistant, chunk, cx);
+                                    };
+                                }
+                            }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
                                 if let Some(last_assistant_message) = thread
                                     .messages

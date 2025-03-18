@@ -567,9 +567,11 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
                     request,
-                    model.id().into(),
+                    model.request_id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
+                    model.enable_thinking(),
+                    model.budget_tokens(),
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
@@ -669,6 +671,8 @@ impl LanguageModel for CloudLanguageModel {
                     model.tool_model_id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
+                    model.enable_thinking(),
+                    model.budget_tokens(),
                 );
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),

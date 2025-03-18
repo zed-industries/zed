@@ -2253,6 +2253,16 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
+                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                        buffer.edit(
+                                            [(
+                                                message_old_end_offset..message_old_end_offset,
+                                                chunk,
+                                            )],
+                                            None,
+                                            cx,
+                                        );
+                                    }
                                     LanguageModelCompletionEvent::ToolUse(_) => {}
                                     LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
