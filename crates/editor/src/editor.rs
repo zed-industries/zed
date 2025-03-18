@@ -8694,7 +8694,6 @@ impl Editor {
                     *indent_size_occurrences.entry(indent).or_insert(0) += 1;
                 }
 
-                eprintln!("-----------------");
                 let indent_size = indent_size_occurrences
                     .into_iter()
                     .max_by_key(|(indent, count)| (*count, indent.len_with_expanded_tabs(tab_size)))
@@ -16880,7 +16879,6 @@ fn wrap_with_prefix(
                     wrapped_text.push('\n');
                     current_line.truncate(line_prefix.len());
                     current_line_len = line_prefix_len;
-                    in_whitespace = true;
                 } else if have_preceding_whitespace {
                     continue;
                 } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
