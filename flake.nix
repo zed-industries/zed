@@ -62,5 +62,14 @@
       overlays = overlays // {
         default = nixpkgs.lib.composeManyExtensions (builtins.attrValues overlays);
       };
+
+      nixConfig = {
+        extra-substituters = [
+          "https://app.cachix.org/cache/zed-industries"
+        ];
+        extra-trusted-public-keys = [
+          "zed-industries.cachix.org-1:QW3RoXK0Lm4ycmU5/3bmYRd3MLf4RbTGPqRulGlX5W0="
+        ];
+      };
     };
 }
