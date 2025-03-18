@@ -376,7 +376,12 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             let project_path = editors[0]
                 .update(cx, |editor, cx| editor.project_path(cx))
                 .unwrap();
-            assert_eq!(path!("src/test.js"), project_path.path.to_string_lossy());
+            let expected = if cfg!(target_os = "windows") {
+                "src\\test.js"
+            } else {
+                "src/test.js"
+            };
+            assert_eq!(expected, project_path.path.to_string_lossy());
             assert_eq!(test_file_content, editors[0].read(cx).text(cx));
             assert_eq!(
                 vec![2..3],
@@ -441,6 +446,11 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         let project_path = editors[0]
             .update(cx, |editor, cx| editor.project_path(cx))
             .unwrap();
+        if cfg!(target_os = "windows") {
+            "src\\module.js"
+        } else {
+            "src/module.js"
+        };
         assert_eq!(path!("src/module.js"), project_path.path.to_string_lossy());
         assert_eq!(module_file_content, editors[0].read(cx).text(cx));
         assert_eq!(

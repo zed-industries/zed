@@ -887,7 +887,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let project_path = Path::new("/project");
+    let project_path = Path::new(path!("/project"));
     let worktree = project
         .update(cx, |project, cx| project.find_worktree(project_path, cx))
         .expect("This worktree should exist in project")
