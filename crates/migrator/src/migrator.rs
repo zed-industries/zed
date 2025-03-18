@@ -77,7 +77,7 @@ fn run_migrations(
             result = Some(migrated_text);
         }
     }
-    Ok(result)
+    Ok(result.filter(|new_text| text != new_text))
 }
 
 pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
