@@ -643,8 +643,8 @@ impl GitStore {
             if !self.repositories.contains_key(id) {
                 self.active_repo_id = None;
             }
-        } else if let Some(first_id) = self.repositories.keys().next() {
-            self.active_repo_id = Some(first_id.clone());
+        } else if let Some(&first_id) = self.repositories.keys().next() {
+            self.active_repo_id = Some(first_id);
         }
 
         match event {
@@ -783,10 +783,9 @@ impl GitStore {
             if file.worktree != worktree {
                 continue;
             }
-            if changed_repos
+            if !changed_repos
                 .iter()
-                .find(|(entry, _)| file.path.starts_with(&entry.path))
-                .is_none()
+                .any(|(entry, _)| file.path.starts_with(&entry.path))
             {
                 continue;
             };
@@ -2049,14 +2048,14 @@ impl Repository {
         };
         let entity = cx.entity();
         git_store.update(cx, |git_store, cx| {
-            let Some((id, _)) = git_store
+            let Some((&id, _)) = git_store
                 .repositories
                 .iter()
                 .find(|(_, handle)| *handle == &entity)
             else {
                 return;
             };
-            git_store.active_repo_id = Some(id.clone());
+            git_store.active_repo_id = Some(id);
             cx.emit(GitEvent::ActiveRepositoryChanged);
         });
     }
@@ -2708,7 +2707,7 @@ impl Repository {
 
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
-            |git_repo, cx| async move {
+            |git_repo, cx| async {
                 match git_repo {
                     GitRepo::Local(repo) => repo.set_index_text(path, content, env.await, cx).await,
                     GitRepo::Remote {
