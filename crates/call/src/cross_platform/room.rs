@@ -1438,8 +1438,8 @@ impl Room {
             let (track, stream) = capture_local_video_track(&**source, &mut cx).await?;
 
             let participant2 = participant.clone();
+            let mut cx2 = cx.clone();
             let publication = async move {
-                let mut cx = cx.clone();
                 Tokio::spawn(&mut cx2, async move {
                     participant2
                         .publish_track(
