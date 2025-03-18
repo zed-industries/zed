@@ -6,7 +6,6 @@
 //! LSP Tree is transparent to RPC peers; when clients ask host to spawn a new language server, the host will perform LSP Tree lookup for provided path; it may decide
 //! to reuse existing language server. The client maintains it's own LSP Tree that is a subset of host LSP Tree. Done this way, the client does not need to
 //! ask about suitable language server for each path it interacts with; it can resolve most of the queries locally.
-//! This module defines a Project Tree.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -27,7 +26,7 @@ use std::sync::OnceLock;
 
 use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
 
-use super::{AdapterWrapper, ProjectTree, ProjectTreeEvent};
+use super::{AdapterWrapper, ManifestTree, ProjectTreeEvent};
 
 #[derive(Debug, Default)]
 struct ServersForWorktree {
@@ -38,7 +37,7 @@ struct ServersForWorktree {
 }
 
 pub struct LanguageServerTree {
-    project_tree: Entity<ProjectTree>,
+    project_tree: Entity<ManifestTree>,
     instances: BTreeMap<WorktreeId, ServersForWorktree>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
     languages: Arc<LanguageRegistry>,
@@ -133,7 +132,7 @@ pub(crate) enum AdapterQuery<'a> {
 
 impl LanguageServerTree {
     pub(crate) fn new(
-        project_tree: Entity<ProjectTree>,
+        project_tree: Entity<ManifestTree>,
         languages: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Entity<Self> {

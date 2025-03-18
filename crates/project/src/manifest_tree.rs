@@ -1,6 +1,7 @@
-//! This module defines a Project Tree.
+//! This module defines a Manifest Tree.
 //!
-//! A Project Tree is responsible for determining where the roots of subprojects are located in a project.
+//! A Manifest Tree is responsible for determining where the manifests for subprojects are located in a project.
+//! This then is used to provide those locations to language servers & determine locations eligible for toolchain selection.
 
 mod path_trie;
 mod server_tree;
@@ -70,7 +71,7 @@ impl WorktreeRoots {
     }
 }
 
-pub struct ProjectTree {
+pub struct ManifestTree {
     root_points: HashMap<WorktreeId, Entity<WorktreeRoots>>,
     worktree_store: Entity<WorktreeStore>,
     _subscriptions: [Subscription; 2],
@@ -116,9 +117,9 @@ pub(crate) enum ProjectTreeEvent {
     Cleared,
 }
 
-impl EventEmitter<ProjectTreeEvent> for ProjectTree {}
+impl EventEmitter<ProjectTreeEvent> for ManifestTree {}
 
-impl ProjectTree {
+impl ManifestTree {
     pub(crate) fn new(worktree_store: Entity<WorktreeStore>, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self {
             root_points: Default::default(),
