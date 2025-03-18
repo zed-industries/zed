@@ -171,38 +171,39 @@ jobs:
         run: script/upload-nightly linux-targz
 
   bundle-nix:
-    strategy:
-      matrix:
-        os: [self-hosted, buildjet-16vcpu-ubuntu-2004, buildjet-16vcpu-ubuntu-2204-arm]
     timeout-minutes: 60
-    name: Cache a nix build
+    name: (${{ matrix.system.os }}) Nix Build
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        system:
+          - os: x86 Linux
+            runner: buildjet-16vcpu-ubuntu-2004
+          - os: arm Mac
+            runner: [macOS, ARM64]
+          - os: arm Linux
+            runner: buildjet-16vcpu-ubuntu-2204-arm
     if: github.repository_owner == 'zed-industries'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.system.runner }}
     needs: tests
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
-      - name: Set release channel to nightly
-        run: |
-          set -euo pipefail
-          version=$(git rev-parse --short HEAD)
-          echo "Publishing version: ${version} on release channel nightly"
-          echo "nightly" > crates/zed/RELEASE_CHANNEL
-
-      - uses: cachix/install-nix-action@v25
-        # TODO: not needed since we're using flakes?
-        # with:
-        #   nix_path: nixpkgs=channel:nixos-unstable
-      - uses: cachix/cachix-action@v14
+      - uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
         with:
           name: zed-industries
-          signingKey: "${{ secrets.CACHIX_SIGNING_KEY }}"
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build
 
   update-nightly-tag:
