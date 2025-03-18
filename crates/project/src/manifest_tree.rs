@@ -112,12 +112,12 @@ impl Borrow<LanguageServerName> for AdapterWrapper {
 }
 
 #[derive(PartialEq)]
-pub(crate) enum ProjectTreeEvent {
+pub(crate) enum ManifestTreeEvent {
     WorktreeRemoved(WorktreeId),
     Cleared,
 }
 
-impl EventEmitter<ProjectTreeEvent> for ManifestTree {}
+impl EventEmitter<ManifestTreeEvent> for ManifestTree {}
 
 impl ManifestTree {
     pub(crate) fn new(worktree_store: Entity<WorktreeStore>, cx: &mut App) -> Entity<Self> {
@@ -131,7 +131,7 @@ impl ManifestTree {
                             worktree_roots.roots = RootPathTrie::new();
                         })
                     }
-                    cx.emit(ProjectTreeEvent::Cleared);
+                    cx.emit(ManifestTreeEvent::Cleared);
                 }),
             ],
             worktree_store,
@@ -236,7 +236,7 @@ impl ManifestTree {
         match evt {
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 self.root_points.remove(&worktree_id);
-                cx.emit(ProjectTreeEvent::WorktreeRemoved(*worktree_id));
+                cx.emit(ManifestTreeEvent::WorktreeRemoved(*worktree_id));
             }
             _ => {}
         }

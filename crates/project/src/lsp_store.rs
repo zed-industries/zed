@@ -3069,7 +3069,7 @@ impl LspStore {
                 sender,
             )
         };
-        let project_tree = ManifestTree::new(worktree_store.clone(), cx);
+        let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
@@ -3095,7 +3095,7 @@ impl LspStore {
                 _subscription: cx.on_app_quit(|this, cx| {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
-                lsp_tree: LanguageServerTree::new(project_tree, languages.clone(), cx),
+                lsp_tree: LanguageServerTree::new(manifest_tree, languages.clone(), cx),
                 registered_buffers: Default::default(),
             }),
             last_formatting_failure: None,

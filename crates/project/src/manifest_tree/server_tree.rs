@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 
 use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
 
-use super::{AdapterWrapper, ManifestTree, ProjectTreeEvent};
+use super::{AdapterWrapper, ManifestTree, ManifestTreeEvent};
 
 #[derive(Debug, Default)]
 struct ServersForWorktree {
@@ -37,7 +37,7 @@ struct ServersForWorktree {
 }
 
 pub struct LanguageServerTree {
-    project_tree: Entity<ManifestTree>,
+    manifest_tree: Entity<ManifestTree>,
     instances: BTreeMap<WorktreeId, ServersForWorktree>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
     languages: Arc<LanguageRegistry>,
@@ -132,18 +132,15 @@ pub(crate) enum AdapterQuery<'a> {
 
 impl LanguageServerTree {
     pub(crate) fn new(
-        project_tree: Entity<ManifestTree>,
+        manifest_tree: Entity<ManifestTree>,
         languages: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| Self {
-            _subscriptions: cx.subscribe(
-                &project_tree,
-                |_: &mut Self, _, event, _| {
-                    if event == &ProjectTreeEvent::Cleared {}
-                },
-            ),
-            project_tree,
+            _subscriptions: cx.subscribe(&manifest_tree, |_: &mut Self, _, event, _| {
+                if event == &ManifestTreeEvent::Cleared {}
+            }),
+            manifest_tree,
             instances: Default::default(),
             attach_kind_cache: Default::default(),
             languages,
@@ -190,7 +187,7 @@ impl LanguageServerTree {
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let worktree_id = path.worktree_id;
         #[allow(clippy::mutable_key_type)]
-        let mut roots = self.project_tree.update(cx, |this, cx| {
+        let mut roots = self.manifest_tree.update(cx, |this, cx| {
             this.root_for_path(
                 path,
                 adapters
