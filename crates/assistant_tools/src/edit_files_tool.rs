@@ -1,4 +1,5 @@
 mod edit_action;
+mod flexible_match;
 pub mod log;
 
 use anyhow::{anyhow, Context, Result};
