@@ -305,7 +305,7 @@ impl EditToolRequest {
 
         if matches.is_empty() {
             return Ok(DiffResult::BadSearch(BadSearch {
-                search: new.clone(),
+                search: old.clone(),
                 file_path: file_path.display().to_string(),
             }));
         }
@@ -378,25 +378,29 @@ impl EditToolRequest {
             if !self.bad_searches.is_empty() {
                 writeln!(
                     &mut output,
-                    "\n\nThese searches failed because they didn't match any strings:"
+                    "\n\n# {} SEARCH/REPLACE block(s) failed to match:\n",
+                    self.bad_searches.len()
                 )?;
 
                 for replace in self.bad_searches {
                     writeln!(
                         &mut output,
-                        "- '{}' does not appear in `{}`",
-                        replace.search.replace("\r", "\\r").replace("\n", "\\n"),
-                        replace.file_path
+                        "## No exact match in: {}\n```\n{}\n```\n",
+                        replace.file_path, replace.search,
                     )?;
                 }
 
-                write!(&mut output, "Make sure to use exact searches.")?;
+                write!(&mut output,
+                    "The SEARCH section must exactly match an existing block of lines including all white \
+                    space, comments, indentation, docstrings, etc."
+                )?;
             }
 
             if !errors.is_empty() {
                 writeln!(
                     &mut output,
-                    "\n\nThese SEARCH/REPLACE blocks failed to parse:"
+                    "\n\n# {} SEARCH/REPLACE blocks failed to parse:",
+                    errors.len()
                 )?;
 
                 for error in errors {
@@ -404,10 +408,22 @@ impl EditToolRequest {
                 }
             }
 
+            if changed_buffer_count > 0 {
+                writeln!(
+                    &mut output,
+                    "\n\nThe other SEARCH/REPLACE blocks were applied successfully. Do not re-send them!",
+                )?;
+            }
+
             writeln!(
                 &mut output,
-                "\nYou can fix errors by running the tool again. You can include instructions, \
-                but errors are part of the conversation so you don't need to repeat them."
+                "{}You can fix errors by running the tool again. You can include instructions, \
+                but errors are part of the conversation so you don't need to repeat them.",
+                if changed_buffer_count == 0 {
+                    "\n\n"
+                } else {
+                    ""
+                }
             )?;
 
             Err(anyhow!(output))
