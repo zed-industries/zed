@@ -65,9 +65,9 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let excluded_windows = NSArray::array(nil);
             let filter: id = msg_send![filter, initWithDisplay:self.sc_display excludingWindows:excluded_windows];
             let configuration: id = msg_send![configuration, init];
-            let _: id = msg_send![configuration, setScalesToFit: false];
-            let _: id = msg_send![configuration, setShowsCursor: false];
-            let _: id = msg_send![configuration, setCaptureResolution: 2];
+            let _: id = msg_send![configuration, setScalesToFit: true];
+            // let _: id = msg_send![configuration, setShowsCursor: false];
+            // let _: id = msg_send![configuration, setCaptureResolution: 3];
             let delegate: id = msg_send![delegate, init];
             let output: id = msg_send![output, init];
 
@@ -76,6 +76,8 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                 Box::into_raw(Box::new(frame_callback)) as *mut c_void,
             );
 
+            let _: id = msg_send![configuration, setWidth: 960 *2];
+            let _: id = msg_send![configuration, setHeight: 540*2];
             let stream: id = msg_send![stream, initWithFilter:filter configuration:configuration delegate:delegate];
 
             let (mut tx, rx) = oneshot::channel();

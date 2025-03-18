@@ -478,6 +478,8 @@ pub type RemoteVideoFrame = media::core_video::CVImageBuffer;
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<RemoteVideoFrame> {
+    use std::sync::atomic::AtomicU8;
+
     use core_foundation::base::TCFType as _;
     use media::core_video::CVImageBuffer;
 
@@ -486,21 +488,23 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     if pixel_buffer.is_null() {
         return None;
     }
-
-    unsafe {
-        let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-        let height = CVPixelBufferGetHeight(pixel_buffer);
-        let width = CVPixelBufferGetWidth(pixel_buffer);
-        let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-        let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-        dbg!(
-            "<<<<<<<<< {}",
-            format,
-            width,
-            height,
-            bytes_per_row,
-            data_size
-        );
+    static FRAME_COUNT: AtomicU8 = AtomicU8::new(0);
+    if FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 64 == 0 {
+        unsafe {
+            let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
+            let height = CVPixelBufferGetHeight(pixel_buffer);
+            let width = CVPixelBufferGetWidth(pixel_buffer);
+            let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
+            let data_size = CVPixelBufferGetDataSize(pixel_buffer);
+            dbg!(
+                "<<<<<<<<< {}",
+                format,
+                width,
+                height,
+                bytes_per_row,
+                data_size
+            );
+        }
     }
 
     unsafe { Some(CVImageBuffer::wrap_under_get_rule(pixel_buffer as _)) }
@@ -563,22 +567,27 @@ extern "C" {
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use std::sync::atomic::AtomicU32;
+
     use core_foundation::base::TCFType as _;
 
     let pixel_buffer = frame.0.as_concrete_TypeRef();
-    unsafe {
-        let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-        let height = CVPixelBufferGetHeight(pixel_buffer);
-        let width = CVPixelBufferGetWidth(pixel_buffer);
-        let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-        let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-        dbg!(
-            ">>>>>>>>>>>>>>>>>>>>>> {}",
-            format,
-            width,
-            height,
-            bytes_per_row
-        );
+    static FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
+    if FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+        unsafe {
+            let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
+            let height = CVPixelBufferGetHeight(pixel_buffer);
+            let width = CVPixelBufferGetWidth(pixel_buffer);
+            let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
+            let data_size = CVPixelBufferGetDataSize(pixel_buffer);
+            dbg!(
+                ">>>>>>>>>>>>>>>>>>>>>> {}",
+                format,
+                width,
+                height,
+                bytes_per_row
+            );
+        }
     }
     std::mem::forget(frame.0);
     unsafe {

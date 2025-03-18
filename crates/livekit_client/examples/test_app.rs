@@ -11,6 +11,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
     WindowOptions,
 };
+use gpui_tokio::Tokio;
 #[cfg(not(target_os = "windows"))]
 use livekit_client::{
     capture_local_audio_track, capture_local_video_track,
@@ -47,16 +48,18 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui::Application::new().run(|cx| {
-        livekit_client::init(
-            cx.background_executor().dispatcher.clone(),
-            cx.http_client(),
-        );
+        // livekit_client::init(
+        //     cx.background_executor().dispatcher.clone(),
+        //     cx.http_client(),
+        // );
 
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 
         #[cfg(not(any(test, feature = "test-support")))]
         println!("USING REAL LIVEKIT");
+
+        gpui_tokio::init(cx);
 
         cx.activate(true);
         cx.on_action(quit);
@@ -89,8 +92,7 @@ fn main() {
 
                 let bounds = bounds(point(width * i, px(0.0)), size(width, height));
                 let window =
-                    LivekitWindow::new(livekit_url.as_str(), token.as_str(), bounds, cx.clone())
-                        .await;
+                    LivekitWindow::new(livekit_url.clone(), token, bounds, cx.clone()).await;
                 windows.push(window);
             }
         })
@@ -124,14 +126,18 @@ struct ParticipantState {
 #[cfg(not(windows))]
 impl LivekitWindow {
     async fn new(
-        url: &str,
-        token: &str,
+        url: String,
+        token: String,
         bounds: Bounds<Pixels>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> WindowHandle<Self> {
-        let (room, mut events) = Room::connect(url, token, RoomOptions::default())
-            .await
-            .unwrap();
+        let (room, mut events) = Tokio::spawn(&mut cx, async move {
+            Room::connect(&url, &token, RoomOptions::default()).await
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
 
         cx.update(|cx| {
             cx.open_window(
@@ -314,17 +320,21 @@ impl LivekitWindow {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
                 let (track, stream) = capture_local_video_track(&*source, &mut cx).await?;
-                let publication = participant
-                    .publish_track(
-                        LocalTrack::Video(track),
-                        TrackPublishOptions {
-                            source: TrackSource::Screenshare,
-                            video_codec: VideoCodec::H264,
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                    .unwrap();
+                let publication = Tokio::spawn(&mut cx, async move {
+                    participant
+                        .publish_track(
+                            LocalTrack::Video(track),
+                            TrackPublishOptions {
+                                source: TrackSource::Screenshare,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                })
+                .unwrap()
+                .await
+                .unwrap()
+                .unwrap();
                 this.update(&mut cx, |this, cx| {
                     this.screen_share_track = Some(publication);
                     this.screen_share_stream = Some(stream);
@@ -407,7 +417,7 @@ impl Render for LivekitWindow {
                     .flex_grow()
                     .children(self.remote_participants.iter().map(|(identity, state)| {
                         div()
-                            .h(px(300.0))
+                            .h(px(1080.0))
                             .flex()
                             .flex_col()
                             .m_2()
