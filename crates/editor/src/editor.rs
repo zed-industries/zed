@@ -3546,7 +3546,21 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_completion_trigger(text, trigger_in_words, cx) {
+        let ignore_completion_provider = self
+            .context_menu
+            .borrow()
+            .as_ref()
+            .map(|menu| match menu {
+                CodeContextMenu::Completions(completions_menu) => {
+                    completions_menu.ignore_completion_provider
+                }
+                CodeContextMenu::CodeActions(_) => false,
+            })
+            .unwrap_or(false);
+
+        if ignore_completion_provider {
+            self.show_word_completions(&ShowWordCompletions, window, cx);
+        } else if self.is_completion_trigger(text, trigger_in_words, cx) {
             self.show_completions(
                 &ShowCompletions {
                     trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
@@ -4183,6 +4197,7 @@ impl Editor {
                         id,
                         sort_completions,
                         show_completion_documentation,
+                        ignore_completion_provider,
                         position,
                         buffer.clone(),
                         completions.into(),

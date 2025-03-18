@@ -9212,7 +9212,7 @@ async fn test_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_words_completion(cx: &mut TestAppContext) {
+async fn test_word_completion(cx: &mut TestAppContext) {
     let lsp_fetch_timeout_ms = 10;
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
@@ -9354,7 +9354,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.update_editor(|editor, window, cx| {
+    cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
@@ -9365,7 +9365,78 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
         } else {
             panic!("expected completion menu to be open");
         }
-        editor.cancel(&Cancel, window, cx);
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+                panic!("LSP completions should not be queried when dealing with word completions")
+            });
+
+    cx.set_state(indoc! {"ˇ
+        first
+        last
+        second
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["first", "last", "second"],
+                "`ShowWordCompletions` action should show word completions"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    cx.simulate_keystroke("s");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["second"],
+                "After showing word completions, further editing should filter them and not query the LSP"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
     });
 }
 
