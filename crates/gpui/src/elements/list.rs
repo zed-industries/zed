@@ -986,20 +986,16 @@ mod test {
             offset_in_item: px(0.0),
         });
 
-        struct TestView {
-            state: ListState,
-        }
+        struct TestView(ListState);
         impl Render for TestView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                list(self.state.clone()).w_full().h_full()
+                list(self.0.clone()).w_full().h_full()
             }
         }
 
         // Paint
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
-            cx.new(|_| TestView {
-                state: state.clone(),
-            })
+            cx.new(|_| TestView(state.clone()))
         });
 
         // Reset
