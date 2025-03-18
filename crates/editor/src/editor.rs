@@ -211,6 +211,7 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
+pub(crate) const MIN_LINE_NUMBER_DIGITS: u32 = 4;
 
 const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
     alt: true,
@@ -17618,7 +17619,7 @@ impl EditorSnapshot {
             .unwrap_or(gutter_settings.line_numbers);
         let line_gutter_width = if show_line_numbers {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
-            let min_width_for_number_on_gutter = em_advance * 4.0;
+            let min_width_for_number_on_gutter = em_advance * MIN_LINE_NUMBER_DIGITS as f32;
             max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
             0.0.into()
@@ -17647,8 +17648,12 @@ impl EditorSnapshot {
                     em_advance * max_char_count
                 });
 
+        let is_singleton = self.buffer_snapshot.is_singleton();
+
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if show_code_actions || show_runnables {
+        left_padding += if !is_singleton {
+            em_width * 4.0
+        } else if show_code_actions || show_runnables {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
@@ -17658,9 +17663,11 @@ impl EditorSnapshot {
             px(0.)
         };
 
-        let right_padding = if gutter_settings.folds && show_line_numbers {
+        let shows_folds = is_singleton && gutter_settings.folds;
+
+        let right_padding = if shows_folds && show_line_numbers {
             em_width * 4.0
-        } else if gutter_settings.folds {
+        } else if shows_folds || (!is_singleton && show_line_numbers) {
             em_width * 3.0
         } else if show_line_numbers {
             em_width
