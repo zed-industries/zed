@@ -27,7 +27,7 @@ You can use the inline assistant right in the prompt editor, allowing you to aut
 2. Click on the menu in the top right corner.
 3. Select "Prompt Library" from the dropdown.
 
-You can also use the `prompt-library: toggle` command.
+You can also use the `assistant: deploy prompt library` command while in the assistant panel.
 
 ### Managing Prompts
 
