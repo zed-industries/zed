@@ -974,6 +974,10 @@ impl Thread {
         })
     }
 
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
     /// Create a snapshot of the current project state including git information and unsaved buffers.
     fn project_snapshot(
         project: Entity<Project>,

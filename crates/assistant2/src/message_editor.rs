@@ -20,6 +20,7 @@ use ui::{
     prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
     Tooltip,
 };
+use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, NotifyTaskExt};
 use workspace::{Toast, Workspace};
@@ -31,7 +32,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::tool_selector::ToolSelector;
-use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
+use crate::{AssistantDiff, Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -313,6 +314,10 @@ impl MessageEditor {
         })
         .detach_and_notify_err(window, cx);
     }
+
+    fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
+        AssistantDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -422,33 +427,53 @@ impl Render for MessageEditor {
                         .rounded_t_md()
                         .child(
                             h_flex()
-                                .gap_2()
                                 .p_2()
+                                .justify_between()
                                 .child(
-                                    Disclosure::new("edits-disclosure", self.edits_expanded)
-                                        .on_click(cx.listener(|this, _ev, _window, cx| {
-                                            this.edits_expanded = !this.edits_expanded;
-                                            cx.notify();
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            Disclosure::new(
+                                                "edits-disclosure",
+                                                self.edits_expanded,
+                                            )
+                                            .on_click(
+                                                cx.listener(|this, _ev, _window, cx| {
+                                                    this.edits_expanded = !this.edits_expanded;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            Label::new("Edits")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("•")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} {}",
+                                                unreviewed_buffers_count,
+                                                if unreviewed_buffers_count == 1 {
+                                                    "file"
+                                                } else {
+                                                    "files"
+                                                }
+                                            ))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("review", "Review")
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.handle_review_click(window, cx)
                                         })),
-                                )
-                                .child(
-                                    Label::new("Edits")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
-                                .child(
-                                    Label::new(format!(
-                                        "{} {}",
-                                        unreviewed_buffers_count,
-                                        if unreviewed_buffers_count == 1 {
-                                            "file"
-                                        } else {
-                                            "files"
-                                        }
-                                    ))
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
                                 ),
                         )
                         .when(self.edits_expanded, |parent| {
