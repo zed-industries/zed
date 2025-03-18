@@ -128,7 +128,6 @@ enum GitOperation {
     WriteGitStatuses {
         repo_path: PathBuf,
         statuses: Vec<(PathBuf, FileStatus)>,
-        git_operation: bool,
     },
 }
 
@@ -987,7 +986,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                 GitOperation::WriteGitStatuses {
                     repo_path,
                     statuses,
-                    git_operation,
                 } => {
                     if !client.fs().directories(false).contains(&repo_path) {
                         return Err(TestError::Inapplicable);
@@ -1447,18 +1445,13 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
         }
         64..=100 => {
             let file_paths = generate_file_paths(&repo_path, rng, client);
-
             let statuses = file_paths
                 .into_iter()
                 .map(|path| (path, gen_status(rng)))
                 .collect::<Vec<_>>();
-
-            let git_operation = rng.gen::<bool>();
-
             GitOperation::WriteGitStatuses {
                 repo_path,
                 statuses,
-                git_operation,
             }
         }
         _ => unreachable!(),

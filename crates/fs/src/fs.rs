@@ -699,7 +699,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
-        use util::paths::SanitizedPath;
+        use util::{paths::SanitizedPath, ResultExt as _};
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
