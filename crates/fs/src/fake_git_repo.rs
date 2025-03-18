@@ -175,7 +175,7 @@ impl GitRepository for FakeGitRepository {
                 let unmerged = state.unmerged_paths.get(path);
                 let fs = git_files.get(path);
                 let status = match (unmerged, head, index, fs) {
-                    (Some(unmerged), _, _, _) => FileStatus::Unmerged(unmerged.clone()),
+                    (Some(unmerged), _, _, _) => FileStatus::Unmerged(*unmerged),
                     (_, Some(head), Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
                         index_status: if head == index {
                             StatusCode::Unmodified

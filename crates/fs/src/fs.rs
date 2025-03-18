@@ -1258,7 +1258,7 @@ impl FakeFs {
             });
             let mut repo_state = repo_state.lock();
 
-            let result = f(&mut *repo_state);
+            let result = f(&mut repo_state);
 
             if emit_git_event {
                 state.emit_event([(dot_git, None)]);
@@ -1301,7 +1301,7 @@ impl FakeFs {
             state.unmerged_paths.extend(
                 unmerged_state
                     .iter()
-                    .map(|(path, content)| (path.clone(), content.clone())),
+                    .map(|(path, content)| (path.clone(), *content)),
             );
         });
     }
@@ -1401,7 +1401,7 @@ impl FakeFs {
                     Some(FileStatus::Unmerged(unmerged_status)) => {
                         state
                             .unmerged_paths
-                            .insert(repo_path.clone(), unmerged_status.clone());
+                            .insert(repo_path.clone(), *unmerged_status);
                         content.push_str(" (unmerged)");
                         index_content = Some(content.clone());
                         head_content = Some(content);
