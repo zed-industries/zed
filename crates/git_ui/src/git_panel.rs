@@ -1407,7 +1407,7 @@ impl GitPanel {
             return Some(message.to_string());
         }
 
-        self.suggest_commit_message()
+        self.suggest_commit_message(cx)
             .filter(|message| !message.trim().is_empty())
     }
 
@@ -1576,7 +1576,15 @@ impl GitPanel {
     }
 
     /// Suggests a commit message based on the changed files and their statuses
-    pub fn suggest_commit_message(&self) -> Option<String> {
+    pub fn suggest_commit_message(&self, cx: &App) -> Option<String> {
+        if let Some(merge_message) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).merge_message.as_ref())
+        {
+            return Some(merge_message.clone());
+        }
+
         let git_status_entry = if let Some(staged_entry) = &self.single_staged_entry {
             Some(staged_entry)
         } else if let Some(single_tracked_entry) = &self.single_tracked_entry {
@@ -1710,19 +1718,6 @@ impl GitPanel {
             }
             .log_err()
         }));
-    }
-
-    fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
-        let suggested_commit_message = self.suggest_commit_message();
-        let placeholder_text = suggested_commit_message
-            .as_deref()
-            .unwrap_or("Enter commit message");
-
-        self.commit_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
-        });
-
-        cx.notify();
     }
 
     pub(crate) fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2181,7 +2176,6 @@ impl GitPanel {
                             git_panel.clear_pending();
                         }
                         git_panel.update_visible_entries(cx);
-                        git_panel.update_editor_placeholder(cx);
                         git_panel.update_scrollbar_properties(window, cx);
                     })
                     .ok();
@@ -2217,7 +2211,7 @@ impl GitPanel {
                     git_panel.commit_editor = cx.new(|cx| {
                         commit_message_editor(
                             buffer,
-                            git_panel.suggest_commit_message().as_deref(),
+                            git_panel.suggest_commit_message(cx).as_deref(),
                             git_panel.project.clone(),
                             true,
                             window,
@@ -2237,6 +2231,7 @@ impl GitPanel {
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
         self.single_staged_entry.take();
+        self.single_tracked_entry.take();
         self.conflicted_count = 0;
         self.conflicted_staged_count = 0;
         self.new_count = 0;
@@ -2395,6 +2390,15 @@ impl GitPanel {
         self.update_counts(repo);
 
         self.select_first_entry_if_none(cx);
+
+        let suggested_commit_message = self.suggest_commit_message(cx);
+        let placeholder_text = suggested_commit_message
+            .as_deref()
+            .unwrap_or("Enter commit message");
+
+        self.commit_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
+        });
 
         cx.notify();
     }
