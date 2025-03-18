@@ -61,5 +61,5 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{
               "version": "${{ github.event.release.tag_name }}",
-              "markdownBody": ${{ toJSON(github.event.release.body) }}
+              "markdown_body": ${{ toJSON(github.event.release.body) }}
             }'
