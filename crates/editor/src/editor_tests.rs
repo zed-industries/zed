@@ -4816,7 +4816,7 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
         "
     ));
 
-    cx.simulate_input("6");
+    cx.simulate_input(" 6");
     cx.run_until_parked();
     cx.assert_editor_state(indoc!(
         "
@@ -4824,7 +4824,7 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
         four
         five
         #
-        #6ˇ
+        # 6ˇ
         "
     ));
 }

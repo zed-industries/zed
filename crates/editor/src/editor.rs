@@ -118,6 +118,7 @@ pub use proposed_changes_editor::{
 use smallvec::smallvec;
 use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
+use unicode_script::script_extensions::DEVA_GRAN;
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
@@ -8695,7 +8696,7 @@ impl Editor {
                 }
 
                 eprintln!("-----------------");
-                let indent_size = dbg!(indent_size_occurrences)
+                let indent_size = indent_size_occurrences
                     .into_iter()
                     .max_by_key(|(indent, count)| (*count, indent.len_with_expanded_tabs(tab_size)))
                     .map(|(indent, _)| indent)
@@ -8707,7 +8708,6 @@ impl Editor {
             };
 
             let mut line_prefix = indent_size.chars().collect::<String>();
-            dbg!(&line_prefix);
 
             let mut inside_comment = false;
             if let Some(comment_prefix) =
@@ -8767,7 +8767,6 @@ impl Editor {
             let start_offset = start.to_offset(&buffer);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
-            dbg!(&line_prefix);
             let Some(lines_without_prefixes) = selection_text
                 .lines()
                 .map(|line| {
@@ -8789,11 +8788,11 @@ impl Editor {
                     .preferred_line_length as usize
             });
             let wrapped_text = wrap_with_prefix(
-                dbg!(line_prefix),
-                dbg!(lines_without_prefixes).join("\n"),
-                dbg!(wrap_column),
-                dbg!(tab_size),
-                dbg!(options.preserve_existing_newlines),
+                line_prefix,
+                lines_without_prefixes.join("\n"),
+                wrap_column,
+                tab_size,
+                options.preserve_existing_newlines,
             );
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
@@ -8819,7 +8818,7 @@ impl Editor {
         }
 
         self.buffer
-            .update(cx, |buffer, cx| buffer.edit(dbg!(edits), None, cx));
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
     }
 
     pub fn cut_common(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ClipboardItem {
@@ -16674,8 +16673,8 @@ fn should_stay_with_preceding_ideograph(text: &str) -> bool {
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum WordBreakToken<'a> {
     Word { token: &'a str, grapheme_len: usize },
+    InlineWhitespace { token: &'a str, grapheme_len: usize },
     Newline,
-    Whitespace,
 }
 
 impl<'a> Iterator for WordBreakingTokenizer<'a> {
@@ -16693,6 +16692,7 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
         let mut offset = 0;
         let mut grapheme_len = 0;
         if let Some(first_grapheme) = iter.next() {
+            let is_newline = first_grapheme == "\n";
             let is_whitespace = is_grapheme_whitespace(first_grapheme);
             offset += first_grapheme.len();
             grapheme_len += 1;
@@ -16713,15 +16713,14 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
                     if next_word_bound.map_or(false, |(i, _)| i == offset) {
                         break;
                     };
-                    if is_grapheme_whitespace(grapheme) != is_whitespace {
+                    if is_grapheme_whitespace(grapheme) != is_whitespace
+                        || (grapheme == "\n") != is_newline
+                    {
                         break;
                     };
                     offset += grapheme.len();
                     grapheme_len += 1;
                     iter.next();
-                    if grapheme == "\n" {
-                        break;
-                    }
                 }
             }
             let token = &self.input[..offset];
@@ -16729,7 +16728,10 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
             if token == "\n" {
                 Some(WordBreakToken::Newline)
             } else if is_whitespace {
-                Some(WordBreakToken::Whitespace)
+                Some(WordBreakToken::InlineWhitespace {
+                    token,
+                    grapheme_len,
+                })
             } else {
                 Some(WordBreakToken::Word {
                     token,
@@ -16779,7 +16781,9 @@ fn test_word_breaking_tokenizer() {
                 word("是", 1),
                 word("什", 1),
                 word("么", 1),
-                whitespace(" \n ", 3),
+                whitespace(" ", 1),
+                newline(),
+                whitespace(" ", 1),
                 word("钢", 1),
                 word("笔", 1),
             ],
@@ -16794,8 +16798,15 @@ fn test_word_breaking_tokenizer() {
         }
     }
 
-    fn whitespace() -> WordBreakToken<'static> {
-        WordBreakToken::Whitespace
+    fn whitespace(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+        WordBreakToken::InlineWhitespace {
+            token,
+            grapheme_len,
+        }
+    }
+
+    fn newline() -> WordBreakToken<'static> {
+        WordBreakToken::Newline
     }
 
     for (input, result) in tests {
@@ -16813,46 +16824,77 @@ fn wrap_with_prefix(
     unwrapped_text: String,
     wrap_column: usize,
     tab_size: NonZeroU32,
-    preserve_existing_newlines: bool,
+    preserve_existing_whitespace: bool,
 ) -> String {
-    dbg!(&unwrapped_text);
     let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
     let mut wrapped_text = String::new();
     let mut current_line = line_prefix.clone();
 
     let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
     let mut current_line_len = line_prefix_len;
+    let mut in_whitespace = false;
     for token in tokenizer {
-        let grapheme_len = match token {
-            WordBreakToken::Word { grapheme_len, .. } => grapheme_len,
-            WordBreakToken::Whitespace { .. } => 1,
-        };
-        if current_line_len + grapheme_len > wrap_column && current_line_len != line_prefix_len {
-            wrapped_text.push_str(current_line.trim_end());
-            wrapped_text.push('\n');
-            current_line.truncate(line_prefix.len());
-            current_line_len = line_prefix_len;
-        }
-        if let WordBreakToken::Word {
-            token,
-            grapheme_len,
-        } = token
-        {
-            current_line.push_str(token);
-            current_line_len += grapheme_len;
-        } else if let (
-            WordBreakToken::Whitespace {
-                original,
-                original_grapheme_len,
-            },
-            true,
-        ) = (token, preserve_existing_newlines)
-        {
-            current_line.push_str(original);
-            current_line_len += original_grapheme_len;
-        } else if current_line_len != line_prefix_len {
-            current_line.push(' ');
-            current_line_len += 1;
+        let have_preceding_whitespace = in_whitespace;
+        match token {
+            WordBreakToken::Word {
+                token,
+                grapheme_len,
+            } => {
+                in_whitespace = false;
+                if current_line_len + grapheme_len > wrap_column
+                    && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                }
+                current_line.push_str(token);
+                current_line_len += grapheme_len;
+            }
+            WordBreakToken::InlineWhitespace {
+                mut token,
+                mut grapheme_len,
+            } => {
+                in_whitespace = true;
+                if have_preceding_whitespace && !preserve_existing_whitespace {
+                    continue;
+                }
+                if !preserve_existing_whitespace {
+                    token = " ";
+                    grapheme_len = 1;
+                }
+                if current_line_len + grapheme_len > wrap_column {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len || preserve_existing_whitespace {
+                    current_line.push_str(token);
+                    current_line_len += grapheme_len;
+                }
+            }
+            WordBreakToken::Newline => {
+                in_whitespace = true;
+                if preserve_existing_whitespace {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                    in_whitespace = true;
+                } else if have_preceding_whitespace {
+                    continue;
+                } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len {
+                    current_line.push(' ');
+                    current_line_len += 1;
+                }
+            }
         }
     }
 
