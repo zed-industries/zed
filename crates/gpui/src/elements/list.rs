@@ -9,8 +9,8 @@
 
 use crate::{
     point, px, size, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent,
-    Size, Style, StyleRefinement, Styled, Window,
+    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
+    ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -371,6 +371,7 @@ impl StateInner {
         scroll_top: &ListOffset,
         height: Pixels,
         delta: Point<Pixels>,
+        current_view: EntityId,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -413,7 +414,7 @@ impl StateInner {
             );
         }
 
-        cx.notify(window.current_view());
+        cx.notify(current_view);
     }
 
     fn logical_scroll_top(&self) -> ListOffset {
@@ -847,6 +848,7 @@ impl Element for List {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let current_view = window.current_view();
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for item in &mut prepaint.layout.item_layouts {
                 item.element.paint(window, cx);
@@ -863,6 +865,7 @@ impl Element for List {
                     &scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),
+                    current_view,
                     window,
                     cx,
                 )
