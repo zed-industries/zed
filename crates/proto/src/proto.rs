@@ -464,6 +464,9 @@ messages!(
     (GitDiff, Background),
     (GitDiffResponse, Background),
     (GitInit, Background),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
+    (RefreshDocumentsDiagnostics, Background)
 );
 
 request_messages!(
@@ -614,6 +617,8 @@ request_messages!(
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (RefreshDocumentsDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -723,6 +728,8 @@ entity_messages!(
     CheckForPushedCommits,
     GitDiff,
     GitInit,
+    GetDocumentDiagnostics,
+    RefreshDocumentsDiagnostics
 );
 
 entity_messages!(
