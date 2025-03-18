@@ -2965,7 +2965,7 @@ async fn test_git_status_sync(
         )
         .await;
 
-    // Intially, a.txt is uncommitted, but present in the index,
+    // Initially, a.txt is uncommitted, but present in the index,
     // and b.txt is unmerged.
     client_a.fs().set_head_for_repo(
         "/dir/.git".as_ref(),
