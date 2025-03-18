@@ -1,0 +1,16 @@
+name: CI Test
+
+on:
+  push:
+    branches:
+      - marshall/ci-test
+
+jobs:
+  test:
+    name: Test
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hello
+        run: |
+          echo "Hey there"
