@@ -5131,7 +5131,6 @@ impl BackgroundScanner {
 
         for (work_directory, mut paths) in paths_by_git_repo {
             if let Ok(status) = paths.repo.status(&paths.repo_paths) {
-                dbg!(&status.entries);
                 let mut changed_path_statuses = Vec::new();
                 let statuses = paths.entry.statuses_by_path.clone();
                 let mut cursor = statuses.cursor::<PathProgress>(&());
@@ -5623,7 +5622,6 @@ async fn do_git_status_update(
     else {
         return;
     };
-    dbg!(&statuses.entries);
     log::trace!(
         "computed git statuses for repo {repository_name} in {:?}",
         t0.elapsed()
