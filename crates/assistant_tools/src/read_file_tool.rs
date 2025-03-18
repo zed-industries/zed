@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
+use itertools::Itertools;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -26,6 +27,14 @@ pub struct ReadFileToolInput {
     /// If you wanna access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: Arc<Path>,
+
+    /// Optional line number to start reading from (0-based index)
+    #[serde(default)]
+    pub start_line: Option<usize>,
+
+    /// Optional number of lines to read
+    #[serde(default)]
+    pub line_count: Option<usize>,
 }
 
 pub struct ReadFileTool;
@@ -73,7 +82,19 @@ impl Tool for ReadFileTool {
                     .file()
                     .map_or(false, |file| file.disk_state().exists())
                 {
-                    Ok(buffer.text())
+                    let text = buffer.text();
+                    let string = if input.start_line.is_some() || input.line_count.is_some() {
+                        let lines = text.split('\n').skip(input.start_line.unwrap_or(0));
+                        if let Some(line_count) = input.line_count {
+                            Itertools::intersperse(lines.take(line_count), "\n").collect()
+                        } else {
+                            Itertools::intersperse(lines, "\n").collect()
+                        }
+                    } else {
+                        text
+                    };
+
+                    Ok(string)
                 } else {
                     Err(anyhow!("File does not exist"))
                 }
