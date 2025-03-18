@@ -1708,13 +1708,14 @@ impl Interactivity {
                         });
 
                         let was_hovered = hitbox.is_hovered(window);
+                        let current_view = window.current_view();
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            move |_: &MouseMoveEvent, phase, window, _| {
+                            move |_: &MouseMoveEvent, phase, window, cx| {
                                 if phase == DispatchPhase::Capture {
                                     let hovered = hitbox.is_hovered(window);
                                     if hovered != was_hovered {
-                                        window.refresh();
+                                        cx.notify(current_view)
                                     }
                                 }
                             }
@@ -1828,10 +1829,11 @@ impl Interactivity {
         {
             let hitbox = hitbox.clone();
             let was_hovered = hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            let current_view = window.current_view();
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    cx.notify(current_view);
                 }
             });
         }
@@ -2117,10 +2119,11 @@ impl Interactivity {
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            let current_view = window.current_view();
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = group_hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    cx.notify(current_view);
                 }
             });
         }
@@ -2139,6 +2142,7 @@ impl Interactivity {
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
+            let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
@@ -2172,7 +2176,7 @@ impl Interactivity {
                     scroll_offset.x += delta_x;
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
-                        window.refresh();
+                        cx.notify(current_view);
                     }
                 }
             });
