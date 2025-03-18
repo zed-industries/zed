@@ -202,6 +202,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             adapters: vec![yaml_lsp_adapter],
             ..Default::default()
         },
+        LanguageInfo {
+            name: "gitcommit",
+            ..Default::default()
+        },
     ];
 
     for registration in built_in_languages {
