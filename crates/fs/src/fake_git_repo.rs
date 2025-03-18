@@ -10,7 +10,7 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::AsyncApp;
+use gpui::{AsyncApp, BackgroundExecutor};
 use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
@@ -19,6 +19,7 @@ use std::{path::PathBuf, sync::Arc};
 #[derive(Clone)]
 pub struct FakeGitRepository {
     pub(crate) fs: Arc<FakeFs>,
+    pub(crate) executor: BackgroundExecutor,
     pub(crate) dot_git_path: PathBuf,
 }
 
@@ -58,19 +59,36 @@ impl FakeGitRepository {
     {
         self.fs.with_git_state(&self.dot_git_path, false, f)
     }
+
+    fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<T>
+    where
+        F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> T,
+        T: Send,
+    {
+        let fs = self.fs.clone();
+        let executor = self.executor.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            executor.simulate_random_delay().await;
+            fs.with_git_state(&dot_git_path, write, f)
+        }
+        .boxed()
+    }
 }
 
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
     fn load_index_text(&self, path: RepoPath, _cx: AsyncApp) -> BoxFuture<Option<String>> {
-        future::ready(self.with_state(|state| state.index_contents.get(path.as_ref()).cloned()))
-            .boxed()
+        self.with_state_async(false, move |state| {
+            state.index_contents.get(path.as_ref()).cloned()
+        })
     }
 
     fn load_committed_text(&self, path: RepoPath, _cx: AsyncApp) -> BoxFuture<Option<String>> {
-        future::ready(self.with_state(|state| state.head_contents.get(path.as_ref()).cloned()))
-            .boxed()
+        self.with_state_async(false, move |state| {
+            state.head_contents.get(path.as_ref()).cloned()
+        })
     }
 
     fn set_index_text(
@@ -80,7 +98,7 @@ impl GitRepository for FakeGitRepository {
         _env: HashMap<String, String>,
         _cx: AsyncApp,
     ) -> BoxFuture<anyhow::Result<()>> {
-        future::ready(self.with_state(|state| {
+        self.with_state_async(true, move |state| {
             if let Some(message) = state.simulated_index_write_error_message.clone() {
                 return Err(anyhow!("{}", message));
             } else if let Some(content) = content {
@@ -88,13 +106,8 @@ impl GitRepository for FakeGitRepository {
             } else {
                 state.index_contents.remove(&path);
             }
-            state
-                .event_emitter
-                .try_send(state.path.clone())
-                .expect("Dropped repo change event");
             Ok(())
-        }))
-        .boxed()
+        })
     }
 
     fn remote_url(&self, _name: &str) -> Option<String> {
@@ -269,7 +282,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
-        future::ready(self.with_state(|state| {
+        self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
             Ok(state
                 .branches
@@ -281,32 +294,21 @@ impl GitRepository for FakeGitRepository {
                     upstream: None,
                 })
                 .collect())
-        }))
-        .boxed()
+        })
     }
 
     fn change_branch(&self, name: String, _cx: AsyncApp) -> BoxFuture<Result<()>> {
-        future::ready(self.with_state(|state| {
+        self.with_state_async(true, |state| {
             state.current_branch_name = Some(name);
-            state
-                .event_emitter
-                .try_send(state.path.clone())
-                .expect("Dropped repo change event");
             Ok(())
-        }))
-        .boxed()
+        })
     }
 
     fn create_branch(&self, name: String, _: AsyncApp) -> BoxFuture<Result<()>> {
-        future::ready(self.with_state(|state| {
+        self.with_state_async(true, move |state| {
             state.branches.insert(name.to_owned());
-            state
-                .event_emitter
-                .try_send(state.path.clone())
-                .expect("Dropped repo change event");
             Ok(())
-        }))
-        .boxed()
+        })
     }
 
     fn blame(
@@ -315,14 +317,13 @@ impl GitRepository for FakeGitRepository {
         _content: Rope,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<git::blame::Blame>> {
-        future::ready(self.with_state(|state| {
+        self.with_state_async(false, move |state| {
             state
                 .blames
                 .get(&path)
                 .with_context(|| format!("failed to get blame for {:?}", path.0))
                 .cloned()
-        }))
-        .boxed()
+        })
     }
 
     fn stage_paths(

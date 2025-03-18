@@ -2112,6 +2112,7 @@ impl Fs for FakeFs {
             });
             Some(Arc::new(fake_git_repo::FakeGitRepository {
                 fs: self.this.upgrade().unwrap(),
+                executor: self.executor.clone(),
                 dot_git_path: abs_dot_git.to_path_buf(),
             }))
         } else {
