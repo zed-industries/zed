@@ -542,6 +542,9 @@ impl Render for ContextMenu {
                             .flex_1()
                             .overflow_y_scroll()
                             .track_focus(&self.focus_handle(cx))
+                            .on_mouse_move(|_, window, _| {
+                                window.refresh()
+                            })
                             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                                 this.cancel(&menu::Cancel, window, cx)
                             }))

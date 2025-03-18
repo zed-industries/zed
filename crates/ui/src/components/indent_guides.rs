@@ -266,6 +266,8 @@ mod uniform_list {
             window: &mut Window,
             _cx: &mut App,
         ) {
+            let current_view = window.current_view();
+
             match prepaint {
                 IndentGuidesElementPrepaintState::Static => {
                     for indent_guide in self.indent_guides.as_ref() {
@@ -327,7 +329,7 @@ mod uniform_list {
                     window.on_mouse_event({
                         let prev_hovered_hitbox_id = hovered_hitbox_id;
                         let hitboxes = hitboxes.clone();
-                        move |_: &MouseMoveEvent, phase, window, _cx| {
+                        move |_: &MouseMoveEvent, phase, window, cx| {
                             let mut hovered_hitbox_id = None;
                             for hitbox in hitboxes.as_ref() {
                                 if hitbox.is_hovered(window) {
@@ -340,15 +342,11 @@ mod uniform_list {
                                 match (prev_hovered_hitbox_id, hovered_hitbox_id) {
                                     (Some(prev_id), Some(id)) => {
                                         if prev_id != id {
-                                            window.refresh();
+                                            cx.notify(current_view)
                                         }
                                     }
-                                    (None, Some(_)) => {
-                                        window.refresh();
-                                    }
-                                    (Some(_), None) => {
-                                        window.refresh();
-                                    }
+                                    (None, Some(_)) => cx.notify(current_view),
+                                    (Some(_), None) => cx.notify(current_view),
                                     (None, None) => {}
                                 }
                             }
