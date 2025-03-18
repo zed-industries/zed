@@ -415,8 +415,11 @@ impl AssistantPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let context_server_manager = self.thread_store.read(cx).context_server_manager();
+
         self.active_view = ActiveView::Configuration;
-        self.configuration = Some(cx.new(|cx| AssistantConfiguration::new(window, cx)));
+        self.configuration =
+            Some(cx.new(|cx| AssistantConfiguration::new(context_server_manager, window, cx)));
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(
