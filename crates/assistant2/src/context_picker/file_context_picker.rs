@@ -429,9 +429,13 @@ pub fn render_file_context_entry(
         }
     });
 
-    let file_icon = FileIcons::get_icon(&path, cx)
-        .map(Icon::from_path)
-        .unwrap_or_else(|| Icon::new(IconName::File));
+    let file_icon = if is_directory {
+        FileIcons::get_folder_icon(false, cx)
+    } else {
+        FileIcons::get_icon(&path, cx)
+    }
+    .map(Icon::from_path)
+    .unwrap_or_else(|| Icon::new(IconName::File));
 
     h_flex()
         .id(id)
