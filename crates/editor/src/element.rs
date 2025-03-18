@@ -39,7 +39,8 @@ use gpui::{
     GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, Window,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyle,
+    TextStyleRefinement, Window,
 };
 use inline_completion::Direction;
 use itertools::Itertools;
@@ -1493,6 +1494,7 @@ impl EditorElement {
         bounds: Bounds<Pixels>,
         scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
         line_height: Pixels,
+        visible_range: Range<DisplayRow>,
     ) -> Option<AnyElement> {
         match snapshot.mode {
             EditorMode::Full => {
@@ -1507,8 +1509,9 @@ impl EditorElement {
                     ..Default::default()
                 });
 
-                let editor_entity = cx.new(|_| editor);
+                let num_lines = editor.max_point(cx).row().0 as f32;
 
+                let editor_entity = cx.new(|_| editor);
                 let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
                     editor.render(window, cx).into_any_element()
                 });
@@ -1523,6 +1526,7 @@ impl EditorElement {
                     }
                     None => px(0.),
                 };
+
                 let header_height = line_height * FILE_HEADER_HEIGHT as f32;
                 let minimap_bounds = Bounds::from_corners(
                     point(
@@ -1531,6 +1535,33 @@ impl EditorElement {
                     ),
                     point(bounds.size.width - scrollbar_y_width, bounds.bottom()),
                 );
+
+                let rem_size = self.rem_size(cx).unwrap_or(window.rem_size());
+                let mut text_style = self.style.text.clone();
+                text_style.font_size = px(2.).into();
+                let minimap_line_height = text_style.line_height_in_pixels(rem_size);
+
+                let scroll_top_lines = visible_range.start.0 as f32;
+                let viewport_height = bounds.size.height;
+                let minimap_height = minimap_bounds.size.height;
+
+                let visible_lines = viewport_height / line_height;
+                let slider_height = px(visible_lines) * minimap_line_height;
+                // Allows for overscrolling
+                let logical_minimap_scroll_height = num_lines + visible_lines - 1.;
+                let max_minimap_slider_top = f32::max(0., minimap_height.0 - slider_height.0);
+                let show_slider = max_minimap_slider_top > 0.;
+                let slider_top = f32::min(
+                    (scroll_top_lines / logical_minimap_scroll_height) * minimap_height.0,
+                    max_minimap_slider_top,
+                );
+                let slider_lines_from_top = slider_top / minimap_line_height.0;
+                let minimap_scroll_top_lines = scroll_top_lines - slider_lines_from_top;
+
+                editor_entity.update(cx, |editor, cx| {
+                    editor.set_scroll_position(point(0., minimap_scroll_top_lines), window, cx)
+                });
+
                 _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
                 window.with_element_offset(minimap_bounds.origin, |window| {
                     minimap_elem.prepaint(window, cx)
@@ -6799,10 +6830,6 @@ impl Element for EditorElement {
 
                     let mut scroll_position = snapshot.scroll_position();
 
-                    // Minimap cannot scroll horizontally
-                    if snapshot.mode == EditorMode::Minimap {
-                        scroll_position.x = 0.;
-                    }
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
                     let start_row = DisplayRow(scroll_position.y as u32);
@@ -7508,6 +7535,7 @@ impl Element for EditorElement {
                             bounds,
                             scrollbars_layout.clone(),
                             line_height,
+                            start_row..end_row,
                         )
                     });
 
