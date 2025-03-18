@@ -1720,19 +1720,6 @@ impl GitPanel {
         }));
     }
 
-    fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
-        let suggested_commit_message = self.suggest_commit_message(cx);
-        let placeholder_text = suggested_commit_message
-            .as_deref()
-            .unwrap_or("Enter commit message");
-
-        self.commit_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
-        });
-
-        cx.notify();
-    }
-
     pub(crate) fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_push_and_pull(cx) {
             return;
@@ -2189,7 +2176,6 @@ impl GitPanel {
                             git_panel.clear_pending();
                         }
                         git_panel.update_visible_entries(cx);
-                        git_panel.update_editor_placeholder(cx);
                         git_panel.update_scrollbar_properties(window, cx);
                     })
                     .ok();
@@ -2245,6 +2231,7 @@ impl GitPanel {
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
         self.single_staged_entry.take();
+        self.single_tracked_entry.take();
         self.conflicted_count = 0;
         self.conflicted_staged_count = 0;
         self.new_count = 0;
@@ -2403,6 +2390,15 @@ impl GitPanel {
         self.update_counts(repo);
 
         self.select_first_entry_if_none(cx);
+
+        let suggested_commit_message = self.suggest_commit_message(cx);
+        let placeholder_text = suggested_commit_message
+            .as_deref()
+            .unwrap_or("Enter commit message");
+
+        self.commit_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
+        });
 
         cx.notify();
     }
