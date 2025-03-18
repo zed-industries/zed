@@ -2,8 +2,10 @@ use super::*;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-        editor_test_context::EditorTestContext, select_ranges,
+        assert_text_with_selections, build_editor,
+        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_test_context::EditorTestContext,
+        select_ranges,
     },
     JoinLines,
 };
@@ -4746,6 +4748,7 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(git_commit_lang()), cx));
     cx.update_editor(|editor, _, cx| {
         editor.set_hard_wrap(Some(14), cx);
     });
@@ -4762,6 +4765,69 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
         "
         one two three
         fourˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        ˇ
+        "
+    ));
+
+    cx.simulate_input("five");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        fiveˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_input("# ");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        # ˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        #\x20
+        #ˇ
+        "
+    ));
+
+    cx.simulate_input(" 6");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        #
+        # 6ˇ
         "
     ));
 }
