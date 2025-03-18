@@ -966,11 +966,13 @@ mod test {
 
     use gpui::{ScrollDelta, ScrollWheelEvent};
 
-    use crate::{self as gpui, TestAppContext};
+    use crate::{self as gpui, AppContext, IntoElement, TestAppContext};
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
-        use crate::{div, list, point, px, size, Element, ListState, Styled};
+        use crate::{
+            div, list, point, px, size, Context, Element, ListState, Render, Styled, Window,
+        };
 
         let cx = cx.add_empty_window();
 
@@ -984,9 +986,20 @@ mod test {
             offset_in_item: px(0.0),
         });
 
+        struct TestView {
+            state: ListState,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.state.clone()).w_full().h_full()
+            }
+        }
+
         // Paint
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, _| {
-            list(state.clone()).w_full().h_full()
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+            })
         });
 
         // Reset
