@@ -1590,15 +1590,24 @@ fn gen_file_name(rng: &mut StdRng) -> String {
 }
 
 fn gen_status(rng: &mut StdRng) -> FileStatus {
-    fn gen_status_code(rng: &mut StdRng) -> StatusCode {
-        match rng.gen_range(0..7) {
-            0 => StatusCode::Modified,
-            1 => StatusCode::TypeChanged,
-            2 => StatusCode::Added,
-            3 => StatusCode::Deleted,
-            4 => StatusCode::Renamed,
-            5 => StatusCode::Copied,
-            6 => StatusCode::Unmodified,
+    fn gen_tracked_status(rng: &mut StdRng) -> TrackedStatus {
+        match rng.gen_range(0..3) {
+            0 => TrackedStatus {
+                index_status: StatusCode::Unmodified,
+                worktree_status: StatusCode::Unmodified,
+            },
+            1 => TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            },
+            2 => TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: StatusCode::Modified,
+            },
+            3 => TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: StatusCode::Unmodified,
+            },
             _ => unreachable!(),
         }
     }
@@ -1612,17 +1621,12 @@ fn gen_status(rng: &mut StdRng) -> FileStatus {
         }
     }
 
-    match rng.gen_range(0..4) {
-        0 => FileStatus::Untracked,
-        1 => FileStatus::Ignored,
-        2 => FileStatus::Unmerged(UnmergedStatus {
+    match rng.gen_range(0..2) {
+        0 => FileStatus::Unmerged(UnmergedStatus {
             first_head: gen_unmerged_status_code(rng),
             second_head: gen_unmerged_status_code(rng),
         }),
-        3 => FileStatus::Tracked(TrackedStatus {
-            index_status: gen_status_code(rng),
-            worktree_status: gen_status_code(rng),
-        }),
+        1 => FileStatus::Tracked(gen_tracked_status(rng)),
         _ => unreachable!(),
     }
 }
