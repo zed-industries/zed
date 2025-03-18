@@ -4,7 +4,10 @@ use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
 use language_model::LanguageModelRequestMessage;
-use project::{search::SearchQuery, Project};
+use project::{
+    search::{SearchQuery, SearchResult},
+    Project,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
@@ -15,7 +18,14 @@ pub struct RegexSearchToolInput {
     /// A regex pattern to search for in the entire project. Note that the regex
     /// will be parsed by the Rust `regex` crate.
     pub regex: String,
+
+    /// Optional starting position for paginated results (0-based).
+    /// When not provided, starts from the beginning.
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
+
+const RESULTS_PER_PAGE: usize = 20;
 
 pub struct RegexSearchTool;
 
@@ -43,13 +53,13 @@ impl Tool for RegexSearchTool {
     ) -> Task<Result<String>> {
         const CONTEXT_LINES: u32 = 2;
 
-        let input = match serde_json::from_value::<RegexSearchToolInput>(input) {
-            Ok(input) => input,
+        let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
+            Ok(input) => (input.offset.unwrap_or(0), input.regex),
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
         let query = match SearchQuery::regex(
-            &input.regex,
+            &regex,
             false,
             false,
             false,
@@ -62,20 +72,23 @@ impl Tool for RegexSearchTool {
         };
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
+
         cx.spawn(|cx| async move {
             futures::pin_mut!(results);
 
             let mut output = String::new();
-            while let Some(project::search::SearchResult::Buffer { buffer, ranges }) =
-                results.next().await
-            {
+            let mut skips_remaining = offset;
+            let mut matches_found = 0;
+            let mut has_more_matches = false;
+
+            while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
                 if ranges.is_empty() {
                     continue;
                 }
 
-                buffer.read_with(&cx, |buffer, cx| {
+                buffer.read_with(&cx, |buffer, cx| -> Result<(), anyhow::Error> {
                     if let Some(path) = buffer.file().map(|file| file.full_path(cx)) {
-                        writeln!(output, "### Found matches in {}:\n", path.display()).unwrap();
+                        let mut file_header_written = false;
                         let mut ranges = ranges
                             .into_iter()
                             .map(|range| {
@@ -93,6 +106,17 @@ impl Tool for RegexSearchTool {
                             .peekable();
 
                         while let Some(mut range) = ranges.next() {
+                            if skips_remaining > 0 {
+                                skips_remaining -= 1;
+                                continue;
+                            }
+
+                            // We'd already found a full page of matches, and we just found one more.
+                            if matches_found >= RESULTS_PER_PAGE {
+                                has_more_matches = true;
+                                return Ok(());
+                            }
+
                             while let Some(next_range) = ranges.peek() {
                                 if range.end.row >= next_range.start.row {
                                     range.end = next_range.end;
@@ -102,18 +126,36 @@ impl Tool for RegexSearchTool {
                                 }
                             }
 
-                            writeln!(output, "```").unwrap();
+                            if !file_header_written {
+                                writeln!(output, "\n## Matches in {}", path.display())?;
+                                file_header_written = true;
+                            }
+
+                            let start_line = range.start.row + 1;
+                            let end_line = range.end.row + 1;
+                            writeln!(output, "\n### Lines {start_line}-{end_line}\n```")?;
                             output.extend(buffer.text_for_range(range));
-                            writeln!(output, "\n```\n").unwrap();
+                            output.push_str("\n```\n");
+
+                            matches_found += 1;
                         }
                     }
-                })?;
+
+                    Ok(())
+                })??;
             }
 
-            if output.is_empty() {
+            if matches_found == 0 {
                 Ok("No matches found".to_string())
-            } else {
-                Ok(output)
+            } else if has_more_matches {
+                Ok(format!(
+                    "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
+                    offset + 1,
+                    offset + matches_found,
+                    offset + RESULTS_PER_PAGE,
+                ))
+          } else {
+                Ok(format!("Found {matches_found} matches:\n{output}"))
             }
         })
     }

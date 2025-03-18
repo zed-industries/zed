@@ -2944,6 +2944,10 @@ impl GitPanel {
                                         .disabled(!can_commit || self.modal_open)
                                         .on_click({
                                             cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                                telemetry::event!(
+                                                    "Git Committed",
+                                                    source = "Git Panel"
+                                                );
                                                 this.commit_changes(window, cx)
                                             })
                                         }),

@@ -5461,6 +5461,7 @@ impl BackgroundScanner {
                     }
                 };
 
+                inc_scans_running(&self.scans_running);
                 status_updates
                     .push(self.schedule_git_statuses_update(&mut state, local_repository));
             }
@@ -5493,9 +5494,12 @@ impl BackgroundScanner {
             });
         }
 
+        let scans_running = self.scans_running.clone();
         self.executor.spawn(async move {
-            let _updates_finished: Vec<Result<(), oneshot::Canceled>> =
+            let updates_finished: Vec<Result<(), oneshot::Canceled>> =
                 join_all(status_updates).await;
+            let n = updates_finished.len();
+            dec_scans_running(&scans_running, n as i32);
         })
     }
 
