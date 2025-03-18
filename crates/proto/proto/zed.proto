@@ -1,4 +1,3 @@
-
 syntax = "proto3";
 package zed.messages;
 
@@ -345,7 +344,14 @@ message Envelope {
         AskPassResponse ask_pass_response = 318;
 
         GitDiff git_diff = 319;
-        GitDiffResponse git_diff_response = 320; // current max
+        GitDiffResponse git_diff_response = 320;
+
+        GitInit git_init = 321;
+
+        CodeLens code_lens = 322;
+        GetCodeLens get_code_lens = 323;
+        GetCodeLensResponse get_code_lens_response = 324;
+        RefreshCodeLens refresh_code_lens = 325;  // current max
     }
 
     reserved 87 to 88;
@@ -999,6 +1005,16 @@ message Completion {
     uint64 server_id = 4;
     bytes lsp_completion = 5;
     bool resolved = 6;
+    Source source = 7;
+    optional bytes lsp_defaults = 8;
+    optional Anchor buffer_word_start = 9;
+    optional Anchor buffer_word_end = 10;
+
+    enum Source {
+        Lsp = 0;
+        Custom = 1;
+        BufferWord = 2;
+    }
 }
 
 message GetCodeActions {
@@ -1252,6 +1268,25 @@ message RefreshInlayHints {
     uint64 project_id = 1;
 }
 
+message CodeLens {
+    bytes lsp_lens = 1;
+}
+
+message GetCodeLens {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetCodeLensResponse {
+    repeated CodeAction lens_actions = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message RefreshCodeLens {
+    uint64 project_id = 1;
+}
+
 message MarkupContent {
     bool is_markdown = 1;
     string value = 2;
@@ -1287,9 +1322,11 @@ message CodeAction {
     Anchor end = 3;
     bytes lsp_action = 4;
     Kind kind = 5;
+    bool resolved = 6;
     enum Kind {
         Action = 0;
         Command = 1;
+        CodeLens = 2;
     }
 }
 
@@ -2315,8 +2352,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        repeated CommitPermalink permalinks = 3;
         optional string remote_url = 4;
+        reserved 3;
     }
 
     optional BlameResponse blame_response = 5;
@@ -2335,6 +2372,7 @@ message MultiLspQuery {
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
         GetSignatureHelp get_signature_help = 7;
+        GetCodeLens get_code_lens = 8;
     }
 }
 
@@ -2354,6 +2392,7 @@ message LspResponse {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
         GetSignatureHelpResponse get_signature_help_response = 3;
+        GetCodeLensResponse get_code_lens_response = 4;
     }
 }
 
@@ -2930,4 +2969,10 @@ message GitDiff {
 
 message GitDiffResponse {
     string diff = 1;
+}
+
+message GitInit {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string fallback_branch_name = 3;
 }

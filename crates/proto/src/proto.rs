@@ -340,6 +340,9 @@ messages!(
     (ResolveCompletionDocumentationResponse, Background),
     (ResolveInlayHint, Background),
     (ResolveInlayHintResponse, Background),
+    (RefreshCodeLens, Background),
+    (GetCodeLens, Background),
+    (GetCodeLensResponse, Background),
     (RespondToChannelInvite, Foreground),
     (RespondToContactRequest, Foreground),
     (RoomUpdated, Foreground),
@@ -460,6 +463,7 @@ messages!(
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
     (GitDiffResponse, Background),
+    (GitInit, Background),
 );
 
 request_messages!(
@@ -512,6 +516,7 @@ request_messages!(
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
+    (GetCodeLens, GetCodeLensResponse),
     (InviteChannelMember, Ack),
     (JoinChannel, JoinRoomResponse),
     (JoinChannelBuffer, JoinChannelBufferResponse),
@@ -533,6 +538,7 @@ request_messages!(
     (PrepareRename, PrepareRenameResponse),
     (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
+    (RefreshCodeLens, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
     (ReloadBuffers, ReloadBuffersResponse),
@@ -607,6 +613,7 @@ request_messages!(
     (GitChangeBranch, Ack),
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
+    (GitInit, Ack),
 );
 
 entity_messages!(
@@ -630,6 +637,7 @@ entity_messages!(
     ApplyCodeActionKind,
     FormatBuffers,
     GetCodeActions,
+    GetCodeLens,
     GetCompletions,
     GetDefinition,
     GetDeclaration,
@@ -657,6 +665,7 @@ entity_messages!(
     PerformRename,
     PrepareRename,
     RefreshInlayHints,
+    RefreshCodeLens,
     ReloadBuffers,
     RemoveProjectCollaborator,
     RenameProjectEntry,
@@ -713,6 +722,7 @@ entity_messages!(
     GitCreateBranch,
     CheckForPushedCommits,
     GitDiff,
+    GitInit,
 );
 
 entity_messages!(

@@ -38,10 +38,14 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     item::{BreadcrumbText, FollowEvent},
     searchable::SearchOptions,
+    OpenVisible,
+};
+use workspace::{
+    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
+    OpenOptions,
 };
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
@@ -125,13 +129,8 @@ impl FollowableItem for Editor {
                 });
 
                 cx.new(|cx| {
-                    let mut editor = Editor::for_multibuffer(
-                        multibuffer,
-                        Some(project.clone()),
-                        true,
-                        window,
-                        cx,
-                    );
+                    let mut editor =
+                        Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
                     editor.remote_id = Some(remote_id);
                     editor
                 })
@@ -1157,7 +1156,15 @@ impl SerializableItem for Editor {
                     }
                     None => {
                         let open_by_abs_path = workspace.update(cx, |workspace, cx| {
-                            workspace.open_abs_path(abs_path.clone(), false, window, cx)
+                            workspace.open_abs_path(
+                                abs_path.clone(),
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
                         });
                         window.spawn(cx, |mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;

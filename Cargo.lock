@@ -84,7 +84,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1-dev"
-source = "git+https://github.com/zed-industries/alacritty.git?rev=03c2907b44b4189aac5fdeaea331f5aab5c7072e#03c2907b44b4189aac5fdeaea331f5aab5c7072e"
+source = "git+https://github.com/zed-industries/alacritty.git?branch=add-hush-login-flag#828457c9ff1f7ea0a0469337cc8a37ee3a1b0590"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.8.0",
@@ -257,9 +257,9 @@ checksum = "34cd60c5e3152cef0a592f1b296f1cc93715d89d2551d85315828c3a09575ff4"
 
 [[package]]
 name = "anyhow"
-version = "1.0.96"
+version = "1.0.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b964d184e89d9b6b67dd2715bc8e74cf3107fb2b529990c90cf517326150bf4"
+checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
 
 [[package]]
 name = "approx"
@@ -284,7 +284,7 @@ checksum = "0ae92a5119aa49cdbcf6b9f893fe4e1d98b04ccbf82ee0584ad948a44a734dea"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -398,7 +398,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -467,6 +467,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git",
  "gpui",
  "heed",
  "html_to_markdown",
@@ -490,11 +491,13 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "rope",
+ "scripting_tool",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "streaming_diff",
+ "telemetry",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -564,6 +567,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant_eval"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant2",
+ "assistant_tool",
+ "assistant_tools",
+ "clap",
+ "client",
+ "collections",
+ "context_server",
+ "env_logger 0.11.7",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
+ "language_models",
+ "node_runtime",
+ "project",
+ "prompt_store",
+ "regex",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "assistant_settings"
 version = "0.1.0"
 dependencies = [
@@ -617,7 +655,7 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -654,13 +692,16 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "collections",
  "derive_more",
  "gpui",
+ "language",
+ "language_model",
  "parking_lot",
+ "project",
  "serde",
  "serde_json",
- "workspace",
 ]
 
 [[package]]
@@ -670,12 +711,27 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
+ "collections",
+ "feature_flags",
+ "futures 0.3.31",
  "gpui",
+ "html_to_markdown",
+ "http_client",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
  "project",
+ "rand 0.8.5",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -899,7 +955,7 @@ checksum = "3b43422f69d8ff38f95f1b2bb76517c91589a924d1559a0e935d7c8ce0274c11"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -967,7 +1023,7 @@ checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -1024,13 +1080,13 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.86"
+version = "0.1.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "644dd749086bf3771a2fbc5f256fdb982d53f011c7d5d560304eafeecebce79d"
+checksum = "d556ec1359574147ec0c4fc5eb525f3f23263a592b1a9c07e0a75b427de55c97"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -1234,27 +1290,25 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.12.2"
+version = "1.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c2b7ddaa2c56a367ad27a094ad8ef4faacf8a617c2575acb2ba88949df999ca"
+checksum = "dabb68eb3a7aa08b46fddfd59a3d55c978243557a90ab804769f7e20e67d2b01"
 dependencies = [
  "aws-lc-sys",
- "paste",
  "zeroize",
 ]
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.25.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71b2ddd3ada61a305e1d8bb6c005d1eaa7d14d903681edfc400406d523a9b491"
+checksum = "6bbe221bbf523b625a4dd8585c7f38166e31167ec2ca98051dbcb4c3b6e825d2"
 dependencies = [
  "bindgen 0.69.5",
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
- "paste",
 ]
 
 [[package]]
@@ -1834,7 +1888,7 @@ dependencies = [
  "regex",
  "rustc-hash 1.1.0",
  "shlex",
- "syn 2.0.90",
+ "syn 2.0.100",
  "which 4.4.2",
 ]
 
@@ -1855,7 +1909,7 @@ dependencies = [
  "regex",
  "rustc-hash 1.1.0",
  "shlex",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -1966,7 +2020,7 @@ source = "git+https://github.com/kvark/blade?rev=b16f5c7bd873c7126f48c82c39e7ae6
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -2059,7 +2113,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -2093,7 +2147,7 @@ dependencies = [
  "anyhow",
  "clock",
  "ctor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -2169,7 +2223,7 @@ checksum = "bcfcc3cd946cb52f0bbfdbbcfa2f4e24f75ebb6c0e1002f7c25904fada18b9ec"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -2301,7 +2355,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2329,7 +2383,7 @@ dependencies = [
  "ipnet",
  "maybe-owned",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "winx",
 ]
 
@@ -2431,7 +2485,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "syn 2.0.90",
+ "syn 2.0.100",
  "tempfile",
  "toml 0.8.20",
 ]
@@ -2449,7 +2503,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "syn 2.0.90",
+ "syn 2.0.100",
  "tempfile",
  "toml 0.8.20",
 ]
@@ -2603,9 +2657,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.31"
+version = "4.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027bb0d98429ae334a8698531da7077bdf906419543a35a55c2cb1b66437d767"
+checksum = "6088f3ae8c3608d19260cd7445411865a485688711b78b5be70d78cd96136f83"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -2613,9 +2667,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.31"
+version = "4.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5589e0cba072e0f3d23791efac0fd8627b49c829c196a492e88168e6a669d863"
+checksum = "22a7ef7f676155edfb82daa97f99441f3ebf4a58d5e32f295a56259f1b6facc8"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2635,14 +2689,14 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.28"
+version = "4.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf4ced95c6f4a675af3da73304b9ac4ed991640c36374e4b46795c49e17cf1ed"
+checksum = "09176aae279615badda0765c0c0b3f6ed53f4709118af73cf4655d85d1530cd7"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -2670,7 +2724,7 @@ dependencies = [
  "serde",
  "tempfile",
  "util",
- "windows 0.58.0",
+ "windows 0.60.0",
 ]
 
 [[package]]
@@ -2690,6 +2744,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "http_client_tls",
  "log",
  "parking_lot",
  "paths",
@@ -2712,7 +2767,7 @@ dependencies = [
  "tokio-socks",
  "url",
  "util",
- "windows 0.58.0",
+ "windows 0.60.0",
  "worktree",
 ]
 
@@ -2843,7 +2898,7 @@ dependencies = [
  "dashmap 6.1.0",
  "derive_more",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "envy",
  "extension",
  "file_finder",
@@ -3002,7 +3057,7 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "fuzzy",
  "go_to_line",
  "gpui",
@@ -3047,6 +3102,7 @@ name = "component_preview"
 version = "0.1.0"
 dependencies = [
  "client",
+ "collections",
  "component",
  "gpui",
  "languages",
@@ -3129,6 +3185,7 @@ dependencies = [
  "extension",
  "futures 0.3.31",
  "gpui",
+ "language_model",
  "log",
  "parking_lot",
  "postage",
@@ -3139,7 +3196,6 @@ dependencies = [
  "smol",
  "url",
  "util",
- "workspace",
 ]
 
 [[package]]
@@ -3185,7 +3241,7 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -3310,6 +3366,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "core_maths"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77745e017f5edba1a9c1d854f6f3a52dac8a12dd5af5d2f54aecf61e43d80d30"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "coreaudio-rs"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3346,16 +3411,16 @@ version = "0.11.2"
 source = "git+https://github.com/pop-os/cosmic-text?rev=542b20c#542b20ca4376a3b5de5fa629db1a4ace44e18e0c"
 dependencies = [
  "bitflags 2.8.0",
- "fontdb",
+ "fontdb 0.18.0",
  "log",
  "rangemap",
  "rayon",
  "rustc-hash 1.1.0",
- "rustybuzz",
+ "rustybuzz 0.14.1",
  "self_cell",
  "swash",
  "sys-locale",
- "ttf-parser",
+ "ttf-parser 0.21.1",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-script",
@@ -3685,9 +3750,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7747ac3a66a06f4ee6718686c8ea976d2d05fb30ada93ebd76b3f9aef97257c"
+checksum = "07e9666f4a9a948d4f1dff0c08a4512b0f7c86414b23960104c243c10d79f4c3"
 dependencies = [
  "ctor-proc-macro",
  "dtor",
@@ -3740,7 +3805,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "scratch",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -3753,7 +3818,7 @@ dependencies = [
  "codespan-reporting",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -3771,7 +3836,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -3906,7 +3971,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -3927,7 +3992,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "gpui",
  "language",
  "log",
@@ -4026,7 +4091,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -4075,9 +4140,9 @@ dependencies = [
 
 [[package]]
 name = "dtor"
-version = "0.0.4"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bf39a0bfd1f94d62ffdb2802a7e6244c0f34f6ebacf5d4c26547d08cd1d67a5"
+checksum = "222ef136a1c687d4aa0395c175f2c4586e379924c352fd02f7870cf7de783c23"
 dependencies = [
  "dtor-proc-macro",
 ]
@@ -4146,7 +4211,7 @@ dependencies = [
  "ctor",
  "db",
  "emojis",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -4315,7 +4380,7 @@ checksum = "de0d48a183585823424a4ce1aa132d174a6a81bd540895822eb4c8373a8e49e8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -4349,14 +4414,14 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.11.6"
+version = "0.11.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcaee3d8e3cfc3fd92428d477bc97fc29ec8716d180c0d74c643bb26166660e0"
+checksum = "c3716d7a920fb4fac5d84e9d4bce8ceb321e9414b4409da61b07b75c1e3d0697"
 dependencies = [
  "anstream",
  "anstyle",
  "env_filter",
- "humantime",
+ "jiff",
  "log",
 ]
 
@@ -4403,7 +4468,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4455,10 +4520,9 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "feature_flags",
  "fs",
- "git",
  "gpui",
  "http_client",
  "language",
@@ -4536,6 +4600,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "convert_case 0.8.0",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -4560,7 +4625,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "extension",
  "fs",
  "language",
@@ -4588,7 +4653,7 @@ dependencies = [
  "collections",
  "context_server_settings",
  "ctor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -4783,7 +4848,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -4949,7 +5014,21 @@ dependencies = [
  "memmap2",
  "slotmap",
  "tinyvec",
- "ttf-parser",
+ "ttf-parser 0.21.1",
+]
+
+[[package]]
+name = "fontdb"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
+dependencies = [
+ "fontconfig-parser",
+ "log",
+ "memmap2",
+ "slotmap",
+ "tinyvec",
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]
@@ -4979,7 +5058,7 @@ checksum = "1a5c6c585bc94aaf2c7b51dd4c2ba22680844aba4c687be581871a6f518c5742"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -5053,7 +5132,7 @@ dependencies = [
  "text",
  "time",
  "util",
- "windows 0.58.0",
+ "windows 0.60.0",
 ]
 
 [[package]]
@@ -5064,7 +5143,7 @@ checksum = "5e2e6123af26f0f2c51cc66869137080199406754903cc926a7690401ce09cb4"
 dependencies = [
  "io-lifetimes",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5240,7 +5319,7 @@ checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -5408,8 +5487,9 @@ dependencies = [
 
 [[package]]
 name = "git2"
-version = "0.20.0"
-source = "git+https://github.com/rust-lang/git2-rs?rev=a3b90cb3756c1bb63e2317bf9cfa57838178de5c#a3b90cb3756c1bb63e2317bf9cfa57838178de5c"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5220b8ba44c68a9a7f7a7659e864dd73692e417ef0211bea133c7b74e031eeb9"
 dependencies = [
  "bitflags 2.8.0",
  "libc",
@@ -5431,8 +5511,10 @@ dependencies = [
  "indoc",
  "pretty_assertions",
  "regex",
+ "schemars",
  "serde",
  "serde_json",
+ "settings",
  "url",
  "util",
 ]
@@ -5443,14 +5525,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "assistant_settings",
  "buffer_diff",
+ "chrono",
  "collections",
+ "command_palette_hooks",
  "component",
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.6",
- "feature_flags",
+ "env_logger 0.11.7",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -5463,9 +5547,11 @@ dependencies = [
  "log",
  "menu",
  "multi_buffer",
+ "notifications",
  "panel",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "schemars",
  "serde",
@@ -5477,10 +5563,11 @@ dependencies = [
  "telemetry",
  "theme",
  "time",
+ "time_format",
  "ui",
  "unindent",
  "util",
- "windows 0.58.0",
+ "windows 0.60.0",
  "workspace",
  "zed_actions",
 ]
@@ -5624,7 +5711,7 @@ dependencies = [
  "ctor",
  "derive_more",
  "embed-resource",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "etagere",
  "filedescriptor",
  "flume",
@@ -5680,8 +5767,8 @@ dependencies = [
  "wayland-cursor",
  "wayland-protocols",
  "wayland-protocols-plasma",
- "windows 0.58.0",
- "windows-core 0.58.0",
+ "windows 0.60.0",
+ "windows-core 0.60.1",
  "x11-clipboard",
  "x11rb",
  "xim",
@@ -6015,7 +6102,7 @@ dependencies = [
  "markup5ever",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -6123,11 +6210,17 @@ dependencies = [
  "futures 0.3.31",
  "http 1.2.0",
  "log",
- "rustls 0.23.23",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "http_client_tls"
+version = "0.1.0"
+dependencies = [
+ "rustls 0.23.23",
+ "rustls-platform-verifier",
 ]
 
 [[package]]
@@ -6402,7 +6495,7 @@ checksum = "1ec89e9337638ecdc08744df490b221a7399bf8d164eb52a665454e60e075ad6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -6579,7 +6672,7 @@ checksum = "0122b7114117e64a63ac49f752a5ca4624d534c7b1c7de796ac196381cd2d947"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -6689,7 +6782,7 @@ checksum = "c34819042dc3d3971c46c2190835914dfbe0c3c13f61449b2997f4e9722dfa60"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -6708,7 +6801,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
  "io-lifetimes",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6828,6 +6921,30 @@ name = "itoa"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d75a2a4b1b190afb6f5425f10f6a8f959d2ea0b9c2b1d79553551850539e4674"
+
+[[package]]
+name = "jiff"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d699bc6dfc879fb1bf9bdff0d4c56f0884fc6f0d0eb0fba397a6d00cd9a6b85e"
+dependencies = [
+ "jiff-static",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d16e75759ee0aa64c57a56acbf43916987b20c77373cb7e808979e02b93c9f9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
 
 [[package]]
 name = "jni"
@@ -7000,7 +7117,7 @@ dependencies = [
  "collections",
  "ctor",
  "ec4rs",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -7132,6 +7249,7 @@ dependencies = [
  "http_client",
  "language_model",
  "lmstudio",
+ "log",
  "menu",
  "mistral",
  "ollama",
@@ -7179,7 +7297,7 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -7286,9 +7404,9 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
 name = "libc"
-version = "0.2.170"
+version = "0.2.171"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875b3680cb2f8f71bdcf9a30f38d48282f5d3c95cbf9b3fa57269bb5d5c06828"
+checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
 
 [[package]]
 name = "libdbus-sys"
@@ -7312,8 +7430,9 @@ dependencies = [
 
 [[package]]
 name = "libgit2-sys"
-version = "0.18.0+1.9.0"
-source = "git+https://github.com/rust-lang/git2-rs?rev=a3b90cb3756c1bb63e2317bf9cfa57838178de5c#a3b90cb3756c1bb63e2317bf9cfa57838178de5c"
+version = "0.18.1+1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1dcb20f84ffcdd825c7a311ae347cce604a6f084a767dec4a4929829645290e"
 dependencies = [
  "cc",
  "libc",
@@ -7439,7 +7558,7 @@ checksum = "71a98813fa0073a317ed6a8055dcd4722a49d9b862af828ee68449adb799b6be"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -7666,7 +7785,7 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -7811,7 +7930,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "gpui",
  "language",
  "languages",
@@ -7915,9 +8034,9 @@ dependencies = [
 
 [[package]]
 name = "mdbook"
-version = "0.4.45"
+version = "0.4.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b07d36d96ffe1b5b16ddf2bc80b3b26bb7a498b2a6591061250bf0af8e8095ad"
+checksum = "7e1a8fe3a4a01f28dab245c474cb7b95ccb4d3d2f17a5419a3d949f474c45e84"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -7925,9 +8044,10 @@ dependencies = [
  "clap",
  "clap_complete",
  "elasticlunr-rs",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "futures-util",
  "handlebars 6.2.0",
+ "hex",
  "ignore",
  "log",
  "memchr",
@@ -7940,6 +8060,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2",
  "shlex",
  "tempfile",
  "tokio",
@@ -8133,6 +8254,7 @@ checksum = "d3f763c1041eff92ffb5d7169968a327e1ed2ebfe425dac0ee5a35f29082534b"
 dependencies = [
  "bstr",
  "either",
+ "futures-util",
  "mlua-sys",
  "num-traits",
  "parking_lot",
@@ -8170,7 +8292,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "futures 0.3.31",
  "gpui",
  "indoc",
@@ -8535,7 +8657,7 @@ checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -8632,7 +8754,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9024,7 +9146,7 @@ checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9111,7 +9233,7 @@ dependencies = [
  "proc-macro2",
  "proc-macro2-diagnostics",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9226,7 +9348,7 @@ dependencies = [
  "by_address",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9468,7 +9590,7 @@ dependencies = [
  "pest_meta",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9915,7 +10037,7 @@ dependencies = [
  "phf_shared 0.11.2",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9943,7 +10065,7 @@ dependencies = [
  "anyhow",
  "ctor",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "gpui",
  "menu",
  "schemars",
@@ -9977,7 +10099,7 @@ checksum = "3c0f5fad0874fc7abcd4d750e76917eaebbecaa2c20bde22e1dbeeba8beb758c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -10116,6 +10238,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
 
 [[package]]
+name = "portable-atomic"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "350e9b48cbc6b0e028b0473b114454c6316e57336ee184ceab6e53f72c178b3e"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
+dependencies = [
+ "portable-atomic",
+]
+
+[[package]]
 name = "postage"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10201,7 +10338,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64d1ec885c64d0457d564db4ec299b2dae3f9c02808b8ad9c3a089c591b18033"
 dependencies = [
  "proc-macro2",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -10232,14 +10369,14 @@ dependencies = [
  "proc-macro-error-attr2",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.93"
+version = "1.0.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60946a68e5f9d28b0dc1c21bb8a97ee7d018a8b322fa57838ba31cc878e22d99"
+checksum = "a31971752e70b8b2686d7e46ec17fb38dad4051d94024c88df49b667caea9c84"
 dependencies = [
  "unicode-ident",
 ]
@@ -10252,7 +10389,7 @@ checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "version_check",
  "yansi",
 ]
@@ -10273,7 +10410,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a65f2e60fbf1063868558d69c6beacf412dc755f9fc020f514b7955fc914fe30"
 dependencies = [
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -10288,7 +10425,8 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
+ "extension",
  "fancy-regex 0.14.0",
  "fs",
  "futures 0.3.31",
@@ -10514,7 +10652,7 @@ dependencies = [
  "prost 0.12.6",
  "prost-types 0.12.6",
  "regex",
- "syn 2.0.90",
+ "syn 2.0.100",
  "tempfile",
 ]
 
@@ -10541,7 +10679,7 @@ dependencies = [
  "itertools 0.12.1",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -10732,14 +10870,14 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "quote"
-version = "1.0.38"
+version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e4dccaaaf89514f546c693ddc140f729f958c247918a13380cccc6078391acc"
+checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
 ]
@@ -11124,6 +11262,7 @@ dependencies = [
  "smol",
  "tempfile",
  "thiserror 1.0.69",
+ "urlencoding",
  "util",
 ]
 
@@ -11139,7 +11278,7 @@ dependencies = [
  "clap",
  "client",
  "clock",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "extension",
  "extension_host",
  "fork",
@@ -11200,7 +11339,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "feature_flags",
  "file_icons",
  "futures 0.3.31",
@@ -11338,6 +11477,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "http_client_tls",
  "log",
  "regex",
  "reqwest 0.12.8",
@@ -11348,9 +11488,9 @@ dependencies = [
 
 [[package]]
 name = "resvg"
-version = "0.44.0"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a325d5e8d1cebddd070b13f44cec8071594ab67d1012797c121f27a669b7958"
+checksum = "dd43d1c474e9dadf09a8fdf22d713ba668b499b5117b9b9079500224e26b5b29"
 dependencies = [
  "log",
  "pico-args",
@@ -11476,7 +11616,7 @@ dependencies = [
  "arrayvec",
  "criterion",
  "ctor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "gpui",
  "log",
  "rand 0.8.5",
@@ -11502,7 +11642,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "collections",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "futures 0.3.31",
  "gpui",
  "parking_lot",
@@ -11520,9 +11660,9 @@ dependencies = [
 
 [[package]]
 name = "rsa"
-version = "0.9.7"
+version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47c75d7c5c6b673e58bf54d8544a9f432e3a925b0e80f7cd3602ab5c50c55519"
+checksum = "78928ac1ed176a5ca1d17e578a1825f3d81ca54cf41053a592584b020cfd691b"
 dependencies = [
  "const-oid",
  "digest",
@@ -11584,7 +11724,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rust-embed-utils",
- "syn 2.0.90",
+ "syn 2.0.100",
  "walkdir",
 ]
 
@@ -11654,7 +11794,7 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "once_cell",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11812,9 +11952,27 @@ dependencies = [
  "bytemuck",
  "libm",
  "smallvec",
- "ttf-parser",
- "unicode-bidi-mirroring",
- "unicode-ccc",
+ "ttf-parser 0.21.1",
+ "unicode-bidi-mirroring 0.2.0",
+ "unicode-ccc 0.2.0",
+ "unicode-properties",
+ "unicode-script",
+]
+
+[[package]]
+name = "rustybuzz"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3c7c96f8a08ee34eff8857b11b49b07d71d1c3f4e88f8a88d4c9e9f90b1702"
+dependencies = [
+ "bitflags 2.8.0",
+ "bytemuck",
+ "core_maths",
+ "log",
+ "smallvec",
+ "ttf-parser 0.25.1",
+ "unicode-bidi-mirroring 0.4.0",
+ "unicode-ccc 0.4.0",
  "unicode-properties",
  "unicode-script",
 ]
@@ -11858,7 +12016,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "schemars",
  "serde",
  "serde_json",
@@ -11867,9 +12025,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "0.8.21"
+version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09c024468a378b7e36765cd36702b7a90cc3cba11654f6685c8f233408e89e92"
+checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
 dependencies = [
  "dyn-clone",
  "indexmap",
@@ -11880,14 +12038,14 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "0.8.21"
+version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1eee588578aff73f856ab961cd2f79e36bc45d7ded33a7562adba4667aecc0e"
+checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
 dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -11913,14 +12071,23 @@ name = "scripting_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_tool",
+ "buffer_diff",
+ "clock",
+ "collections",
+ "futures 0.3.31",
  "gpui",
+ "language",
+ "log",
  "mlua",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
  "regex",
  "schemars",
  "serde",
  "serde_json",
- "workspace",
+ "settings",
+ "util",
 ]
 
 [[package]]
@@ -11955,7 +12122,7 @@ dependencies = [
  "proc-macro-error2",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -11996,7 +12163,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "sea-bae",
- "syn 2.0.90",
+ "syn 2.0.100",
  "unicode-ident",
 ]
 
@@ -12132,7 +12299,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -12198,7 +12365,7 @@ checksum = "f09503e191f4e797cb8aac08e9a4a4695c5edf6a2e70e376d961ddd5c969f82b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -12209,7 +12376,7 @@ checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -12287,7 +12454,7 @@ checksum = "6c64451ba24fc7a6a2d60fc75dd9c83c90903b19028d4eff35e88fc1e86564e9"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -12822,7 +12989,7 @@ dependencies = [
  "quote",
  "sqlx-core",
  "sqlx-macros-core",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -12845,7 +13012,7 @@ dependencies = [
  "sqlx-mysql",
  "sqlx-postgres",
  "sqlx-sqlite",
- "syn 2.0.90",
+ "syn 2.0.100",
  "tempfile",
  "tokio",
  "url",
@@ -13104,7 +13271,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -13119,7 +13286,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ctor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "log",
  "rand 0.8.5",
  "rayon",
@@ -13133,7 +13300,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -13253,9 +13420,9 @@ checksum = "ce5d813d71d82c4cbc1742135004e4a79fd870214c155443451c139c9470a0aa"
 
 [[package]]
 name = "svgtypes"
-version = "0.15.2"
+version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "794de53cc48eaabeed0ab6a3404a65f40b3e38c067e4435883a65d2aa4ca000e"
+checksum = "68c7541fff44b35860c1a7a47a7cadf3e4a304c457b58f9870d9706ece028afc"
 dependencies = [
  "kurbo",
  "siphasher 1.0.1",
@@ -13285,9 +13452,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.90"
+version = "2.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "919d3b74a5dd0ccd15aeb8f93e7006bd9e14c295087c9896a110f490752bcf31"
+checksum = "b09a44accad81e1ba1cd74a32461ba89dee89095ba17b32f5d03683b1b1fc2a0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13326,7 +13493,7 @@ checksum = "c8af7666ab7b6390ab78131fb5b0fce11d6b7a6951602017c35fa82800708971"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -13419,7 +13586,7 @@ dependencies = [
  "fd-lock",
  "io-lifetimes",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "winx",
 ]
 
@@ -13431,7 +13598,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "gpui",
  "language",
  "menu",
@@ -13559,7 +13726,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -13606,7 +13773,7 @@ dependencies = [
  "theme",
  "thiserror 1.0.69",
  "util",
- "windows 0.58.0",
+ "windows 0.60.0",
 ]
 
 [[package]]
@@ -13662,7 +13829,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "gpui",
  "http_client",
  "log",
@@ -13780,7 +13947,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -13791,7 +13958,7 @@ checksum = "d65750cab40f4ff1929fb1ba509e9914eb756131cef4210da8d5d700d26f6312"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -13966,6 +14133,7 @@ dependencies = [
  "client",
  "collections",
  "feature_flags",
+ "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -13983,7 +14151,7 @@ dependencies = [
  "tree-sitter-md",
  "ui",
  "util",
- "windows 0.58.0",
+ "windows 0.60.0",
  "workspace",
  "zed_actions",
  "zeta",
@@ -14026,7 +14194,7 @@ checksum = "6e06d43f1345a3bcd39f6a56dbb7dcab2ba47e68e8ac134855e7e2bdbaf8cab8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -14273,7 +14441,7 @@ checksum = "395ae124c09f9e6918a2310af6038fba074bcf474ac352496d5910dd59a2226d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -14336,7 +14504,7 @@ checksum = "70977707304198400eb4835a78f6a9f928bf41bba420deb8fdb175cd965d77a7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -14587,6 +14755,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c591d83f69777866b9126b24c6dd9a18351f177e49d625920d19f989fd31cf8"
 
 [[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+dependencies = [
+ "core_maths",
+]
+
+[[package]]
 name = "tungstenite"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14690,7 +14867,7 @@ dependencies = [
  "theme",
  "ui_macros",
  "util",
- "windows 0.58.0",
+ "windows 0.60.0",
 ]
 
 [[package]]
@@ -14734,10 +14911,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23cb788ffebc92c5948d0e997106233eeb1d8b9512f93f41651f52b6c5f5af86"
 
 [[package]]
+name = "unicode-bidi-mirroring"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5dfa6e8c60bb66d49db113e0125ee8711b7647b5579dc7f5f19c42357ed039fe"
+
+[[package]]
 name = "unicode-ccc"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1df77b101bcc4ea3d78dafc5ad7e4f58ceffe0b2b16bf446aeb50b6cb4157656"
+
+[[package]]
+name = "unicode-ccc"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce61d488bcdc9bc8b5d1772c404828b17fc481c0a582b5581e95fb233aef503e"
 
 [[package]]
 name = "unicode-ident"
@@ -14777,6 +14966,12 @@ name = "unicode-segmentation"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
+
+[[package]]
+name = "unicode-vo"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1d386ff53b415b7fe27b50bb44679e2cc4660272694b7b6f3326d8480823a94"
 
 [[package]]
 name = "unicode-width"
@@ -14828,23 +15023,28 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usvg"
-version = "0.44.0"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7447e703d7223b067607655e625e0dbca80822880248937da65966194c4864e6"
+checksum = "2ac8e0e3e4696253dc06167990b3fe9a2668ab66270adf949a464db4088cb354"
 dependencies = [
  "base64 0.22.1",
  "data-url",
  "flate2",
+ "fontdb 0.23.0",
  "imagesize",
  "kurbo",
  "log",
  "pico-args",
  "roxmltree",
+ "rustybuzz 0.20.1",
  "simplecss",
  "siphasher 1.0.1",
  "strict-num",
  "svgtypes",
  "tiny-skia-path",
+ "unicode-bidi",
+ "unicode-script",
+ "unicode-vo",
  "xmlwriter",
 ]
 
@@ -15002,6 +15202,7 @@ dependencies = [
  "collections",
  "command_palette",
  "command_palette_hooks",
+ "db",
  "editor",
  "futures 0.3.31",
  "git_ui",
@@ -15027,6 +15228,7 @@ dependencies = [
  "serde_json",
  "settings",
  "task",
+ "text",
  "theme",
  "tokio",
  "ui",
@@ -15195,7 +15397,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "wasm-bindgen-shared",
 ]
 
@@ -15230,7 +15432,7 @@ checksum = "30d7a95b763d3c45903ed6c81f156801839e5ee968bb07e534c44df0fcd330c2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]
@@ -15429,7 +15631,7 @@ dependencies = [
  "anyhow",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "wasmtime-component-util",
  "wasmtime-wit-bindgen",
  "wit-parser 0.221.3",
@@ -15543,7 +15745,7 @@ checksum = "86ff86db216dc0240462de40c8290887a613dddf9685508eb39479037ba97b5b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -15867,7 +16069,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "shellexpand 2.1.2",
- "syn 2.0.90",
+ "syn 2.0.100",
  "witx",
 ]
 
@@ -15879,7 +16081,7 @@ checksum = "08c5c473d4198e6c2d377f3809f713ff0c110cab88a0805ae099a82119ee250c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "wiggle-generate",
 ]
 
@@ -15905,7 +16107,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15963,6 +16165,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows"
+version = "0.60.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddf874e74c7a99773e62b1c671427abf01a425e77c3d3fb9fb1e4883ea934529"
+dependencies = [
+ "windows-collections",
+ "windows-core 0.60.1",
+ "windows-future",
+ "windows-link",
+ "windows-numerics",
+]
+
+[[package]]
+name = "windows-collections"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5467f79cc1ba3f52ebb2ed41dbb459b8e7db636cc3429458d9a852e15bc24dec"
+dependencies = [
+ "windows-core 0.60.1",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16002,8 +16226,31 @@ dependencies = [
  "windows-implement 0.58.0",
  "windows-interface 0.58.0",
  "windows-result 0.2.0",
- "windows-strings",
+ "windows-strings 0.1.0",
  "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.60.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca21a92a9cae9bf4ccae5cf8368dce0837100ddf6e6d57936749e85f152f6247"
+dependencies = [
+ "windows-implement 0.59.0",
+ "windows-interface 0.59.0",
+ "windows-link",
+ "windows-result 0.3.1",
+ "windows-strings 0.3.1",
+]
+
+[[package]]
+name = "windows-future"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a787db4595e7eb80239b74ce8babfb1363d8e343ab072f2ffe901400c03349f0"
+dependencies = [
+ "windows-core 0.60.1",
+ "windows-link",
 ]
 
 [[package]]
@@ -16014,7 +16261,7 @@ checksum = "9107ddc059d5b6fbfbffdfa7a7fe3e22a226def0b2608f72e9d552763d3e1ad7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -16025,7 +16272,18 @@ checksum = "2bbd5b46c938e506ecbce286b6628a02171d56153ba733b6c741fc627ec9579b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "windows-implement"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83577b051e2f49a058c308f17f273b570a6a758386fc291b5f6a934dd84e48c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -16036,7 +16294,7 @@ checksum = "29bee4b38ea3cde66011baa44dba677c432a78593e202392d1e9070cf2a7fca7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -16047,7 +16305,18 @@ checksum = "053c4c462dc91d3b1504c6fe5a726dd15e216ba718e84a0e46a88fbe5ded3515"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "windows-interface"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb26fd936d991781ea39e87c3a27285081e3c0da5ca0fcbc02d368cc6f52ff01"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -16057,13 +16326,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dccfd733ce2b1753b03b6d3c65edf020262ea35e20ccdf3e288043e6dd620e3"
 
 [[package]]
+name = "windows-numerics"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "005dea54e2f6499f2cee279b8f703b3cf3b5734a2d8d21867c8f44003182eeed"
+dependencies = [
+ "windows-core 0.60.1",
+ "windows-link",
+]
+
+[[package]]
 name = "windows-registry"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e400001bb720a623c1c69032f8e3e4cf09984deec740f007dd2b03ec864804b0"
 dependencies = [
  "windows-result 0.2.0",
- "windows-strings",
+ "windows-strings 0.1.0",
  "windows-targets 0.52.6",
 ]
 
@@ -16086,6 +16365,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-result"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06374efe858fab7e4f881500e6e86ec8bc28f9462c47e5a9941a0142ad86b189"
+dependencies = [
+ "windows-link",
+]
+
+[[package]]
 name = "windows-strings"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16093,6 +16381,15 @@ checksum = "4cd9b125c486025df0eabcb585e62173c6c9eddcec5d117d3b6e8c30e2ee4d10"
 dependencies = [
  "windows-result 0.2.0",
  "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-strings"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87fa48cc5d406560701792be122a10132491cff9d0aeb23583cc2dcafc847319"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]
@@ -16370,7 +16667,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
  "bitflags 2.8.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16441,7 +16738,7 @@ dependencies = [
  "anyhow",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
@@ -16547,7 +16844,7 @@ dependencies = [
  "component",
  "db",
  "derive_more",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -16585,7 +16882,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -16822,7 +17119,7 @@ checksum = "2380878cad4ac9aac1e2435f3eb4020e8374b5f13c296cb75b4620ff8e229154"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "synstructure",
 ]
 
@@ -16871,7 +17168,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "zbus_names",
  "zvariant",
  "zvariant_utils",
@@ -16891,7 +17188,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.178.0"
+version = "0.179.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16923,7 +17220,7 @@ dependencies = [
  "db",
  "diagnostics",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "extension",
  "extension_host",
  "extensions_ui",
@@ -16977,7 +17274,6 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
- "scripting_tool",
  "search",
  "serde",
  "serde_json",
@@ -17012,7 +17308,7 @@ dependencies = [
  "vim",
  "vim_mode_setting",
  "welcome",
- "windows 0.58.0",
+ "windows 0.60.0",
  "winresource",
  "workspace",
  "zed_actions",
@@ -17031,13 +17327,6 @@ dependencies = [
 [[package]]
 name = "zed_emmet"
 version = "0.0.3"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_erlang"
-version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -17070,13 +17359,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_haskell"
-version = "0.1.3"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_html"
 version = "0.1.6"
 dependencies = [
@@ -17095,22 +17377,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_lua"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_proto"
 version = "0.2.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_purescript"
-version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -17131,13 +17399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_terraform"
-version = "0.1.2"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
@@ -17147,20 +17408,6 @@ dependencies = [
 [[package]]
 name = "zed_toml"
 version = "0.1.3"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_uiua"
-version = "0.0.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_zig"
-version = "0.3.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -17198,7 +17445,7 @@ checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -17209,7 +17456,7 @@ checksum = "76331675d372f91bf8d17e13afbd5fe639200b73d01f0fc748bb059f9cca2db7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -17229,7 +17476,7 @@ checksum = "595eed982f7d355beb85837f651fa22e90b3c044842dc7f2c2842c086f295808"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "synstructure",
 ]
 
@@ -17250,7 +17497,7 @@ checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -17296,7 +17543,7 @@ checksum = "6eafa6dfb17584ea3e2bd6e76e0cc15ad7af12b09abdd1ca55961bed9b1063c6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -17314,7 +17561,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.6",
+ "env_logger 0.11.7",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -17451,7 +17698,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
  "zvariant_utils",
 ]
 
@@ -17465,6 +17712,6 @@ dependencies = [
  "quote",
  "serde",
  "static_assertions",
- "syn 2.0.90",
+ "syn 2.0.100",
  "winnow 0.7.1",
 ]

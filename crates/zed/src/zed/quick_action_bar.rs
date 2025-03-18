@@ -96,6 +96,7 @@ impl Render for QuickActionBar {
         let git_blame_inline_enabled = editor_value.git_blame_inline_enabled();
         let show_git_blame_gutter = editor_value.show_git_blame_gutter();
         let auto_signature_help_enabled = editor_value.auto_signature_help_enabled(cx);
+        let show_line_numbers = editor_value.line_numbers_enabled(cx);
         let has_edit_prediction_provider = editor_value.edit_prediction_provider().is_some();
         let show_edit_predictions = editor_value.edit_predictions_enabled();
         let edit_predictions_enabled_at_cursor =
@@ -261,6 +262,58 @@ impl Render for QuickActionBar {
                                 );
                             }
 
+                            if has_edit_prediction_provider {
+                                let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
+                                    .toggleable(IconPosition::Start, edit_predictions_enabled_at_cursor && show_edit_predictions)
+                                    .disabled(!edit_predictions_enabled_at_cursor)
+                                    .action(
+                                        editor::actions::ToggleEditPrediction.boxed_clone(),
+                                    ).handler({
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_edit_predictions(
+                                                        &editor::actions::ToggleEditPrediction,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    });
+                                if !edit_predictions_enabled_at_cursor {
+                                    inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                        Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
+                                    });
+                                }
+
+                                menu = menu.item(inline_completion_entry);
+                            }
+
+                            menu = menu.separator();
+
+                            menu = menu.toggleable_entry(
+                                "Line Numbers",
+                                show_line_numbers,
+                                IconPosition::Start,
+                                Some(editor::actions::ToggleLineNumbers.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_line_numbers(
+                                                    &editor::actions::ToggleLineNumbers,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+
                             menu = menu.toggleable_entry(
                                 "Selection Menu",
                                 selection_menu_enabled,
@@ -303,35 +356,6 @@ impl Render for QuickActionBar {
                                 },
                             );
 
-                            if has_edit_prediction_provider {
-                                let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
-                                    .toggleable(IconPosition::Start, edit_predictions_enabled_at_cursor && show_edit_predictions)
-                                    .disabled(!edit_predictions_enabled_at_cursor)
-                                    .action(
-                                        editor::actions::ToggleEditPrediction.boxed_clone(),
-                                    ).handler({
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_edit_predictions(
-                                                        &editor::actions::ToggleEditPrediction,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    });
-                                if !edit_predictions_enabled_at_cursor {
-                                    inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
-                                        Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
-                                    });
-                                }
-
-                                menu = menu.item(inline_completion_entry);
-                            }
-
                             menu = menu.separator();
 
                             menu = menu.toggleable_entry(
@@ -359,14 +383,14 @@ impl Render for QuickActionBar {
                                 "Column Git Blame",
                                 show_git_blame_gutter,
                                 IconPosition::Start,
-                                Some(editor::actions::ToggleGitBlame.boxed_clone()),
+                                Some(git::Blame.boxed_clone()),
                                 {
                                     let editor = editor.clone();
                                     move |window, cx| {
                                         editor
                                             .update(cx, |editor, cx| {
                                                 editor.toggle_git_blame(
-                                                    &editor::actions::ToggleGitBlame,
+                                                    &git::Blame,
                                                     window,
                                                     cx,
                                                 )

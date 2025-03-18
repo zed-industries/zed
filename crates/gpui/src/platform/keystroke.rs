@@ -76,8 +76,9 @@ impl Keystroke {
     }
 
     /// key syntax is:
-    /// [ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]
+    /// [secondary-][ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]
     /// key_char syntax is only used for generating test events,
+    /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
@@ -95,6 +96,13 @@ impl Keystroke {
                 "alt" => alt = true,
                 "shift" => shift = true,
                 "fn" => function = true,
+                "secondary" => {
+                    if cfg!(target_os = "macos") {
+                        platform = true
+                    } else {
+                        control = true
+                    };
+                }
                 "cmd" | "super" | "win" => platform = true,
                 _ => {
                     if let Some(next) = components.peek() {
@@ -244,6 +252,22 @@ fn is_printable_key(key: &str) -> bool {
             | "f17"
             | "f18"
             | "f19"
+            | "f20"
+            | "f21"
+            | "f22"
+            | "f23"
+            | "f24"
+            | "f25"
+            | "f26"
+            | "f27"
+            | "f28"
+            | "f29"
+            | "f30"
+            | "f31"
+            | "f32"
+            | "f33"
+            | "f34"
+            | "f35"
             | "backspace"
             | "delete"
             | "left"

@@ -3,26 +3,50 @@ use gpui::{
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
-use project::{git::Repository, Project};
+use project::{
+    git::{GitStore, Repository},
+    Project,
+};
 use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
+use workspace::{ModalView, Workspace};
+
+pub fn register(workspace: &mut Workspace) {
+    workspace.register_action(open);
+}
+
+pub fn open(
+    workspace: &mut Workspace,
+    _: &zed_actions::git::SelectRepo,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project().clone();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RepositorySelector::new(project, rems(34.), window, cx)
+    })
+}
 
 pub struct RepositorySelector {
+    width: Rems,
     picker: Entity<Picker<RepositorySelectorDelegate>>,
 }
 
 impl RepositorySelector {
     pub fn new(
         project_handle: Entity<Project>,
+        width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let git_store = project_handle.read(cx).git_store().clone();
+        let repository_entries = git_store.update(cx, |git_store, cx| {
+            filtered_repository_entries(git_store, cx)
+        });
         let project = project_handle.read(cx);
-        let git_store = project.git_store().clone();
-        let all_repositories = git_store.read(cx).all_repositories();
-        let filtered_repositories = all_repositories.clone();
+        let filtered_repositories = repository_entries.clone();
 
-        let widest_item_ix = all_repositories.iter().position_max_by(|a, b| {
+        let widest_item_ix = repository_entries.iter().position_max_by(|a, b| {
             a.read(cx)
                 .display_name(project, cx)
                 .len()
@@ -32,7 +56,7 @@ impl RepositorySelector {
         let delegate = RepositorySelectorDelegate {
             project: project_handle.downgrade(),
             repository_selector: cx.entity().downgrade(),
-            repository_entries: all_repositories.clone(),
+            repository_entries,
             filtered_repositories,
             selected_index: 0,
         };
@@ -43,8 +67,37 @@ impl RepositorySelector {
                 .max_height(Some(rems(20.).into()))
         });
 
-        RepositorySelector { picker }
+        RepositorySelector { picker, width }
     }
+}
+
+pub(crate) fn filtered_repository_entries(
+    git_store: &GitStore,
+    cx: &App,
+) -> Vec<Entity<Repository>> {
+    let mut repository_entries = git_store.all_repositories();
+    repository_entries.sort_by_key(|repo| {
+        let repo = repo.read(cx);
+        (
+            repo.dot_git_abs_path.clone(),
+            repo.worktree_abs_path.clone(),
+        )
+    });
+    // Remove any entry that comes from a single file worktree and represents a repository that is also represented by a non-single-file worktree.
+    repository_entries
+        .chunk_by(|a, b| a.read(cx).dot_git_abs_path == b.read(cx).dot_git_abs_path)
+        .flat_map(|chunk| {
+            let has_non_single_file_worktree = chunk
+                .iter()
+                .any(|repo| !repo.read(cx).is_from_single_file_worktree);
+            chunk
+                .iter()
+                .filter(move |repo| {
+                    !repo.read(cx).is_from_single_file_worktree || !has_non_single_file_worktree
+                })
+                .cloned()
+        })
+        .collect()
 }
 
 impl EventEmitter<DismissEvent> for RepositorySelector {}
@@ -57,9 +110,11 @@ impl Focusable for RepositorySelector {
 
 impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.picker.clone()
+        div().w(self.width).child(self.picker.clone())
     }
 }
+
+impl ModalView for RepositorySelector {}
 
 pub struct RepositorySelectorDelegate {
     project: WeakEntity<Project>,

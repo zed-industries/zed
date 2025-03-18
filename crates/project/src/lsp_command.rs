@@ -2,9 +2,9 @@ mod signature_help;
 
 use crate::{
     lsp_store::{LocalLspStore, LspStore},
-    ActionVariant, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
     HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, MarkupContent, PrepareRenameResponse,
+    InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -232,6 +232,19 @@ pub(crate) struct OnTypeFormatting {
 #[derive(Debug)]
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetCodeLens;
+
+impl GetCodeLens {
+    pub(crate) fn can_resolve_lens(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_lens_provider
+            .as_ref()
+            .and_then(|code_lens_options| code_lens_options.resolve_provider)
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Debug)]
@@ -1847,7 +1860,6 @@ impl LspCommand for GetCompletions {
         let mut completions = if let Some(completions) = completions {
             match completions {
                 lsp::CompletionResponse::Array(completions) => completions,
-
                 lsp::CompletionResponse::List(mut list) => {
                     let items = std::mem::take(&mut list.items);
                     response_list = Some(list);
@@ -1855,74 +1867,19 @@ impl LspCommand for GetCompletions {
                 }
             }
         } else {
-            Default::default()
+            Vec::new()
         };
 
         let language_server_adapter = lsp_store
             .update(&mut cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
-            .ok_or_else(|| anyhow!("no such language server"))?;
+            .with_context(|| format!("no language server with id {server_id}"))?;
 
-        let item_defaults = response_list
+        let lsp_defaults = response_list
             .as_ref()
-            .and_then(|list| list.item_defaults.as_ref());
-
-        if let Some(item_defaults) = item_defaults {
-            let default_data = item_defaults.data.as_ref();
-            let default_commit_characters = item_defaults.commit_characters.as_ref();
-            let default_edit_range = item_defaults.edit_range.as_ref();
-            let default_insert_text_format = item_defaults.insert_text_format.as_ref();
-            let default_insert_text_mode = item_defaults.insert_text_mode.as_ref();
-
-            if default_data.is_some()
-                || default_commit_characters.is_some()
-                || default_edit_range.is_some()
-                || default_insert_text_format.is_some()
-                || default_insert_text_mode.is_some()
-            {
-                for item in completions.iter_mut() {
-                    if item.data.is_none() && default_data.is_some() {
-                        item.data = default_data.cloned()
-                    }
-                    if item.commit_characters.is_none() && default_commit_characters.is_some() {
-                        item.commit_characters = default_commit_characters.cloned()
-                    }
-                    if item.text_edit.is_none() {
-                        if let Some(default_edit_range) = default_edit_range {
-                            match default_edit_range {
-                                CompletionListItemDefaultsEditRange::Range(range) => {
-                                    item.text_edit =
-                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                            range: *range,
-                                            new_text: item.label.clone(),
-                                        }))
-                                }
-                                CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                    insert,
-                                    replace,
-                                } => {
-                                    item.text_edit =
-                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                            lsp::InsertReplaceEdit {
-                                                new_text: item.label.clone(),
-                                                insert: *insert,
-                                                replace: *replace,
-                                            },
-                                        ))
-                                }
-                            }
-                        }
-                    }
-                    if item.insert_text_format.is_none() && default_insert_text_format.is_some() {
-                        item.insert_text_format = default_insert_text_format.cloned()
-                    }
-                    if item.insert_text_mode.is_none() && default_insert_text_mode.is_some() {
-                        item.insert_text_mode = default_insert_text_mode.cloned()
-                    }
-                }
-            }
-        }
+            .and_then(|list| list.item_defaults.clone())
+            .map(Arc::new);
 
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
@@ -1930,12 +1887,34 @@ impl LspCommand for GetCompletions {
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
             let mut range_for_token = None;
-            completions.retain_mut(|lsp_completion| {
-                let edit = match lsp_completion.text_edit.as_ref() {
+            completions.retain(|lsp_completion| {
+                let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
+                    let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
+                    match default_text_edit {
+                        CompletionListItemDefaultsEditRange::Range(range) => {
+                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: *range,
+                                new_text: lsp_completion.label.clone(),
+                            }))
+                        }
+                        CompletionListItemDefaultsEditRange::InsertAndReplace {
+                            insert,
+                            replace,
+                        } => Some(lsp::CompletionTextEdit::InsertAndReplace(
+                            lsp::InsertReplaceEdit {
+                                new_text: lsp_completion.label.clone(),
+                                insert: *insert,
+                                replace: *replace,
+                            },
+                        )),
+                    }
+                });
+
+                let edit = match lsp_edit {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
                     Some(completion_text_edit) => {
-                        match parse_completion_text_edit(completion_text_edit, &snapshot) {
+                        match parse_completion_text_edit(&completion_text_edit, &snapshot) {
                             Some(edit) => edit,
                             None => return false,
                         }
@@ -1949,14 +1928,15 @@ impl LspCommand for GetCompletions {
                             return false;
                         }
 
-                        let default_edit_range = response_list
-                            .as_ref()
-                            .and_then(|list| list.item_defaults.as_ref())
-                            .and_then(|defaults| defaults.edit_range.as_ref())
-                            .and_then(|range| match range {
-                                CompletionListItemDefaultsEditRange::Range(r) => Some(r),
-                                _ => None,
-                            });
+                        let default_edit_range = lsp_defaults.as_ref().and_then(|lsp_defaults| {
+                            lsp_defaults
+                                .edit_range
+                                .as_ref()
+                                .and_then(|range| match range {
+                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
+                                    _ => None,
+                                })
+                        });
 
                         let range = if let Some(range) = default_edit_range {
                             let range = range_from_lsp(*range);
@@ -2006,14 +1986,27 @@ impl LspCommand for GetCompletions {
         Ok(completions
             .into_iter()
             .zip(completion_edits)
-            .map(|(lsp_completion, (old_range, mut new_text))| {
+            .map(|(mut lsp_completion, (old_range, mut new_text))| {
                 LineEnding::normalize(&mut new_text);
+                if lsp_completion.data.is_none() {
+                    if let Some(default_data) = lsp_defaults
+                        .as_ref()
+                        .and_then(|item_defaults| item_defaults.data.clone())
+                    {
+                        // Servers (e.g. JDTLS) prefer unchanged completions, when resolving the items later,
+                        // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
+                        lsp_completion.data = Some(default_data);
+                    }
+                }
                 CoreCompletion {
                     old_range,
                     new_text,
-                    server_id,
-                    lsp_completion,
-                    resolved: false,
+                    source: CompletionSource::Lsp {
+                        server_id,
+                        lsp_completion: Box::new(lsp_completion),
+                        lsp_defaults: lsp_defaults.clone(),
+                        resolved: false,
+                    },
                 }
             })
             .collect())
@@ -2249,18 +2242,18 @@ impl LspCommand for GetCodeActions {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp_action = match entry {
+                let (lsp_action, resolved) = match entry {
                     lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
                         if let Some(command) = lsp_action.command.as_ref() {
                             if !available_commands.contains(&command.command) {
                                 return None;
                             }
                         }
-                        ActionVariant::Action(Box::new(lsp_action))
+                        (LspAction::Action(Box::new(lsp_action)), false)
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
                         if available_commands.contains(&command.command) {
-                            ActionVariant::Command(command)
+                            (LspAction::Command(command), true)
                         } else {
                             return None;
                         }
@@ -2279,6 +2272,7 @@ impl LspCommand for GetCodeActions {
                     server_id,
                     range: self.range.clone(),
                     lsp_action,
+                    resolved,
                 })
             })
             .collect())
@@ -3053,6 +3047,152 @@ impl LspCommand for InlayHints {
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetCodeLens {
+    type Response = Vec<CodeAction>;
+    type LspRequest = lsp::CodeLensRequest;
+    type ProtoRequest = proto::GetCodeLens;
+
+    fn display_name(&self) -> &str {
+        "Code Lens"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .code_lens_provider
+            .as_ref()
+            .map_or(false, |code_lens_options| {
+                code_lens_options.resolve_provider.unwrap_or(false)
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::CodeLensParams> {
+        Ok(lsp::CodeLensParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::CodeLens>>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<CodeAction>> {
+        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
+        let server_capabilities = language_server.capabilities();
+        let available_commands = server_capabilities
+            .execute_command_provider
+            .as_ref()
+            .map(|options| options.commands.as_slice())
+            .unwrap_or_default();
+        Ok(message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|code_lens| {
+                code_lens
+                    .command
+                    .as_ref()
+                    .is_none_or(|command| available_commands.contains(&command.command))
+            })
+            .map(|code_lens| {
+                let code_lens_range = range_from_lsp(code_lens.range);
+                let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
+                let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
+                let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                CodeAction {
+                    server_id,
+                    range,
+                    lsp_action: LspAction::CodeLens(code_lens),
+                    resolved: false,
+                }
+            })
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCodeLens {
+        proto::GetCodeLens {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetCodeLens,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Vec<CodeAction>,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetCodeLensResponse {
+        proto::GetCodeLensResponse {
+            lens_actions: response
+                .iter()
+                .map(LspStore::serialize_code_action)
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetCodeLensResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<CodeAction>> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        message
+            .lens_actions
+            .into_iter()
+            .map(LspStore::deserialize_code_action)
+            .collect::<Result<Vec<_>>>()
+            .context("deserializing proto code lens response")
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetCodeLens) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

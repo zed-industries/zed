@@ -29,6 +29,7 @@
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
       "cmd-alt-l": "editor::Format",
+      "ctrl-alt-o": "editor::OrganizeImports",
       "shift-f6": "editor::Rename",
       "cmd-[": "pane::GoBack",
       "cmd-]": "pane::GoForward",

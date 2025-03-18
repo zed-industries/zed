@@ -203,7 +203,8 @@ impl SshConnectionOptions {
                 anyhow::bail!("unsupported argument: {:?}", arg);
             }
             let mut input = &arg as &str;
-            if let Some((u, rest)) = input.split_once('@') {
+            // Destination might be: username1@username2@ip2@ip1
+            if let Some((u, rest)) = input.rsplit_once('@') {
                 input = rest;
                 username = Some(u.to_string());
             }
@@ -238,7 +239,9 @@ impl SshConnectionOptions {
     pub fn ssh_url(&self) -> String {
         let mut result = String::from("ssh://");
         if let Some(username) = &self.username {
-            result.push_str(username);
+            // Username might be: username1@username2@ip2
+            let username = urlencoding::encode(username);
+            result.push_str(&username);
             result.push('@');
         }
         result.push_str(&self.host);
@@ -1280,7 +1283,6 @@ impl From<SshRemoteClient> for AnyProtoClient {
 
 #[async_trait(?Send)]
 trait RemoteConnection: Send + Sync {
-    #[allow(clippy::too_many_arguments)]
     fn start_proxy(
         &self,
         unique_identifier: String,

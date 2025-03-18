@@ -254,10 +254,7 @@ fn main() {
         };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
-    let fs = Arc::new(RealFs::new(
-        git_hosting_provider_registry.clone(),
-        git_binary_path,
-    ));
+    let fs = Arc::new(RealFs::new(git_binary_path));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -326,6 +323,7 @@ fn main() {
             .or_else(read_proxy_from_env);
         let http = {
             let _guard = Tokio::handle(cx).enter();
+
             ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
                 .expect("could not start HTTP client")
         };
@@ -474,8 +472,7 @@ fn main() {
             prompt_builder.clone(),
             cx,
         );
-        assistant_tools::init(cx);
-        scripting_tool::init(cx);
+        assistant_tools::init(app_state.client.http_client(), cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,

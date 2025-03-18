@@ -87,14 +87,17 @@ impl HeadlessProject {
             buffer_store
         });
 
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let git_store = cx.new(|cx| {
-            GitStore::new(
+            let mut store = GitStore::local(
                 &worktree_store,
                 buffer_store.clone(),
-                session.clone().into(),
-                None,
+                environment.clone(),
+                fs.clone(),
                 cx,
-            )
+            );
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
         });
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
@@ -105,7 +108,6 @@ impl HeadlessProject {
                 cx,
             )
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
