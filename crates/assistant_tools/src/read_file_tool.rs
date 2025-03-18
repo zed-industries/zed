@@ -28,13 +28,13 @@ pub struct ReadFileToolInput {
     /// </example>
     pub path: Arc<Path>,
 
-    /// Optional line number to start reading from (0-based index)
+    /// Optional line number to start reading on (1-based index)
     #[serde(default)]
     pub start_line: Option<usize>,
 
-    /// Optional number of lines to read
+    /// Optional line number to end reading on (1-based index)
     #[serde(default)]
-    pub line_count: Option<usize>,
+    pub end_line: Option<usize>,
 }
 
 pub struct ReadFileTool;
@@ -83,10 +83,12 @@ impl Tool for ReadFileTool {
                     .map_or(false, |file| file.disk_state().exists())
                 {
                     let text = buffer.text();
-                    let string = if input.start_line.is_some() || input.line_count.is_some() {
-                        let lines = text.split('\n').skip(input.start_line.unwrap_or(0));
-                        if let Some(line_count) = input.line_count {
-                            Itertools::intersperse(lines.take(line_count), "\n").collect()
+                    let string = if input.start_line.is_some() || input.end_line.is_some() {
+                        let start = input.start_line.unwrap_or(1);
+                        let lines = text.split('\n').skip(start - 1);
+                        if let Some(end) = input.end_line {
+                            let count = end.saturating_sub(start);
+                            Itertools::intersperse(lines.take(count), "\n").collect()
                         } else {
                             Itertools::intersperse(lines, "\n").collect()
                         }
