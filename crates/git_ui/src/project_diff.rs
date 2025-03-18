@@ -1293,7 +1293,6 @@ mod preview {
 mod tests {
     use db::indoc;
     use editor::test::editor_test_context::{assert_state_with_diff, EditorTestContext};
-    use git::status::{StatusCode, TrackedStatus};
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
@@ -1351,16 +1350,6 @@ mod tests {
             path!("/project/.git").as_ref(),
             &[("foo.txt".into(), "foo\n".into())],
         );
-        fs.set_status_for_repo(
-            path!("/project/.git").as_ref(),
-            &[(
-                "foo.txt".as_ref(),
-                FileStatus::Tracked(TrackedStatus {
-                    index_status: StatusCode::Unmodified,
-                    worktree_status: StatusCode::Modified,
-                }),
-            )],
-        );
         cx.run_until_parked();
 
         let editor = diff.update(cx, |diff, _| diff.editor.clone());
@@ -1407,30 +1396,11 @@ mod tests {
         });
         cx.run_until_parked();
 
-        fs.set_head_for_repo(
+        fs.set_head_and_index_for_repo(
             path!("/project/.git").as_ref(),
             &[
                 ("bar".into(), "bar\n".into()),
                 ("foo".into(), "foo\n".into()),
-            ],
-        );
-        fs.set_status_for_repo(
-            path!("/project/.git").as_ref(),
-            &[
-                (
-                    "bar".as_ref(),
-                    FileStatus::Tracked(TrackedStatus {
-                        index_status: StatusCode::Unmodified,
-                        worktree_status: StatusCode::Modified,
-                    }),
-                ),
-                (
-                    "foo".as_ref(),
-                    FileStatus::Tracked(TrackedStatus {
-                        index_status: StatusCode::Unmodified,
-                        worktree_status: StatusCode::Modified,
-                    }),
-                ),
             ],
         );
         cx.run_until_parked();

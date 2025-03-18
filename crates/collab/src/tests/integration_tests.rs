@@ -2998,10 +2998,6 @@ async fn test_git_status_sync(
         first_head: UnmergedStatusCode::Updated,
         second_head: UnmergedStatusCode::Deleted,
     });
-    const C_STATUS_START: FileStatus = FileStatus::Tracked(TrackedStatus {
-        index_status: StatusCode::Unmodified,
-        worktree_status: StatusCode::Unmodified,
-    });
 
     let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
     let project_id = active_call_a
@@ -3034,13 +3030,13 @@ async fn test_git_status_sync(
     project_local.read_with(cx_a, |project, cx| {
         assert_status("a.txt", Some(A_STATUS_START), project, cx);
         assert_status("b.txt", Some(B_STATUS_START), project, cx);
-        assert_status("c.txt", Some(C_STATUS_START), project, cx);
+        assert_status("c.txt", None, project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
         assert_status("a.txt", Some(A_STATUS_START), project, cx);
         assert_status("b.txt", Some(B_STATUS_START), project, cx);
-        assert_status("c.txt", Some(C_STATUS_START), project, cx);
+        assert_status("c.txt", None, project, cx);
     });
 
     const A_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
