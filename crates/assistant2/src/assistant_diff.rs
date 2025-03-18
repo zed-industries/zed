@@ -1,8 +1,9 @@
 use anyhow::Result;
+use assistant_tool::ActionLog;
 use editor::{Editor, EditorEvent, MultiBuffer};
 use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Task, WeakEntity, Window,
+    SharedString, Subscription, Task, WeakEntity, Window,
 };
 use language::Capability;
 use project::{Project, ProjectPath};
@@ -22,6 +23,7 @@ pub struct AssistantDiff {
     thread: Entity<Thread>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AssistantDiff {
@@ -70,13 +72,23 @@ impl AssistantDiff {
             editor
         });
 
+        let action_log = thread.read(cx).action_log().clone();
         Self {
+            _subscriptions: vec![cx.observe_in(&action_log, window, Self::action_log_changed)],
             multibuffer,
             editor,
             thread,
             focus_handle,
             workspace,
         }
+    }
+
+    fn action_log_changed(
+        &mut self,
+        action_log: Entity<ActionLog>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
     }
 }
 
