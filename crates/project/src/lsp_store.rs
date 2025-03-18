@@ -1170,16 +1170,7 @@ impl LocalLspStore {
 
         for buffer in &buffers {
             // todo! consider lazily initializing
-            let adapters_and_servers = lsp_store.update(&mut cx, |lsp_store, cx| {
-                buffer.handle.update(cx, |buffer, cx| {
-                    lsp_store
-                        .as_local()
-                        .unwrap()
-                        .language_servers_for_buffer(buffer, cx)
-                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
-                        .collect::<Vec<_>>()
-                })
-            })?;
+            let adapters_and_servers = std::cell::OnceCell::new();
 
             let settings = buffer.handle.read_with(&cx, |buffer, cx| {
                 language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
@@ -1290,7 +1281,7 @@ impl LocalLspStore {
             // the only `?`s in the loop below should be for "app doesn't exist anymore" errors
             let mut result = anyhow::Ok(());
 
-            for formatter in formatters {
+            'formatters: for formatter in formatters {
                 let should_continue_formatting = |buffer: &FormattableBuffer, cx: &AsyncApp| {
                     buffer
                         .handle
@@ -1316,16 +1307,16 @@ impl LocalLspStore {
                         .transpose();
                         let Ok(diff) = diff_result else {
                             result = Err(diff_result.unwrap_err());
-                            break;
+                            break 'formatters;
+                        };
+                        // todo! have format with prettier return diff instead of operation
+                        let Some(FormatOperation::Prettier(diff)) = diff else {
+                            continue 'formatters;
                         };
                         if !should_continue_formatting(buffer, &cx) {
                             result = Err(anyhow!("Formatting aborted due to buffer changes"));
-                            break;
+                            break 'formatters;
                         }
-                        // todo! have format with prettier return diff instead of operation
-                        let Some(FormatOperation::Prettier(diff)) = diff else {
-                            continue;
-                        };
                         buffer.handle.update(&mut cx, |buffer, cx| {
                             buffer.apply_diff(diff, cx);
                             buffer.group_until_transaction(transaction_id_format);
@@ -1344,21 +1335,112 @@ impl LocalLspStore {
                         });
                         let Ok(diff) = diff_result else {
                             result = Err(diff_result.unwrap_err());
-                            break;
+                            break 'formatters;
+                        };
+                        let Some(diff) = diff else {
+                            continue 'formatters;
                         };
                         if !should_continue_formatting(buffer, &cx) {
                             result = Err(anyhow!("Formatting aborted due to buffer changes"));
-                            break;
+                            break 'formatters;
                         }
-                        let Some(diff) = diff else {
-                            continue;
-                        };
                         buffer.handle.update(&mut cx, |buffer, cx| {
                             buffer.apply_diff(diff, cx);
                             buffer.group_until_transaction(transaction_id_format);
                         })?;
                     }
-                    Formatter::LanguageServer { name } => {}
+                    Formatter::LanguageServer { name } => {
+                        let Some(buffer_path_abs) = buffer.abs_path.as_ref() else {
+                            // todo! log
+                            continue 'formatters;
+                        };
+                        let adapters_and_servers = adapters_and_servers.get_or_init(|| {
+                            lsp_store
+                                .update(&mut cx, |lsp_store, cx| {
+                                    buffer.handle.update(cx, |buffer, cx| {
+                                        lsp_store
+                                            .as_local()
+                                            .unwrap()
+                                            .language_servers_for_buffer(buffer, cx)
+                                            .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                                            .collect::<Vec<_>>()
+                                    })
+                                })
+                                .unwrap_or_default()
+                        });
+
+                        let language_server = 'language_server: {
+                            // if a name was provided, try to find the server with that name
+                            if let Some(name) = name.as_deref() {
+                                for (adapter, server) in adapters_and_servers {
+                                    if adapter.name.0.as_ref() == name {
+                                        break 'language_server server.clone();
+                                    }
+                                }
+                            }
+
+                            // otherwise, fall back to the primary language server for the buffer if one exists
+                            let default_lsp = lsp_store.update(&mut cx, |lsp_store, cx| {
+                                buffer.handle.update(cx, |buffer, cx| {
+                                    lsp_store
+                                        .as_local()
+                                        .unwrap()
+                                        .primary_language_server_for_buffer(buffer, cx)
+                                        .map(|(_, lsp)| lsp.clone())
+                                })
+                            })?;
+
+                            if let Some(default_lsp) = default_lsp {
+                                break 'language_server default_lsp;
+                            } else {
+                                // No language server found
+                                // todo! log
+                                continue 'formatters;
+                            }
+                        };
+
+                        let edits_result = if let Some(ranges) = buffer.ranges.as_ref() {
+                            Self::format_ranges_via_lsp(
+                                &lsp_store,
+                                &buffer.handle,
+                                ranges,
+                                buffer_path_abs,
+                                &language_server,
+                                &settings,
+                                &mut cx,
+                            )
+                            .await
+                            .context("Failed to format ranges via language server")
+                        } else {
+                            Self::format_via_lsp(
+                                &lsp_store,
+                                &buffer.handle,
+                                buffer_path_abs,
+                                &language_server,
+                                &settings,
+                                &mut cx,
+                            )
+                            .await
+                            .context("failed to format via language server")
+                        };
+
+                        let Ok(edits) = edits_result else {
+                            result = Err(edits_result.unwrap_err());
+                            break 'formatters;
+                        };
+                        if edits.is_empty() {
+                            continue 'formatters;
+                        }
+                        if !should_continue_formatting(buffer, &cx) {
+                            result = Err(anyhow!("Formatting aborted due to buffer changes"));
+                            break 'formatters;
+                        }
+
+                        buffer.handle.update(&mut cx, |buffer, cx| {
+                            buffer.edit(edits, None, cx);
+                            buffer.group_until_transaction(transaction_id_format);
+                        })?;
+                    }
                     Formatter::CodeActions(hash_map) => {}
                 }
             }
