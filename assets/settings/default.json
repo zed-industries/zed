@@ -324,6 +324,8 @@
     "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show breakpoints in the gutter.
+    "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
@@ -1453,6 +1455,12 @@
   //   }
   // ]
   "ssh_connections": [],
+
   // Configures context servers for use in the Assistant.
-  "context_servers": {}
+  "context_servers": {},
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "button": true
+  }
 }

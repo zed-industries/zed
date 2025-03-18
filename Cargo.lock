@@ -13,7 +13,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
- "lsp",
  "project",
  "smallvec",
  "ui",
@@ -2645,6 +2644,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "circular-buffer"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dacb91f972298e70fc507a2ffcaf1545807f1a36da586fb846646030adc542f"
+
+[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2893,9 +2898,12 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
+ "command_palette_hooks",
  "context_server",
  "ctor",
+ "dap",
  "dashmap 6.1.0",
+ "debugger_ui",
  "derive_more",
  "editor",
  "env_logger 0.11.7",
@@ -3840,6 +3848,66 @@ dependencies = [
 ]
 
 [[package]]
+name = "dap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-pipe",
+ "async-tar",
+ "async-trait",
+ "client",
+ "collections",
+ "dap-types",
+ "env_logger 0.11.7",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "language",
+ "log",
+ "node_runtime",
+ "parking_lot",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "task",
+ "util",
+]
+
+[[package]]
+name = "dap-types"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/dap-types?rev=bfd4af0#bfd4af084bbaa5f344e6925370d7642e41d0b5b8"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dap_adapters"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dap",
+ "gpui",
+ "language",
+ "paths",
+ "regex",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "task",
+ "util",
+]
+
+[[package]]
 name = "dashmap"
 version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3910,6 +3978,58 @@ dependencies = [
  "libc",
  "libdbus-sys",
  "winapi",
+]
+
+[[package]]
+name = "debugger_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "project",
+ "serde_json",
+ "settings",
+ "smol",
+ "util",
+ "workspace",
+]
+
+[[package]]
+name = "debugger_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "command_palette_hooks",
+ "dap",
+ "editor",
+ "env_logger 0.11.7",
+ "feature_flags",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "menu",
+ "picker",
+ "pretty_assertions",
+ "project",
+ "rpc",
+ "serde",
+ "serde_json",
+ "settings",
+ "sysinfo",
+ "task",
+ "terminal_view",
+ "theme",
+ "ui",
+ "unindent",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -4212,6 +4332,7 @@ dependencies = [
  "db",
  "emojis",
  "env_logger 0.11.7",
+ "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -4228,6 +4349,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
+ "menu",
  "multi_buffer",
  "ordered-float 2.10.1",
  "parking_lot",
@@ -10422,9 +10544,12 @@ dependencies = [
  "askpass",
  "async-trait",
  "buffer_diff",
+ "circular-buffer",
  "client",
  "clock",
  "collections",
+ "dap",
+ "dap_adapters",
  "env_logger 0.11.7",
  "extension",
  "fancy-regex 0.14.0",
@@ -10437,6 +10562,7 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
+ "indexmap",
  "itertools 0.14.0",
  "language",
  "log",
@@ -11100,6 +11226,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
+ "dap",
  "editor",
  "extension_host",
  "file_finder",
@@ -13657,12 +13784,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "dap-types",
  "futures 0.3.31",
  "gpui",
  "hex",
  "parking_lot",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "sha2",
  "shellexpand 2.1.2",
@@ -13675,7 +13804,9 @@ name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "debugger_ui",
  "editor",
+ "feature_flags",
  "file_icons",
  "fuzzy",
  "gpui",
@@ -17218,6 +17349,8 @@ dependencies = [
  "component_preview",
  "copilot",
  "db",
+ "debugger_tools",
+ "debugger_ui",
  "diagnostics",
  "editor",
  "env_logger 0.11.7",

@@ -37,6 +37,10 @@ members = [
     "crates/context_server_settings",
     "crates/copilot",
     "crates/credentials_provider",
+    "crates/dap",
+    "crates/dap_adapters",
+    "crates/debugger_tools",
+    "crates/debugger_ui",
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
@@ -236,7 +240,11 @@ context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 credentials_provider = { path = "crates/credentials_provider" }
+dap = { path = "crates/dap" }
+dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
+debugger_ui = { path = "crates/debugger_ui" }
+debugger_tools = { path = "crates/debugger_tools" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
 buffer_diff = { path = "crates/buffer_diff" }
@@ -402,6 +410,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
@@ -410,6 +419,7 @@ core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.4.0"
 dashmap = "6.0"
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "bfd4af0" }
 derive_more = "0.99.17"
 dirs = "4.0"
 ec4rs = "1.1"
