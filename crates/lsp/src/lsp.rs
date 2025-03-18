@@ -47,7 +47,7 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncApp)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -309,7 +309,7 @@ impl LanguageServer {
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
             root_path
@@ -383,7 +383,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_uri: Url,
         workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
     where
@@ -511,7 +511,7 @@ impl LanguageServer {
             {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
-                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
+                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
                 } else {
                     drop(notification_handlers);
                     on_unhandled_notification(msg);
@@ -877,7 +877,7 @@ impl LanguageServer {
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
     where
         T: notification::Notification,
-        F: 'static + Send + FnMut(T::Params, AsyncApp),
+        F: 'static + Send + FnMut(T::Params, &mut AsyncApp),
     {
         self.on_custom_notification(T::METHOD, f)
     }
@@ -890,7 +890,7 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + FnMut(T::Params, AsyncApp) -> Fut + Send,
+        F: 'static + FnMut(T::Params, &mut AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
@@ -928,7 +928,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncApp) + Send,
+        F: 'static + FnMut(Params, &mut AsyncApp) + Send,
         Params: DeserializeOwned,
     {
         let prev_handler = self.notification_handlers.lock().insert(
@@ -952,7 +952,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncApp) -> Fut + Send,
+        F: 'static + FnMut(Params, &mut AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
@@ -964,7 +964,7 @@ impl LanguageServer {
                 if let Some(id) = id {
                     match serde_json::from_value(params) {
                         Ok(params) => {
-                            let response = f(params, cx.clone());
+                            let response = f(params, cx);
                             cx.foreground_executor()
                                 .spawn({
                                     let outbound_tx = outbound_tx.clone();
@@ -1378,7 +1378,7 @@ impl FakeLanguageServer {
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
@@ -1400,7 +1400,7 @@ impl FakeLanguageServer {
             binary.clone(),
             root,
             workspace_folders.clone(),
-            cx.clone(),
+            cx,
             |_| {},
         );
         server.process_name = process_name;
@@ -1419,7 +1419,7 @@ impl FakeLanguageServer {
                     binary,
                     Self::root_path(),
                     workspace_folders,
-                    cx.clone(),
+                    cx,
                     move |msg| {
                         notifications_tx
                             .try_send((
@@ -1633,7 +1633,7 @@ mod tests {
             },
             "the-lsp".to_string(),
             Default::default(),
-            cx.to_async(),
+            &mut cx.to_async(),
         );
 
         let (message_tx, message_rx) = channel::unbounded();

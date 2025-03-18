@@ -938,7 +938,7 @@ impl LanguageRegistry {
         server_id: LanguageServerId,
         name: &LanguageServerName,
         binary: lsp::LanguageServerBinary,
-        cx: gpui::AsyncApp,
+        cx: &mut gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
         use gpui::AppContext as _;
 
@@ -949,7 +949,7 @@ impl LanguageRegistry {
             binary,
             name.0.to_string(),
             fake_entry.capabilities.clone(),
-            cx.clone(),
+            cx,
         );
         fake_entry._server = Some(fake_server.clone());
 

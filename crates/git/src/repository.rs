@@ -207,7 +207,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         path: RepoPath,
         content: Rope,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
@@ -678,7 +678,7 @@ impl GitRepository for RealGitRepository {
         &self,
         path: RepoPath,
         content: Rope,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -1237,7 +1237,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         path: RepoPath,
         _content: Rope,
-        _cx: AsyncApp,
+        _cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>> {
         let state = self.state.lock();
         let result = state

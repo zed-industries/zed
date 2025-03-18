@@ -2950,7 +2950,7 @@ impl LspCommand for InlayHints {
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    &mut cx,
+                    cx,
                 )
                 .await
             })

@@ -66,7 +66,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                                     lsp_name: name.clone(),
                                 };
                                 let _ = this
-                                    .update(&mut cx, |_, cx| {
+                                    .update(cx, |_, cx| {
                                         cx.emit(LspStoreEvent::LanguageServerPrompt(request));
                                     })
                                     .ok();

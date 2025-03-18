@@ -440,7 +440,7 @@ impl ChannelChat {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         let channel_id = self.channel_id;
-        cx.spawn(move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             async move {
                 let response = rpc
                     .request(proto::JoinChannelChat {
@@ -453,11 +453,11 @@ impl ChannelChat {
                     rpc.clone(),
                     response.messages,
                     response.done,
-                    &mut cx,
+                    cx,
                 )
                 .await?;
 
-                let pending_messages = this.update(&mut cx, |this, _| {
+                let pending_messages = this.update(cx, |this, _| {
                     this.pending_messages().cloned().collect::<Vec<_>>()
                 })?;
 
@@ -473,10 +473,10 @@ impl ChannelChat {
                     let message = ChannelMessage::from_proto(
                         response.message.ok_or_else(|| anyhow!("invalid message"))?,
                         &user_store,
-                        &mut cx,
+                        cx,
                     )
                     .await?;
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.insert_messages(SumTree::from_item(message, &()), cx);
                     })?;
                 }
@@ -484,6 +484,7 @@ impl ChannelChat {
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         })
         .detach();
     }
