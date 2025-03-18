@@ -44,7 +44,7 @@ impl AlacModifiers {
 }
 
 // TODO:
-// These keystokes are not keyboard layouts aware, so they will not work for all users
+// These keystrokes are not keyboard layouts aware, so they will not work for all users
 pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> Option<String> {
     let modifiers = AlacModifiers::new(keystroke);
 
