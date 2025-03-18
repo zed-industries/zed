@@ -7,8 +7,6 @@ pub mod fs_watcher;
 use anyhow::{anyhow, Context as _, Result};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
-use git::status::{StatusCode, TrackedStatus, UnmergedStatus};
-use git::{repository::RepoPath, status::FileStatus};
 use gpui::App;
 use gpui::Global;
 use gpui::ReadGlobal as _;
@@ -40,10 +38,14 @@ use text::LineEnding;
 #[cfg(any(test, feature = "test-support"))]
 mod fake_git_repo;
 #[cfg(any(test, feature = "test-support"))]
-use fake_git_repo::FakeGitRepositoryState;
-
-#[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
+#[cfg(any(test, feature = "test-support"))]
+use fake_git_repo::FakeGitRepositoryState;
+#[cfg(any(test, feature = "test-support"))]
+use git::{
+    repository::RepoPath,
+    status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
+};
 #[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
 #[cfg(any(test, feature = "test-support"))]
