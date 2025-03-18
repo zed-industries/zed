@@ -716,6 +716,7 @@ dependencies = [
  "gpui",
  "language",
  "language_model",
+ "pretty_assertions",
  "project",
  "rand 0.8.5",
  "release_channel",
@@ -725,8 +726,10 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "unindent",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -2739,6 +2742,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "http_client_tls",
  "log",
  "parking_lot",
  "paths",
@@ -5504,8 +5508,10 @@ dependencies = [
  "indoc",
  "pretty_assertions",
  "regex",
+ "schemars",
  "serde",
  "serde_json",
+ "settings",
  "url",
  "util",
 ]
@@ -6201,11 +6207,17 @@ dependencies = [
  "futures 0.3.31",
  "http 1.2.0",
  "log",
- "rustls 0.23.23",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "http_client_tls"
+version = "0.1.0"
+dependencies = [
+ "rustls 0.23.23",
+ "rustls-platform-verifier",
 ]
 
 [[package]]
@@ -11246,6 +11258,7 @@ dependencies = [
  "smol",
  "tempfile",
  "thiserror 1.0.69",
+ "urlencoding",
  "util",
 ]
 
@@ -11460,6 +11473,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "http_client_tls",
  "log",
  "regex",
  "reqwest 0.12.8",

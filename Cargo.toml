@@ -65,6 +65,7 @@ members = [
     "crates/gpui_tokio",
     "crates/html_to_markdown",
     "crates/http_client",
+    "crates/http_client_tls",
     "crates/image_viewer",
     "crates/indexed_docs",
     "crates/inline_completion",
@@ -262,6 +263,7 @@ gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
+http_client_tls = { path = "crates/http_client_tls" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion = { path = "crates/inline_completion" }
@@ -563,6 +565,7 @@ unindent = "0.2.0"
 unicode-segmentation = "1.10"
 unicode-script = "0.5.7"
 url = "2.2"
+urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 wasmparser = "0.221"
 wasm-encoder = "0.221"

@@ -805,7 +805,7 @@ impl Pane {
             .cloned()
     }
 
-    fn preview_item_idx(&self) -> Option<usize> {
+    pub fn preview_item_idx(&self) -> Option<usize> {
         if let Some(preview_item_id) = self.preview_item_id {
             self.items
                 .iter()
