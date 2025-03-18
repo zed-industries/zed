@@ -791,6 +791,8 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
+      "delete": "git::RestoreFile",
+      "cmd-backspace": "git::RestoreFile",
       "backspace": "git::RestoreFile"
     }
   },
