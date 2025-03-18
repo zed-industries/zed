@@ -13,8 +13,8 @@ mod thinking_tool;
 use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
-use gpui::http_client::HttpClientWithUrl;
 use gpui::App;
+use http_client::HttpClientWithUrl;
 
 use crate::bash_tool::BashTool;
 use crate::delete_path_tool::DeletePathTool;
