@@ -715,6 +715,8 @@ dependencies = [
  "feature_flags",
  "futures 0.3.31",
  "gpui",
+ "html_to_markdown",
+ "http_client",
  "itertools 0.14.0",
  "language",
  "language_model",
