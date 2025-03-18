@@ -259,7 +259,15 @@ impl EditToolRequest {
                 .await),
         }?;
 
-        let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+        let edit_ids = buffer.update(cx, |buffer, cx| {
+            buffer.finalize_last_transaction();
+            buffer.apply_diff(diff, cx);
+            let transaction = buffer.finalize_last_transaction();
+            transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
+        })?;
+        self.action_log.update(cx, |log, cx| {
+            log.buffer_edited(buffer.clone(), edit_ids, cx)
+        })?;
 
         write!(&mut self.output, "\n\n{}", source)?;
         self.changed_buffers.insert(buffer);
@@ -307,10 +315,6 @@ impl EditToolRequest {
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
                 .await?;
         }
-
-        self.action_log
-            .update(cx, |log, cx| log.buffer_edited(self.changed_buffers, cx))
-            .log_err();
 
         let errors = self.parser.errors();
 

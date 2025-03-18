@@ -347,8 +347,9 @@ impl Render for MessageEditor {
             px(64.)
         };
 
-        let changed_buffers = self.thread.read(cx).scripting_changed_buffers(cx);
-        let changed_buffers_count = changed_buffers.len();
+        let action_log = self.thread.read(cx).action_log();
+        let unreviewed_buffers = action_log.read(cx).unreviewed_buffers();
+        let unreviewed_buffers_count = action_log.read(cx).unreviewed_buffers().count();
 
         v_flex()
             .size_full()
@@ -410,7 +411,7 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            .when(changed_buffers_count > 0, |parent| {
+            .when(unreviewed_buffers_count > 0, |parent| {
                 parent.child(
                     v_flex()
                         .mx_2()
@@ -439,8 +440,8 @@ impl Render for MessageEditor {
                                 .child(
                                     Label::new(format!(
                                         "{} {}",
-                                        changed_buffers_count,
-                                        if changed_buffers_count == 1 {
+                                        unreviewed_buffers_count,
+                                        if unreviewed_buffers_count == 1 {
                                             "file"
                                         } else {
                                             "files"
@@ -453,7 +454,7 @@ impl Render for MessageEditor {
                         .when(self.edits_expanded, |parent| {
                             parent.child(
                                 v_flex().bg(cx.theme().colors().editor_background).children(
-                                    changed_buffers.enumerate().flat_map(|(index, buffer)| {
+                                    unreviewed_buffers.enumerate().flat_map(|(index, buffer)| {
                                         let file = buffer.read(cx).file()?;
                                         let path = file.path();
 
@@ -486,7 +487,7 @@ impl Render for MessageEditor {
 
                                         let element = div()
                                             .p_2()
-                                            .when(index + 1 < changed_buffers_count, |parent| {
+                                            .when(index + 1 < unreviewed_buffers_count, |parent| {
                                                 parent
                                                     .border_color(cx.theme().colors().border)
                                                     .border_b_1()

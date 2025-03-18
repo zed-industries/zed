@@ -1,15 +1,14 @@
 mod tool_registry;
 mod tool_working_set;
 
-use std::sync::Arc;
-
 use anyhow::Result;
+use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
-use gpui::Context;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
+use std::sync::Arc;
 
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
@@ -65,8 +64,10 @@ pub struct ActionLog {
     tracked_buffers: HashMap<Entity<Buffer>, TrackedBuffer>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TrackedBuffer {
+    unreviewed_edit_ids: Vec<clock::Lamport>,
+    diff: Entity<BufferDiff>,
     version: clock::Global,
 }
 
@@ -79,20 +80,65 @@ impl ActionLog {
         }
     }
 
+    fn track_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> &mut TrackedBuffer {
+        let tracked_buffer = self
+            .tracked_buffers
+            .entry(buffer.clone())
+            .or_insert_with(|| {
+                let text_snapshot = buffer.read(cx).text_snapshot();
+                TrackedBuffer {
+                    unreviewed_edit_ids: Vec::new(),
+                    diff: cx.new(|cx| BufferDiff::new(&text_snapshot, cx)),
+                    version: buffer.read(cx).version(),
+                }
+            });
+        tracked_buffer.version = buffer.read(cx).version();
+        tracked_buffer
+    }
+
     /// Track a buffer as read, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.tracked_buffers.entry(buffer.clone()).or_default();
-        tracked_buffer.version = buffer.read(cx).version();
+        self.track_buffer(buffer, cx);
     }
 
     /// Mark a buffer as edited, so we can refresh it in the context
-    pub fn buffer_edited(&mut self, buffers: HashSet<Entity<Buffer>>, cx: &mut Context<Self>) {
-        for buffer in &buffers {
-            let tracked_buffer = self.tracked_buffers.entry(buffer.clone()).or_default();
-            tracked_buffer.version = buffer.read(cx).version();
-        }
+    pub fn buffer_edited(
+        &mut self,
+        buffer: Entity<Buffer>,
+        edit_ids: Vec<clock::Lamport>,
+        cx: &mut Context<Self>,
+    ) {
+        self.stale_buffers_in_context.insert(buffer.clone());
 
-        self.stale_buffers_in_context.extend(buffers);
+        let tracked_buffer = self.track_buffer(buffer.clone(), cx);
+        tracked_buffer
+            .unreviewed_edit_ids
+            .extend(edit_ids.iter().copied());
+
+        let operations_to_undo = tracked_buffer
+            .unreviewed_edit_ids
+            .iter()
+            .map(|edit_id| (*edit_id, u32::MAX))
+            .collect::<HashMap<_, _>>();
+        let buffer_without_changes = buffer.update(cx, |buffer, cx| buffer.branch(cx));
+        buffer_without_changes.update(cx, |buffer, cx| {
+            buffer.undo_operations(operations_to_undo, cx);
+        });
+        let _ = tracked_buffer.diff.update(cx, |diff, cx| {
+            diff.set_base_text(buffer_without_changes, buffer.read(cx).text_snapshot(), cx)
+        });
+    }
+
+    /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
+    pub fn unreviewed_buffers(&self) -> impl '_ + Iterator<Item = Entity<Buffer>> {
+        self.tracked_buffers
+            .iter()
+            .filter(|(_, tracked)| !tracked.unreviewed_edit_ids.is_empty())
+            .map(|(buffer, _)| buffer.clone())
     }
 
     /// Iterate over buffers changed since last read or edited by the model

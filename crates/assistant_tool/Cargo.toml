@@ -13,6 +13,7 @@ path = "src/assistant_tool.rs"
 
 [dependencies]
 anyhow.workspace = true
+buffer_diff.workspace = true
 collections.workspace = true
 clock.workspace = true
 derive_more.workspace = true
