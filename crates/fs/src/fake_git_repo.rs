@@ -221,7 +221,14 @@ impl GitRepository for FakeGitRepository {
                         unreachable!();
                     }
                 };
-                entries.push((path.clone(), status));
+                if status
+                    != FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Unmodified,
+                    })
+                {
+                    entries.push((path.clone(), status));
+                }
             }
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             Ok(GitStatus {
