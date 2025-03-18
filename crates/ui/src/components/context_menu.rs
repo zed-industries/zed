@@ -126,7 +126,7 @@ impl From<ContextMenuEntry> for ContextMenuItem {
 }
 
 pub struct ContextMenu {
-    builder: Rc<dyn Fn(Self, &mut Window, &mut Context<Self>) -> Self>,
+    builder: Option<Rc<dyn Fn(Self, &mut Window, &mut Context<Self>) -> Self>>,
     items: Vec<ContextMenuItem>,
     focus_handle: FocusHandle,
     action_context: Option<FocusHandle>,
@@ -164,7 +164,7 @@ impl ContextMenu {
             window.refresh();
             f(
                 Self {
-                    builder: Rc::new(|menu, _window, _cx| menu),
+                    builder: None,
                     items: Default::default(),
                     focus_handle,
                     action_context: None,
@@ -181,7 +181,11 @@ impl ContextMenu {
         })
     }
 
-    pub fn build2(
+    /// Builds a [`ContextMenu`] that will stay open when making changes instead of closing after each confirmation.
+    ///
+    /// The main difference from [`ContextMenu::build`] is the type of the `builder`, as we need to be able to hold onto
+    /// it to call it again.
+    pub fn build_persistent(
         window: &mut Window,
         cx: &mut App,
         builder: impl Fn(Self, &mut Window, &mut Context<Self>) -> Self + 'static,
@@ -199,7 +203,7 @@ impl ContextMenu {
 
             (builder.clone())(
                 Self {
-                    builder,
+                    builder: Some(builder),
                     items: Default::default(),
                     focus_handle,
                     action_context: None,
@@ -207,7 +211,7 @@ impl ContextMenu {
                     delayed: false,
                     clicked: false,
                     _on_blur_subscription,
-                    keep_open_on_confirm: false,
+                    keep_open_on_confirm: true,
                     documentation_aside: None,
                 },
                 window,
@@ -216,11 +220,23 @@ impl ContextMenu {
         })
     }
 
-    pub fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Rebuilds the menu.
+    ///
+    /// This is used to refresh the menu entries when entries are toggled when the menu is configured with
+    /// `keep_open_on_confirm = true`.
+    ///
+    /// This only works if the [`ContextMenu`] was constructed using [`ContextMenu::build_persistent`]. Otherwise it is
+    /// a no-op.
+    fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(builder) = self.builder.clone() else {
+            return;
+        };
+
+        // The way we rebuild the menu is a bit of a hack.
         let focus_handle = cx.focus_handle();
-        let new_menu = (self.builder.clone())(
+        let new_menu = (builder.clone())(
             Self {
-                builder: self.builder.clone(),
+                builder: Some(builder),
                 items: Default::default(),
                 focus_handle: focus_handle.clone(),
                 action_context: None,
