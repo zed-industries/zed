@@ -393,7 +393,7 @@ impl ContextProvider for PythonContextProvider {
             },
             // Execute a file as module
             TaskTemplate {
-                label: format!("run as module '{}'", VariableName::File.template_value()),
+                label: format!("run module '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-m".to_owned(),
