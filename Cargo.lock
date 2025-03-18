@@ -5115,6 +5115,7 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "gpui",
+ "ignore",
  "libc",
  "log",
  "notify 6.1.1",

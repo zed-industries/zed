@@ -717,7 +717,13 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         }),
     )
     .await;
-    fs.set_status_for_repo("/root/tree/.git".as_ref(), &[]);
+    fs.set_head_and_index_for_repo(
+        "/root/tree/.git".as_ref(),
+        &[
+            (".gitignore".into(), "ignored-dir\n".into()),
+            ("tracked-dir/tracked-file1".into(), "".into()),
+        ],
+    );
 
     let tree = Worktree::local(
         "/root/tree".as_ref(),
@@ -752,6 +758,14 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
+    fs.set_index_for_repo(
+        "/root/tree/.git".as_ref(),
+        &[
+            (".gitignore".into(), "ignored-dir\n".into()),
+            ("tracked-dir/tracked-file1".into(), "".into()),
+            ("tracked-dir/tracked-file2".into(), "".into()),
+        ],
+    );
     fs.create_file(
         "/root/tree/tracked-dir/ancestor-ignored-file2".as_ref(),
         Default::default(),
@@ -794,9 +808,13 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
         }),
     )
     .await;
-    fs.set_head_for_repo(
+
+    fs.set_head_and_index_for_repo(
         "/root/.git".as_ref(),
-        &[(".gitignore".into(), "*.xml".into())],
+        &[
+            (".gitignore".into(), "*.txt\n".into()),
+            ("a.xml".into(), "<a></a>".into()),
+        ],
     );
 
     let tree = Worktree::local(
@@ -819,15 +837,25 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     .recv()
     .await;
 
+    // One file is unmodified, the other is ignored.
     cx.read(|cx| {
         let tree = tree.read(cx);
         assert_entry_git_state(tree, "a.xml", None, false);
         assert_entry_git_state(tree, "b.txt", None, true);
     });
 
-    fs.atomic_write("/root/.gitignore".into(), "*.xml".into())
+    // Change the gitignore, and stage the newly non-ignored file.
+    fs.atomic_write("/root/.gitignore".into(), "*.xml\n".into())
         .await
         .unwrap();
+    fs.set_index_for_repo(
+        Path::new("/root/.git"),
+        &[
+            (".gitignore".into(), "*.txt\n".into()),
+            ("a.xml".into(), "<a></a>".into()),
+            ("b.txt".into(), "Some text".into()),
+        ],
+    );
 
     cx.executor().run_until_parked();
     cx.read(|cx| {

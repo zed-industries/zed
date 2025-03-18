@@ -19,6 +19,7 @@ collections.workspace = true
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
+ignore.workspace = true
 libc.workspace = true
 log.workspace = true
 parking_lot.workspace = true

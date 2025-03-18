@@ -11,6 +11,7 @@ use git::{
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 use gpui::AsyncApp;
+use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
 use std::{path::PathBuf, sync::Arc};
@@ -139,24 +140,47 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
-        let git_files: HashMap<_, _> = self
+        let workdir_path = self.dot_git_path.parent().unwrap();
+
+        // Load gitignores
+        let ignores = workdir_path
+            .ancestors()
+            .filter_map(|dir| {
+                let ignore_path = dir.join(".gitignore");
+                let content = self.fs.read_file_sync(ignore_path).ok()?;
+                let content = String::from_utf8(content).ok()?;
+                let mut builder = GitignoreBuilder::new(dir);
+                for line in content.lines() {
+                    builder.add_line(Some(dir.into()), line).ok()?;
+                }
+                builder.build().ok()
+            })
+            .collect::<Vec<_>>();
+
+        // Load working copy files.
+        let git_files: HashMap<RepoPath, (String, bool)> = self
             .fs
             .files()
             .iter()
             .filter_map(|path| {
-                let repo_path = RepoPath::new(
-                    path.strip_prefix(self.dot_git_path.parent().unwrap())
-                        .ok()?
-                        .into(),
-                );
+                let repo_path = path.strip_prefix(workdir_path).ok()?;
+                let mut is_ignored = false;
+                for ignore in &ignores {
+                    match ignore.matched_path_or_any_parents(path, false) {
+                        ignore::Match::None => {}
+                        ignore::Match::Ignore(_) => is_ignored = true,
+                        ignore::Match::Whitelist(_) => break,
+                    }
+                }
                 let content = self
                     .fs
                     .read_file_sync(path)
                     .ok()
-                    .map(|content| String::from_utf8(content).unwrap());
-                Some((repo_path, content?))
+                    .map(|content| String::from_utf8(content).unwrap())?;
+                Some((repo_path.into(), (content, is_ignored)))
             })
             .collect();
+
         self.with_state(|state| {
             let mut entries = Vec::new();
             let paths = state
@@ -176,18 +200,20 @@ impl GitRepository for FakeGitRepository {
                 let fs = git_files.get(path);
                 let status = match (unmerged, head, index, fs) {
                     (Some(unmerged), _, _, _) => FileStatus::Unmerged(*unmerged),
-                    (_, Some(head), Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
-                        index_status: if head == index {
-                            StatusCode::Unmodified
-                        } else {
-                            StatusCode::Modified
-                        },
-                        worktree_status: if fs == index {
-                            StatusCode::Unmodified
-                        } else {
-                            StatusCode::Modified
-                        },
-                    }),
+                    (_, Some(head), Some(index), Some((fs, _))) => {
+                        FileStatus::Tracked(TrackedStatus {
+                            index_status: if head == index {
+                                StatusCode::Unmodified
+                            } else {
+                                StatusCode::Modified
+                            },
+                            worktree_status: if fs == index {
+                                StatusCode::Unmodified
+                            } else {
+                                StatusCode::Modified
+                            },
+                        })
+                    }
                     (_, Some(head), Some(index), None) => FileStatus::Tracked(TrackedStatus {
                         index_status: if head == index {
                             StatusCode::Unmodified
@@ -204,7 +230,7 @@ impl GitRepository for FakeGitRepository {
                         index_status: StatusCode::Deleted,
                         worktree_status: StatusCode::Deleted,
                     }),
-                    (_, None, Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
+                    (_, None, Some(index), Some((fs, _))) => FileStatus::Tracked(TrackedStatus {
                         index_status: StatusCode::Added,
                         worktree_status: if fs == index {
                             StatusCode::Unmodified
@@ -216,7 +242,12 @@ impl GitRepository for FakeGitRepository {
                         index_status: StatusCode::Added,
                         worktree_status: StatusCode::Deleted,
                     }),
-                    (_, None, None, Some(_)) => FileStatus::Untracked,
+                    (_, None, None, Some((_, is_ignored))) => {
+                        if *is_ignored {
+                            continue;
+                        }
+                        FileStatus::Untracked
+                    }
                     (_, None, None, None) => {
                         unreachable!();
                     }
