@@ -204,7 +204,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "gitcommit",
-            adapters: vec![],
             ..Default::default()
         },
     ];
