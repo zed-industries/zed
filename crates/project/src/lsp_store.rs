@@ -1194,18 +1194,15 @@ impl LocalLspStore {
                     return transaction_id;
                 }
                 let transaction_id_prev = buffer.peek_undo_stack().unwrap().transaction_id();
+                // todo! this might cause panics if other places where format is called expect to be
+                // able to call end_transaction at the end
+                // investigate a better way to make sure we start our own transaction in the history
                 while buffer.end_transaction(cx).is_none() {
                     if buffer.peek_undo_stack().unwrap().transaction_id() != transaction_id_prev {
                         break;
                     }
                 }
                 return buffer.start_transaction().unwrap();
-                // if let Some(transaction_id_new) = buffer.start_transaction() {
-                //     // no open transactions except for this one
-                //     // (text.history.transaction_depth was 0)
-                //     return transaction_id_new;
-                // }
-                // return buffer.peek_undo_stack().unwrap().transaction_id();
             })?;
 
             // handle whitespace formatting
@@ -1286,22 +1283,84 @@ impl LocalLspStore {
 
             let formatters = code_actions_on_format_formatter.iter().chain(formatters);
 
-            for formatter in formatters {
-                // let should_continue_formatting = || {
-                //     buffer
-                //         .handle
-                //         .read_with(&cx, |buffer, _| {
-                //             buffer.peek_undo_stack().map(|t| t.transaction_id())
-                //         })
-                //         .ok()
-                //         .flatten()
-                //         .is_some_and(|id| id == transaction_id_format)
-                // };
+            // variable to handle errors in format loop below
+            // we can't use `?` because we need to make sure we end the transaction
+            // which happens after the loop so we use this variable to store the error
+            // until we get there
+            // the only `?`s in the loop below should be for "app doesn't exist anymore" errors
+            let mut result = anyhow::Ok(());
 
-                _ = formatter;
-                // match formatter {
-                //     Format
-                // }
+            for formatter in formatters {
+                let should_continue_formatting = |buffer: &FormattableBuffer, cx: &AsyncApp| {
+                    buffer
+                        .handle
+                        .read_with(cx, |buffer, _| {
+                            buffer.peek_undo_stack().map(|t| t.transaction_id())
+                        })
+                        .ok()
+                        .flatten()
+                        .is_some_and(|id| id == transaction_id_format)
+                };
+
+                match formatter {
+                    Formatter::Prettier => {
+                        let prettier = lsp_store.read_with(&cx, |lsp_store, _cx| {
+                            lsp_store.prettier_store().unwrap().downgrade()
+                        })?;
+                        let diff_result = prettier_store::format_with_prettier(
+                            &prettier,
+                            &buffer.handle,
+                            &mut cx,
+                        )
+                        .await
+                        .transpose();
+                        let Ok(diff) = diff_result else {
+                            result = Err(diff_result.unwrap_err());
+                            break;
+                        };
+                        if !should_continue_formatting(buffer, &cx) {
+                            result = Err(anyhow!("Formatting aborted due to buffer changes"));
+                            break;
+                        }
+                        // todo! have format with prettier return diff instead of operation
+                        let Some(FormatOperation::Prettier(diff)) = diff else {
+                            continue;
+                        };
+                        buffer.handle.update(&mut cx, |buffer, cx| {
+                            buffer.apply_diff(diff, cx);
+                            buffer.group_until_transaction(transaction_id_format);
+                        })?;
+                    }
+                    Formatter::External { command, arguments } => {
+                        let diff_result = Self::format_via_external_command(
+                            buffer,
+                            command.as_ref(),
+                            arguments.as_deref(),
+                            &mut cx,
+                        )
+                        .await
+                        .with_context(|| {
+                            format!("Failed to format buffer via external command: {}", command)
+                        });
+                        let Ok(diff) = diff_result else {
+                            result = Err(diff_result.unwrap_err());
+                            break;
+                        };
+                        if !should_continue_formatting(buffer, &cx) {
+                            result = Err(anyhow!("Formatting aborted due to buffer changes"));
+                            break;
+                        }
+                        let Some(diff) = diff else {
+                            continue;
+                        };
+                        buffer.handle.update(&mut cx, |buffer, cx| {
+                            buffer.apply_diff(diff, cx);
+                            buffer.group_until_transaction(transaction_id_format);
+                        })?;
+                    }
+                    Formatter::LanguageServer { name } => {}
+                    Formatter::CodeActions(hash_map) => {}
+                }
             }
 
             buffer.handle.update(&mut cx, |b, cx| {
@@ -1309,12 +1368,17 @@ impl LocalLspStore {
                     // last transaction could be None if there were no edits made in the transaction
                     // todo! check to make sure that is the case here
                     // (prev entry on undo stack should be none or not equal to transaction_id_format)
-                    return anyhow::Ok(());
+                    return result;
                 }
                 let transaction = b
                     .finalize_last_transaction()
                     .cloned()
                     .expect("should have last transaction if end_transaction returns Some");
+                // todo! remove?
+                debug_assert_eq!(transaction.id, transaction_id_format);
+                if result.is_err() {
+                    return result;
+                }
                 if !push_to_history {
                     b.forget_transaction(transaction.id);
                 }
