@@ -1,5 +1,5 @@
 use buffer_diff::BufferDiff;
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use gpui::{App, AppContext, Context, Entity};
 use language::Buffer;
 
@@ -10,14 +10,14 @@ pub struct ActionLog {
     /// changed since the model last saw them.
     stale_buffers_in_context: HashSet<Entity<Buffer>>,
     /// Buffers that we want to notify the model about when they change.
-    tracked_buffers: HashMap<Entity<Buffer>, TrackedBuffer>,
+    tracked_buffers: BTreeMap<Entity<Buffer>, TrackedBuffer>,
 }
 
-#[derive(Debug)]
-struct TrackedBuffer {
+#[derive(Debug, Clone)]
+pub struct TrackedBuffer {
     unreviewed_edit_ids: Vec<clock::Lamport>,
-    diff: Entity<BufferDiff>,
     version: clock::Global,
+    pub diff: Entity<BufferDiff>,
 }
 
 impl ActionLog {
@@ -25,7 +25,7 @@ impl ActionLog {
     pub fn new() -> Self {
         Self {
             stale_buffers_in_context: HashSet::default(),
-            tracked_buffers: HashMap::default(),
+            tracked_buffers: BTreeMap::default(),
         }
     }
 
@@ -41,8 +41,8 @@ impl ActionLog {
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 TrackedBuffer {
                     unreviewed_edit_ids: Vec::new(),
-                    diff: cx.new(|cx| BufferDiff::new(&text_snapshot, cx)),
                     version: buffer.read(cx).version(),
+                    diff: cx.new(|cx| BufferDiff::new(&text_snapshot, cx)),
                 }
             });
         tracked_buffer.version = buffer.read(cx).version();
@@ -80,14 +80,17 @@ impl ActionLog {
         let _ = tracked_buffer.diff.update(cx, |diff, cx| {
             diff.set_base_text(buffer_without_changes, buffer.read(cx).text_snapshot(), cx)
         });
+
+        cx.notify();
     }
 
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
-    pub fn unreviewed_buffers(&self) -> impl '_ + Iterator<Item = Entity<Buffer>> {
+    pub fn unreviewed_buffers(&self) -> BTreeMap<Entity<Buffer>, TrackedBuffer> {
         self.tracked_buffers
             .iter()
             .filter(|(_, tracked)| !tracked.unreviewed_edit_ids.is_empty())
-            .map(|(buffer, _)| buffer.clone())
+            .map(|(buffer, tracked)| (buffer.clone(), tracked.clone()))
+            .collect()
     }
 
     /// Iterate over buffers changed since last read or edited by the model

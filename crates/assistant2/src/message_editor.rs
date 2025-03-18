@@ -354,7 +354,7 @@ impl Render for MessageEditor {
 
         let action_log = self.thread.read(cx).action_log();
         let unreviewed_buffers = action_log.read(cx).unreviewed_buffers();
-        let unreviewed_buffers_count = action_log.read(cx).unreviewed_buffers().count();
+        let unreviewed_buffers_count = unreviewed_buffers.len();
 
         v_flex()
             .size_full()
@@ -479,61 +479,72 @@ impl Render for MessageEditor {
                         .when(self.edits_expanded, |parent| {
                             parent.child(
                                 v_flex().bg(cx.theme().colors().editor_background).children(
-                                    unreviewed_buffers.enumerate().flat_map(|(index, buffer)| {
-                                        let file = buffer.read(cx).file()?;
-                                        let path = file.path();
+                                    unreviewed_buffers.into_keys().enumerate().flat_map(
+                                        |(index, buffer)| {
+                                            let file = buffer.read(cx).file()?;
+                                            let path = file.path();
 
-                                        let parent_label = path.parent().and_then(|parent| {
-                                            let parent_str = parent.to_string_lossy();
+                                            let parent_label = path.parent().and_then(|parent| {
+                                                let parent_str = parent.to_string_lossy();
 
-                                            if parent_str.is_empty() {
-                                                None
-                                            } else {
-                                                Some(
-                                                    Label::new(format!(
-                                                        "{}{}",
-                                                        parent_str,
-                                                        std::path::MAIN_SEPARATOR_STR
-                                                    ))
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                                )
-                                            }
-                                        });
-
-                                        let name_label = path.file_name().map(|name| {
-                                            Label::new(name.to_string_lossy().to_string())
-                                                .size(LabelSize::Small)
-                                        });
-
-                                        let file_icon = FileIcons::get_icon(&path, cx)
-                                            .map(Icon::from_path)
-                                            .unwrap_or_else(|| Icon::new(IconName::File));
-
-                                        let element = div()
-                                            .p_2()
-                                            .when(index + 1 < unreviewed_buffers_count, |parent| {
-                                                parent
-                                                    .border_color(cx.theme().colors().border)
-                                                    .border_b_1()
-                                            })
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(file_icon)
-                                                    .child(
-                                                        // TODO: handle overflow
-                                                        h_flex()
-                                                            .children(parent_label)
-                                                            .children(name_label),
+                                                if parent_str.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(
+                                                        Label::new(format!(
+                                                            "{}{}",
+                                                            parent_str,
+                                                            std::path::MAIN_SEPARATOR_STR
+                                                        ))
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small),
                                                     )
-                                                    // TODO: show lines changed
-                                                    .child(Label::new("+").color(Color::Created))
-                                                    .child(Label::new("-").color(Color::Deleted)),
-                                            );
+                                                }
+                                            });
 
-                                        Some(element)
-                                    }),
+                                            let name_label = path.file_name().map(|name| {
+                                                Label::new(name.to_string_lossy().to_string())
+                                                    .size(LabelSize::Small)
+                                            });
+
+                                            let file_icon = FileIcons::get_icon(&path, cx)
+                                                .map(Icon::from_path)
+                                                .unwrap_or_else(|| Icon::new(IconName::File));
+
+                                            let element = div()
+                                                .p_2()
+                                                .when(
+                                                    index + 1 < unreviewed_buffers_count,
+                                                    |parent| {
+                                                        parent
+                                                            .border_color(
+                                                                cx.theme().colors().border,
+                                                            )
+                                                            .border_b_1()
+                                                    },
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .child(file_icon)
+                                                        .child(
+                                                            // TODO: handle overflow
+                                                            h_flex()
+                                                                .children(parent_label)
+                                                                .children(name_label),
+                                                        )
+                                                        // TODO: show lines changed
+                                                        .child(
+                                                            Label::new("+").color(Color::Created),
+                                                        )
+                                                        .child(
+                                                            Label::new("-").color(Color::Deleted),
+                                                        ),
+                                                );
+
+                                            Some(element)
+                                        },
+                                    ),
                                 ),
                             )
                         }),

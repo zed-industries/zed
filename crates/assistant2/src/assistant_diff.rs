@@ -1,11 +1,14 @@
+use crate::Thread;
 use anyhow::Result;
 use assistant_tool::ActionLog;
+use collections::{HashMap, HashSet};
 use editor::{Editor, EditorEvent, MultiBuffer};
 use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, WeakEntity, Window,
 };
-use language::Capability;
+use language::{Anchor, Capability, OffsetRangeExt};
+use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
 use std::any::{Any, TypeId};
 use ui::prelude::*;
@@ -14,8 +17,6 @@ use workspace::{
     searchable::SearchableItemHandle,
     Item, ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
 };
-
-use crate::Thread;
 
 pub struct AssistantDiff {
     multibuffer: Entity<MultiBuffer>,
@@ -57,7 +58,6 @@ impl AssistantDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // todo!("listen for changes to thread/action_log and update multibuffer")
         let focus_handle = cx.focus_handle();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
@@ -73,22 +73,87 @@ impl AssistantDiff {
         });
 
         let action_log = thread.read(cx).action_log().clone();
-        Self {
-            _subscriptions: vec![cx.observe_in(&action_log, window, Self::action_log_changed)],
+        let mut this = Self {
+            _subscriptions: vec![cx.observe_in(
+                &action_log,
+                window,
+                |this, _action_log, window, cx| this.refresh(window, cx),
+            )],
             multibuffer,
             editor,
             thread,
             focus_handle,
             workspace,
-        }
+        };
+        this.refresh(window, cx);
+        this
     }
 
-    fn action_log_changed(
-        &mut self,
-        action_log: Entity<ActionLog>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let thread = self.thread.read(cx);
+        let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+
+        for (buffer, tracked) in thread.action_log().read(cx).unreviewed_buffers() {
+            let Some(file) = buffer.read(cx).file().cloned() else {
+                continue;
+            };
+
+            let path_key = PathKey::namespaced("", file.full_path(cx).into());
+            paths_to_delete.remove(&path_key);
+
+            let snapshot = buffer.read(cx).snapshot();
+            let diff = tracked.diff.read(cx);
+            let diff_hunk_ranges = diff
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                .collect::<Vec<_>>();
+
+            let (was_empty, is_excerpt_newly_added) =
+                self.multibuffer.update(cx, |multibuffer, cx| {
+                    let was_empty = multibuffer.is_empty();
+                    let is_newly_added = multibuffer.set_excerpts_for_path(
+                        path_key.clone(),
+                        buffer,
+                        diff_hunk_ranges,
+                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        cx,
+                    );
+                    multibuffer.add_diff(tracked.diff.clone(), cx);
+                    (was_empty, is_newly_added)
+                });
+
+            self.editor.update(cx, |editor, cx| {
+                if was_empty {
+                    editor.change_selections(None, window, cx, |selections| {
+                        // TODO select the very beginning (possibly inside a deletion)
+                        selections.select_ranges([0..0])
+                    });
+                }
+                if is_excerpt_newly_added && !file.disk_state().exists() {
+                    editor.fold_buffer(snapshot.text.remote_id(), cx)
+                }
+            });
+        }
+
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            for path in paths_to_delete {
+                multibuffer.remove_excerpts_for_path(path, cx);
+            }
+        });
+
+        if self.multibuffer.read(cx).is_empty()
+            && self
+                .editor
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        {
+            self.focus_handle.focus(window);
+        } else if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
+            self.editor.update(cx, |editor, cx| {
+                editor.focus_handle(cx).focus(window);
+            });
+        }
     }
 }
 
