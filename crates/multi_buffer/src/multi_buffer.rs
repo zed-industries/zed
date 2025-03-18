@@ -1596,6 +1596,10 @@ impl MultiBuffer {
         self.update_path_excerpts(path, buffer, &buffer_snapshot, new, cx)
     }
 
+    pub fn has_excerpt_for_path(&self, path: &PathKey) -> bool {
+        self.excerpts_by_path.get(path).is_some()
+    }
+
     fn update_path_excerpts(
         &mut self,
         path: PathKey,

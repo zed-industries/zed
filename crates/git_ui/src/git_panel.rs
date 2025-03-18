@@ -875,7 +875,20 @@ impl GitPanel {
                 }
             };
 
-            if entry.worktree_path.starts_with("..") {
+            let should_open_single_path = entry.worktree_path.starts_with("..")
+                || self
+                    .workspace
+                    .update(cx, |workspace, cx| {
+                        workspace
+                            .item_of_type::<ProjectDiff>(cx)
+                            .map_or(false, |project_diff| {
+                                project_diff
+                                    .read(cx)
+                                    .has_excerpt_for_path(&entry.repo_path.0, cx)
+                            })
+                    })
+                    .unwrap_or(false);
+            if should_open_single_path {
                 self.workspace
                     .update(cx, |workspace, cx| {
                         workspace

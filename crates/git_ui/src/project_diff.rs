@@ -26,7 +26,11 @@ use project::{
     git::{GitEvent, GitStore},
     Project, ProjectPath,
 };
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    path::Path,
+    sync::Arc,
+};
 use theme::ActiveTheme;
 use ui::{prelude::*, vertical_divider, KeyBinding, Tooltip};
 use util::ResultExt as _;
@@ -64,6 +68,9 @@ struct DiffBuffer {
 const CONFLICT_NAMESPACE: &'static str = "0";
 const TRACKED_NAMESPACE: &'static str = "1";
 const NEW_NAMESPACE: &'static str = "2";
+
+const MAX_DIFF_TRACKED_PATHS: usize = 1000;
+const MAX_DIFF_UNTRACKED_PATHS: usize = 1000;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -339,6 +346,7 @@ impl ProjectDiff {
 
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
+            let (mut tracked_count, mut untracked_count) = (0, 0);
             for entry in repo.status() {
                 if !entry.status.has_changes() {
                     continue;
@@ -346,11 +354,24 @@ impl ProjectDiff {
                 let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
                     continue;
                 };
+
                 let namespace = if repo.has_conflict(&entry.repo_path) {
+                    if tracked_count >= MAX_DIFF_TRACKED_PATHS {
+                        continue;
+                    }
+                    tracked_count += 1;
                     CONFLICT_NAMESPACE
                 } else if entry.status.is_created() {
+                    if untracked_count >= MAX_DIFF_UNTRACKED_PATHS {
+                        continue;
+                    }
+                    untracked_count += 1;
                     NEW_NAMESPACE
                 } else {
+                    if tracked_count >= MAX_DIFF_TRACKED_PATHS {
+                        continue;
+                    }
+                    tracked_count += 1;
                     TRACKED_NAMESPACE
                 };
                 let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
@@ -480,6 +501,14 @@ impl ProjectDiff {
         }
 
         Ok(())
+    }
+
+    pub fn has_excerpt_for_path(&self, path: &Arc<Path>, cx: &App) -> bool {
+        let multibuffer = self.multibuffer.read(cx);
+        multibuffer.has_excerpt_for_path(&PathKey::namespaced(CONFLICT_NAMESPACE, path.clone()))
+            || multibuffer
+                .has_excerpt_for_path(&PathKey::namespaced(TRACKED_NAMESPACE, path.clone()))
+            || multibuffer.has_excerpt_for_path(&PathKey::namespaced(NEW_NAMESPACE, path.clone()))
     }
 
     #[cfg(any(test, feature = "test-support"))]
