@@ -1131,6 +1131,204 @@ impl LocalLspStore {
         Ok(project_transaction)
     }
 
+    async fn format_locally_2(
+        lsp_store: WeakEntity<LspStore>,
+        mut buffers: Vec<FormattableBuffer>,
+        push_to_history: bool,
+        trigger: FormatTrigger,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<ProjectTransaction> {
+        // Do not allow multiple concurrent formatting requests for the
+        // same buffer.
+        let _cleanup = {
+            lsp_store.update(&mut cx, |this, cx| {
+                let this = this.as_local_mut().unwrap();
+                buffers.retain(|buffer| {
+                    this.buffers_being_formatted
+                        .insert(buffer.handle.read(cx).remote_id())
+                });
+            })?;
+
+            defer({
+                let this = lsp_store.clone();
+                let mut cx = cx.clone();
+                let buffers = &buffers;
+                move || {
+                    this.update(&mut cx, |this, cx| {
+                        let this = this.as_local_mut().unwrap();
+                        for buffer in buffers {
+                            this.buffers_being_formatted
+                                .remove(&buffer.handle.read(cx).remote_id());
+                        }
+                    })
+                    .ok();
+                }
+            })
+        };
+
+        let mut project_transaction = ProjectTransaction::default();
+
+        for buffer in &buffers {
+            // todo! consider lazily initializing
+            let adapters_and_servers = lsp_store.update(&mut cx, |lsp_store, cx| {
+                buffer.handle.update(cx, |buffer, cx| {
+                    lsp_store
+                        .as_local()
+                        .unwrap()
+                        .language_servers_for_buffer(buffer, cx)
+                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                        .collect::<Vec<_>>()
+                })
+            })?;
+
+            let settings = buffer.handle.read_with(&cx, |buffer, cx| {
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                    .into_owned()
+            })?;
+
+            let transaction_id_format = buffer.handle.update(&mut cx, |buffer, cx| {
+                buffer.finalize_last_transaction();
+                if let Some(transaction_id) = buffer.start_transaction() {
+                    // no open transactions except for this one
+                    // (text.history.transaction_depth was 0)
+                    return transaction_id;
+                }
+                let transaction_id_prev = buffer.peek_undo_stack().unwrap().transaction_id();
+                while buffer.end_transaction(cx).is_none() {
+                    if buffer.peek_undo_stack().unwrap().transaction_id() != transaction_id_prev {
+                        break;
+                    }
+                }
+                return buffer.start_transaction().unwrap();
+                // if let Some(transaction_id_new) = buffer.start_transaction() {
+                //     // no open transactions except for this one
+                //     // (text.history.transaction_depth was 0)
+                //     return transaction_id_new;
+                // }
+                // return buffer.peek_undo_stack().unwrap().transaction_id();
+            })?;
+
+            // handle whitespace formatting
+            {
+                let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
+                let ensure_final_newline = settings.ensure_final_newline_on_save;
+
+                if remove_trailing_whitespace {
+                    let diff = buffer
+                        .handle
+                        .read_with(&cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))?
+                        .await;
+                    buffer.handle.update(&mut cx, |buffer, cx| {
+                        if let Some(transaction_id_diff) = buffer.apply_diff(diff, cx) {
+                            buffer.merge_transactions(transaction_id_diff, transaction_id_format);
+                        }
+                    })?;
+                }
+
+                if ensure_final_newline {
+                    buffer.handle.update(&mut cx, |buffer, cx| {
+                        buffer.ensure_final_newline(cx);
+                        // ensure_final_newline creates it's own transaction and
+                        // calls buffer.edit which creates one as well
+                        buffer.group_until_transaction(transaction_id_format);
+                    });
+                }
+
+                #[cfg(debug_assertions)]
+                {
+                    let prev_transaction_id = buffer
+                        .handle
+                        .read_with(&cx, |buffer, _| {
+                            buffer.peek_undo_stack().map(|t| t.transaction_id())
+                        })?
+                        .expect("History not empty");
+                    assert_eq!(prev_transaction_id, transaction_id_format);
+                }
+            }
+
+            // Formatter for `code_actions_on_format` that runs before
+            // the rest of the formatters
+            let code_actions_on_format_formatter = 'ca_formatter: {
+                let should_run_code_actions_on_format = !matches!(
+                    (trigger, &settings.format_on_save),
+                    (FormatTrigger::Save, &FormatOnSave::Off)
+                );
+                let have_code_actions_to_run_on_format = settings
+                    .code_actions_on_format
+                    .values()
+                    .any(|enabled| *enabled);
+
+                if should_run_code_actions_on_format && have_code_actions_to_run_on_format {
+                    break 'ca_formatter Some(Formatter::CodeActions(
+                        settings.code_actions_on_format.clone(),
+                    ));
+                } else {
+                    break 'ca_formatter None;
+                }
+            };
+
+            let formatters = match (trigger, &settings.format_on_save) {
+                (FormatTrigger::Save, FormatOnSave::Off) => &[],
+                (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
+                (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
+                    match &settings.formatter {
+                        SelectedFormatter::Auto => {
+                            if settings.prettier.allowed {
+                                std::slice::from_ref(&Formatter::Prettier)
+                            } else {
+                                std::slice::from_ref(&Formatter::LanguageServer { name: None })
+                            }
+                        }
+                        SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
+                    }
+                }
+            };
+
+            let formatters = code_actions_on_format_formatter.iter().chain(formatters);
+
+            for formatter in formatters {
+                // let should_continue_formatting = || {
+                //     buffer
+                //         .handle
+                //         .read_with(&cx, |buffer, _| {
+                //             buffer.peek_undo_stack().map(|t| t.transaction_id())
+                //         })
+                //         .ok()
+                //         .flatten()
+                //         .is_some_and(|id| id == transaction_id_format)
+                // };
+
+                _ = formatter;
+                // match formatter {
+                //     Format
+                // }
+            }
+
+            buffer.handle.update(&mut cx, |b, cx| {
+                if b.end_transaction(cx).is_none() {
+                    // last transaction could be None if there were no edits made in the transaction
+                    // todo! check to make sure that is the case here
+                    // (prev entry on undo stack should be none or not equal to transaction_id_format)
+                    return anyhow::Ok(());
+                }
+                let transaction = b
+                    .finalize_last_transaction()
+                    .cloned()
+                    .expect("should have last transaction if end_transaction returns Some");
+                if !push_to_history {
+                    b.forget_transaction(transaction.id);
+                }
+                project_transaction
+                    .0
+                    .insert(buffer.handle.clone(), transaction);
+
+                anyhow::Ok(())
+            })??;
+        }
+
+        return Ok(project_transaction);
+    }
+
     async fn format_locally(
         lsp_store: WeakEntity<LspStore>,
         mut buffers: Vec<FormattableBuffer>,
@@ -7683,7 +7881,7 @@ impl LspStore {
                     });
                 }
 
-                let result = LocalLspStore::format_locally(
+                let result = LocalLspStore::format_locally_2(
                     lsp_store.clone(),
                     formattable_buffers,
                     push_to_history,
