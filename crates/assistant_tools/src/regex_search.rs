@@ -86,14 +86,9 @@ impl Tool for RegexSearchTool {
                     continue;
                 }
 
-                if skips_remaining > 0 {
-                    skips_remaining -= 1;
-                    continue;
-                }
-
                 buffer.read_with(&cx, |buffer, cx| -> Result<(), anyhow::Error> {
                     if let Some(path) = buffer.file().map(|file| file.full_path(cx)) {
-                        writeln!(output, "## Matches in {}:", path.display())?;
+                        let mut file_header_written = false;
                         let mut ranges = ranges
                             .into_iter()
                             .map(|range| {
@@ -111,6 +106,11 @@ impl Tool for RegexSearchTool {
                             .peekable();
 
                         while let Some(mut range) = ranges.next() {
+                            if skips_remaining > 0 {
+                                skips_remaining -= 1;
+                                continue;
+                            }
+
                             // We'd already found a full page of matches, and we just found one more.
                             if matches_found >= RESULTS_PER_PAGE {
                                 has_more_matches = true;
@@ -126,9 +126,14 @@ impl Tool for RegexSearchTool {
                                 }
                             }
 
+                            if !file_header_written {
+                                writeln!(output, "\n## Matches in {}", path.display())?;
+                                file_header_written = true;
+                            }
+
                             let start_line = range.start.row + 1;
                             let end_line = range.end.row + 1;
-                            writeln!(output, "### Lines {start_line}-{end_line}\n```")?;
+                            writeln!(output, "\n### Lines {start_line}-{end_line}\n```")?;
                             output.extend(buffer.text_for_range(range));
                             output.push_str("\n```\n");
 
@@ -144,13 +149,13 @@ impl Tool for RegexSearchTool {
                 Ok("No matches found".to_string())
             } else if has_more_matches {
                 Ok(format!(
-                    "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n\n{output}",
+                    "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
                     offset + 1,
                     offset + matches_found,
                     offset + RESULTS_PER_PAGE,
                 ))
           } else {
-                Ok(format!("Found {matches_found} matches in total:\n\n{output}"))
+                Ok(format!("Found {matches_found} matches:\n{output}"))
             }
         })
     }
