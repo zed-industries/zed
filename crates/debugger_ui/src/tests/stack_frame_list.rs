@@ -446,12 +446,12 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         let project_path = editors[0]
             .update(cx, |editor, cx| editor.project_path(cx))
             .unwrap();
-        if cfg!(target_os = "windows") {
+        let expected = if cfg!(target_os = "windows") {
             "src\\module.js"
         } else {
             "src/module.js"
         };
-        assert_eq!(path!("src/module.js"), project_path.path.to_string_lossy());
+        assert_eq!(expected, project_path.path.to_string_lossy());
         assert_eq!(module_file_content, editors[0].read(cx).text(cx));
         assert_eq!(
             vec![0..1],
