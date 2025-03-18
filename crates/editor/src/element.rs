@@ -1525,19 +1525,10 @@ impl EditorElement {
                     bounds
                 };
 
-                // let header_height = line_height * FILE_HEADER_HEIGHT as f32;
                 let minimap_bounds = Bounds::new(
                     scrollbar_bounds.origin - point(minimap_width, Pixels::ZERO),
                     size(minimap_width, scrollbar_bounds.size.height),
                 );
-
-                //     Bounds::from_corners(
-                //     point(
-                //         bounds.size.width - minimap_width - scrollbar_y_width,
-                //         bounds.origin.y - header_height + px(2.),
-                //     ),
-                //     point(bounds.size.width - scrollbar_y_width, bounds.bottom()),
-                // );
 
                 let rem_size = self.rem_size(cx).unwrap_or(window.rem_size());
                 let mut text_style = self.style.text.clone();
