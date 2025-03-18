@@ -1,19 +1,25 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{Action, AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
+use context_server::manager::ContextServerManager;
+use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{prelude::*, Divider, DividerColor, ElevationIndex};
+use ui::{prelude::*, Divider, DividerColor, ElevationIndex, Indicator};
 use zed_actions::assistant::DeployPromptLibrary;
 
 pub struct AssistantConfiguration {
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
+    context_server_manager: Entity<ContextServerManager>,
     _registry_subscription: Subscription,
 }
 
 impl AssistantConfiguration {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        context_server_manager: Entity<ContextServerManager>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
 
         let registry_subscription = cx.subscribe_in(
@@ -36,6 +42,7 @@ impl AssistantConfiguration {
         let mut this = Self {
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
+            context_server_manager,
             _registry_subscription: registry_subscription,
         };
         this.build_provider_configuration_views(window, cx);
@@ -143,6 +150,42 @@ impl AssistantConfiguration {
                     }),
             )
     }
+
+    fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let context_servers = self.context_server_manager.read(cx).servers().clone();
+
+        const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
+
+        v_flex()
+            .p(DynamicSpacing::Base16.rems(cx))
+            .mt_1()
+            .gap_6()
+            .flex_1()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Headline::new("Context Servers (MCP)").size(HeadlineSize::Small))
+                    .child(Label::new(SUBHEADING).color(Color::Muted)),
+            )
+            .children(context_servers.into_iter().map(|context_server| {
+                let is_running = context_server.client().is_some();
+
+                h_flex()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .rounded_sm()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(Indicator::dot().color(if is_running {
+                        Color::Success
+                    } else {
+                        Color::Error
+                    }))
+                    .child(Label::new(context_server.id()))
+            }))
+    }
 }
 
 impl Render for AssistantConfiguration {
@@ -181,6 +224,8 @@ impl Render for AssistantConfiguration {
                             }),
                     ),
             )
+            .child(Divider::horizontal().color(DividerColor::Border))
+            .child(self.render_context_servers_section(cx))
             .child(Divider::horizontal().color(DividerColor::Border))
             .child(
                 v_flex()
