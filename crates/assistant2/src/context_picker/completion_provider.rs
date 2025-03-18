@@ -1,0 +1,708 @@
+use std::cell::RefCell;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use anyhow::Result;
+use editor::{CompletionProvider, Editor, ExcerptId};
+use gpui::{App, Entity, Task, WeakEntity};
+use language::{Buffer, CodeLabel, HighlightId};
+use lsp::CompletionContext;
+use project::{Completion, WorktreeId};
+use rope::Point;
+use text::{Anchor, ToPoint};
+use ui::prelude::*;
+use workspace::Workspace;
+
+use crate::context_store::ContextStore;
+use crate::thread_store::ThreadStore;
+
+use super::{recent_context_picker_entries, supported_context_picker_modes, ContextPickerMode};
+
+pub struct ContextPickerCompletionProvider {
+    workspace: WeakEntity<Workspace>,
+    context_store: WeakEntity<ContextStore>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    editor: WeakEntity<Editor>,
+}
+
+impl ContextPickerCompletionProvider {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        context_store: WeakEntity<ContextStore>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        editor: WeakEntity<Editor>,
+    ) -> Self {
+        Self {
+            workspace,
+            context_store,
+            thread_store,
+            editor,
+        }
+    }
+
+    fn default_completions(
+        range_to_replace: Range<Anchor>,
+        context_store: Entity<ContextStore>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        workspace: Entity<Workspace>,
+        cx: &App,
+    ) -> Vec<Completion> {
+        let mut completions = Vec::new();
+
+        if let Some(thread_store) = thread_store
+            .as_ref()
+            .and_then(|thread_store| thread_store.upgrade())
+        {
+            completions.extend(
+                recent_context_picker_entries(
+                    context_store.read(cx),
+                    thread_store.read(cx),
+                    workspace.read(cx),
+                    cx,
+                )
+                .iter()
+                .filter_map(|entry| {
+                    let (mode, mention_argument, label) = match entry {
+                        super::RecentEntry::File {
+                            project_path,
+                            path_prefix: _,
+                        } => {
+                            let full_path = Self::full_path_for_entry(
+                                project_path.worktree_id,
+                                &project_path.path,
+                                workspace.clone(),
+                                cx,
+                            )?;
+                            let label = Self::build_code_label_for_full_path(
+                                project_path.worktree_id,
+                                &project_path.path,
+                                workspace.clone(),
+                                cx,
+                            )?;
+                            (
+                                ContextPickerMode::File,
+                                full_path.to_string_lossy().to_string(),
+                                label,
+                            )
+                        }
+                        super::RecentEntry::Thread(thread_context_entry) => (
+                            ContextPickerMode::Thread,
+                            thread_context_entry.summary.to_string(),
+                            CodeLabel::plain(thread_context_entry.summary.to_string(), None),
+                        ),
+                    };
+                    Some(Completion {
+                        old_range: range_to_replace.clone(),
+                        new_text: format!("@{} {}", mode.mention_prefix(), mention_argument),
+                        label,
+                        documentation: None,
+                        source: project::CompletionSource::Custom,
+                        confirm: None,
+                    })
+                }),
+            );
+        }
+
+        completions.extend(
+            supported_context_picker_modes(&thread_store)
+                .iter()
+                .map(|mode| {
+                    Completion {
+                        old_range: range_to_replace.clone(),
+                        new_text: format!("@{} ", mode.mention_prefix()),
+                        label: CodeLabel::plain(mode.label().to_string(), None),
+                        documentation: None,
+                        source: project::CompletionSource::Custom,
+                        // This ensures that when a user accepts this completion, the
+                        // completion menu will still be shown after "@category " is
+                        // inserted
+                        confirm: Some(Arc::new(|_, _, _| true)),
+                    }
+                }),
+        );
+        completions
+    }
+
+    fn full_path_for_entry(
+        worktree_id: WorktreeId,
+        path: &Path,
+        workspace: Entity<Workspace>,
+        cx: &App,
+    ) -> Option<PathBuf> {
+        let worktree = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)?
+            .read(cx);
+
+        let mut full_path = PathBuf::from(worktree.root_name());
+        full_path.push(path);
+        Some(full_path)
+    }
+
+    fn build_code_label_for_full_path(
+        worktree_id: WorktreeId,
+        path: &Path,
+        workspace: Entity<Workspace>,
+        cx: &App,
+    ) -> Option<CodeLabel> {
+        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+        let mut label = CodeLabel::default();
+        let worktree = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)?;
+
+        let entry = worktree.read(cx).entry_for_path(&path)?;
+        let file_name = path.file_name()?.to_string_lossy();
+        label.push_str(&file_name, None);
+        if entry.is_dir() {
+            label.push_str("/ ", None);
+        } else {
+            label.push_str(" ", None);
+        };
+
+        let mut path_hint = String::new();
+        path_hint.push_str(worktree.read(cx).root_name());
+        if let Some(path_to_entry) = path.parent().and_then(|parent| parent.to_str()) {
+            path_hint.push_str("/");
+            path_hint.push_str(path_to_entry);
+        }
+        label.push_str(&path_hint, comment_id);
+
+        label.filter_range = 0..label.text().len();
+
+        Some(label)
+    }
+}
+
+impl CompletionProvider for ContextPickerCompletionProvider {
+    fn completions(
+        &self,
+        excerpt_id: ExcerptId,
+        buffer: &Entity<Buffer>,
+        buffer_position: Anchor,
+        _trigger: CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<Result<Option<Vec<Completion>>>> {
+        let state = buffer.update(cx, |buffer, _cx| {
+            let position = buffer_position.to_point(buffer);
+            let line_start = Point::new(position.row, 0);
+            let mut lines = buffer.text_for_range(line_start..position).lines();
+            let line = lines.next()?;
+            Some(MentionCompletion::try_parse(line)?)
+        });
+        let Some(state) = state else {
+            return Task::ready(Ok(None));
+        };
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Ok(None));
+        };
+        let Some(context_store) = self.context_store.upgrade() else {
+            return Task::ready(Ok(None));
+        };
+
+        let snapshot = buffer.read(cx).snapshot();
+        let range_to_replace = snapshot.anchor_after(state.range_to_replace.start)
+            ..snapshot.anchor_after(state.range_to_replace.end);
+
+        let thread_store = self.thread_store.clone();
+        let editor = self.editor.clone();
+
+        cx.spawn(|_, cx| async move {
+            let mut completions = Vec::new();
+
+            let MentionCompletion {
+                mode: category,
+                argument,
+                ..
+            } = state;
+
+            let query = argument.unwrap_or_else(|| "".to_string());
+            match category {
+                Some(ContextPickerMode::File) => {
+                    let path_matches = cx
+                        .update(|cx| {
+                            super::file_context_picker::search_paths(
+                                query,
+                                Arc::new(AtomicBool::default()),
+                                &workspace,
+                                cx,
+                            )
+                        })?
+                        .await;
+
+                    completions.reserve(path_matches.len());
+                    cx.update(|cx| {
+                        for path_match in path_matches {
+                            let Some(label) = Self::build_code_label_for_full_path(
+                                WorktreeId::from_usize(path_match.worktree_id),
+                                &path_match.path,
+                                workspace.clone(),
+                                cx,
+                            ) else {
+                                continue;
+                            };
+                            let Some(full_path) = Self::full_path_for_entry(
+                                WorktreeId::from_usize(path_match.worktree_id),
+                                &path_match.path,
+                                workspace.clone(),
+                                cx,
+                            ) else {
+                                continue;
+                            };
+
+                            completions.push(Completion {
+                                old_range: range_to_replace.clone(),
+                                new_text: format!("@file {}", full_path.to_string_lossy()),
+                                label,
+                                documentation: None,
+                                source: project::CompletionSource::Custom,
+                                confirm: None,
+                            });
+                        }
+                    })?;
+                }
+                Some(ContextPickerMode::Fetch) => {}
+                Some(ContextPickerMode::Thread) => {
+                    if let Some((thread_store, editor)) = thread_store
+                        .and_then(|thread_store| thread_store.upgrade())
+                        .zip(editor.upgrade())
+                    {
+                        let threads = cx
+                            .update(|cx| {
+                                super::thread_context_picker::search_threads(
+                                    query,
+                                    thread_store,
+                                    cx,
+                                )
+                            })?
+                            .await;
+                        for thread in threads {
+                            completions.push(Completion {
+                                old_range: range_to_replace.clone(),
+                                new_text: format!("@thread {}", thread.summary),
+                                label: CodeLabel::plain(thread.summary.to_string(), None),
+                                documentation: None,
+                                source: project::CompletionSource::Custom,
+                                confirm: Some(Arc::new({
+                                    let editor = editor.clone();
+                                    let range_to_replace = range_to_replace.clone();
+                                    move |_, window, cx| {
+                                        let editor = editor.clone();
+                                        let range_to_replace = range_to_replace.clone();
+                                        let thread_summary = thread.summary.clone();
+                                        {
+                                            window.defer(cx, move |window, cx| {
+                                                let snapshot =
+                                                    editor.read(cx).buffer().read(cx).snapshot(cx);
+
+                                                if let Some((start, end)) = snapshot
+                                                    .anchor_in_excerpt(
+                                                        excerpt_id,
+                                                        range_to_replace.start.clone(),
+                                                    )
+                                                    .zip(snapshot.anchor_in_excerpt(
+                                                        excerpt_id,
+                                                        range_to_replace.end.clone(),
+                                                    ))
+                                                {
+                                                    // crate::context_picker::insert_crease_for_mention(
+                                                    //     thread_summary.clone(),
+                                                    //     IconSource::Svg(
+                                                    //         IconName::MessageCircle.path().into(),
+                                                    //     ),
+                                                    //     start..end,
+                                                    //     editor.clone(),
+                                                    //     window,
+                                                    //     cx,
+                                                    // );
+                                                }
+                                            });
+                                            true
+                                        }
+                                    }
+                                })),
+                            });
+                        }
+                    }
+                }
+                None => {
+                    cx.update(|cx| {
+                        completions.extend(Self::default_completions(
+                            range_to_replace.clone(),
+                            context_store.clone(),
+                            thread_store.clone(),
+                            workspace.clone(),
+                            cx,
+                        ));
+                    })?;
+                }
+            }
+            Ok(Some(completions))
+        })
+    }
+
+    fn resolve_completions(
+        &self,
+        _buffer: Entity<Buffer>,
+        _completion_indices: Vec<usize>,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
+        _cx: &mut Context<Editor>,
+    ) -> Task<Result<bool>> {
+        Task::ready(Ok(true))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Entity<language::Buffer>,
+        position: language::Anchor,
+        _: &str,
+        _: bool,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        let buffer = buffer.read(cx);
+        let position = position.to_point(buffer);
+        let line_start = Point::new(position.row, 0);
+        let mut lines = buffer.text_for_range(line_start..position).lines();
+        if let Some(line) = lines.next() {
+            MentionCompletion::try_parse(line).is_some()
+        } else {
+            false
+        }
+    }
+
+    fn sort_completions(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum MentionCategory {
+    File,
+    Fetch,
+    Thread,
+}
+
+impl TryFrom<&str> for MentionCategory {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "file" => Ok(MentionCategory::File),
+            "fetch" => Ok(MentionCategory::Fetch),
+            "thread" => Ok(MentionCategory::Thread),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct MentionCompletion {
+    range_to_replace: Range<usize>,
+    mode: Option<ContextPickerMode>,
+    argument: Option<String>,
+}
+
+impl MentionCompletion {
+    fn try_parse(line: &str) -> Option<Self> {
+        let last_mention_start = line.rfind('@')?;
+        if last_mention_start >= line.len() {
+            return Some(Self::default());
+        }
+        let rest_of_line = &line[last_mention_start + 1..];
+
+        let mut mode = None;
+        let mut argument = None;
+
+        let mut parts = rest_of_line.split_whitespace();
+        let mut end = last_mention_start + 1;
+        if let Some(mode_text) = parts.next() {
+            end += mode_text.len();
+            mode = ContextPickerMode::try_from(mode_text).ok();
+            match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
+                Some(whitespace_count) => {
+                    if let Some(argument_text) = parts.next() {
+                        argument = Some(argument_text.to_string());
+                        end += whitespace_count + argument_text.len();
+                    }
+                }
+                None => {
+                    // Rest of line is entirely whitespace
+                    end += rest_of_line.len() - mode_text.len();
+                }
+            }
+        }
+
+        Some(Self {
+            range_to_replace: last_mention_start..end,
+            mode,
+            argument,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assistant_tool::ToolWorkingSet;
+    use gpui::{Focusable, TestAppContext, VisualTestContext};
+    use project::{Project, ProjectPath};
+    use prompt_store::PromptBuilder;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::{ops::Deref, path::PathBuf};
+    use util::path;
+    use workspace::AppState;
+
+    #[test]
+    fn test_mention_completion_parse() {
+        assert_eq!(MentionCompletion::try_parse("Lorem Ipsum"), None);
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @"),
+            Some(MentionCompletion {
+                range_to_replace: 6..7,
+                mode: None,
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file"),
+            Some(MentionCompletion {
+                range_to_replace: 6..11,
+                mode: Some(ContextPickerMode::File),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file "),
+            Some(MentionCompletion {
+                range_to_replace: 6..12,
+                mode: Some(ContextPickerMode::File),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs"),
+            Some(MentionCompletion {
+                range_to_replace: 6..19,
+                mode: Some(ContextPickerMode::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs "),
+            Some(MentionCompletion {
+                range_to_replace: 6..19,
+                mode: Some(ContextPickerMode::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs Ipsum"),
+            Some(MentionCompletion {
+                range_to_replace: 6..19,
+                mode: Some(ContextPickerMode::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_context_completions(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "editor": "",
+                    "a": {
+                        "one.txt": "",
+                        "two.txt": "",
+                        "three.txt": ""
+                    },
+                    "b": {
+                        "four.txt": "",
+                        "five.txt": "",
+                        "six.txt": "",
+                        "seven.txt": "",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let worktree = project.update(cx, |project, cx| {
+            let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees.pop().unwrap()
+        });
+        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let paths = vec![
+            "a/one.txt",
+            "a/two.txt",
+            "a/three.txt",
+            "a/four.txt",
+            "b/five.txt",
+            "b/six.txt",
+            "b/seven.txt",
+        ];
+        for path in paths {
+            workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    workspace.open_path(
+                        ProjectPath {
+                            worktree_id,
+                            path: PathBuf::from(path).into(),
+                        },
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+        }
+
+        //TODO: Construct the editor without an actual buffer that points to a file
+        let item = workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path(
+                    ProjectPath {
+                        worktree_id,
+                        path: PathBuf::from("editor").into(),
+                    },
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("Could not open test file");
+
+        let editor = cx.update(|_, cx| {
+            item.act_as::<Editor>(cx)
+                .expect("Opened test file wasn't an editor")
+        });
+
+        let context_store = cx.new(|_| ContextStore::new(workspace.downgrade()));
+
+        let editor_entity = editor.downgrade();
+        editor.update_in(&mut cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx));
+            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+                workspace.downgrade(),
+                context_store.downgrade(),
+                None,
+                editor_entity,
+            ))));
+        });
+
+        cx.simulate_input("Lorem ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem ");
+            assert!(!editor.has_visible_completions_menu());
+        });
+
+        cx.simulate_input("@");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                current_completion_labels(editor),
+                &[
+                    "seven.txt dir/b",
+                    "five.txt dir/b",
+                    "three.txt dir/a",
+                    "File",
+                    "Fetch",
+                    "Thread"
+                ]
+            );
+        });
+
+        // Select and confirm "File"
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file ");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                current_completion_labels(editor),
+                vec!["seven.txt dir/b", "five.txt dir/b", "three.txt dir/a"]
+            );
+        });
+
+        cx.simulate_input("thr");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file thr");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(current_completion_labels(editor), vec!["three.txt dir/a"]);
+        });
+    }
+
+    fn current_completion_labels(editor: &Editor) -> Vec<String> {
+        let completions = editor.current_completions().expect("Missing completions");
+        completions
+            .into_iter()
+            .map(|completion| completion.label.text.to_string())
+            .collect::<Vec<_>>()
+    }
+
+    pub(crate) fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            client::init_settings(cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            editor::init_settings(cx);
+        });
+    }
+}
