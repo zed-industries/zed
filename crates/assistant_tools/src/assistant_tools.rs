@@ -6,7 +6,7 @@ mod list_directory_tool;
 mod now_tool;
 mod path_search_tool;
 mod read_file_tool;
-mod regex_search;
+mod regex_search_tool;
 mod thinking_tool;
 
 use assistant_tool::ToolRegistry;
@@ -20,7 +20,7 @@ use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::path_search_tool::PathSearchTool;
 use crate::read_file_tool::ReadFileTool;
-use crate::regex_search::RegexSearchTool;
+use crate::regex_search_tool::RegexSearchTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub fn init(cx: &mut App) {
