@@ -33,3 +33,17 @@ jobs:
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           content: ${{ steps.get-content.outputs.string }}
+
+  send_release_notes_email:
+    if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send release notes email
+        run: |
+          curl -X POST "https://zed.dev/api/send_release_notes_email" \
+            -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "version": "${{ github.event.release.tag_name }}",
+              "markdownBody": ${{ toJSON(github.event.release.body) }}
+            }'
