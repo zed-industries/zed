@@ -17103,25 +17103,25 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "main.rs": sample_text,
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "main.rs": sample_text,
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree_id = workspace
@@ -17226,13 +17226,13 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "main.rs": sample_text,
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let (workspace, cx) =
         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 

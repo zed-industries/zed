@@ -876,14 +876,14 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let project_path = Path::new("/project");
@@ -948,7 +948,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         .on_request::<SetBreakpoints, _>({
             let called_set_breakpoints = called_set_breakpoints.clone();
             move |_, args| {
-                assert_eq!("/project/main.rs", args.source.path.unwrap());
+                assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
                 assert_eq!(
                     vec![SourceBreakpoint {
                         line: 2,
@@ -988,7 +988,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         .on_request::<SetBreakpoints, _>({
             let called_set_breakpoints = called_set_breakpoints.clone();
             move |_, args| {
-                assert_eq!("/project/main.rs", args.source.path.unwrap());
+                assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
                 assert_eq!(
                     vec![SourceBreakpoint {
                         line: 3,

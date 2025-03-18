@@ -18,6 +18,7 @@ use menu::{SelectFirst, SelectNext, SelectPrevious};
 use project::{FakeFs, Project};
 use serde_json::json;
 use unindent::Unindent as _;
+use util::path;
 
 /// This only tests fetching one scope and 2 variables for a single stackframe
 #[gpui::test]
@@ -36,7 +37,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -45,7 +46,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     workspace
         .update(cx, |workspace, window, cx| {
@@ -80,7 +81,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
         name: "Stack Frame 1".into(),
         source: Some(dap::Source {
             name: Some("test.js".into()),
-            path: Some("/project/src/test.js".into()),
+            path: Some(path!("/project/src/test.js").into()),
             source_reference: None,
             presentation_hint: None,
             origin: None,
@@ -263,7 +264,7 @@ async fn test_fetch_variables_for_multiple_scopes(
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -272,7 +273,7 @@ async fn test_fetch_variables_for_multiple_scopes(
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     workspace
         .update(cx, |workspace, window, cx| {
@@ -318,7 +319,7 @@ async fn test_fetch_variables_for_multiple_scopes(
         name: "Stack Frame 1".into(),
         source: Some(dap::Source {
             name: Some("test.js".into()),
-            path: Some("/project/src/test.js".into()),
+            path: Some(path!("/project/src/test.js").into()),
             source_reference: None,
             presentation_hint: None,
             origin: None,
@@ -542,7 +543,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -551,7 +552,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     workspace
         .update(cx, |workspace, window, cx| {
@@ -597,7 +598,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
         name: "Stack Frame 1".into(),
         source: Some(dap::Source {
             name: Some("test.js".into()),
-            path: Some("/project/src/test.js".into()),
+            path: Some(path!("/project/src/test.js").into()),
             source_reference: None,
             presentation_hint: None,
             origin: None,
@@ -1133,7 +1134,7 @@ async fn test_variable_list_only_sends_requests_when_rendering(
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -1143,7 +1144,7 @@ async fn test_variable_list_only_sends_requests_when_rendering(
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -1185,7 +1186,7 @@ async fn test_variable_list_only_sends_requests_when_rendering(
             name: "Stack Frame 1".into(),
             source: Some(dap::Source {
                 name: Some("test.js".into()),
-                path: Some("/project/src/test.js".into()),
+                path: Some(path!("/project/src/test.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -1207,7 +1208,7 @@ async fn test_variable_list_only_sends_requests_when_rendering(
             name: "Stack Frame 2".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -1405,7 +1406,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -1415,7 +1416,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     workspace
         .update(cx, |workspace, window, cx| {
@@ -1462,7 +1463,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
             name: "Stack Frame 1".into(),
             source: Some(dap::Source {
                 name: Some("test.js".into()),
-                path: Some("/project/src/test.js".into()),
+                path: Some(path!("/project/src/test.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -1484,7 +1485,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
             name: "Stack Frame 2".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,

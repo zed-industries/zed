@@ -36,7 +36,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -46,7 +46,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -77,7 +77,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
             name: "Stack Frame 1".into(),
             source: Some(dap::Source {
                 name: Some("test.js".into()),
-                path: Some("/project/src/test.js".into()),
+                path: Some(path!("/project/src/test.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -99,7 +99,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
             name: "Stack Frame 2".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -220,7 +220,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -230,7 +230,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let _ = workspace.update(cx, |workspace, window, cx| {
         workspace.toggle_dock(workspace::dock::DockPosition::Bottom, window, cx);
@@ -265,7 +265,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             name: "Stack Frame 1".into(),
             source: Some(dap::Source {
                 name: Some("test.js".into()),
-                path: Some("/project/src/test.js".into()),
+                path: Some(path!("/project/src/test.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -287,7 +287,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             name: "Stack Frame 2".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -375,7 +375,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             let project_path = editors[0]
                 .update(cx, |editor, cx| editor.project_path(cx))
                 .unwrap();
-            assert_eq!("src/test.js", project_path.path.to_string_lossy());
+            assert_eq!(path!("src/test.js"), project_path.path.to_string_lossy());
             assert_eq!(test_file_content, editors[0].read(cx).text(cx));
             assert_eq!(
                 vec![2..3],
@@ -440,7 +440,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         let project_path = editors[0]
             .update(cx, |editor, cx| editor.project_path(cx))
             .unwrap();
-        assert_eq!("src/module.js", project_path.path.to_string_lossy());
+        assert_eq!(path!("src/module.js"), project_path.path.to_string_lossy());
         assert_eq!(module_file_content, editors[0].read(cx).text(cx));
         assert_eq!(
             vec![0..1],
@@ -487,7 +487,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     .unindent();
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
            "src": {
                "test.js": test_file_content,
@@ -497,7 +497,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -528,7 +528,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             name: "Stack Frame 1".into(),
             source: Some(dap::Source {
                 name: Some("test.js".into()),
-                path: Some("/project/src/test.js".into()),
+                path: Some(path!("/project/src/test.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -550,7 +550,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             name: "Stack Frame 2".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: Some("ignored".into()),
@@ -572,7 +572,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             name: "Stack Frame 3".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: Some("ignored".into()),
@@ -594,7 +594,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             name: "Stack Frame 4".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -616,7 +616,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             name: "Stack Frame 5".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -638,7 +638,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             name: "Stack Frame 6".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
@@ -660,7 +660,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             name: "Stack Frame 7".into(),
             source: Some(dap::Source {
                 name: Some("module.js".into()),
-                path: Some("/project/src/module.js".into()),
+                path: Some(path!("/project/src/module.js").into()),
                 source_reference: None,
                 presentation_hint: None,
                 origin: None,
