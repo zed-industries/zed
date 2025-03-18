@@ -5844,7 +5844,6 @@ impl EditorElement {
                         }
 
                         Self::mouse_moved(editor, event, &position_map, window, cx);
-                        window.refresh();
                     });
                 }
             }
