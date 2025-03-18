@@ -110,45 +110,11 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let Ok(threads) = self.thread_store.update(cx, |this, _cx| {
-            this.threads()
-                .into_iter()
-                .map(|thread| ThreadContextEntry {
-                    id: thread.id,
-                    summary: thread.summary,
-                })
-                .collect::<Vec<_>>()
-        }) else {
+        let Some(threads) = self.thread_store.upgrade() else {
             return Task::ready(());
         };
 
-        let executor = cx.background_executor().clone();
-        let search_task = cx.background_spawn(async move {
-            if query.is_empty() {
-                threads
-            } else {
-                let candidates = threads
-                    .iter()
-                    .enumerate()
-                    .map(|(id, thread)| StringMatchCandidate::new(id, &thread.summary))
-                    .collect::<Vec<_>>();
-                let matches = fuzzy::match_strings(
-                    &candidates,
-                    &query,
-                    false,
-                    100,
-                    &Default::default(),
-                    executor,
-                )
-                .await;
-
-                matches
-                    .into_iter()
-                    .map(|mat| threads[mat.candidate_id].clone())
-                    .collect()
-            }
-        });
-
+        let search_task = search_threads(query, threads, cx);
         cx.spawn_in(window, |this, mut cx| async move {
             let matches = search_task.await;
             this.update(&mut cx, |this, cx| {
@@ -247,4 +213,47 @@ pub fn render_thread_context_entry(
                     .child(Label::new("Added").size(LabelSize::Small)),
             )
         })
+}
+
+pub(crate) fn search_threads(
+    query: String,
+    thread_store: Entity<ThreadStore>,
+    cx: &mut App,
+) -> Task<Vec<ThreadContextEntry>> {
+    let threads = thread_store.update(cx, |this, _cx| {
+        this.threads()
+            .into_iter()
+            .map(|thread| ThreadContextEntry {
+                id: thread.id,
+                summary: thread.summary,
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        if query.is_empty() {
+            threads
+        } else {
+            let candidates = threads
+                .iter()
+                .enumerate()
+                .map(|(id, thread)| StringMatchCandidate::new(id, &thread.summary))
+                .collect::<Vec<_>>();
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                100,
+                &Default::default(),
+                executor,
+            )
+            .await;
+
+            matches
+                .into_iter()
+                .map(|mat| threads[mat.candidate_id].clone())
+                .collect()
+        }
+    })
 }

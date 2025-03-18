@@ -93,81 +93,6 @@ impl FileContextPickerDelegate {
             selected_index: 0,
         }
     }
-
-    fn search(
-        &mut self,
-        query: String,
-        cancellation_flag: Arc<AtomicBool>,
-        workspace: &Entity<Workspace>,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Task<Vec<PathMatch>> {
-        if query.is_empty() {
-            let workspace = workspace.read(cx);
-            let project = workspace.project().read(cx);
-            let recent_matches = workspace
-                .recent_navigation_history(Some(10), cx)
-                .into_iter()
-                .filter_map(|(project_path, _)| {
-                    let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-                    Some(PathMatch {
-                        score: 0.,
-                        positions: Vec::new(),
-                        worktree_id: project_path.worktree_id.to_usize(),
-                        path: project_path.path,
-                        path_prefix: worktree.read(cx).root_name().into(),
-                        distance_to_relative_ancestor: 0,
-                        is_dir: false,
-                    })
-                });
-
-            let file_matches = project.worktrees(cx).flat_map(|worktree| {
-                let worktree = worktree.read(cx);
-                let path_prefix: Arc<str> = worktree.root_name().into();
-                worktree.entries(false, 0).map(move |entry| PathMatch {
-                    score: 0.,
-                    positions: Vec::new(),
-                    worktree_id: worktree.id().to_usize(),
-                    path: entry.path.clone(),
-                    path_prefix: path_prefix.clone(),
-                    distance_to_relative_ancestor: 0,
-                    is_dir: entry.is_dir(),
-                })
-            });
-
-            Task::ready(recent_matches.chain(file_matches).collect())
-        } else {
-            let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
-            let candidate_sets = worktrees
-                .into_iter()
-                .map(|worktree| {
-                    let worktree = worktree.read(cx);
-
-                    PathMatchCandidateSet {
-                        snapshot: worktree.snapshot(),
-                        include_ignored: worktree
-                            .root_entry()
-                            .map_or(false, |entry| entry.is_ignored),
-                        include_root_name: true,
-                        candidates: project::Candidates::Entries,
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            let executor = cx.background_executor().clone();
-            cx.foreground_executor().spawn(async move {
-                fuzzy::match_path_sets(
-                    candidate_sets.as_slice(),
-                    query.as_str(),
-                    None,
-                    false,
-                    100,
-                    &cancellation_flag,
-                    executor,
-                )
-                .await
-            })
-        }
-    }
 }
 
 impl PickerDelegate for FileContextPickerDelegate {
@@ -204,7 +129,7 @@ impl PickerDelegate for FileContextPickerDelegate {
             return Task::ready(());
         };
 
-        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
+        let search_task = search_paths(query, Arc::<AtomicBool>::default(), &workspace, cx);
 
         cx.spawn_in(window, |this, mut cx| async move {
             // TODO: This should be probably be run in the background.
@@ -387,6 +312,80 @@ impl PickerDelegate for FileContextPickerDelegate {
                     cx,
                 )),
         )
+    }
+}
+
+pub(crate) fn search_paths(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> Task<Vec<PathMatch>> {
+    if query.is_empty() {
+        let workspace = workspace.read(cx);
+        let project = workspace.project().read(cx);
+        let recent_matches = workspace
+            .recent_navigation_history(Some(10), cx)
+            .into_iter()
+            .filter_map(|(project_path, _)| {
+                let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+                Some(PathMatch {
+                    score: 0.,
+                    positions: Vec::new(),
+                    worktree_id: project_path.worktree_id.to_usize(),
+                    path: project_path.path,
+                    path_prefix: worktree.read(cx).root_name().into(),
+                    distance_to_relative_ancestor: 0,
+                    is_dir: false,
+                })
+            });
+
+        let file_matches = project.worktrees(cx).flat_map(|worktree| {
+            let worktree = worktree.read(cx);
+            let path_prefix: Arc<str> = worktree.root_name().into();
+            worktree.entries(false, 0).map(move |entry| PathMatch {
+                score: 0.,
+                positions: Vec::new(),
+                worktree_id: worktree.id().to_usize(),
+                path: entry.path.clone(),
+                path_prefix: path_prefix.clone(),
+                distance_to_relative_ancestor: 0,
+                is_dir: entry.is_dir(),
+            })
+        });
+
+        Task::ready(recent_matches.chain(file_matches).collect())
+    } else {
+        let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let candidate_sets = worktrees
+            .into_iter()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+
+                PathMatchCandidateSet {
+                    snapshot: worktree.snapshot(),
+                    include_ignored: worktree
+                        .root_entry()
+                        .map_or(false, |entry| entry.is_ignored),
+                    include_root_name: true,
+                    candidates: project::Candidates::Entries,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let executor = cx.background_executor().clone();
+        cx.foreground_executor().spawn(async move {
+            fuzzy::match_path_sets(
+                candidate_sets.as_slice(),
+                query.as_str(),
+                None,
+                false,
+                100,
+                &cancellation_flag,
+                executor,
+            )
+            .await
+        })
     }
 }
 

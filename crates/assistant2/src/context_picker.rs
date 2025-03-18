@@ -1,3 +1,4 @@
+mod completion_provider;
 mod fetch_context_picker;
 mod file_context_picker;
 mod thread_context_picker;
@@ -14,6 +15,7 @@ use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
+pub use crate::context_picker::completion_provider::ContextPickerCompletionProvider;
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
@@ -34,7 +36,28 @@ enum ContextPickerMode {
     Thread,
 }
 
+impl TryFrom<&str> for ContextPickerMode {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "file" => Ok(Self::File),
+            "fetch" => Ok(Self::Fetch),
+            "thread" => Ok(Self::Thread),
+            _ => Err(format!("Invalid context picker mode: {}", value)),
+        }
+    }
+}
+
 impl ContextPickerMode {
+    pub fn mention_prefix(&self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Fetch => "fetch",
+            Self::Thread => "thread",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::File => "File/Directory",
@@ -109,10 +132,7 @@ impl ContextPicker {
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
-            let mut modes = vec![ContextPickerMode::File, ContextPickerMode::Fetch];
-            if self.allow_threads() {
-                modes.push(ContextPickerMode::Thread);
-            }
+            let modes = supported_context_picker_modes(&self.thread_store);
 
             let menu = menu
                 .when(has_recent, |menu| {
@@ -330,7 +350,7 @@ impl ContextPicker {
 
         let mut current_files = context_store.file_paths(cx);
 
-        if let Some(active_path) = Self::active_singleton_buffer_path(&workspace, cx) {
+        if let Some(active_path) = active_singleton_buffer_path(&workspace, cx) {
             current_files.insert(active_path);
         }
 
@@ -386,16 +406,6 @@ impl ContextPicker {
 
         recent
     }
-
-    fn active_singleton_buffer_path(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-        let active_item = workspace.active_item(cx)?;
-
-        let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-        let buffer = editor.buffer().read(cx).as_singleton()?;
-
-        let path = buffer.read(cx).file()?.path().to_path_buf();
-        Some(path)
-    }
 }
 
 impl EventEmitter<DismissEvent> for ContextPicker {}
@@ -430,4 +440,81 @@ enum RecentEntry {
         path_prefix: Arc<str>,
     },
     Thread(ThreadContextEntry),
+}
+
+fn supported_context_picker_modes(
+    thread_store: &Option<WeakEntity<ThreadStore>>,
+) -> Vec<ContextPickerMode> {
+    let mut modes = vec![ContextPickerMode::File, ContextPickerMode::Fetch];
+    if thread_store.is_some() {
+        modes.push(ContextPickerMode::Thread);
+    }
+    modes
+}
+
+fn active_singleton_buffer_path(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    let active_item = workspace.active_item(cx)?;
+
+    let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
+    let buffer = editor.buffer().read(cx).as_singleton()?;
+
+    let path = buffer.read(cx).file()?.path().to_path_buf();
+    Some(path)
+}
+
+fn recent_context_picker_entries(
+    context_store: &ContextStore,
+    thread_store: &ThreadStore,
+    workspace: &Workspace,
+    cx: &App,
+) -> Vec<RecentEntry> {
+    let mut recent = Vec::with_capacity(6);
+
+    let mut current_files = context_store.file_paths(cx);
+
+    if let Some(active_path) = active_singleton_buffer_path(workspace, cx) {
+        current_files.insert(active_path);
+    }
+
+    let project = workspace.project().read(cx);
+
+    recent.extend(
+        workspace
+            .recent_navigation_history_iter(cx)
+            .filter(|(path, _)| !current_files.contains(&path.path.to_path_buf()))
+            .take(4)
+            .filter_map(|(project_path, _)| {
+                project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .map(|worktree| RecentEntry::File {
+                        project_path,
+                        path_prefix: worktree.read(cx).root_name().into(),
+                    })
+            }),
+    );
+
+    let mut current_threads = context_store.thread_ids();
+
+    if let Some(active_thread) = workspace
+        .panel::<AssistantPanel>(cx)
+        .map(|panel| panel.read(cx).active_thread(cx))
+    {
+        current_threads.insert(active_thread.read(cx).id().clone());
+    }
+
+    recent.extend(
+        thread_store
+            .threads()
+            .into_iter()
+            .filter(|thread| !current_threads.contains(&thread.id))
+            .take(2)
+            .map(|thread| {
+                RecentEntry::Thread(ThreadContextEntry {
+                    id: thread.id,
+                    summary: thread.summary,
+                })
+            }),
+    );
+
+    recent
 }
