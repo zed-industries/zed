@@ -4334,8 +4334,6 @@ impl Render for ProjectPanel {
             ProjectPanelSettings::get_global(cx).indent_guides.show == ShowIndentGuides::Always;
         let is_local = project.is_local();
 
-        println!("--------- ProjectPanel {:?}", std::time::Instant::now());
-
         if has_worktree {
             let item_count = self
                 .visible_entries
