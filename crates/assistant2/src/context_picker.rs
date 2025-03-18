@@ -463,14 +463,16 @@ fn active_singleton_buffer_path(workspace: &Workspace, cx: &App) -> Option<PathB
 }
 
 fn recent_context_picker_entries(
-    context_store: &ContextStore,
-    thread_store: &ThreadStore,
-    workspace: &Workspace,
+    context_store: Entity<ContextStore>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    workspace: Entity<Workspace>,
     cx: &App,
 ) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
 
-    let mut current_files = context_store.file_paths(cx);
+    let mut current_files = context_store.read(cx).file_paths(cx);
+
+    let workspace = workspace.read(cx);
 
     if let Some(active_path) = active_singleton_buffer_path(workspace, cx) {
         current_files.insert(active_path);
@@ -493,7 +495,7 @@ fn recent_context_picker_entries(
             }),
     );
 
-    let mut current_threads = context_store.thread_ids();
+    let mut current_threads = context_store.read(cx).thread_ids();
 
     if let Some(active_thread) = workspace
         .panel::<AssistantPanel>(cx)
@@ -502,19 +504,22 @@ fn recent_context_picker_entries(
         current_threads.insert(active_thread.read(cx).id().clone());
     }
 
-    recent.extend(
-        thread_store
-            .threads()
-            .into_iter()
-            .filter(|thread| !current_threads.contains(&thread.id))
-            .take(2)
-            .map(|thread| {
-                RecentEntry::Thread(ThreadContextEntry {
-                    id: thread.id,
-                    summary: thread.summary,
-                })
-            }),
-    );
+    if let Some(thread_store) = thread_store.and_then(|thread_store| thread_store.upgrade()) {
+        recent.extend(
+            thread_store
+                .read(cx)
+                .threads()
+                .into_iter()
+                .filter(|thread| !current_threads.contains(&thread.id))
+                .take(2)
+                .map(|thread| {
+                    RecentEntry::Thread(ThreadContextEntry {
+                        id: thread.id,
+                        summary: thread.summary,
+                    })
+                }),
+        );
+    }
 
     recent
 }

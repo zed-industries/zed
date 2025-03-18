@@ -4247,9 +4247,11 @@ impl Editor {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn current_completions(&self) -> Option<Vec<Completion>> {
-        if let CodeContextMenu::Completions(menu) = self.context_menu.borrow() {
-            menu.completions
+    pub fn current_completions(&self) -> Option<Vec<project::Completion>> {
+        let menu = self.context_menu.borrow();
+        if let CodeContextMenu::Completions(menu) = menu.as_ref()? {
+            let completions = menu.completions.borrow();
+            Some(completions.to_vec())
         } else {
             None
         }

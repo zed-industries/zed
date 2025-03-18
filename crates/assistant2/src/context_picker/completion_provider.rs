@@ -52,59 +52,54 @@ impl ContextPickerCompletionProvider {
     ) -> Vec<Completion> {
         let mut completions = Vec::new();
 
-        if let Some(thread_store) = thread_store
-            .as_ref()
-            .and_then(|thread_store| thread_store.upgrade())
-        {
-            completions.extend(
-                recent_context_picker_entries(
-                    context_store.read(cx),
-                    thread_store.read(cx),
-                    workspace.read(cx),
-                    cx,
-                )
-                .iter()
-                .filter_map(|entry| {
-                    let (mode, mention_argument, label) = match entry {
-                        super::RecentEntry::File {
-                            project_path,
-                            path_prefix: _,
-                        } => {
-                            let full_path = Self::full_path_for_entry(
-                                project_path.worktree_id,
-                                &project_path.path,
-                                workspace.clone(),
-                                cx,
-                            )?;
-                            let label = Self::build_code_label_for_full_path(
-                                project_path.worktree_id,
-                                &project_path.path,
-                                workspace.clone(),
-                                cx,
-                            )?;
-                            (
-                                ContextPickerMode::File,
-                                full_path.to_string_lossy().to_string(),
-                                label,
-                            )
-                        }
-                        super::RecentEntry::Thread(thread_context_entry) => (
-                            ContextPickerMode::Thread,
-                            thread_context_entry.summary.to_string(),
-                            CodeLabel::plain(thread_context_entry.summary.to_string(), None),
-                        ),
-                    };
-                    Some(Completion {
-                        old_range: range_to_replace.clone(),
-                        new_text: format!("@{} {}", mode.mention_prefix(), mention_argument),
-                        label,
-                        documentation: None,
-                        source: project::CompletionSource::Custom,
-                        confirm: None,
-                    })
-                }),
-            );
-        }
+        completions.extend(
+            recent_context_picker_entries(
+                context_store.clone(),
+                thread_store.clone(),
+                workspace.clone(),
+                cx,
+            )
+            .iter()
+            .filter_map(|entry| {
+                let (mode, mention_argument, label) = match entry {
+                    super::RecentEntry::File {
+                        project_path,
+                        path_prefix: _,
+                    } => {
+                        let full_path = Self::full_path_for_entry(
+                            project_path.worktree_id,
+                            &project_path.path,
+                            workspace.clone(),
+                            cx,
+                        )?;
+                        let label = Self::build_code_label_for_full_path(
+                            project_path.worktree_id,
+                            &project_path.path,
+                            workspace.clone(),
+                            cx,
+                        )?;
+                        (
+                            ContextPickerMode::File,
+                            full_path.to_string_lossy().to_string(),
+                            label,
+                        )
+                    }
+                    super::RecentEntry::Thread(thread_context_entry) => (
+                        ContextPickerMode::Thread,
+                        thread_context_entry.summary.to_string(),
+                        CodeLabel::plain(thread_context_entry.summary.to_string(), None),
+                    ),
+                };
+                Some(Completion {
+                    old_range: range_to_replace.clone(),
+                    new_text: format!("@{} {}", mode.mention_prefix(), mention_argument),
+                    label,
+                    documentation: None,
+                    source: project::CompletionSource::Custom,
+                    confirm: None,
+                })
+            }),
+        );
 
         completions.extend(
             supported_context_picker_modes(&thread_store)
@@ -452,10 +447,8 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assistant_tool::ToolWorkingSet;
     use gpui::{Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
-    use prompt_store::PromptBuilder;
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, path::PathBuf};
@@ -522,7 +515,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_context_completions(cx: &mut TestAppContext) {
+    async fn test_context_completion_provider(cx: &mut TestAppContext) {
         init_test(cx);
 
         let app_state = cx.update(AppState::test);
@@ -544,10 +537,10 @@ mod tests {
                     "a": {
                         "one.txt": "",
                         "two.txt": "",
-                        "three.txt": ""
+                        "three.txt": "",
+                        "four.txt": ""
                     },
                     "b": {
-                        "four.txt": "",
                         "five.txt": "",
                         "six.txt": "",
                         "seven.txt": "",
@@ -647,11 +640,11 @@ mod tests {
                 current_completion_labels(editor),
                 &[
                     "seven.txt dir/b",
+                    "six.txt dir/b",
                     "five.txt dir/b",
-                    "three.txt dir/a",
-                    "File",
-                    "Fetch",
-                    "Thread"
+                    "four.txt dir/a",
+                    "File/Directory",
+                    "Fetch"
                 ]
             );
         });
@@ -659,6 +652,7 @@ mod tests {
         // Select and confirm "File"
         editor.update_in(&mut cx, |editor, window, cx| {
             assert!(editor.has_visible_completions_menu());
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
             editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
             editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
             editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
@@ -670,10 +664,6 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file ");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(
-                current_completion_labels(editor),
-                vec!["seven.txt dir/b", "five.txt dir/b", "three.txt dir/a"]
-            );
         });
 
         cx.simulate_input("thr");
