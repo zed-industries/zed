@@ -25,7 +25,7 @@ pub struct RegexSearchToolInput {
     pub offset: Option<usize>,
 }
 
-const RESULTS_PER_PAGE: usize = 50;
+const RESULTS_PER_PAGE: usize = 20;
 
 pub struct RegexSearchTool;
 
