@@ -7,6 +7,7 @@ mod now_tool;
 mod path_search_tool;
 mod read_file_tool;
 mod regex_search;
+mod thinking_tool;
 
 use assistant_tool::ToolRegistry;
 use gpui::App;
@@ -20,6 +21,7 @@ use crate::now_tool::NowTool;
 use crate::path_search_tool::PathSearchTool;
 use crate::read_file_tool::ReadFileTool;
 use crate::regex_search::RegexSearchTool;
+use crate::thinking_tool::ThinkingTool;
 
 pub fn init(cx: &mut App) {
     assistant_tool::init(cx);
@@ -35,4 +37,5 @@ pub fn init(cx: &mut App) {
     registry.register_tool(PathSearchTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(RegexSearchTool);
+    registry.register_tool(ThinkingTool);
 }

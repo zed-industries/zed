@@ -2825,7 +2825,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
@@ -2851,7 +2851,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
@@ -2919,7 +2919,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
 }
@@ -6414,8 +6414,6 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let range = Anchor::MIN..snapshot.anchor_after(snapshot.max_point());
-
     let mut expected_hunks: Vec<(Range<u32>, String, String, DiffHunkStatus)> = (0..500)
         .step_by(5)
         .map(|i| {
@@ -6444,9 +6442,7 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
 
     // Stage every hunk with a different call
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff
-            .hunks_intersecting_range(range.clone(), &snapshot, cx)
-            .collect::<Vec<_>>();
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         for hunk in hunks {
             diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         }
@@ -6480,9 +6476,7 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
 
     // Unstage every hunk with a different call
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
-            .collect::<Vec<_>>();
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         for hunk in hunks {
             diff.stage_or_unstage_hunks(false, &[hunk], &snapshot, true, cx);
         }

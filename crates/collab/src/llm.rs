@@ -5,6 +5,7 @@ mod token;
 use crate::api::events::SnowflakeRow;
 use crate::api::CloudflareIpCountryHeader;
 use crate::build_kinesis_client;
+use crate::rpc::MIN_ACCOUNT_AGE_FOR_LLM_USE;
 use crate::{db::UserId, executor::Executor, Cents, Config, Error, Result};
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
@@ -216,6 +217,13 @@ async fn perform_completion(
         state.db.model_names_for_provider(params.provider),
         params.model,
     );
+
+    let bypass_account_age_check = claims.has_llm_subscription || claims.bypass_account_age_check;
+    if !bypass_account_age_check {
+        if Utc::now().naive_utc() - claims.account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
+            Err(anyhow!("account too young"))?
+        }
+    }
 
     authorize_access_to_language_model(
         &state.config,

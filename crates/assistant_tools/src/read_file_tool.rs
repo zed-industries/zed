@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -49,6 +49,7 @@ impl Tool for ReadFileTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
@@ -59,14 +60,15 @@ impl Tool for ReadFileTool {
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path not found in project")));
         };
-        cx.spawn(|cx| async move {
+
+        cx.spawn(|mut cx| async move {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
 
-            buffer.read_with(&cx, |buffer, _cx| {
+            let result = buffer.read_with(&cx, |buffer, _cx| {
                 if buffer
                     .file()
                     .map_or(false, |file| file.disk_state().exists())
@@ -75,7 +77,13 @@ impl Tool for ReadFileTool {
                 } else {
                     Err(anyhow!("File does not exist"))
                 }
-            })?
+            })??;
+
+            action_log.update(&mut cx, |log, cx| {
+                log.buffer_read(buffer, cx);
+            })?;
+
+            anyhow::Ok(result)
         })
     }
 }

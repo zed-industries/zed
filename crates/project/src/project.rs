@@ -280,6 +280,7 @@ pub enum Event {
     Reshared,
     Rejoined,
     RefreshInlayHints,
+    RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
@@ -509,6 +510,8 @@ pub struct CodeAction {
     /// The raw code action provided by the language server.
     /// Can be either an action or a command.
     pub lsp_action: LspAction,
+    /// Whether the action needs to be resolved using the language server.
+    pub resolved: bool,
 }
 
 /// An action sent back by a language server.
@@ -519,6 +522,8 @@ pub enum LspAction {
     Action(Box<lsp::CodeAction>),
     /// A command data to run as an action.
     Command(lsp::Command),
+    /// A code lens data to run as an action.
+    CodeLens(lsp::CodeLens),
 }
 
 impl LspAction {
@@ -526,6 +531,11 @@ impl LspAction {
         match self {
             Self::Action(action) => &action.title,
             Self::Command(command) => &command.title,
+            Self::CodeLens(lens) => lens
+                .command
+                .as_ref()
+                .map(|command| command.title.as_str())
+                .unwrap_or("Unknown command"),
         }
     }
 
@@ -533,6 +543,7 @@ impl LspAction {
         match self {
             Self::Action(action) => action.kind.clone(),
             Self::Command(_) => Some(lsp::CodeActionKind::new("command")),
+            Self::CodeLens(_) => Some(lsp::CodeActionKind::new("code lens")),
         }
     }
 
@@ -540,6 +551,7 @@ impl LspAction {
         match self {
             Self::Action(action) => action.edit.as_ref(),
             Self::Command(_) => None,
+            Self::CodeLens(_) => None,
         }
     }
 
@@ -547,6 +559,7 @@ impl LspAction {
         match self {
             Self::Action(action) => action.command.as_ref(),
             Self::Command(command) => Some(command),
+            Self::CodeLens(lens) => lens.command.as_ref(),
         }
     }
 }
@@ -652,6 +665,7 @@ impl Hover {
 enum EntitySubscription {
     Project(PendingEntitySubscription<Project>),
     BufferStore(PendingEntitySubscription<BufferStore>),
+    GitStore(PendingEntitySubscription<GitStore>),
     WorktreeStore(PendingEntitySubscription<WorktreeStore>),
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
@@ -850,7 +864,6 @@ impl Project {
                     buffer_store.clone(),
                     environment.clone(),
                     fs.clone(),
-                    client.clone().into(),
                     cx,
                 )
             });
@@ -979,7 +992,6 @@ impl Project {
                     buffer_store.clone(),
                     environment.clone(),
                     ssh_proto.clone(),
-                    ProjectId(SSH_PROJECT_ID),
                     cx,
                 )
             });
@@ -1096,6 +1108,7 @@ impl Project {
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
             EntitySubscription::BufferStore(client.subscribe_to_entity::<BufferStore>(remote_id)?),
+            EntitySubscription::GitStore(client.subscribe_to_entity::<GitStore>(remote_id)?),
             EntitySubscription::WorktreeStore(
                 client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
             ),
@@ -1124,7 +1137,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 5],
+        subscriptions: [EntitySubscription; 6],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
@@ -1241,7 +1254,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                git_store,
+                git_store: git_store.clone(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1270,6 +1283,9 @@ impl Project {
                 }
                 EntitySubscription::WorktreeStore(subscription) => {
                     subscription.set_entity(&worktree_store, &mut cx)
+                }
+                EntitySubscription::GitStore(subscription) => {
+                    subscription.set_entity(&git_store, &mut cx)
                 }
                 EntitySubscription::SettingsObserver(subscription) => {
                     subscription.set_entity(&settings_observer, &mut cx)
@@ -1861,6 +1877,9 @@ impl Project {
         self.settings_observer.update(cx, |settings_observer, cx| {
             settings_observer.shared(project_id, self.client.clone().into(), cx)
         });
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.shared(project_id, self.client.clone().into(), cx)
+        });
 
         self.client_state = ProjectClientState::Shared {
             remote_id: project_id,
@@ -1941,6 +1960,9 @@ impl Project {
             });
             self.settings_observer.update(cx, |settings_observer, cx| {
                 settings_observer.unshared(cx);
+            });
+            self.git_store.update(cx, |git_store, cx| {
+                git_store.unshared(cx);
             });
 
             self.client
@@ -2167,10 +2189,8 @@ impl Project {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
-
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_unstaged_diff(buffer, cx)
-        })
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
     pub fn open_uncommitted_diff(
@@ -2181,9 +2201,8 @@ impl Project {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
-
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_uncommitted_diff(buffer, cx)
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.open_uncommitted_diff(buffer, cx)
         })
     }
 
@@ -2483,6 +2502,7 @@ impl Project {
                 };
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
+            LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
@@ -2741,8 +2761,8 @@ impl Project {
                         if buffers.is_empty() {
                             None
                         } else {
-                            Some(this.buffer_store.update(cx, |buffer_store, cx| {
-                                buffer_store.recalculate_buffer_diffs(buffers, cx)
+                            Some(this.git_store.update(cx, |git_store, cx| {
+                                git_store.recalculate_buffer_diffs(buffers, cx)
                             }))
                         }
                     })
@@ -3142,7 +3162,7 @@ impl Project {
         position: T,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.completions(buffer, position, context, cx)
@@ -3160,6 +3180,34 @@ impl Project {
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.code_actions(buffer_handle, range, kinds, cx)
+        })
+    }
+
+    pub fn code_lens<T: Clone + ToOffset>(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        range: Range<T>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        let snapshot = buffer_handle.read(cx).snapshot();
+        let range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+        let code_lens_actions = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.code_lens(buffer_handle, cx));
+
+        cx.background_spawn(async move {
+            let mut code_lens_actions = code_lens_actions.await?;
+            code_lens_actions.retain(|code_lens_action| {
+                range
+                    .start
+                    .cmp(&code_lens_action.range.start, &snapshot)
+                    .is_ge()
+                    && range
+                        .end
+                        .cmp(&code_lens_action.range.end, &snapshot)
+                        .is_le()
+            });
+            Ok(code_lens_actions)
         })
     }
 
@@ -3800,7 +3848,8 @@ impl Project {
     /// # Returns
     ///
     /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
-    pub fn find_project_path(&self, path: &Path, cx: &App) -> Option<ProjectPath> {
+    pub fn find_project_path(&self, path: impl AsRef<Path>, cx: &App) -> Option<ProjectPath> {
+        let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
         for worktree in worktree_store.visible_worktrees(cx) {
@@ -3964,6 +4013,9 @@ impl Project {
                 for buffer in buffer_store.buffers() {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
+            });
+            this.git_store.update(cx, |git_store, _| {
+                git_store.forget_shared_diffs_for(&peer_id);
             });
 
             cx.emit(Event::CollaboratorLeft(peer_id));
