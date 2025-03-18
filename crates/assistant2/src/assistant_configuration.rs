@@ -1,22 +1,26 @@
 use std::sync::Arc;
 
+use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{prelude::*, Divider, DividerColor, ElevationIndex, Indicator};
+use ui::{prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator};
 use zed_actions::assistant::DeployPromptLibrary;
 
 pub struct AssistantConfiguration {
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_manager: Entity<ContextServerManager>,
+    expanded_context_server_tools: HashMap<Arc<str>, bool>,
+    tools: Arc<ToolWorkingSet>,
     _registry_subscription: Subscription,
 }
 
 impl AssistantConfiguration {
     pub fn new(
         context_server_manager: Entity<ContextServerManager>,
+        tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -43,6 +47,8 @@ impl AssistantConfiguration {
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             context_server_manager,
+            expanded_context_server_tools: HashMap::default(),
+            tools,
             _registry_subscription: registry_subscription,
         };
         this.build_provider_configuration_views(window, cx);
@@ -153,6 +159,8 @@ impl AssistantConfiguration {
 
     fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let context_servers = self.context_server_manager.read(cx).servers().clone();
+        let tools_by_source = self.tools.tools_by_source(cx);
+        let empty = Vec::new();
 
         const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
 
@@ -169,21 +177,75 @@ impl AssistantConfiguration {
             )
             .children(context_servers.into_iter().map(|context_server| {
                 let is_running = context_server.client().is_some();
+                let are_tools_expanded = self
+                    .expanded_context_server_tools
+                    .get(&context_server.id())
+                    .copied()
+                    .unwrap_or_default();
 
-                h_flex()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
+                let tools = tools_by_source
+                    .get(&ToolSource::ContextServer {
+                        id: context_server.id().into(),
+                    })
+                    .unwrap_or_else(|| &empty);
+                let tool_count = tools.len();
+
+                v_flex()
                     .border_1()
                     .rounded_sm()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_background)
-                    .child(Indicator::dot().color(if is_running {
-                        Color::Success
-                    } else {
-                        Color::Error
-                    }))
-                    .child(Label::new(context_server.id()))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .when(are_tools_expanded, |element| {
+                                element
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                            })
+                            .child(
+                                Disclosure::new("tool-list-disclosure", are_tools_expanded)
+                                    .on_click(cx.listener({
+                                        let context_server_id = context_server.id();
+                                        move |this, _event, _window, _cx| {
+                                            let is_open = this
+                                                .expanded_context_server_tools
+                                                .entry(context_server_id.clone())
+                                                .or_insert(false);
+
+                                            *is_open = !*is_open;
+                                        }
+                                    })),
+                            )
+                            .child(Indicator::dot().color(if is_running {
+                                Color::Success
+                            } else {
+                                Color::Error
+                            }))
+                            .child(Label::new(context_server.id()))
+                            .child(Label::new(format!("{tool_count} tools")).color(Color::Muted)),
+                    )
+                    .map(|parent| {
+                        if !are_tools_expanded {
+                            return parent;
+                        }
+
+                        parent.child(v_flex().children(tools.into_iter().enumerate().map(
+                            |(ix, tool)| {
+                                h_flex()
+                                    .px_2()
+                                    .py_1()
+                                    .when(ix < tool_count - 1, |element| {
+                                        element
+                                            .border_b_1()
+                                            .border_color(cx.theme().colors().border)
+                                    })
+                                    .child(Label::new(tool.name()))
+                            },
+                        )))
+                    })
             }))
     }
 }
