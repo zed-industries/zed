@@ -26,7 +26,7 @@ pub struct RegexSearchToolInput {
 }
 
 const RESULTS_PER_PAGE: usize = 20;
-const MAX_LINE_LENGTH: usize = 240;
+const MAX_LINE_LENGTH: u32 = 240;
 const LONG_LINE_CONTEXT: usize = 120;
 
 pub struct RegexSearchTool;
@@ -99,14 +99,21 @@ impl Tool for RegexSearchTool {
                             .into_iter()
                             .map(|range| {
                                 let mut point_range = range.to_point(buffer);
-                                point_range.start.row = point_range.start.row.saturating_sub(CONTEXT_LINES);
-                                point_range.start.column = 0;
-                                point_range.end.row = cmp::min(
-                                    buffer.max_point().row,
-                                    point_range.end.row + CONTEXT_LINES,
-                                );
-                                point_range.end.column = buffer.line_len(point_range.end.row);
-                                point_range
+                                let is_long_line = buffer.line_len(point_range.start.row) > MAX_LINE_LENGTH;
+
+                                if is_long_line {
+
+                                } else {
+                                    point_range.start.row = point_range.start.row.saturating_sub(CONTEXT_LINES);
+                                    point_range.start.column = 0;
+                                    point_range.end.row = cmp::min(
+                                        buffer.max_point().row,
+                                        point_range.end.row + CONTEXT_LINES,
+                                    );
+                                    point_range.end.column = buffer.line_len(point_range.end.row);
+                                }
+
+                                (point_range, is_long_line)
                             })
                             .peekable();
 
@@ -140,12 +147,12 @@ impl Tool for RegexSearchTool {
 
                             // Process matches in two passes:
                             // 1. Long lines (>240 chars): Show only the matched line, with 120 chars of context around each match
-                            // 2. Regular lines: Show the matched line plus context lines before/after
+                            // 2. Other lines: Show the matched line plus context lines before/after
 
                             // First pass: handle long lines
                             for row in range.start.row..=range.end.row {
                                 let line_len = buffer.line_len(row);
-                                if (line_len as usize) > MAX_LINE_LENGTH {
+                                if line_len > MAX_LINE_LENGTH {
                                     let line_range = Point::new(row, 0)..Point::new(row, line_len);
                                     let line_text = buffer.text_for_range(line_range).collect::<String>();
 
