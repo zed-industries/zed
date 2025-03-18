@@ -346,17 +346,16 @@ impl std::fmt::Debug for ExcerptInfo {
 #[derive(Debug)]
 pub struct ExcerptBoundary {
     pub prev: Option<ExcerptInfo>,
-    pub next: Option<ExcerptInfo>,
+    pub next: ExcerptInfo,
     /// The row in the `MultiBuffer` where the boundary is located
     pub row: MultiBufferRow,
 }
 
 impl ExcerptBoundary {
     pub fn starts_new_buffer(&self) -> bool {
-        match (self.prev.as_ref(), self.next.as_ref()) {
+        match (self.prev.as_ref(), &self.next) {
             (None, _) => true,
-            (Some(_), None) => false,
-            (Some(prev), Some(next)) => prev.buffer_id != next.buffer_id,
+            (Some(prev), next) => prev.buffer_id != next.buffer_id,
         }
     }
 }
@@ -5200,27 +5199,19 @@ impl MultiBufferSnapshot {
 
         cursor.next_excerpt();
 
-        let mut visited_end = false;
         iter::from_fn(move || loop {
             if self.singleton {
                 return None;
             }
 
-            let next_region = cursor.region();
+            let next_region = cursor.region()?;
             cursor.next_excerpt();
+            if !bounds.contains(&next_region.range.start.key) {
+                prev_region = Some(next_region);
+                continue;
+            }
 
-            let next_region_start = if let Some(region) = &next_region {
-                if !bounds.contains(&region.range.start.key) {
-                    prev_region = next_region;
-                    continue;
-                }
-                region.range.start.value.unwrap()
-            } else {
-                if !bounds.contains(&self.len()) {
-                    return None;
-                }
-                self.max_point()
-            };
+            let next_region_start = next_region.range.start.value.unwrap();
             let next_region_end = if let Some(region) = cursor.region() {
                 region.range.start.value.unwrap()
             } else {
@@ -5235,29 +5226,21 @@ impl MultiBufferSnapshot {
                 end_row: MultiBufferRow(next_region_start.row),
             });
 
-            let next = next_region.as_ref().map(|region| ExcerptInfo {
-                id: region.excerpt.id,
-                buffer: region.excerpt.buffer.clone(),
-                buffer_id: region.excerpt.buffer_id,
-                range: region.excerpt.range.clone(),
-                end_row: if region.excerpt.has_trailing_newline {
+            let next = ExcerptInfo {
+                id: next_region.excerpt.id,
+                buffer: next_region.excerpt.buffer.clone(),
+                buffer_id: next_region.excerpt.buffer_id,
+                range: next_region.excerpt.range.clone(),
+                end_row: if next_region.excerpt.has_trailing_newline {
                     MultiBufferRow(next_region_end.row - 1)
                 } else {
                     MultiBufferRow(next_region_end.row)
                 },
-            });
-
-            if next.is_none() {
-                if visited_end {
-                    return None;
-                } else {
-                    visited_end = true;
-                }
-            }
+            };
 
             let row = MultiBufferRow(next_region_start.row);
 
-            prev_region = next_region;
+            prev_region = Some(next_region);
 
             return Some(ExcerptBoundary { row, prev, next });
         })

@@ -1348,7 +1348,8 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "git_gutter": "tracked_files",
     "inline_blame": {
       "enabled": true
-    }
+    },
+    "hunk_style": "staged_hollow"
   }
 }
 ```
@@ -1381,6 +1382,26 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+### Gutter Debounce
+
+- Description: Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+- Setting: `gutter_debounce`
+- Default: `null`
+
+**Options**
+
+`integer` values representing milliseconds
+
+Example:
+
+```json
+{
+  "git": {
+    "gutter_debounce": 100
+  }
+}
+```
+
 ### Inline Git Blame
 
 - Description: Whether or not to show git blame information inline, on the currently focused line.
@@ -1393,6 +1414,42 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     }
+  }
+}
+```
+
+### Hunk Style
+
+- Description: What styling we should use for the diff hunks.
+- Setting: `hunk_style`
+- Default:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+**Options**
+
+1. Show the staged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+2. Show unstaged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "unstaged_hollow"
   }
 }
 ```
@@ -2576,7 +2633,6 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
-    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {

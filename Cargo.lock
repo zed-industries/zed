@@ -692,6 +692,7 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "collections",
  "derive_more",
  "gpui",
@@ -716,6 +717,7 @@ dependencies = [
  "gpui",
  "language",
  "language_model",
+ "pretty_assertions",
  "project",
  "rand 0.8.5",
  "release_channel",
@@ -725,6 +727,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "unindent",
  "util",
  "workspace",
  "worktree",
