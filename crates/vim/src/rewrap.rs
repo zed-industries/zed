@@ -2,7 +2,7 @@ use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias, Editor, RewrapOptions};
 use gpui::{actions, Context, Window};
-use language::{language_settings::RewrapBehavior, SelectionGoal};
+use language::SelectionGoal;
 
 actions!(vim, [Rewrap]);
 
