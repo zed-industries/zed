@@ -38,7 +38,23 @@ jobs:
     if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check if release was promoted from preview
+        id: check-promotion-from-preview
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          PREVIEW_TAG="${VERSION}-pre"
+          if git rev-parse "$PREVIEW_TAG" >/dev/null 2>&1; then
+            echo "was_preview=true" >> $GITHUB_OUTPUT
+          else
+            echo "was_preview=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Send release notes email
+        if: steps.check-promotion-from-preview.outputs.was_preview == 'true'
         run: |
           curl -X POST "https://zed.dev/api/send_release_notes_email" \
             -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
