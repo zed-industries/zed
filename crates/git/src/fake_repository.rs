@@ -1,8 +1,7 @@
 use crate::{
     blame::Blame,
     repository::{
-        Branch, CommitDetails, DiffType, GitRepository, PushOptions, Remote, RemoteCommandOutput,
-        RepoPath, ResetMode,
+        Branch, CommitDetails, DiffType, FetchOptions, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode
     },
     status::{FileStatus, GitStatus},
 };
@@ -269,6 +268,7 @@ impl GitRepository for FakeGitRepository {
 
     fn fetch(
         &self,
+        _fetch_options: FetchOptions,
         _ask_pass: AskPassSession,
         _env: HashMap<String, String>,
         _cx: AsyncApp,
