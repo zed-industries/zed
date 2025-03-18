@@ -622,25 +622,6 @@ impl ExtensionsPage {
                                             .provides
                                             .iter()
                                             .map(|provides| {
-                                                let label = match provides {
-                                                    ExtensionProvides::Themes => "Themes",
-                                                    ExtensionProvides::IconThemes => "Icon Themes",
-                                                    ExtensionProvides::Languages => "Languages",
-                                                    ExtensionProvides::Grammars => "Grammars",
-                                                    ExtensionProvides::LanguageServers => {
-                                                        "Language Servers"
-                                                    }
-                                                    ExtensionProvides::ContextServers => {
-                                                        "Context Servers"
-                                                    }
-                                                    ExtensionProvides::SlashCommands => {
-                                                        "Slash Commands"
-                                                    }
-                                                    ExtensionProvides::IndexedDocsProviders => {
-                                                        "Indexed Docs Providers"
-                                                    }
-                                                    ExtensionProvides::Snippets => "Snippets",
-                                                };
                                                 div()
                                                     .bg(cx.theme().colors().element_background)
                                                     .px_0p5()
@@ -648,7 +629,10 @@ impl ExtensionsPage {
                                                     .border_color(cx.theme().colors().border)
                                                     .rounded_sm()
                                                     .child(
-                                                        Label::new(label).size(LabelSize::XSmall),
+                                                        Label::new(extension_provides_label(
+                                                            *provides,
+                                                        ))
+                                                        .size(LabelSize::XSmall),
                                                     )
                                             })
                                             .collect::<Vec<_>>(),
