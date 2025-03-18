@@ -2,7 +2,38 @@ use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
-use language::OffsetRangeExt;
+use language::{OffsetRangeExt, Point};
+
+fn matches_regex(text: String, pattern: &str) -> bool {
+    // Safely check if pattern exists in text
+    if pattern.is_empty() {
+        return false;
+    }
+    text.contains(pattern)
+}
+
+fn find_matches(text: String, pattern: &str) -> Vec<(usize, usize)> {
+    let mut matches = Vec::new();
+    if pattern.is_empty() {
+        return matches;
+    }
+
+    let mut start = 0;
+    while start < text.len() {
+        match text[start..].find(pattern) {
+            Some(pos) => {
+                let match_start = start + pos;
+                let match_end = match_start + pattern.len();
+                if match_end <= text.len() {
+                    matches.push((match_start, match_end));
+                }
+                start = match_start + 1;
+            }
+            None => break,
+        }
+    }
+    matches
+}
 use language_model::LanguageModelRequestMessage;
 use project::{
     search::{SearchQuery, SearchResult},
@@ -26,6 +57,8 @@ pub struct RegexSearchToolInput {
 }
 
 const RESULTS_PER_PAGE: usize = 20;
+const MAX_LINE_LENGTH: usize = 240;
+const LONG_LINE_CONTEXT: usize = 120;
 
 pub struct RegexSearchTool;
 
@@ -51,15 +84,17 @@ impl Tool for RegexSearchTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        const CONTEXT_LINES: u32 = 2;
+        const CONTEXT_LINES: usize = 2;
 
-        let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
-            Ok(input) => (input.offset.unwrap_or(0), input.regex),
+        let input = match serde_json::from_value::<RegexSearchToolInput>(input) {
+            Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
+        let offset = input.offset.unwrap_or(0);
+        let regex_str = input.regex;
 
         let query = match SearchQuery::regex(
-            &regex,
+            &regex_str,
             false,
             false,
             false,
@@ -93,12 +128,12 @@ impl Tool for RegexSearchTool {
                             .into_iter()
                             .map(|range| {
                                 let mut point_range = range.to_point(buffer);
-                                point_range.start.row =
-                                    point_range.start.row.saturating_sub(CONTEXT_LINES);
+                                let context_lines_u32 = CONTEXT_LINES as u32;
+                                point_range.start.row = point_range.start.row.saturating_sub(context_lines_u32);
                                 point_range.start.column = 0;
                                 point_range.end.row = cmp::min(
                                     buffer.max_point().row,
-                                    point_range.end.row + CONTEXT_LINES,
+                                    point_range.end.row + (CONTEXT_LINES as u32),
                                 );
                                 point_range.end.column = buffer.line_len(point_range.end.row);
                                 point_range
@@ -106,15 +141,14 @@ impl Tool for RegexSearchTool {
                             .peekable();
 
                         while let Some(mut range) = ranges.next() {
-                            if skips_remaining > 0 {
-                                skips_remaining -= 1;
-                                continue;
-                            }
-
-                            // We'd already found a full page of matches, and we just found one more.
                             if matches_found >= RESULTS_PER_PAGE {
                                 has_more_matches = true;
                                 return Ok(());
+                            }
+
+                            if skips_remaining > 0 {
+                                skips_remaining -= 1;
+                                continue;
                             }
 
                             while let Some(next_range) = ranges.peek() {
@@ -131,13 +165,81 @@ impl Tool for RegexSearchTool {
                                 file_header_written = true;
                             }
 
-                            let start_line = range.start.row + 1;
-                            let end_line = range.end.row + 1;
-                            writeln!(output, "\n### Lines {start_line}-{end_line}\n```")?;
-                            output.extend(buffer.text_for_range(range));
-                            output.push_str("\n```\n");
+                            let mut processed_lines = std::collections::HashSet::<u32>::new();
 
-                            matches_found += 1;
+                            // Process matches in two passes:
+                            // 1. Long lines (>240 chars): Show only the matched line, with 120 chars of context around each match
+                            // 2. Regular lines: Show the matched line plus context lines before/after
+
+                            // First pass: handle long lines
+                            for row in range.start.row..=range.end.row {
+                                let row_u32 = row as u32;
+                                let line_len = buffer.line_len(row_u32);
+                                if (line_len as usize) > MAX_LINE_LENGTH {
+                                    let line_range = Point::new(row_u32, 0)..Point::new(row_u32, line_len);
+                                    let line_text = buffer.text_for_range(line_range).collect::<String>();
+
+                                    if matches_regex(line_text.clone(), &regex_str) {
+                                        if skips_remaining == 0 {
+                                            // Show each match in the long line with limited context
+                                            for (match_start, match_end) in find_matches(line_text.clone(), &regex_str) {
+                                                let start_char = match_start.saturating_sub(LONG_LINE_CONTEXT);
+                                                let end_char = (match_end + LONG_LINE_CONTEXT).min(line_len as usize);
+                                                writeln!(output, "\n# Line {}, chars {}-{}\n```", row_u32 + 1, start_char, end_char)?;
+                                                output.push_str(&line_text[start_char..end_char]);
+                                                output.push_str("\n```\n");
+                                            }
+                                            matches_found += 1;
+                                        } else {
+                                            skips_remaining -= 1;
+                                        }
+
+                                        processed_lines.insert(row_u32);
+                                    }
+                                }
+                            }
+
+                            // Second pass: handle regular lines with context
+                            let mut row = range.start.row;
+                            while row <= range.end.row {
+                                let row_u32 = row as u32;
+                                if processed_lines.contains(&row_u32) {
+                                    row += 1;
+                                    continue;
+                                }
+
+                                let line_len = buffer.line_len(row_u32);
+                                let line_range = Point::new(row_u32, 0)..Point::new(row_u32, line_len);
+                                let line_text = buffer.text_for_range(line_range).collect::<String>();
+
+                                if matches_regex(line_text.clone(), &regex_str) {
+                                    if skips_remaining > 0 {
+                                        skips_remaining -= 1;
+                                        row += 1;
+                                        continue;
+                                    }
+
+                                    // Show the match with context lines
+                                    let context_start = (row as usize).saturating_sub(CONTEXT_LINES) as u32;
+                                    let context_end = ((row as usize + CONTEXT_LINES) as u32).min(buffer.max_point().row);
+                                    let context_range = Point::new(context_start, 0)..Point::new(context_end, buffer.line_len(context_end));
+
+                                    writeln!(output, "\n### Lines {}-{}\n```", context_start + 1, context_end + 1)?;
+                                    output.push_str(&buffer.text_for_range(context_range).collect::<String>());
+                                    output.push_str("\n```\n");
+
+                                    // Mark all lines in this context range as processed
+                                    for r in context_start..=context_end {
+                                        processed_lines.insert(r);
+                                    }
+
+                                    matches_found += 1;
+                                    row = context_end + 1;
+                                } else {
+                                    row += 1;
+                                }
+                            }
+
                         }
                     }
 
@@ -154,7 +256,7 @@ impl Tool for RegexSearchTool {
                     offset + matches_found,
                     offset + RESULTS_PER_PAGE,
                 ))
-          } else {
+            } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
             }
         })
