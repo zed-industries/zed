@@ -66,84 +66,84 @@ pub enum AudioStream {
     },
 }
 
-struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
+// struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-impl livekit::dispatcher::Dispatcher for Dispatcher {
-    fn dispatch(&self, runnable: livekit::dispatcher::Runnable) {
-        self.0.dispatch(runnable, None);
-    }
+// #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
+// impl livekit::dispatcher::Dispatcher for Dispatcher {
+//     fn dispatch(&self, runnable: livekit::dispatcher::Runnable) {
+//         self.0.dispatch(runnable, None);
+//     }
 
-    fn dispatch_after(
-        &self,
-        duration: std::time::Duration,
-        runnable: livekit::dispatcher::Runnable,
-    ) {
-        self.0.dispatch_after(duration, runnable);
-    }
-}
+//     fn dispatch_after(
+//         &self,
+//         duration: std::time::Duration,
+//         runnable: livekit::dispatcher::Runnable,
+//     ) {
+//         self.0.dispatch_after(duration, runnable);
+//     }
+// }
 
-struct HttpClientAdapter(Arc<dyn http_client::HttpClient>);
+// struct HttpClientAdapter(Arc<dyn http_client::HttpClient>);
 
-fn http_2_status(status: http_client::http::StatusCode) -> http_2::StatusCode {
-    http_2::StatusCode::from_u16(status.as_u16())
-        .expect("valid status code to status code conversion")
-}
+// fn http_2_status(status: http_client::http::StatusCode) -> http_2::StatusCode {
+//     http_2::StatusCode::from_u16(status.as_u16())
+//         .expect("valid status code to status code conversion")
+// }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-impl livekit::dispatcher::HttpClient for HttpClientAdapter {
-    fn get(
-        &self,
-        url: &str,
-    ) -> Pin<Box<dyn Future<Output = io::Result<livekit::tokio::Response>> + Send>> {
-        let http_client = self.0.clone();
-        let url = url.to_string();
-        Box::pin(async move {
-            let response = http_client
-                .get(&url, http_client::AsyncBody::empty(), false)
-                .await
-                .map_err(io::Error::other)?;
-            Ok(livekit::dispatcher::Response {
-                status: http_2_status(response.status()),
-                body: Box::pin(response.into_body()),
-            })
-        })
-    }
+// #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
+// impl livekit::dispatcher::HttpClient for HttpClientAdapter {
+//     fn get(
+//         &self,
+//         url: &str,
+//     ) -> Pin<Box<dyn Future<Output = io::Result<livekit::tokio::Response>> + Send>> {
+//         let http_client = self.0.clone();
+//         let url = url.to_string();
+//         Box::pin(async move {
+//             let response = http_client
+//                 .get(&url, http_client::AsyncBody::empty(), false)
+//                 .await
+//                 .map_err(io::Error::other)?;
+//             Ok(livekit::dispatcher::Response {
+//                 status: http_2_status(response.status()),
+//                 body: Box::pin(response.into_body()),
+//             })
+//         })
+//     }
 
-    fn send_async(
-        &self,
-        request: http_2::Request<Vec<u8>>,
-    ) -> Pin<Box<dyn Future<Output = io::Result<livekit::dispatcher::Response>> + Send>> {
-        let http_client = self.0.clone();
-        let mut builder = http_client::http::Request::builder()
-            .method(request.method().as_str())
-            .uri(request.uri().to_string());
+//     fn send_async(
+//         &self,
+//         request: http_2::Request<Vec<u8>>,
+//     ) -> Pin<Box<dyn Future<Output = io::Result<livekit::dispatcher::Response>> + Send>> {
+//         let http_client = self.0.clone();
+//         let mut builder = http_client::http::Request::builder()
+//             .method(request.method().as_str())
+//             .uri(request.uri().to_string());
 
-        for (key, value) in request.headers().iter() {
-            builder = builder.header(key.as_str(), value.as_bytes());
-        }
+//         for (key, value) in request.headers().iter() {
+//             builder = builder.header(key.as_str(), value.as_bytes());
+//         }
 
-        if !request.extensions().is_empty() {
-            debug_panic!(
-                "Livekit sent an HTTP request with a protocol extension that Zed doesn't support!"
-            );
-        }
+//         if !request.extensions().is_empty() {
+//             debug_panic!(
+//                 "Livekit sent an HTTP request with a protocol extension that Zed doesn't support!"
+//             );
+//         }
 
-        let request = builder
-            .body(http_client::AsyncBody::from_bytes(
-                request.into_body().into(),
-            ))
-            .unwrap();
+//         let request = builder
+//             .body(http_client::AsyncBody::from_bytes(
+//                 request.into_body().into(),
+//             ))
+//             .unwrap();
 
-        Box::pin(async move {
-            let response = http_client.send(request).await.map_err(io::Error::other)?;
-            Ok(livekit::dispatcher::Response {
-                status: http_2_status(response.status()),
-                body: Box::pin(response.into_body()),
-            })
-        })
-    }
-}
+//         Box::pin(async move {
+//             let response = http_client.send(request).await.map_err(io::Error::other)?;
+//             Ok(livekit::dispatcher::Response {
+//                 status: http_2_status(response.status()),
+//                 body: Box::pin(response.into_body()),
+//             })
+//         })
+//     }
+// }
 
 #[cfg(all(target_os = "windows", target_env = "gnu"))]
 pub fn init(
@@ -164,13 +164,17 @@ pub fn init(
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
+    cx: &mut gpui::AsyncApp,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let resolution = capture_source.resolution()?;
     dbg!(&resolution);
-    let track_source = NativeVideoSource::new(VideoResolution {
-        width: resolution.width.0 as u32,
-        height: resolution.height.0 as u32,
-    });
+    let track_source = gpui_tokio::Tokio::spawn(cx, async move {
+        NativeVideoSource::new(VideoResolution {
+            width: resolution.width.0 as u32,
+            height: resolution.height.0 as u32,
+        })
+    })?
+    .await?;
 
     let capture_stream = capture_source
         .stream({

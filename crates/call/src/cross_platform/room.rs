@@ -1411,6 +1411,8 @@ impl Room {
 
     #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     pub fn share_screen(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        use gpui_tokio::Tokio;
+
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -1433,19 +1435,27 @@ impl Room {
             let sources = sources.await??;
             let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
 
-            let (track, stream) = capture_local_video_track(&**source).await?;
+            let (track, stream) = capture_local_video_track(&**source, &mut cx).await?;
 
-            let publication = participant
-                .publish_track(
-                    livekit::track::LocalTrack::Video(track),
-                    TrackPublishOptions {
-                        source: TrackSource::Screenshare,
-                        video_codec: VideoCodec::H264,
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(|error| anyhow!("error publishing screen track {error:?}"));
+            let participant2 = participant.clone();
+            let publication = async move {
+                let mut cx = cx.clone();
+                Tokio::spawn(&mut cx2, async move {
+                    participant2
+                        .publish_track(
+                            livekit::track::LocalTrack::Video(track),
+                            TrackPublishOptions {
+                                source: TrackSource::Screenshare,
+                                video_codec: VideoCodec::H264,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                })?
+                .await?
+                .map_err(|error| anyhow!("error publishing screen track {error:?}"))
+            }
+            .await;
 
             this.update(&mut cx, |this, cx| {
                 let live_kit = this
@@ -1639,14 +1649,19 @@ fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
     cx: &mut Context<'_, Room>,
 ) {
+    use gpui_tokio::Tokio;
+
     if let Some(connection_info) = livekit_connection_info {
         cx.spawn(|this, mut cx| async move {
-            let (room, mut events) = livekit::Room::connect(
-                &connection_info.server_url,
-                &connection_info.token,
-                RoomOptions::default(),
-            )
-            .await?;
+            let (room, mut events) = Tokio::spawn(&mut cx, async move {
+                livekit::Room::connect(
+                    &connection_info.server_url,
+                    &connection_info.token,
+                    RoomOptions::default(),
+                )
+                .await
+            })?
+            .await??;
 
             this.update(&mut cx, |this, cx| {
                 let _handle_updates = cx.spawn(|this, mut cx| async move {

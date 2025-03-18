@@ -21,6 +21,7 @@ no-webrtc = []
 test-support = ["collections/test-support", "gpui/test-support", "nanoid"]
 
 [dependencies]
+gpui_tokio.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 collections.workspace = true

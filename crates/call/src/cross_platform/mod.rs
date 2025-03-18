@@ -28,10 +28,10 @@ struct GlobalActiveCall(Entity<ActiveCall>);
 impl Global for GlobalActiveCall {}
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    livekit_client::init(
-        cx.background_executor().dispatcher.clone(),
-        cx.http_client(),
-    );
+    // livekit_client::init(
+    //     cx.background_executor().dispatcher.clone(),
+    //     cx.http_client(),
+    // );
     CallSettings::register(cx);
 
     let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));

@@ -313,7 +313,7 @@ impl LivekitWindow {
             cx.spawn_in(window, |this, mut cx| async move {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
-                let (track, stream) = capture_local_video_track(&*source).await?;
+                let (track, stream) = capture_local_video_track(&*source, &mut cx).await?;
                 let publication = participant
                     .publish_track(
                         LocalTrack::Video(track),

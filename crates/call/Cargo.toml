@@ -41,6 +41,7 @@ serde_derive.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 util.workspace = true
+gpui_tokio.workspace = true
 
 [target.'cfg(any())'.dependencies]
 livekit_client_macos = { workspace = true }
