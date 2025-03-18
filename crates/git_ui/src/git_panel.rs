@@ -4573,7 +4573,7 @@ mod tests {
             );
             // But we can select it artificially here.
             let repo_from_single_file_worktree = git_store
-                .all_repositories()
+                .repositories()
                 .values()
                 .find(|repo| {
                     repo.read(cx).worktree_abs_path.as_ref()
@@ -4583,7 +4583,7 @@ mod tests {
                 .clone();
 
             // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
-            repo_from_single_file_worktree.update(cx, |repo, cx| repo.activate(cx));
+            repo_from_single_file_worktree.update(cx, |repo, cx| repo.set_as_active_repository(cx));
         });
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {

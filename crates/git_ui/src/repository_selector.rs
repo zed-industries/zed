@@ -76,7 +76,7 @@ pub(crate) fn filtered_repository_entries(
     cx: &App,
 ) -> Vec<Entity<Repository>> {
     let repositories = git_store
-        .all_repositories()
+        .repositories()
         .values()
         .sorted_by_key(|repo| {
             let repo = repo.read(cx);
@@ -197,7 +197,9 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let Some(selected_repo) = self.filtered_repositories.get(self.selected_index) else {
             return;
         };
-        selected_repo.update(cx, |selected_repo, cx| selected_repo.activate(cx));
+        selected_repo.update(cx, |selected_repo, cx| {
+            selected_repo.set_as_active_repository(cx)
+        });
         self.dismissed(window, cx);
     }
 

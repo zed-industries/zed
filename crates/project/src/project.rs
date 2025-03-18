@@ -4527,11 +4527,8 @@ impl Project {
         self.git_store.read(cx).active_repository()
     }
 
-    pub fn all_repositories<'a>(
-        &self,
-        cx: &'a App,
-    ) -> &'a HashMap<ProjectEntryId, Entity<Repository>> {
-        self.git_store.read(cx).all_repositories()
+    pub fn repositories<'a>(&self, cx: &'a App) -> &'a HashMap<ProjectEntryId, Entity<Repository>> {
+        self.git_store.read(cx).repositories()
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {

@@ -552,16 +552,14 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let mut new_repositories = HashMap::default();
-        let this = cx.weak_entity();
-        let upstream_client = self.upstream_client();
-        let project_id = self.project_id();
+        let git_store = cx.weak_entity();
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
                 worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
                     for repo_entry in snapshot.repositories().iter() {
-                        let git_data = worktree
+                        let git_repo_and_merge_message = worktree
                             .as_local()
                             .and_then(|local_worktree| local_worktree.get_local_repo(repo_entry))
                             .map(|local_repo| {
@@ -571,39 +569,37 @@ impl GitStore {
                                 )
                             })
                             .or_else(|| {
-                                let client = upstream_client
-                                    .clone()
-                                    .context("no upstream client")
-                                    .log_err()?;
-                                let project_id = project_id?;
-                                Some((
-                                    GitRepo::Remote {
-                                        project_id,
-                                        client,
-                                        worktree_id: worktree.id(),
-                                        work_directory_id: repo_entry.work_directory_id(),
-                                    },
-                                    None,
-                                ))
+                                let git_repo = GitRepo::Remote {
+                                    project_id: self.project_id()?,
+                                    client: self
+                                        .upstream_client()
+                                        .context("no upstream client")
+                                        .log_err()?
+                                        .clone(),
+                                    worktree_id: worktree.id(),
+                                    work_directory_id: repo_entry.work_directory_id(),
+                                };
+                                Some((git_repo, None))
                             });
-                        let Some((git_repo, merge_message)) = git_data else {
+
+                        let Some((git_repo, merge_message)) = git_repo_and_merge_message else {
                             continue;
                         };
-                        let worktree_id = worktree.id();
-                        let existing = self.repositories.values().find(|existing_handle| {
-                            existing_handle.read(cx).id()
-                                == (worktree_id, repo_entry.work_directory_id())
+
+                        let existing_repo = self.repositories.values().find(|repo| {
+                            repo.read(cx).id() == (worktree.id(), repo_entry.work_directory_id())
                         });
-                        let handle = if let Some(handle) = existing {
+
+                        let repo = if let Some(existing_repo) = existing_repo {
                             // Update the statuses and merge message but keep everything else.
-                            let existing_handle = handle.clone();
-                            existing_handle.update(cx, |existing_handle, cx| {
-                                existing_handle.repository_entry = repo_entry.clone();
+                            let existing_repo = existing_repo.clone();
+                            existing_repo.update(cx, |existing_repo, cx| {
+                                existing_repo.repository_entry = repo_entry.clone();
                                 if matches!(git_repo, GitRepo::Local { .. })
-                                    && existing_handle.merge_message != merge_message
+                                    && existing_repo.merge_message != merge_message
                                 {
                                     if let (Some(merge_message), Some(buffer)) =
-                                        (&merge_message, &existing_handle.commit_message_buffer)
+                                        (&merge_message, &existing_repo.commit_message_buffer)
                                     {
                                         buffer.update(cx, |buffer, cx| {
                                             if buffer.is_empty() {
@@ -611,18 +607,18 @@ impl GitStore {
                                             }
                                         })
                                     }
-                                    existing_handle.merge_message = merge_message;
+                                    existing_repo.merge_message = merge_message;
                                 }
                             });
-                            existing_handle
+                            existing_repo
                         } else {
-                            let environment = self.project_environment();
                             cx.new(|_| Repository {
-                                project_environment: environment
+                                project_environment: self
+                                    .project_environment()
                                     .as_ref()
                                     .map(|env| env.downgrade()),
-                                git_store: this.clone(),
-                                worktree_id,
+                                git_store: git_store.clone(),
+                                worktree_id: worktree.id(),
                                 askpass_delegates: Default::default(),
                                 latest_askpass_id: 0,
                                 repository_entry: repo_entry.clone(),
@@ -636,7 +632,7 @@ impl GitStore {
                                 commit_message_buffer: None,
                             })
                         };
-                        new_repositories.insert(repo_entry.work_directory_id(), handle);
+                        new_repositories.insert(repo_entry.work_directory_id(), repo);
                     }
                 })
             }
@@ -926,7 +922,7 @@ impl GitStore {
         .detach_and_log_err(cx);
     }
 
-    pub fn all_repositories(&self) -> &HashMap<ProjectEntryId, Entity<Repository>> {
+    pub fn repositories(&self) -> &HashMap<ProjectEntryId, Entity<Repository>> {
         &self.repositories
     }
 
@@ -2047,7 +2043,7 @@ impl Repository {
         .into()
     }
 
-    pub fn activate(&self, cx: &mut Context<Self>) {
+    pub fn set_as_active_repository(&self, cx: &mut Context<Self>) {
         let Some(git_store) = self.git_store.upgrade() else {
             return;
         };
