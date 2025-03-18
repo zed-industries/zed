@@ -17,7 +17,7 @@ jobs:
           else
             URL="https://zed.dev/releases/stable/latest"
           fi
-          echo "::set-output name=URL::$URL"
+          echo "URL=$URL" >> $GITHUB_OUTPUT
       - name: Get content
         uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757 # v1.4.1
         id: get-content
