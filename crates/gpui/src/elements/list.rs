@@ -966,12 +966,13 @@ mod test {
 
     use gpui::{ScrollDelta, ScrollWheelEvent};
 
-    use crate::{self as gpui, AppContext, IntoElement, TestAppContext};
+    use crate::{self as gpui, TestAppContext};
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
         use crate::{
-            div, list, point, px, size, Context, Element, ListState, Render, Styled, Window,
+            div, list, point, px, size, AppContext, Context, Element, IntoElement, ListState,
+            Render, Styled, Window,
         };
 
         let cx = cx.add_empty_window();
