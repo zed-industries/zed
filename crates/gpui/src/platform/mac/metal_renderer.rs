@@ -1064,13 +1064,14 @@ impl MetalRenderer {
             );
 
             let y_texture = unsafe {
+                // called `Result::unwrap()` on an `Err` value: could not create texture, code: -6660
                 self.core_video_texture_cache
                     .create_texture_from_image(
                         surface.image_buffer.as_concrete_TypeRef(),
                         ptr::null(),
                         MTLPixelFormat::R8Unorm,
-                        surface.image_buffer.plane_width(0),
-                        surface.image_buffer.plane_height(0),
+                        dbg!(surface.image_buffer.plane_width(0)),
+                        dbg!(surface.image_buffer.plane_height(0)),
                         0,
                     )
                     .unwrap()

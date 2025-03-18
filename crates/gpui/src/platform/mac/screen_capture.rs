@@ -47,11 +47,11 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
         unsafe {
             let width: i64 = msg_send![self.sc_display, width];
             let height: i64 = msg_send![self.sc_display, height];
-            // Ok(size(px(3456 as f32), px(2234 as f32)))
+            Ok(size(px(3456 as f32), px(2234 as f32)))
             // max seems to be about px(2382, 1539) (screen is 1728x1117)
             // received is still *half* at px(1190, 768)...
             // Ok(size(px(width as f32 * 1.3785), px(height as f32 * 1.3785)))
-            Ok(size(px(1190.), px(768.)))
+            // Ok(size(px(1190.), px(768.)))
         }
     }
 

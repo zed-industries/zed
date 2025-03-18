@@ -39,7 +39,7 @@ pub mod core_video {
         kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
     };
-    use crate::bindings::{kCVReturnSuccess, CVReturn, OSType};
+    pub use crate::bindings::{kCVReturnSuccess, CVReturn, OSType};
     use anyhow::{anyhow, Result};
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,

@@ -7629,6 +7629,7 @@ dependencies = [
  "log",
  "media",
  "nanoid",
+ "objc",
  "parking_lot",
  "postage",
  "serde",

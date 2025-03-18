@@ -46,6 +46,9 @@ livekit.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 coreaudio-rs = "0.12.1"
+objc = "0.2"
+# objc2 = { version = "0.5", optional = true }
+
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

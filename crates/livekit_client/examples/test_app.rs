@@ -326,7 +326,7 @@ impl LivekitWindow {
                             LocalTrack::Video(track),
                             TrackPublishOptions {
                                 source: TrackSource::Screenshare,
-                                // video_codec: VideoCodec::VP8,
+                                video_codec: VideoCodec::VP8,
                                 // simulcast: true,
                                 ..Default::default()
                             },

@@ -202,23 +202,23 @@ pub async fn capture_local_video_track(
                 //     data
                 // };
                 //
-                let mut nv12_buffer =
-                    NV12Buffer::new(resolution.width.0 as u32, resolution.height.0 as u32);
+                // let mut nv12_buffer =
+                //     NV12Buffer::new(resolution.width.0 as u32, resolution.height.0 as u32);
 
-                let (data_y, data_uv) = nv12_buffer.data_mut();
-                // Fill Y plane with green (150)
-                for y in data_y.iter_mut() {
-                    *y = 150;
-                }
+                // let (data_y, data_uv) = nv12_buffer.data_mut();
+                // // Fill Y plane with green (150)
+                // for y in data_y.iter_mut() {
+                //     *y = 150;
+                // }
 
-                // Fill UV plane with green (-43)
-                for y in data_uv.iter_mut() {
-                    *y = if y as *const _ as usize % 2 == 0 {
-                        213
-                    } else {
-                        235
-                    };
-                }
+                // // Fill UV plane with green (-43)
+                // for y in data_uv.iter_mut() {
+                //     *y = if y as *const _ as usize % 2 == 0 {
+                //         213
+                //     } else {
+                //         235
+                //     };
+                // }
 
                 // let mut i420_buffer =
                 //     I420Buffer::new(resolution.width.0 as u32, resolution.height.0 as u32);
@@ -239,18 +239,18 @@ pub async fn capture_local_video_track(
                 //     *v = 235;
                 // }
 
-                // if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
-                //     dbg!(
-                //         buffer.as_ref().width(),
-                //         buffer.as_ref().height(),
-                //         buffer.as_ref().buffer_type()
-                //     );
-                track_source.capture_frame(&VideoFrame {
-                    rotation: VideoRotation::VideoRotation0,
-                    timestamp_us: 0,
-                    buffer: nv12_buffer,
-                });
-                // }
+                if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
+                    dbg!(
+                        buffer.as_ref().width(),
+                        buffer.as_ref().height(),
+                        buffer.as_ref().buffer_type()
+                    );
+                    track_source.capture_frame(&VideoFrame {
+                        rotation: VideoRotation::VideoRotation0,
+                        timestamp_us: 0,
+                        buffer: buffer,
+                    });
+                }
             })
         })
         .await??;
@@ -548,14 +548,18 @@ pub type RemoteVideoFrame = media::core_video::CVImageBuffer;
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<RemoteVideoFrame> {
-    use std::sync::atomic::AtomicU8;
+    use std::{ffi, sync::atomic::AtomicU8};
 
-    use core_foundation::base::TCFType as _;
-    use coreaudio::sys::CGSize;
+    use core_foundation::base::{CFRetain, TCFType as _};
+    use coreaudio::sys::{
+        kCFStringEncodingUTF8, CFDictionaryCreate, CFStringCreateWithCString, CGSize,
+    };
     use livekit::webrtc::native::yuv_helper::{i420_to_bgra, i420_to_nv12};
     use media::core_video::{
-        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, CVImageBuffer,
+        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVReturnSuccess, CVImageBuffer,
     };
+    use objc::{runtime::YES, *};
 
     dbg!(buffer.buffer_type());
     let i420_buffer = buffer.as_i420()?;
@@ -567,23 +571,40 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     };
 
     let image_buffer = unsafe {
+        //
         let pixel_format = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
         let mut pixel_buffer: CVImageBufferRef = std::ptr::null();
 
-        CVPixelBufferCreate(
+        let c_str = ffi::CString::new("IOSurfaceCoreAnimationCompatibility").unwrap();
+        let str =
+            CFStringCreateWithCString(std::ptr::null(), c_str.as_ptr(), kCFStringEncodingUTF8);
+        let yes: *mut c_void = msg_send![class!(NSNumber), numberWithBool:YES];
+        let attrs = msg_send![class!(NSDictionary),
+            dictionaryWithObject: yes
+            forKey: str
+        ];
+
+        let ret = CVPixelBufferCreate(
             std::ptr::null(),
             width as i64,
             height as i64,
             pixel_format,
-            std::ptr::null(),
+            attrs,
             &mut pixel_buffer,
         );
+        if ret != kCVReturnSuccess {
+            panic!("got {}", ret)
+        }
 
         if pixel_buffer.is_null() {
             return None;
         }
 
-        CVPixelBufferLockBaseAddress(pixel_buffer, 0);
+        let ret = CVPixelBufferLockBaseAddress(pixel_buffer, 0);
+
+        if ret != kCVReturnSuccess {
+            panic!("got {}", ret)
+        }
 
         let dst_y = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 0);
         let dst_y_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 0);
@@ -632,9 +653,14 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
         //     panic!("zing")
         // }
         // std::ptr::copy_nonoverlapping(v_data.as_ptr(), dst as *mut u8, v_data.len());
+        // CFRetain(pixel_buffer as _);
 
-        CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
-        CVImageBuffer::wrap_under_get_rule(pixel_buffer as _)
+        let ret = CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
+        if ret != kCVReturnSuccess {
+            panic!("got {}", ret)
+        }
+
+        CVImageBuffer::wrap_under_create_rule(pixel_buffer as _)
     };
     // Some(image_buffer)
     // let i420_buffer = buffer.as_i420()?;
