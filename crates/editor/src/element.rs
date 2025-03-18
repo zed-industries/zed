@@ -1511,25 +1511,33 @@ impl EditorElement {
 
                 let editor_entity = cx.new(|_| editor);
 
-                let scrollbar_y_width = match scrollbars_layout.vertical {
-                    Some(scrollbar) => {
-                        if scrollbar.visible {
-                            scrollbar.hitbox.bounds.size.width
-                        } else {
-                            Pixels::ZERO
-                        }
-                    }
-                    None => Pixels::ZERO,
+                // We shouldn't render the minimap if the vertical scrollbar doesn't exist. This should only occur when the editor is not in Full mode.
+                if scrollbars_layout.vertical.is_none() {
+                    return None;
+                }
+
+                let scrollbar = scrollbars_layout.vertical.unwrap();
+                let scrollbar_bounds = if scrollbar.visible {
+                    scrollbar.hitbox.bounds
+                } else {
+                    let mut bounds = scrollbar.hitbox.bounds;
+                    bounds.size.width = Pixels::ZERO;
+                    bounds
                 };
 
-                let header_height = line_height * FILE_HEADER_HEIGHT as f32;
-                let minimap_bounds = Bounds::from_corners(
-                    point(
-                        bounds.size.width - minimap_width - scrollbar_y_width,
-                        bounds.origin.y - header_height + px(2.),
-                    ),
-                    point(bounds.size.width - scrollbar_y_width, bounds.bottom()),
+                // let header_height = line_height * FILE_HEADER_HEIGHT as f32;
+                let minimap_bounds = Bounds::new(
+                    scrollbar_bounds.origin - point(minimap_width, Pixels::ZERO),
+                    size(minimap_width, scrollbar_bounds.size.height),
                 );
+
+                //     Bounds::from_corners(
+                //     point(
+                //         bounds.size.width - minimap_width - scrollbar_y_width,
+                //         bounds.origin.y - header_height + px(2.),
+                //     ),
+                //     point(bounds.size.width - scrollbar_y_width, bounds.bottom()),
+                // );
 
                 let rem_size = self.rem_size(cx).unwrap_or(window.rem_size());
                 let mut text_style = self.style.text.clone();
@@ -1538,12 +1546,13 @@ impl EditorElement {
 
                 let scroll_top_lines = visible_range.start.0 as f32;
                 let viewport_height = bounds.size.height;
+                let minimap_height = minimap_bounds.size.height;
 
                 let visible_lines = viewport_height / line_height;
                 let slider_height = px(visible_lines) * minimap_line_height;
                 // Allows for overscrolling
                 let logical_minimap_scroll_height = num_lines + visible_lines - 1.;
-                let max_minimap_slider_top = px(f32::max(0., viewport_height.0 - slider_height.0));
+                let max_minimap_slider_top = px(f32::max(0., minimap_height.0 - slider_height.0));
                 let show_slider = max_minimap_slider_top.0 > 0.;
                 let slider_top =
                     (scroll_top_lines / logical_minimap_scroll_height) * max_minimap_slider_top;
@@ -1551,11 +1560,10 @@ impl EditorElement {
                 let minimap_scroll_top_lines = scroll_top_lines - slider_lines_from_top;
 
                 let slider_bounds = Bounds::new(
-                    window.element_offset()
-                        + point(
-                            minimap_bounds.origin.x,
-                            minimap_bounds.origin.y + slider_top,
-                        ),
+                    point(
+                        minimap_bounds.origin.x,
+                        minimap_bounds.origin.y + slider_top,
+                    ),
                     size(minimap_bounds.size.width, slider_height),
                 );
 
@@ -1567,7 +1575,7 @@ impl EditorElement {
                     editor.render(window, cx).into_any_element()
                 });
                 _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
-                window.with_element_offset(minimap_bounds.origin, |window| {
+                window.with_absolute_element_offset(minimap_bounds.origin, |window| {
                     minimap_elem.prepaint(window, cx)
                 });
                 Some(MinimapLayout {
@@ -5454,18 +5462,20 @@ impl EditorElement {
                 window.with_element_namespace("minimap", |window| {
                     layout.minimap.paint(window, cx);
                     if layout.show_slider {
-                        window.paint_quad(quad(
-                            layout.slider_bounds,
-                            Corners::default(),
-                            cx.theme().colors().scrollbar_thumb_background,
-                            Edges {
-                                top: ScrollbarLayout::BORDER_WIDTH,
-                                right: ScrollbarLayout::BORDER_WIDTH,
-                                bottom: ScrollbarLayout::BORDER_WIDTH,
-                                left: Pixels::ZERO,
-                            },
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
+                        window.paint_layer(layout.slider_bounds, |window| {
+                            window.paint_quad(quad(
+                                layout.slider_bounds,
+                                Corners::default(),
+                                cx.theme().colors().scrollbar_thumb_background,
+                                Edges {
+                                    top: ScrollbarLayout::BORDER_WIDTH,
+                                    right: ScrollbarLayout::BORDER_WIDTH,
+                                    bottom: ScrollbarLayout::BORDER_WIDTH,
+                                    left: Pixels::ZERO,
+                                },
+                                cx.theme().colors().scrollbar_thumb_border,
+                            ));
+                        });
                     }
                 });
             });
