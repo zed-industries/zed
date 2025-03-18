@@ -170,6 +170,41 @@ jobs:
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
 
+  bundle-nix:
+    strategy:
+      matrix:
+        os: [self-hosted, buildjet-16vcpu-ubuntu-2004, buildjet-16vcpu-ubuntu-2204-arm]
+    timeout-minutes: 60
+    name: Cache a nix build
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ${{ matrix.os }}
+    needs: tests
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Set release channel to nightly
+        run: |
+          set -euo pipefail
+          version=$(git rev-parse --short HEAD)
+          echo "Publishing version: ${version} on release channel nightly"
+          echo "nightly" > crates/zed/RELEASE_CHANNEL
+
+      - uses: cachix/install-nix-action@v25
+        # TODO: not needed since we're using flakes?
+        # with:
+        #   nix_path: nixpkgs=channel:nixos-unstable
+      - uses: cachix/cachix-action@v14
+        with:
+          name: zed-industries
+          signingKey: "${{ secrets.CACHIX_SIGNING_KEY }}"
+      - run: nix build
+
   update-nightly-tag:
     name: Update nightly tag
     if: github.repository_owner == 'zed-industries'
