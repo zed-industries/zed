@@ -127,18 +127,13 @@ const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(
-        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
-            workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
-                workspace.toggle_panel_focus::<GitPanel>(window, cx);
-            });
-            workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
-                CommitModal::toggle(workspace, window, cx)
-            });
-        },
-    )
-    .detach();
+pub fn register(workspace: &mut Workspace) {
+    workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+        workspace.toggle_panel_focus::<GitPanel>(window, cx);
+    });
+    workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
+        CommitModal::toggle(workspace, window, cx)
+    });
 }
 
 #[derive(Debug, Clone)]
@@ -1412,7 +1407,7 @@ impl GitPanel {
             return Some(message.to_string());
         }
 
-        self.suggest_commit_message()
+        self.suggest_commit_message(cx)
             .filter(|message| !message.trim().is_empty())
     }
 
@@ -1581,7 +1576,15 @@ impl GitPanel {
     }
 
     /// Suggests a commit message based on the changed files and their statuses
-    pub fn suggest_commit_message(&self) -> Option<String> {
+    pub fn suggest_commit_message(&self, cx: &App) -> Option<String> {
+        if let Some(merge_message) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).merge_message.as_ref())
+        {
+            return Some(merge_message.clone());
+        }
+
         let git_status_entry = if let Some(staged_entry) = &self.single_staged_entry {
             Some(staged_entry)
         } else if let Some(single_tracked_entry) = &self.single_tracked_entry {
@@ -1715,19 +1718,6 @@ impl GitPanel {
             }
             .log_err()
         }));
-    }
-
-    fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
-        let suggested_commit_message = self.suggest_commit_message();
-        let placeholder_text = suggested_commit_message
-            .as_deref()
-            .unwrap_or("Enter commit message");
-
-        self.commit_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
-        });
-
-        cx.notify();
     }
 
     pub(crate) fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2186,7 +2176,6 @@ impl GitPanel {
                             git_panel.clear_pending();
                         }
                         git_panel.update_visible_entries(cx);
-                        git_panel.update_editor_placeholder(cx);
                         git_panel.update_scrollbar_properties(window, cx);
                     })
                     .ok();
@@ -2222,7 +2211,7 @@ impl GitPanel {
                     git_panel.commit_editor = cx.new(|cx| {
                         commit_message_editor(
                             buffer,
-                            git_panel.suggest_commit_message().as_deref(),
+                            git_panel.suggest_commit_message(cx).as_deref(),
                             git_panel.project.clone(),
                             true,
                             window,
@@ -2242,7 +2231,15 @@ impl GitPanel {
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
         self.single_staged_entry.take();
-        self.single_staged_entry.take();
+        self.single_tracked_entry.take();
+        self.conflicted_count = 0;
+        self.conflicted_staged_count = 0;
+        self.new_count = 0;
+        self.tracked_count = 0;
+        self.new_staged_count = 0;
+        self.tracked_staged_count = 0;
+        self.entry_count = 0;
+
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
@@ -2393,6 +2390,15 @@ impl GitPanel {
         self.update_counts(repo);
 
         self.select_first_entry_if_none(cx);
+
+        let suggested_commit_message = self.suggest_commit_message(cx);
+        let placeholder_text = suggested_commit_message
+            .as_deref()
+            .unwrap_or("Enter commit message");
+
+        self.commit_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
+        });
 
         cx.notify();
     }
@@ -2942,6 +2948,10 @@ impl GitPanel {
                                         .disabled(!can_commit || self.modal_open)
                                         .on_click({
                                             cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                                telemetry::event!(
+                                                    "Git Committed",
+                                                    source = "Git Panel"
+                                                );
                                                 this.commit_changes(window, cx)
                                             })
                                         }),
@@ -3829,7 +3839,7 @@ impl Render for GitPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(Corner::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -4087,14 +4097,14 @@ impl RenderOnce for PanelRepoFooter {
                 let project = project.clone();
                 move |window, cx| {
                     let project = project.clone()?;
-                    Some(cx.new(|cx| RepositorySelector::new(project, window, cx)))
+                    Some(cx.new(|cx| RepositorySelector::new(project, rems(16.), window, cx)))
                 }
             })
             .trigger_with_tooltip(
                 repo_selector_trigger.disabled(single_repo).truncate(true),
                 Tooltip::text("Switch active repository"),
             )
-            .attach(gpui::Corner::BottomLeft)
+            .anchor(Corner::BottomLeft)
             .into_any_element();
 
         let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
@@ -4116,7 +4126,7 @@ impl RenderOnce for PanelRepoFooter {
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
             )
-            .anchor(Corner::TopLeft)
+            .anchor(Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),

@@ -22,6 +22,8 @@ pub enum Color {
     ///
     /// A custom color specified by an HSLA value.
     Custom(Hsla),
+    /// A color used for all debugger UI elements.
+    Debugger,
     /// A color used to indicate a deleted item, such as a file removed from version control.
     Deleted,
     /// A color used for disabled UI elements or text, like a disabled button or menu item.
@@ -76,11 +78,12 @@ impl Color {
         match self {
             Color::Default => cx.theme().colors().text,
             Color::Muted => cx.theme().colors().text_muted,
-            Color::Created => cx.theme().colors().version_control_added,
-            Color::Modified => cx.theme().colors().version_control_modified,
-            Color::Conflict => cx.theme().colors().version_control_conflict,
-            Color::Ignored => cx.theme().colors().version_control_ignored,
-            Color::Deleted => cx.theme().colors().version_control_deleted,
+            Color::Created => cx.theme().status().created,
+            Color::Modified => cx.theme().status().modified,
+            Color::Conflict => cx.theme().status().conflict,
+            Color::Ignored => cx.theme().status().ignored,
+            Color::Debugger => cx.theme().colors().debugger_accent,
+            Color::Deleted => cx.theme().status().deleted,
             Color::Disabled => cx.theme().colors().text_disabled,
             Color::Hidden => cx.theme().status().hidden,
             Color::Hint => cx.theme().status().hint,

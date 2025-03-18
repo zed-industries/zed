@@ -1,11 +1,12 @@
 use anyhow::Context as _;
 use collections::HashMap;
+use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter};
 use lsp::LanguageServerName;
 use paths::{
-    local_settings_file_relative_path, local_tasks_file_relative_path,
-    local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
 use rpc::{
     proto::{self, FromProto, ToProto},
@@ -15,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
-    SettingsSources, SettingsStore,
+    SettingsSources, SettingsStore, TaskKind,
 };
 use std::{path::Path, sync::Arc, time::Duration};
 use task::{TaskTemplates, VsCodeTaskFile};
@@ -40,6 +41,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Configuration for Debugger-related features
+    #[serde(default)]
+    pub dap: HashMap<DebugAdapterName, DapSettings>,
+
     /// Configuration for Diagnostics-related features.
     #[serde(default)]
     pub diagnostics: DiagnosticsSettings,
@@ -59,6 +64,12 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct DapSettings {
+    pub binary: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -483,7 +494,7 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                (settings_dir, LocalSettingsKind::Tasks)
+                (settings_dir, LocalSettingsKind::Tasks(TaskKind::Script))
             } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
                 let settings_dir = Arc::<Path>::from(
                     path.ancestors()
@@ -495,7 +506,19 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                (settings_dir, LocalSettingsKind::Tasks)
+                (settings_dir, LocalSettingsKind::Tasks(TaskKind::Script))
+            } else if path.ends_with(local_debug_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(
+                            local_debug_file_relative_path()
+                                .components()
+                                .count()
+                                .saturating_sub(1),
+                        )
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Tasks(TaskKind::Debug))
             } else if path.ends_with(EDITORCONFIG_NAME) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
@@ -616,7 +639,7 @@ impl SettingsObserver {
                             }
                         }
                     }),
-                LocalSettingsKind::Tasks => task_store.update(cx, |task_store, cx| {
+                LocalSettingsKind::Tasks(task_kind) => task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(
                             Some(SettingsLocation {
@@ -624,6 +647,7 @@ impl SettingsObserver {
                                 path: directory.as_ref(),
                             }),
                             file_content.as_deref(),
+                            task_kind,
                             cx,
                         )
                         .log_err();
@@ -648,7 +672,7 @@ impl SettingsObserver {
 pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSettingsKind {
     match kind {
         proto::LocalSettingsKind::Settings => LocalSettingsKind::Settings,
-        proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks,
+        proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks(TaskKind::Script),
         proto::LocalSettingsKind::Editorconfig => LocalSettingsKind::Editorconfig,
     }
 }
@@ -656,7 +680,7 @@ pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSe
 pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSettingsKind {
     match kind {
         LocalSettingsKind::Settings => proto::LocalSettingsKind::Settings,
-        LocalSettingsKind::Tasks => proto::LocalSettingsKind::Tasks,
+        LocalSettingsKind::Tasks(_) => proto::LocalSettingsKind::Tasks,
         LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
     }
 }

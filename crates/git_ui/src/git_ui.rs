@@ -2,6 +2,7 @@ use std::any::Any;
 
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
+use commit_modal::CommitModal;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
@@ -28,12 +29,14 @@ actions!(git, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
-    branch_picker::init(cx);
-    cx.observe_new(ProjectDiff::register).detach();
-    commit_modal::init(cx);
-    git_panel::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
+        ProjectDiff::register(workspace, cx);
+        CommitModal::register(workspace);
+        git_panel::register(workspace);
+        repository_selector::register(workspace);
+        branch_picker::register(workspace);
+
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
             return;

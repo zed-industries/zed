@@ -361,7 +361,7 @@ impl ActiveThread {
                 if self.thread.read(cx).all_tools_finished() {
                     let pending_refresh_buffers = self.thread.update(cx, |thread, cx| {
                         thread.action_log().update(cx, |action_log, _cx| {
-                            action_log.take_pending_refresh_buffers()
+                            action_log.take_stale_buffers_in_context()
                         })
                     });
 

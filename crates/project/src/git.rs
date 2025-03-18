@@ -605,20 +605,9 @@ impl GitStore {
                             }
                             // Update the statuses and merge message but keep everything else.
                             let existing_handle = handle.clone();
-                            existing_handle.update(cx, |existing_handle, cx| {
+                            existing_handle.update(cx, |existing_handle, _| {
                                 existing_handle.repository_entry = repo.clone();
-                                if matches!(git_repo, GitRepo::Local { .. })
-                                    && existing_handle.merge_message != merge_message
-                                {
-                                    if let (Some(merge_message), Some(buffer)) =
-                                        (&merge_message, &existing_handle.commit_message_buffer)
-                                    {
-                                        buffer.update(cx, |buffer, cx| {
-                                            if buffer.is_empty() {
-                                                buffer.set_text(merge_message.as_str(), cx);
-                                            }
-                                        })
-                                    }
+                                if matches!(git_repo, GitRepo::Local { .. }) {
                                     existing_handle.merge_message = merge_message;
                                 }
                             });
@@ -2039,7 +2028,9 @@ impl Repository {
 
             let mut path = PathBuf::new();
             path = path.join(worktree_name);
-            path = path.join(project_path.path);
+            if project_path.path.components().count() > 0 {
+                path = path.join(project_path.path);
+            }
             Some(path.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| self.repository_entry.work_directory.display_name())
@@ -2175,7 +2166,6 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        let merge_message = self.merge_message.clone();
         cx.spawn(|repository, mut cx| async move {
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
@@ -2185,12 +2175,6 @@ impl Repository {
                 let git_commit_language = language_registry.language_for_name("Git Commit").await?;
                 buffer.update(&mut cx, |buffer, cx| {
                     buffer.set_language(Some(git_commit_language), cx);
-                })?;
-            }
-
-            if let Some(merge_message) = merge_message {
-                buffer.update(&mut cx, |buffer, cx| {
-                    buffer.set_text(merge_message.as_str(), cx)
                 })?;
             }
 
