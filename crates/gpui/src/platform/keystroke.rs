@@ -69,21 +69,22 @@ impl Keystroke {
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
     pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
-        // if let Some(key_char) = self
-        //     .key_char
-        //     .as_ref()
-        //     .filter(|key_char| key_char != &&self.key)
-        // {
-        //     let ime_modifiers = Modifiers {
-        //         control: self.modifiers.control,
-        //         platform: self.modifiers.platform,
-        //         ..Default::default()
-        //     };
+        #[cfg(not(target_os = "windows"))]
+        if let Some(key_char) = self
+            .key_char
+            .as_ref()
+            .filter(|key_char| key_char != &&self.key)
+        {
+            let ime_modifiers = Modifiers {
+                control: self.modifiers.control,
+                platform: self.modifiers.platform,
+                ..Default::default()
+            };
 
-        //     if &target.key == key_char && target.modifiers == ime_modifiers {
-        //         return true;
-        //     }
-        // }
+            if &target.key == key_char && target.modifiers == ime_modifiers {
+                return true;
+            }
+        }
 
         target.modifiers == self.modifiers && target.key == self.key
     }
