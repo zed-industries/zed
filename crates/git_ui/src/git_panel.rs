@@ -1741,10 +1741,7 @@ impl GitPanel {
                 .update(&mut cx, |repo, _| repo.get_remotes(None))?
                 .await??;
 
-            let mut remotes: Vec<_> = remotes
-                .into_iter()
-                .map(|remotes| FetchOptions::Remote(remotes))
-                .collect();
+            let mut remotes: Vec<_> = remotes.into_iter().map(FetchOptions::Remote).collect();
             remotes.push(FetchOptions::All);
             let selection = cx
                 .update(|window, cx| {

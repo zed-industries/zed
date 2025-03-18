@@ -1,7 +1,8 @@
 use crate::{
     blame::Blame,
     repository::{
-        Branch, CommitDetails, DiffType, FetchOptions, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode
+        Branch, CommitDetails, DiffType, FetchOptions, GitRepository, PushOptions, Remote,
+        RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus},
 };
