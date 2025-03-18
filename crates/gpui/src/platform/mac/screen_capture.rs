@@ -47,7 +47,11 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
         unsafe {
             let width: i64 = msg_send![self.sc_display, width];
             let height: i64 = msg_send![self.sc_display, height];
-            Ok(size(px(width as f32), px(height as f32)))
+            // Ok(size(px(3456 as f32), px(2234 as f32)))
+            // max seems to be about px(2382, 1539) (screen is 1728x1117)
+            // received is still *half* at px(1190, 768)...
+            // Ok(size(px(width as f32 * 1.3785), px(height as f32 * 1.3785)))
+            Ok(size(px(1190.), px(768.)))
         }
     }
 
@@ -66,6 +70,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let filter: id = msg_send![filter, initWithDisplay:self.sc_display excludingWindows:excluded_windows];
             let configuration: id = msg_send![configuration, init];
             let _: id = msg_send![configuration, setScalesToFit: true];
+            let _: id = msg_send![configuration, setPixelFormat: 0x42475241];
             // let _: id = msg_send![configuration, setShowsCursor: false];
             // let _: id = msg_send![configuration, setCaptureResolution: 3];
             let delegate: id = msg_send![delegate, init];
@@ -76,8 +81,9 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                 Box::into_raw(Box::new(frame_callback)) as *mut c_void,
             );
 
-            let _: id = msg_send![configuration, setWidth: 960 *2];
-            let _: id = msg_send![configuration, setHeight: 540*2];
+            let resolution = self.resolution().unwrap();
+            let _: id = msg_send![configuration, setWidth: resolution.width.0 as i64];
+            let _: id = msg_send![configuration, setHeight: resolution.height.0 as i64];
             let stream: id = msg_send![stream, initWithFilter:filter configuration:configuration delegate:delegate];
 
             let (mut tx, rx) = oneshot::channel();

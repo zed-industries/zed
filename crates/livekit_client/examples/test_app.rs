@@ -86,7 +86,7 @@ fn main() {
                     &livekit_key,
                     &livekit_secret,
                     Some(&format!("test-participant-{i}")),
-                    VideoGrant::to_join("test-room"),
+                    VideoGrant::to_join("wtej-trty"),
                 )
                 .unwrap();
 
@@ -308,7 +308,7 @@ impl LivekitWindow {
         if let Some(track) = self.screen_share_track.take() {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
-            cx.background_spawn(async move {
+            Tokio::spawn(cx, async move {
                 participant.unpublish_track(&track.sid()).await.unwrap();
             })
             .detach();
@@ -326,6 +326,8 @@ impl LivekitWindow {
                             LocalTrack::Video(track),
                             TrackPublishOptions {
                                 source: TrackSource::Screenshare,
+                                // video_codec: VideoCodec::VP8,
+                                // simulcast: true,
                                 ..Default::default()
                             },
                         )

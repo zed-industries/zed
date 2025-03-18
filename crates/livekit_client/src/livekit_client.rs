@@ -166,6 +166,11 @@ pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
+    use std::{slice, sync::atomic::AtomicU8};
+
+    use core_foundation::base::TCFType as _;
+    use livekit::webrtc::prelude::{I420ABuffer, I420Buffer, NV12Buffer};
+    use media::core_video::CVImageBuffer;
     let resolution = capture_source.resolution()?;
     dbg!(&resolution);
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
@@ -180,13 +185,72 @@ pub async fn capture_local_video_track(
         .stream({
             let track_source = track_source.clone();
             Box::new(move |frame| {
-                if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
-                    track_source.capture_frame(&VideoFrame {
-                        rotation: VideoRotation::VideoRotation0,
-                        timestamp_us: 0,
-                        buffer,
-                    });
+                // let pixel_buffer = frame.0.as_concrete_TypeRef();
+                // let data = unsafe {
+                //     if CVPixelBufferLockBaseAddress(pixel_buffer, 0) != 0 {
+                //         panic!("uh oh")
+                //     }
+                //     let base_address = CVPixelBufferGetBaseAddress(pixel_buffer);
+                //     if base_address.is_null() {
+                //         CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
+                //         panic("no no")
+                //     }
+                //     let data_size = CVPixelBufferGetDataSize(pixel_buffer);
+                //     let data = slice::from_raw_parts(base_address as *const u8, data_size);
+                //     println!("{}", data.len());
+                //     CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
+                //     data
+                // };
+                //
+                let mut nv12_buffer =
+                    NV12Buffer::new(resolution.width.0 as u32, resolution.height.0 as u32);
+
+                let (data_y, data_uv) = nv12_buffer.data_mut();
+                // Fill Y plane with green (150)
+                for y in data_y.iter_mut() {
+                    *y = 150;
                 }
+
+                // Fill UV plane with green (-43)
+                for y in data_uv.iter_mut() {
+                    *y = if y as *const _ as usize % 2 == 0 {
+                        213
+                    } else {
+                        235
+                    };
+                }
+
+                // let mut i420_buffer =
+                //     I420Buffer::new(resolution.width.0 as u32, resolution.height.0 as u32);
+                // let (y_data, u_data, v_data) = i420_buffer.data_mut();
+
+                // // Fill Y plane with green (150)
+                // for y in y_data.iter_mut() {
+                //     *y = 150;
+                // }
+
+                // // Fill U plane with green (-43)
+                // for u in u_data.iter_mut() {
+                //     *u = 213;
+                // }
+
+                // // Fill V plane with green (-21)
+                // for v in v_data.iter_mut() {
+                //     *v = 235;
+                // }
+
+                // if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
+                //     dbg!(
+                //         buffer.as_ref().width(),
+                //         buffer.as_ref().height(),
+                //         buffer.as_ref().buffer_type()
+                //     );
+                track_source.capture_frame(&VideoFrame {
+                    rotation: VideoRotation::VideoRotation0,
+                    timestamp_us: 0,
+                    buffer: nv12_buffer,
+                });
+                // }
             })
         })
         .await??;
@@ -469,8 +533,14 @@ pub fn play_remote_video_track(
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = RemoteVideoFrame> {
-    NativeVideoStream::new(track.rtc_track())
-        .filter_map(|frame| async move { video_frame_buffer_from_webrtc(frame.buffer) })
+    NativeVideoStream::new(track.rtc_track()).filter_map(|frame| async move {
+        dbg!(
+            frame.buffer.width(),
+            frame.buffer.height(),
+            frame.buffer.buffer_type()
+        );
+        video_frame_buffer_from_webrtc(frame.buffer)
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -481,33 +551,121 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     use std::sync::atomic::AtomicU8;
 
     use core_foundation::base::TCFType as _;
-    use media::core_video::CVImageBuffer;
+    use coreaudio::sys::CGSize;
+    use livekit::webrtc::native::yuv_helper::{i420_to_bgra, i420_to_nv12};
+    use media::core_video::{
+        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, CVImageBuffer,
+    };
 
-    let buffer = buffer.as_native()?;
-    let pixel_buffer = buffer.get_cv_pixel_buffer() as CVImageBufferRef;
-    if pixel_buffer.is_null() {
-        return None;
-    }
-    static FRAME_COUNT: AtomicU8 = AtomicU8::new(0);
-    if FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 64 == 0 {
-        unsafe {
-            let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-            let height = CVPixelBufferGetHeight(pixel_buffer);
-            let width = CVPixelBufferGetWidth(pixel_buffer);
-            let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-            let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-            dbg!(
-                "<<<<<<<<< {}",
-                format,
-                width,
-                height,
-                bytes_per_row,
-                data_size
-            );
+    dbg!(buffer.buffer_type());
+    let i420_buffer = buffer.as_i420()?;
+    let width = i420_buffer.width();
+    let height = i420_buffer.height();
+    let dimensions = CGSize {
+        width: width as f64,
+        height: height as f64,
+    };
+
+    let image_buffer = unsafe {
+        let pixel_format = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+        let mut pixel_buffer: CVImageBufferRef = std::ptr::null();
+
+        CVPixelBufferCreate(
+            std::ptr::null(),
+            width as i64,
+            height as i64,
+            pixel_format,
+            std::ptr::null(),
+            &mut pixel_buffer,
+        );
+
+        if pixel_buffer.is_null() {
+            return None;
         }
-    }
 
-    unsafe { Some(CVImageBuffer::wrap_under_get_rule(pixel_buffer as _)) }
+        CVPixelBufferLockBaseAddress(pixel_buffer, 0);
+
+        let dst_y = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 0);
+        let dst_y_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 0);
+        if dst_y.is_null() {
+            panic!("oops")
+        }
+        let dst_uv = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1);
+        let dst_uv_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 1);
+        if dst_uv.is_null() {
+            panic!("oops")
+        }
+        let dst_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
+        let dst_len = CVPixelBufferGetDataSize(pixel_buffer);
+        let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_len as usize);
+        let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_len as usize);
+
+        let (stride_y, stride_u, stride_v) = i420_buffer.strides();
+        let (src_y, src_u, src_v) = i420_buffer.data();
+        i420_to_nv12(
+            src_y,
+            stride_y,
+            src_u,
+            stride_u,
+            src_v,
+            stride_v,
+            dst_y_buffer,
+            dst_y_stride as u32,
+            dst_uv_buffer,
+            dst_uv_stride as u32,
+            width as i32,
+            height as i32,
+        );
+        dbg!(&dst_y_buffer[0..10]);
+        dbg!(&dst_uv_buffer[0..10]);
+
+        // std::ptr::copy_nonoverlapping(y_data.as_ptr(), dst as *mut u8, y_data.len());
+
+        // let dst = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1);
+        // if dst.is_null() {
+        //     panic!("wat")
+        // }
+        // std::ptr::copy_nonoverlapping(u_data.as_ptr(), dst as *mut u8, u_data.len());
+
+        // let dst = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 2);
+        // if dst.is_null() {
+        //     panic!("zing")
+        // }
+        // std::ptr::copy_nonoverlapping(v_data.as_ptr(), dst as *mut u8, v_data.len());
+
+        CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
+        CVImageBuffer::wrap_under_get_rule(pixel_buffer as _)
+    };
+    // Some(image_buffer)
+    // let i420_buffer = buffer.as_i420()?;
+
+    // let buffer = buffer.as_native()?;
+    // dbg!(buffer.buffer_type());
+    // let pixel_buffer = buffer.get_cv_pixel_buffer() as CVImageBufferRef;
+    // if pixel_buffer.is_null() {
+    //     dbg!(buffer.buffer_type());
+    //     return None;
+    // }
+    // static FRAME_COUNT: AtomicU8 = AtomicU8::new(0);
+    // if FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 64 == 0 {
+    //     unsafe {
+    //         let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
+    //         let height = CVPixelBufferGetHeight(pixel_buffer);
+    //         let width = CVPixelBufferGetWidth(pixel_buffer);
+    //         let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
+    //         let data_size = CVPixelBufferGetDataSize(pixel_buffer);
+    //         dbg!(
+    //             "<<<<<<<<< {}",
+    //             format,
+    //             width,
+    //             height,
+    //             bytes_per_row,
+    //             data_size
+    //         );
+    //     }
+    // }
+
+    Some(image_buffer)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -558,11 +716,24 @@ extern "C" {
     fn CVPixelBufferLockBaseAddress(pixelBuffer: CVImageBufferRef, flags: u32) -> i32;
     fn CVPixelBufferUnlockBaseAddress(pixelBuffer: CVImageBufferRef, flags: u32) -> i32;
     fn CVPixelBufferGetBaseAddress(pixelBuffer: CVImageBufferRef) -> *mut c_void;
+    fn CVPixelBufferGetBaseAddressOfPlane(
+        pixelBuffer: CVImageBufferRef,
+        planeIndex: i64,
+    ) -> *mut c_void;
+    fn CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer: CVImageBufferRef, planeIndex: i64) -> i64;
     fn CVPixelBufferGetDataSize(pixelBuffer: CVImageBufferRef) -> usize;
     fn CVPixelBufferGetPixelFormatType(pixelBuffer: CVImageBufferRef) -> OSType;
     fn CVPixelBufferGetHeight(pixelBuffer: CVImageBufferRef) -> i64;
     fn CVPixelBufferGetWidth(pixelBuffer: CVImageBufferRef) -> i64;
     fn CVPixelBufferGetBytesPerRow(pixelBuffer: CVImageBufferRef) -> i64;
+    fn CVPixelBufferCreate(
+        allocator: *const c_void,
+        width: i64,
+        height: i64,
+        pixelFormatType: OSType,
+        attrs: *const c_void,
+        outPixelBuffer: *mut CVImageBufferRef,
+    ) -> i32;
 }
 
 #[cfg(target_os = "macos")]
@@ -570,6 +741,7 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     use std::sync::atomic::AtomicU32;
 
     use core_foundation::base::TCFType as _;
+    use livekit::webrtc::video_frame::native::VideoFrameBufferExt;
 
     let pixel_buffer = frame.0.as_concrete_TypeRef();
     static FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -591,7 +763,9 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     }
     std::mem::forget(frame.0);
     unsafe {
-        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
+        Some(
+            webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _), // .to_i420(),
+        )
     }
 }
 
