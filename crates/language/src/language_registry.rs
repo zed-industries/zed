@@ -4,7 +4,7 @@ use crate::{
     },
     task_context::ContextProvider,
     with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
+    LanguageServerName, LspAdapter, LspAdapterDelegate, ToolchainLister, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
@@ -1101,4 +1101,14 @@ impl LspBinaryStatusSender {
         let mut txs = self.txs.lock();
         txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
     }
+}
+
+pub trait ManifestProvider {
+    fn name(&self) -> SharedString;
+    fn manifest_path(
+        &self,
+        _path: &Path,
+        _ancestor_depth: usize,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>>;
 }

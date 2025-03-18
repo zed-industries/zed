@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
@@ -68,17 +68,18 @@ impl RustLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for RustLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+struct CargoManifestProvider;
+
+impl ManifestProvider for CargoManifestProvider {
+    fn name(&self) -> gpui::SharedString {
+        SharedString::new_static("Cargo.toml")
     }
 
-    fn find_project_root(
+    fn manifest_path(
         &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        _path: &Path,
+        _ancestor_depth: usize,
+        _: &Arc<dyn LspAdapterDelegate>,
     ) -> Option<Arc<Path>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(ancestor_depth) {
@@ -89,6 +90,17 @@ impl LspAdapter for RustLspAdapter {
         }
 
         outermost_cargo_toml
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for RustLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME.clone()
+    }
+
+    fn manifest_name(&self) -> Option<SharedString> {
+        Some(SharedString::new_static("Cargo.toml"))
     }
 
     async fn check_if_user_installed(
