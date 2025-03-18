@@ -27,15 +27,18 @@ pub fn min_printed_log_level(level: log_impl::Level) -> log_impl::Level {
 #[macro_export]
 macro_rules! log {
     ($logger:expr, $level:expr, $($arg:tt)+) => {
-        if $crate::scope_map::is_scope_enabled(&$logger.scope, $level) {
-            $crate::log_impl::log!(target: &$logger.fmt_scope(), $crate::min_printed_log_level($level), $($arg)+);
+        let level = $level;
+        let logger = $logger;
+        let (enabled, level) = $crate::scope_map::is_scope_enabled(&logger.scope, level);
+        if enabled {
+            $crate::log_impl::log!(target: &logger.fmt_scope(), level, $($arg)+);
         }
     }
 }
 
 #[macro_export]
 macro_rules! trace {
-    ($logger:expr, $($arg:tt)+) => {
+    ($logger:expr => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Trace, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -45,7 +48,7 @@ macro_rules! trace {
 
 #[macro_export]
 macro_rules! debug {
-    ($logger:expr, $($arg:tt)+) => {
+    ($logger:expr => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Debug, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -55,7 +58,7 @@ macro_rules! debug {
 
 #[macro_export]
 macro_rules! info {
-    ($logger:expr, $($arg:tt)+) => {
+    ($logger:expr => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Info, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -65,7 +68,7 @@ macro_rules! info {
 
 #[macro_export]
 macro_rules! warn {
-    ($logger:expr, $($arg:tt)+) => {
+    ($logger:expr => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Warn, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -75,7 +78,7 @@ macro_rules! warn {
 
 #[macro_export]
 macro_rules! error {
-    ($logger:expr, $($arg:tt)+) => {
+    ($logger:expr => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Error, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -85,7 +88,7 @@ macro_rules! error {
 
 #[macro_export]
 macro_rules! time {
-    ($logger:expr, $name:expr) => {
+    ($logger:expr => $name:expr) => {
         $crate::Timer::new($logger, $name)
     };
     ($name:expr) => {
@@ -95,7 +98,7 @@ macro_rules! time {
 
 #[macro_export]
 macro_rules! scoped {
-    ($parent:expr, $name:expr) => {{
+    ($parent:expr => $name:expr) => {{
         let mut scope = $parent.scope;
         let mut index = 1; // always have crate/module name
         while index < scope.len() && !scope[index].is_empty() {
@@ -119,7 +122,7 @@ macro_rules! scoped {
         $crate::Logger { scope }
     }};
     ($name:expr) => {
-        $crate::scoped!($crate::default_logger!(), $name)
+        $crate::scoped!($crate::default_logger!() => $name)
     };
 }
 
@@ -203,7 +206,7 @@ pub struct Timer {
 
 impl Drop for Timer {
     fn drop(&mut self) {
-        self.end();
+        self.finish();
     }
 }
 
@@ -223,7 +226,11 @@ impl Timer {
         return self;
     }
 
-    fn end(&mut self) {
+    pub fn end(mut self) {
+        self.finish();
+    }
+
+    fn finish(&mut self) {
         if self.done {
             return;
         }
@@ -231,7 +238,7 @@ impl Timer {
         if let Some(warn_limit) = self.warn_if_longer_than {
             if elapsed > warn_limit {
                 crate::warn!(
-                    self.logger,
+                    self.logger =>
                     "Timer '{}' took {:?}. Which was longer than the expected limit of {:?}",
                     self.name,
                     elapsed,
@@ -242,7 +249,7 @@ impl Timer {
             }
         }
         crate::trace!(
-            self.logger,
+            self.logger =>
             "Timer '{}' finished in {:?}",
             self.name,
             elapsed
@@ -252,43 +259,75 @@ impl Timer {
 }
 
 pub mod scope_map {
+    use std::{
+        collections::HashMap,
+        hash::{DefaultHasher, Hasher},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            LazyLock, RwLock,
+        },
+    };
+
     use super::*;
 
-    type ScopeMap = std::collections::HashMap<ScopeAlloc, log_impl::Level>;
-    static _SCOPE_MAP: std::sync::OnceLock<std::sync::RwLock<ScopeMap>> =
-        std::sync::OnceLock::new();
+    type ScopeMap = HashMap<ScopeAlloc, log_impl::Level>;
+    static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
+    // LazyLock::new(|| RwLock::new(ScopeMap::default()));
+    static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
 
-    fn get() -> &'static std::sync::RwLock<ScopeMap> {
-        _SCOPE_MAP.get_or_init(|| {
-            let map = ScopeMap::default();
-            std::sync::RwLock::new(map)
-        })
-    }
+    pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> (bool, log_impl::Level) {
+        let level_min = min_printed_log_level(level);
+        if level <= level_min {
+            // [FAST PATH]
+            // if the message is at or below the minimum printed log level
+            // (where error < warn < info etc) then always enable
+            return (true, level);
+        }
 
-    pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> bool {
-        let Ok(map) = get().read() else {
+        let Ok(map) = SCOPE_MAP.read() else {
             // on failure, default to enabled detection done by `log` crate
-            return true;
+            return (true, level);
+        };
+
+        let Some(map) = map.as_ref() else {
+            // on failure, default to enabled detection done by `log` crate
+            return (true, level);
         };
 
         if map.is_empty() {
             // if no scopes are enabled, default to enabled detection done by `log` crate
-            return true;
+            return (true, level);
         }
         let Some(level_enabled) = map.get(&private::scope_to_alloc(scope)) else {
             // if this scope isn't configured, default to enabled detection done by `log` crate
-            return true;
+            return (true, level);
         };
         if level_enabled < &level {
             // if the configured level is lower than the requested level, disable logging
             // note: err = 0, warn = 1, etc.
-            return false;
+            return (false, level);
         }
 
-        return true;
+        // note: bumping level to min level that will be printed
+        // to work around log crate limitations
+        return (true, level_min);
     }
 
-    pub fn refresh(settings: &std::collections::HashMap<String, String>) {
+    fn hash_scope_map_settings(map: &HashMap<String, String>) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for (key, value) in map {
+            Hasher::write(&mut hasher, key.as_bytes());
+            Hasher::write(&mut hasher, value.as_bytes());
+        }
+        return hasher.finish();
+    }
+
+    pub fn refresh(settings: &HashMap<String, String>) {
+        let hash_old = SCOPE_MAP_HASH.load(Ordering::Acquire);
+        let hash_new = hash_scope_map_settings(settings);
+        if hash_old == hash_new && hash_old != 0 {
+            return;
+        }
         // compute new scope map then atomically swap it, instead of
         // updating in place to reduce contention
         let mut map_new = ScopeMap::with_capacity(settings.len());
@@ -321,12 +360,16 @@ pub mod scope_map {
             map_new.insert(scope, level);
         }
 
-        let Ok(mut map) = get().write() else {
-            crate::warn!("Failed to update log scope settings");
-            return;
-        };
-        *map = map_new;
-        eprintln!("Refreshed\nmap = {map:?}");
+        {
+            let mut map = SCOPE_MAP.write().unwrap_or_else(|err| {
+                SCOPE_MAP.clear_poison();
+                err.into_inner()
+            });
+            *map = Some(map_new.clone());
+            // note: hash update done here to ensure consistency with scope map
+            SCOPE_MAP_HASH.store(hash_new, Ordering::Release);
+        }
+        eprintln!("Updated log scope settings :: map = {:?}", map_new);
     }
 }
 
