@@ -3,30 +3,6 @@ use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::{OffsetRangeExt, Point};
-
-
-fn find_matches(text: String, pattern: &str) -> Vec<(usize, usize)> {
-    let mut matches = Vec::new();
-    if pattern.is_empty() {
-        return matches;
-    }
-
-    let mut start = 0;
-    while start < text.len() {
-        match text[start..].find(pattern) {
-            Some(pos) => {
-                let match_start = start + pos;
-                let match_end = match_start + pattern.len();
-                if match_end <= text.len() {
-                    matches.push((match_start, match_end));
-                }
-                start = match_start + 1;
-            }
-            None => break,
-        }
-    }
-    matches
-}
 use language_model::LanguageModelRequestMessage;
 use project::{
     search::{SearchQuery, SearchResult},
@@ -140,6 +116,7 @@ impl Tool for RegexSearchTool {
                                 continue;
                             }
 
+                            // We'd already found a full page of matches, and we just found one more.
                             if matches_found >= RESULTS_PER_PAGE {
                                 has_more_matches = true;
                                 return Ok(());
@@ -255,10 +232,32 @@ impl Tool for RegexSearchTool {
     }
 }
 
+fn find_matches(text: String, pattern: &str) -> Vec<(usize, usize)> {
+    let mut matches = Vec::new();
+    if pattern.is_empty() {
+        return matches;
+    }
+
+    let mut start = 0;
+    while start < text.len() {
+        match text[start..].find(pattern) {
+            Some(pos) => {
+                let match_start = start + pos;
+                let match_end = match_start + pattern.len();
+                if match_end <= text.len() {
+                    matches.push((match_start, match_end));
+                }
+                start = match_start + 1;
+            }
+            None => break,
+        }
+    }
+    matches
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_find_matches() {
@@ -376,6 +375,7 @@ mod tests {
 
         // Simulate processing more matches than fit in a page
         for _ in 0..(RESULTS_PER_PAGE + 5) {
+            // We'd already found a full page of matches, and we just found one more.
             if matches_found >= RESULTS_PER_PAGE {
                 has_more_matches = true;
                 break;
