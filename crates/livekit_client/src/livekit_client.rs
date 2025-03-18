@@ -95,7 +95,7 @@ impl livekit::dispatcher::HttpClient for HttpClientAdapter {
     fn get(
         &self,
         url: &str,
-    ) -> Pin<Box<dyn Future<Output = io::Result<livekit::dispatcher::Response>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = io::Result<livekit::tokio::Response>> + Send>> {
         let http_client = self.0.clone();
         let url = url.to_string();
         Box::pin(async move {
@@ -152,14 +152,14 @@ pub fn init(
 ) {
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-pub fn init(
-    dispatcher: Arc<dyn gpui::PlatformDispatcher>,
-    http_client: Arc<dyn http_client::HttpClient>,
-) {
-    livekit::dispatcher::set_dispatcher(Dispatcher(dispatcher));
-    livekit::dispatcher::set_http_client(HttpClientAdapter(http_client));
-}
+// #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
+// pub fn init(
+//     dispatcher: Arc<dyn gpui::PlatformDispatcher>,
+//     http_client: Arc<dyn http_client::HttpClient>,
+// ) {
+//     livekit::dispatcher::set_dispatcher(Dispatcher(dispatcher));
+//     livekit::dispatcher::set_http_client(HttpClientAdapter(http_client));
+// }
 
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub async fn capture_local_video_track(

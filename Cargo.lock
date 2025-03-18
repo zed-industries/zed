@@ -7438,7 +7438,7 @@ dependencies = [
 
 [[package]]
 name = "libwebrtc"
-version = "0.3.7"
+version = "0.3.10"
 dependencies = [
  "cxx",
  "jni",
@@ -7522,11 +7522,12 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 
 [[package]]
 name = "livekit"
-version = "0.7.0"
+version = "0.7.6"
 dependencies = [
  "chrono",
  "futures-util",
  "lazy_static",
+ "libloading",
  "libwebrtc",
  "livekit-api",
  "livekit-protocol",
@@ -7543,9 +7544,9 @@ dependencies = [
 
 [[package]]
 name = "livekit-api"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
- "async-tungstenite",
+ "base64 0.21.7",
  "futures-util",
  "http 0.2.12",
  "jsonwebtoken",
@@ -7553,7 +7554,9 @@ dependencies = [
  "livekit-runtime",
  "log",
  "parking_lot",
+ "pbjson-types",
  "prost 0.12.6",
+ "rand 0.9.0",
  "reqwest 0.11.27",
  "scopeguard",
  "serde",
@@ -7567,7 +7570,7 @@ dependencies = [
 
 [[package]]
 name = "livekit-protocol"
-version = "0.3.6"
+version = "0.3.9"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -7583,12 +7586,10 @@ dependencies = [
 
 [[package]]
 name = "livekit-runtime"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
- "async-io",
- "async-std",
- "async-task",
- "futures 0.3.31",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -14200,10 +14201,7 @@ checksum = "212d5dcb2a1ce06d81107c3d0ffa3121fe974b73f068c8282cb1c32328113b6c"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.21.12",
- "rustls-native-certs 0.6.3",
  "tokio",
- "tokio-rustls 0.24.1",
  "tungstenite 0.20.1",
 ]
 
@@ -14717,7 +14715,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.5",
- "rustls 0.21.12",
  "sha1",
  "thiserror 1.0.69",
  "url",
@@ -15881,7 +15878,7 @@ dependencies = [
 
 [[package]]
 name = "webrtc-sys"
-version = "0.3.5"
+version = "0.3.7"
 dependencies = [
  "cc",
  "cxx",
@@ -15893,7 +15890,7 @@ dependencies = [
 
 [[package]]
 name = "webrtc-sys-build"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "fs2",
  "regex",
