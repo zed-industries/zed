@@ -118,7 +118,6 @@ pub use proposed_changes_editor::{
 use smallvec::smallvec;
 use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
-use unicode_script::script_extensions::DEVA_GRAN;
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
