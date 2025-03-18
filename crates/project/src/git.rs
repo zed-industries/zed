@@ -2190,12 +2190,6 @@ impl Repository {
                 })?;
             }
 
-            if let Some(merge_message) = merge_message {
-                buffer.update(&mut cx, |buffer, cx| {
-                    buffer.set_text(merge_message.as_str(), cx)
-                })?;
-            }
-
             repository.update(&mut cx, |repository, _| {
                 repository.commit_message_buffer = Some(buffer.clone());
             })?;

@@ -1407,7 +1407,7 @@ impl GitPanel {
             return Some(message.to_string());
         }
 
-        self.suggest_commit_message()
+        self.suggest_commit_message(cx)
             .filter(|message| !message.trim().is_empty())
     }
 
@@ -1576,7 +1576,15 @@ impl GitPanel {
     }
 
     /// Suggests a commit message based on the changed files and their statuses
-    pub fn suggest_commit_message(&self) -> Option<String> {
+    pub fn suggest_commit_message(&self, cx: &App) -> Option<String> {
+        if let Some(merge_message) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).merge_message.as_ref())
+        {
+            return Some(merge_message.clone());
+        }
+
         let git_status_entry = if let Some(staged_entry) = &self.single_staged_entry {
             Some(staged_entry)
         } else if let Some(single_tracked_entry) = &self.single_tracked_entry {
@@ -1713,7 +1721,7 @@ impl GitPanel {
     }
 
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
-        let suggested_commit_message = self.suggest_commit_message();
+        let suggested_commit_message = self.suggest_commit_message(cx);
         let placeholder_text = suggested_commit_message
             .as_deref()
             .unwrap_or("Enter commit message");
@@ -2217,7 +2225,7 @@ impl GitPanel {
                     git_panel.commit_editor = cx.new(|cx| {
                         commit_message_editor(
                             buffer,
-                            git_panel.suggest_commit_message().as_deref(),
+                            git_panel.suggest_commit_message(cx).as_deref(),
                             git_panel.project.clone(),
                             true,
                             window,
