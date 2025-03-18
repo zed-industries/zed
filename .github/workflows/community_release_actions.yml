@@ -17,7 +17,7 @@ jobs:
           else
             URL="https://zed.dev/releases/stable/latest"
           fi
-          echo "::set-output name=URL::$URL"
+          echo "URL=$URL" >> $GITHUB_OUTPUT
       - name: Get content
         uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757 # v1.4.1
         id: get-content
@@ -33,3 +33,33 @@ jobs:
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           content: ${{ steps.get-content.outputs.string }}
+
+  send_release_notes_email:
+    if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check if release was promoted from preview
+        id: check-promotion-from-preview
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          PREVIEW_TAG="${VERSION}-pre"
+          if git rev-parse "$PREVIEW_TAG" >/dev/null 2>&1; then
+            echo "was_preview=true" >> $GITHUB_OUTPUT
+          else
+            echo "was_preview=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send release notes email
+        if: steps.check-promotion-from-preview.outputs.was_preview == 'true'
+        run: |
+          curl -X POST "https://zed.dev/api/send_release_notes_email" \
+            -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "version": "${{ github.event.release.tag_name }}",
+              "markdown_body": ${{ toJSON(github.event.release.body) }}
+            }'

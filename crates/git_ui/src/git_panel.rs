@@ -2237,7 +2237,14 @@ impl GitPanel {
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
         self.single_staged_entry.take();
-        self.single_staged_entry.take();
+        self.conflicted_count = 0;
+        self.conflicted_staged_count = 0;
+        self.new_count = 0;
+        self.tracked_count = 0;
+        self.new_staged_count = 0;
+        self.tracked_staged_count = 0;
+        self.entry_count = 0;
+
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
