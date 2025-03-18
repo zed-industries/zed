@@ -1,1 +1,1 @@
-Returns all the paths in the project which match the given glob.
+Returns paths in the project which match the given glob. Results are paginated with a maximum of 20 paths per response. Use the optional 'offset' parameter to retrieve additional results beyond the first 20 matches.
