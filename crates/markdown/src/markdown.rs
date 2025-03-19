@@ -160,6 +160,11 @@ impl Markdown {
         self.parse(cx);
     }
 
+    pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
+        self.autoscroll_request = Some(self.source().len());
+        cx.notify();
+    }
+
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if source == self.source() {
             return;

@@ -36,6 +36,7 @@ pub struct ActiveThread {
     rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
+    expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
@@ -64,7 +65,10 @@ impl RenderedMessage {
 
     fn append_thinking(&mut self, text: &String, window: &Window, cx: &mut App) {
         if let Some(RenderedMessageSegment::Thinking(markdown)) = self.segments.last_mut() {
-            markdown.update(cx, |markdown, cx| markdown.append(text, cx));
+            markdown.update(cx, |markdown, cx| {
+                markdown.append(text, cx);
+                markdown.scroll_to_bottom(cx);
+            });
         } else {
             self.segments
                 .push(RenderedMessageSegment::Thinking(render_markdown(
@@ -220,6 +224,7 @@ impl ActiveThread {
             rendered_messages_by_id: HashMap::default(),
             rendered_scripting_tool_uses: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
+            expanded_thinking_segments: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.entity().downgrade();
                 move |ix, window: &mut Window, cx: &mut App| {
@@ -665,10 +670,11 @@ impl ActiveThread {
                         .p_2p5()
                         .child(edit_message_editor)
                 } else {
-                    div()
-                        .p_2p5()
-                        .text_ui(cx)
-                        .child(self.render_message_content(rendered_message, cx))
+                    div().p_2p5().text_ui(cx).child(self.render_message_content(
+                        message_id,
+                        rendered_message,
+                        cx,
+                    ))
                 },
             )
             .when_some(context, |parent, context| {
@@ -823,22 +829,137 @@ impl ActiveThread {
 
     fn render_message_content(
         &self,
+        message_id: MessageId,
         rendered_message: &RenderedMessage,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let pending_thinking_segment_index = rendered_message
+            .segments
+            .iter()
+            .enumerate()
+            .last()
+            .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking(_)))
+            .map(|(index, _)| index);
+
         div()
-            .p_2p5()
             .text_ui(cx)
             .gap_2()
-            .children(rendered_message.segments.iter().map(|segment| {
-                match segment {
-                    RenderedMessageSegment::Thinking(markdown) => div()
-                        .debug_bg_green()
-                        .child(markdown.clone())
-                        .into_any_element(),
-                    RenderedMessageSegment::Text(markdown) => markdown.clone().into_any_element(),
-                }
-            }))
+            .children(
+                rendered_message.segments.iter().enumerate().map(
+                    |(index, segment)| match segment {
+                        RenderedMessageSegment::Thinking(markdown) => self
+                            .render_message_thinking_segment(
+                                message_id,
+                                index,
+                                markdown.clone(),
+                                Some(index) == pending_thinking_segment_index,
+                                cx,
+                            )
+                            .into_any_element(),
+                        RenderedMessageSegment::Text(markdown) => {
+                            div().p_2p5().child(markdown.clone()).into_any_element()
+                        }
+                    },
+                ),
+            )
+    }
+
+    fn render_message_thinking_segment(
+        &self,
+        message_id: MessageId,
+        ix: usize,
+        markdown: Entity<Markdown>,
+        pending: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let is_open = self
+            .expanded_thinking_segments
+            .get(&(message_id, ix))
+            .copied()
+            .unwrap_or_default();
+
+        let lighter_border = cx.theme().colors().border.opacity(0.5);
+
+        v_flex()
+            .rounded_lg()
+            .border_1()
+            .border_color(lighter_border)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .py_1()
+                    .pl_1()
+                    .pr_2()
+                    .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                    .rounded_t_md()
+                    .border_b_1()
+                    .border_color(lighter_border)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Disclosure::new("tool-use-disclosure", is_open)
+                                    .opened_icon(IconName::ChevronUpDown)
+                                    .closed_icon(IconName::ChevronDownUp)
+                                    .on_click(cx.listener({
+                                        move |this, _event, _window, _cx| {
+                                            let is_open = this
+                                                .expanded_thinking_segments
+                                                .entry((message_id, ix))
+                                                .or_insert(false);
+
+                                            *is_open = !*is_open;
+                                        }
+                                    })),
+                            )
+                            .child({
+                                Label::new(if pending {
+                                    "Thinking…"
+                                } else {
+                                    "Thought Process"
+                                })
+                                .size(LabelSize::Small)
+                                .buffer_font(cx)
+                            }),
+                    )
+                    .child({
+                        let (icon_name, color, animated) = if pending {
+                            (IconName::ArrowCircle, Color::Accent, true)
+                        } else {
+                            (IconName::Check, Color::Success, false)
+                        };
+
+                        let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
+
+                        if animated {
+                            icon.with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            )
+                            .into_any_element()
+                        } else {
+                            icon.into_any_element()
+                        }
+                    }),
+            )
+            .child(
+                div()
+                    .map(|element| {
+                        if is_open {
+                            element.h_full()
+                        } else {
+                            element.max_h_32()
+                        }
+                    })
+                    .overflow_hidden()
+                    .p_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .rounded_b_lg()
+                    .child(markdown),
+            )
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
