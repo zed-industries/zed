@@ -324,12 +324,6 @@ impl Database {
                     .await?;
             }
 
-            if !update.updated_repositories.is_empty() {
-                //
-            }
-
-            if !update.removed_repositories.is_empty() {}
-
             let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
             Ok(connection_ids)
         })
@@ -339,7 +333,7 @@ impl Database {
     pub async fn update_repository(
         &self,
         update: &proto::UpdateRepository,
-        connection: ConnectionId,
+        _connection: ConnectionId,
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
         let repository_id = update.id as i64;
@@ -347,12 +341,12 @@ impl Database {
             project_repository::Entity::insert(project_repository::ActiveModel {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(repository_id),
-                abs_path: ActiveValue::set(update.abs_path),
+                abs_path: ActiveValue::set(update.abs_path.clone()),
                 entry_ids: ActiveValue::set(
                     update
                         .entry_ids
-                        .into_iter()
-                        .map(|id| id as i64)
+                        .iter()
+                        .map(|id| *id as i64)
                         .collect::<Vec<_>>(),
                 ),
                 scan_id: ActiveValue::set(update.scan_id as i64),
@@ -455,17 +449,16 @@ impl Database {
     pub async fn remove_repository(
         &self,
         remove: &proto::RemoveRepository,
-        connection: ConnectionId,
+        _connection: ConnectionId,
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(remove.project_id);
         let repository_id = remove.id as i64;
         self.project_transaction(project_id, |tx| async move {
             project_repository::Entity::update_many()
                 .filter(
-                    project_repository::Column::ProjectId.eq(project_id).and(
-                        project_repository::Column::Id
-                            .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
-                    ),
+                    project_repository::Column::ProjectId
+                        .eq(project_id)
+                        .and(project_repository::Column::Id.eq(repository_id)),
                 )
                 .set(project_repository::ActiveModel {
                     is_deleted: ActiveValue::Set(true),
@@ -478,6 +471,7 @@ impl Database {
             let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
             Ok(connection_ids)
         })
+        .await
     }
 
     /// Updates the diagnostic summary for the given connection.
@@ -711,7 +705,6 @@ impl Database {
                         root_name: db_worktree.root_name,
                         visible: db_worktree.visible,
                         entries: Default::default(),
-                        repository_entries: Default::default(),
                         diagnostic_summaries: Default::default(),
                         settings_files: Default::default(),
                         scan_id: db_worktree.scan_id as u64,
@@ -802,8 +795,8 @@ impl Database {
                     .unwrap_or_default();
 
                 repositories.push(proto::UpdateRepository {
-                    project_id: db_repository_entry.project_id,
-                    id: db_repository_entry.id,
+                    project_id: db_repository_entry.project_id.0 as u64,
+                    id: db_repository_entry.id as u64,
                     abs_path: db_repository_entry.abs_path,
                     entry_ids: db_repository_entry
                         .entry_ids
@@ -814,7 +807,7 @@ impl Database {
                     removed_statuses: Vec::new(),
                     current_merge_conflicts,
                     branch_summary,
-                    scan_id: db_repository_entry.scan_id,
+                    scan_id: db_repository_entry.scan_id as u64,
                 });
             }
         }

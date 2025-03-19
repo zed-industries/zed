@@ -763,7 +763,6 @@ pub struct Worktree {
     pub root_name: String,
     pub visible: bool,
     pub entries: Vec<proto::Entry>,
-    pub repository_entries: BTreeMap<u64, proto::RepositoryEntry>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
@@ -813,7 +812,7 @@ impl LocalSettingsKind {
 }
 
 fn db_status_to_proto(
-    entry: worktree_repository_statuses::Model,
+    entry: project_repository_statuses::Model,
 ) -> anyhow::Result<proto::StatusEntry> {
     use proto::git_file_status::{Tracked, Unmerged, Variant};
 
