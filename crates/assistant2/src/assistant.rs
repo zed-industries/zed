@@ -1,6 +1,5 @@
 mod active_thread;
 mod assistant_configuration;
-mod assistant_diff;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;
@@ -37,7 +36,6 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
-pub use assistant_diff::AssistantDiff;
 
 actions!(
     assistant2,
