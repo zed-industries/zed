@@ -120,9 +120,9 @@ impl MaybePath {
             // main thread. But, the experience will be worse, (no hyperlink on remote
             // workspaces, delayed hyperlink on local workspaces. Also it is a pathological
             // case--in practice it would be unlikely that a user would add so many regexes
-            // that it adversly affects performance. We perhaps could include them add a separate
+            // that it adversly affects performance. We perhaps could add a separate
             // `terminal.path_hyperlink_main_thread_timout` that defaults to a much smaller
-            // number than ``terminal.path_hyperlink_main_thread_timout`?
+            // number than `terminal.path_hyperlink_timout`?
             &preapproved_path_hyperlink_regexes().iter().collect_vec(),
             None,
         )]
