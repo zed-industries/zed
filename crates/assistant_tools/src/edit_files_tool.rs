@@ -57,8 +57,18 @@ pub struct EditFilesToolInput {
     pub edit_instructions: String,
 
     /// A user-friendly description of what changes are being made.
-    /// This will be shown to the user in the UI to describe the edit operation.
-    /// Should be clear and concise, focusing on the high-level changes being made.
+    /// This will be shown to the user in the UI to describe the edit operation. The screen real estate for this UI will be extremely
+    /// constrained, so make the description extremely terse.
+    ///
+    /// <example>
+    /// For fixing a broken authentication system:
+    /// "Fix auth bug in login flow"
+    /// </example>
+    ///
+    /// <example>
+    /// For adding unit tests to a module:
+    /// "Add tests for user profile logic"
+    /// </example>
     pub display_description: String,
 }
 
