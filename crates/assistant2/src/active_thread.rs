@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::Color;
-use ui::{prelude::*, Disclosure, KeyBinding};
+use ui::{prelude::*, Disclosure, Divider, DividerColor, KeyBinding};
 use util::ResultExt as _;
 
 use crate::context_store::{refresh_context_store_text, ContextStore};
@@ -733,7 +733,14 @@ impl ActiveThread {
             ),
         };
 
-        styled_message.into_any()
+        if ix == 0 {
+            v_flex()
+                .child(self.render_rules_item(cx))
+                .child(styled_message)
+                .into_any()
+        } else {
+            styled_message.into_any()
+        }
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1021,6 +1028,75 @@ impl ActiveThread {
                     )
                 }),
         )
+    }
+
+    fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
+        else {
+            return div().into_any();
+        };
+        let rules_files = system_prompt_context
+            .worktrees
+            .iter()
+            .filter_map(|worktree| worktree.rules_file.as_ref())
+            .collect::<Vec<_>>();
+        let label_text = match rules_files.as_slice() {
+            &[] => return div().into_any(),
+            &[rules_file] => {
+                format!("Using {:?} file", rules_file.rel_path)
+            }
+            rules_files => {
+                format!("Using {} rules files", rules_files.len())
+            }
+        };
+
+        // TODO: token estimate
+
+        div()
+            .px_2p5()
+            .child(
+                h_flex()
+                    .group("rules-item")
+                    .w_full()
+                    .py_1()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::File)
+                            .size(IconSize::XSmall)
+                            .color(Color::Disabled),
+                    )
+                    .child(
+                        Label::new(label_text)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    /*
+                    .child(
+                        Label::new("Rules Included")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    .child(
+                        div()
+                            .size_0p5()
+                            .rounded_full()
+                            .bg(cx.theme().colors().border_variant),
+                    )
+                    .child(
+                        Label::new(format!("{} Files", rules_files.len()))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    */
+                    .child(Divider::horizontal().color(DividerColor::BorderVariant))
+                    .child(div().visible_on_hover("rules-item").child(
+                        Button::new("open-rules", "Open Rules").label_size(LabelSize::XSmall),
+                    )),
+            )
+            .into_any()
     }
 }
 

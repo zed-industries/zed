@@ -79,18 +79,20 @@ impl Eval {
 
             let start_time = std::time::SystemTime::now();
 
-            let system_prompt = cx
-                .update(|cx| assistant.read(cx).thread.read(cx).load_system_prompt(cx))?
-                .await?;
+            /* todo!
+                        let system_prompt = cx
+                            .update(|cx| assistant.read(cx).thread.read(cx).load_system_prompt(cx))?
+                            .await?;
 
-            assistant.update(&mut cx, |assistant, cx| {
-                assistant.thread.update(cx, |thread, cx| {
-                    let context = vec![];
-                    thread.set_system_prompt(system_prompt);
-                    thread.insert_user_message(self.user_prompt.clone(), context, cx);
-                    thread.send_to_model(model, RequestKind::Chat, cx);
-                });
-            })?;
+                        assistant.update(&mut cx, |assistant, cx| {
+                            assistant.thread.update(cx, |thread, cx| {
+                                let context = vec![];
+                                thread.set_system_prompt(system_prompt);
+                                thread.insert_user_message(self.user_prompt.clone(), context, cx);
+                                thread.send_to_model(model, RequestKind::Chat, cx);
+                            });
+                        })?;
+            */
 
             done_rx.recv().await??;
 

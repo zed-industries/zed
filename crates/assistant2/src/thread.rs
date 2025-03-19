@@ -18,10 +18,12 @@ use language_model::{
     Role, StopReason, TokenUsage,
 };
 use project::{Project, Worktree};
-use prompt_store::{PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt};
+use prompt_store::{
+    AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
+};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
-use util::{post_inc, TryFutureExt as _};
+use util::{post_inc, ResultExt as _, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
@@ -96,11 +98,11 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
-    system_prompt: Option<String>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     context: BTreeMap<ContextId, ContextSnapshot>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
+    system_prompt_context: Option<AssistantSystemPromptContext>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
@@ -126,11 +128,11 @@ impl Thread {
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
-            system_prompt: None,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
+            system_prompt_context: None,
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
@@ -179,8 +181,6 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
-            // todo! Persist system prompt
-            system_prompt: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -193,6 +193,7 @@ impl Thread {
             next_message_id,
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
+            system_prompt_context: None,
             completion_count: 0,
             pending_completions: Vec::new(),
             project,
@@ -437,7 +438,18 @@ impl Thread {
         })
     }
 
-    pub fn load_system_prompt(&self, cx: &App) -> Task<Result<String>> {
+    pub fn set_system_prompt_context(&mut self, context: AssistantSystemPromptContext) {
+        self.system_prompt_context = Some(context);
+    }
+
+    pub fn system_prompt_context(&self) -> &Option<AssistantSystemPromptContext> {
+        &self.system_prompt_context
+    }
+
+    pub fn load_system_prompt_context(
+        &self,
+        cx: &App,
+    ) -> Task<Result<AssistantSystemPromptContext>> {
         let project = self.project.read(cx);
         let tasks = project
             .visible_worktrees(cx)
@@ -450,15 +462,13 @@ impl Thread {
             })
             .collect::<Vec<_>>();
 
-        let prompt_builder = self.prompt_builder.clone();
         cx.spawn(|_cx| async move {
-            let system_prompt_worktrees = futures::future::join_all(tasks)
+            let worktrees = futures::future::join_all(tasks)
                 .await
                 .into_iter()
                 .collect::<Result<_>>()?;
-            prompt_builder
-                .generate_assistant_system_prompt(system_prompt_worktrees)
-                .context("failed to generate assistant system prompt")
+
+            Ok(AssistantSystemPromptContext::new(worktrees))
         })
     }
 
@@ -499,6 +509,7 @@ impl Thread {
                     abs_path,
                     rules_file: Some(RulesFile {
                         rel_path: rel_rules_path,
+                        abs_path: abs_rules_path.into(),
                         text: text.trim().to_string(),
                     }),
                 })
@@ -510,10 +521,6 @@ impl Thread {
                 rules_file: None,
             }))
         }
-    }
-
-    pub fn set_system_prompt(&mut self, system_prompt: String) {
-        self.system_prompt = Some(system_prompt);
     }
 
     pub fn send_to_model(
@@ -560,12 +567,21 @@ impl Thread {
             temperature: None,
         };
 
-        if let Some(system_prompt) = self.system_prompt.as_ref() {
-            request.messages.push(LanguageModelRequestMessage {
-                role: Role::System,
-                content: vec![MessageContent::Text(system_prompt.clone())],
-                cache: true,
-            });
+        if let Some(system_prompt_context) = self.system_prompt_context.as_ref() {
+            if let Some(system_prompt) = self
+                .prompt_builder
+                .generate_assistant_system_prompt(system_prompt_context)
+                .context("failed to generate assistant system prompt")
+                .log_err()
+            {
+                request.messages.push(LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text(system_prompt)],
+                    cache: true,
+                });
+            }
+        } else {
+            log::error!("system_prompt_context not set.")
         }
 
         let mut referenced_context_ids = HashSet::default();

@@ -44,6 +44,7 @@ pub struct WorktreeInfoForSystemPrompt {
 #[derive(Serialize)]
 pub struct RulesFile {
     pub rel_path: Arc<Path>,
+    pub abs_path: Arc<Path>,
     pub text: String,
 }
 
@@ -254,12 +255,11 @@ impl PromptBuilder {
 
     pub fn generate_assistant_system_prompt(
         &self,
-        worktrees: Vec<WorktreeInfoForSystemPrompt>,
+        context: &AssistantSystemPromptContext,
     ) -> Result<String, RenderError> {
-        let prompt = AssistantSystemPromptContext::new(worktrees);
         self.handlebars
             .lock()
-            .render("assistant_system_prompt", &prompt)
+            .render("assistant_system_prompt", context)
     }
 
     pub fn generate_inline_transformation_prompt(

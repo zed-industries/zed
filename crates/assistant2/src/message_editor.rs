@@ -204,32 +204,26 @@ impl MessageEditor {
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
 
-        let system_prompt_task = self.thread.read_with(cx, |thread, _cx| {
-            if thread.is_empty() {
-                Some(thread.load_system_prompt(cx))
-            } else {
-                None
-            }
-        });
+        let system_prompt_context_task = self.thread.read(cx).load_system_prompt_context(cx);
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         cx.spawn(move |_, mut cx| async move {
             refresh_task.await;
-            if let Some(system_prompt_task) = system_prompt_task {
-                let system_prompt_result = system_prompt_task.await;
-                thread
-                    .update(&mut cx, |thread, cx| match system_prompt_result {
-                        Err(err) => {
-                            // todo! Seems wrong to do this here.
-                            cx.emit(ThreadEvent::ShowError(ThreadError::Message(
-                                format!("{err:?}").into(),
-                            )));
-                        }
-                        Ok(system_prompt) => thread.set_system_prompt(system_prompt),
-                    })
-                    .ok();
-            }
+            let system_prompt_context = system_prompt_context_task.await;
+            thread
+                .update(&mut cx, |thread, cx| match system_prompt_context {
+                    Err(err) => {
+                        // todo! Seems wrong to do this here.
+                        cx.emit(ThreadEvent::ShowError(ThreadError::Message(
+                            format!("{err:?}").into(),
+                        )));
+                    }
+                    Ok(system_prompt_context) => {
+                        thread.set_system_prompt_context(system_prompt_context)
+                    }
+                })
+                .ok();
             thread
                 .update(&mut cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
