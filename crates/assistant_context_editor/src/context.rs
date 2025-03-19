@@ -162,6 +162,11 @@ pub enum ContextOperation {
         section: SlashCommandOutputSection<language::Anchor>,
         version: clock::Global,
     },
+    ThoughtProcessOutputSectionAdded {
+        timestamp: clock::Lamport,
+        section: ThoughtProcessOutputSection<language::Anchor>,
+        version: clock::Global,
+    },
     BufferOperation(language::Operation),
 }
 
@@ -256,6 +261,20 @@ impl ContextOperation {
                         message.timestamp.context("missing timestamp")?,
                     ),
                     error_message: message.error_message,
+                    version: language::proto::deserialize_version(&message.version),
+                })
+            }
+            proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(message) => {
+                let section = message.section.context("missing section")?;
+                Ok(Self::ThoughtProcessOutputSectionAdded {
+                    timestamp: language::proto::deserialize_timestamp(
+                        message.timestamp.context("missing timestamp")?,
+                    ),
+                    section: ThoughtProcessOutputSection {
+                        range: language::proto::deserialize_anchor_range(
+                            section.range.context("invalid range")?,
+                        )?,
+                    },
                     version: language::proto::deserialize_version(&message.version),
                 })
             }
@@ -370,6 +389,27 @@ impl ContextOperation {
                     },
                 )),
             },
+            Self::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section,
+                version,
+            } => proto::ContextOperation {
+                variant: Some(
+                    proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(
+                        proto::context_operation::ThoughtProcessOutputSectionAdded {
+                            timestamp: Some(language::proto::serialize_timestamp(*timestamp)),
+                            section: Some({
+                                proto::ThoughtProcessOutputSection {
+                                    range: Some(language::proto::serialize_anchor_range(
+                                        section.range.clone(),
+                                    )),
+                                }
+                            }),
+                            version: language::proto::serialize_version(version),
+                        },
+                    ),
+                ),
+            },
             Self::BufferOperation(operation) => proto::ContextOperation {
                 variant: Some(proto::context_operation::Variant::BufferOperation(
                     proto::context_operation::BufferOperation {
@@ -387,7 +427,8 @@ impl ContextOperation {
             Self::UpdateSummary { summary, .. } => summary.timestamp,
             Self::SlashCommandStarted { id, .. } => id.0,
             Self::SlashCommandOutputSectionAdded { timestamp, .. }
-            | Self::SlashCommandFinished { timestamp, .. } => *timestamp,
+            | Self::SlashCommandFinished { timestamp, .. }
+            | Self::ThoughtProcessOutputSectionAdded { timestamp, .. } => *timestamp,
             Self::BufferOperation(_) => {
                 panic!("reading the timestamp of a buffer operation is not supported")
             }
@@ -402,7 +443,8 @@ impl ContextOperation {
             | Self::UpdateSummary { version, .. }
             | Self::SlashCommandStarted { version, .. }
             | Self::SlashCommandOutputSectionAdded { version, .. }
-            | Self::SlashCommandFinished { version, .. } => version,
+            | Self::SlashCommandFinished { version, .. }
+            | Self::ThoughtProcessOutputSectionAdded { version, .. } => version,
             Self::BufferOperation(_) => {
                 panic!("reading the version of a buffer operation is not supported")
             }
@@ -503,13 +545,6 @@ impl MessageMetadata {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThoughtProcessOutputSection<T> {
     pub range: Range<T>,
-    pub status: ThoughtProcessStatus,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ThoughtProcessStatus {
-    Pending,
-    Completed,
 }
 
 impl ThoughtProcessOutputSection<language::Anchor> {
@@ -751,7 +786,6 @@ impl AssistantContext {
 
     pub(crate) fn serialize(&self, cx: &App) -> SavedContext {
         let buffer = self.buffer.read(cx);
-        dbg!(self.thought_process_output_sections.len());
         SavedContext {
             id: Some(self.id.clone()),
             zed: "context".into(),
@@ -787,17 +821,13 @@ impl AssistantContext {
                     }
                 })
                 .collect(),
-            thought_process_sections: self
+            thought_process_output_sections: self
                 .thought_process_output_sections
                 .iter()
                 .filter_map(|section| {
                     if section.is_valid(buffer) {
-                        dbg!("Serializing output");
                         let range = section.range.to_offset(buffer);
-                        Some(ThoughtProcessOutputSection {
-                            range,
-                            status: section.status.clone(),
-                        })
+                        Some(ThoughtProcessOutputSection { range })
                     } else {
                         None
                     }
@@ -996,6 +1026,16 @@ impl AssistantContext {
                         cx.emit(ContextEvent::SlashCommandOutputSectionAdded { section });
                     }
                 }
+                ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
+                    let buffer = self.buffer.read(cx);
+                    if let Err(ix) = self
+                        .thought_process_output_sections
+                        .binary_search_by(|probe| probe.range.cmp(&section.range, buffer))
+                    {
+                        self.thought_process_output_sections
+                            .insert(ix, section.clone());
+                    }
+                }
                 ContextOperation::SlashCommandFinished {
                     id,
                     error_message,
@@ -1057,6 +1097,9 @@ impl AssistantContext {
                 self.has_received_operations_for_anchor_range(output_range.clone(), cx)
             }
             ContextOperation::SlashCommandOutputSectionAdded { section, .. } => {
+                self.has_received_operations_for_anchor_range(section.range.clone(), cx)
+            }
+            ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
                 self.has_received_operations_for_anchor_range(section.range.clone(), cx)
             }
             ContextOperation::SlashCommandFinished { .. } => true,
@@ -1167,7 +1210,9 @@ impl AssistantContext {
         &self.slash_command_output_sections
     }
 
-    pub fn thought_process_sections(&self) -> &[ThoughtProcessOutputSection<language::Anchor>] {
+    pub fn thought_process_output_sections(
+        &self,
+    ) -> &[ThoughtProcessOutputSection<language::Anchor>] {
         &self.thought_process_output_sections
     }
 
@@ -2228,14 +2273,14 @@ impl AssistantContext {
         // });
         let version = self.version.clone();
         let timestamp = self.next_timestamp();
-        // self.push_op(
-        //     ContextOperation::ThoughtProcessOutputSectionAdded {
-        //         timestamp,
-        //         section,
-        //         version,
-        //     },
-        //     cx,
-        // ); //TODO
+        self.push_op(
+            ContextOperation::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section,
+                version,
+            },
+            cx,
+        );
     }
 
     pub fn completion_provider_changed(&mut self, cx: &mut Context<Self>) {
@@ -2299,7 +2344,8 @@ impl AssistantContext {
                         let event = event?;
 
                         let mut context_event = None;
-                        // let mut thought_process_output_section = None;
+                        let mut thought_process_output_section = None;
+
                         this.update(&mut cx, |this, cx| {
                             let message_ix = this
                                 .message_anchors
@@ -2336,15 +2382,14 @@ impl AssistantContext {
                                         );
                                     }
                                     LanguageModelCompletionEvent::Text(mut chunk) => {
-                                        if let Some(_) = thought_process_stack.pop() {
+                                        if let Some(start) = thought_process_stack.pop() {
                                             let end = buffer.anchor_before(message_old_end_offset);
                                             context_event =
                                                 Some(ContextEvent::EndedThoughtProcess(end));
-                                            // thought_process_output_section =
-                                            //     Some(ThoughtProcessOutputSection {
-                                            //         status: ThoughtProcessStatus::Completed,
-                                            //         range: start..end.clone(),
-                                            //     });
+                                            thought_process_output_section =
+                                                Some(ThoughtProcessOutputSection {
+                                                    range: start..end.clone(),
+                                                });
                                             chunk.insert_str(0, "\n\n");
                                         }
 
@@ -2362,12 +2407,12 @@ impl AssistantContext {
                                 }
                             });
 
+                            if let Some(section) = thought_process_output_section.take() {
+                                this.insert_thought_process_output_section(section, cx);
+                            }
                             if let Some(context_event) = context_event.take() {
                                 cx.emit(context_event);
                             }
-                            // if let Some(section) = thought_process_output_section.take() {
-                            //     this.insert_thought_process_output_section(section, cx);
-                            // }
 
                             cx.emit(ContextEvent::StreamedCompletion);
 
@@ -3236,7 +3281,7 @@ pub struct SavedContext {
     pub slash_command_output_sections:
         Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
     #[serde(default)]
-    pub thought_process_sections: Vec<ThoughtProcessOutputSection<usize>>,
+    pub thought_process_output_sections: Vec<ThoughtProcessOutputSection<usize>>,
 }
 
 impl SavedContext {
@@ -3338,6 +3383,20 @@ impl SavedContext {
             version.observe(timestamp);
         }
 
+        for section in self.thought_process_output_sections {
+            let timestamp = next_timestamp.tick();
+            operations.push(ContextOperation::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section: ThoughtProcessOutputSection {
+                    range: buffer.anchor_after(section.range.start)
+                        ..buffer.anchor_before(section.range.end),
+                },
+                version: version.clone(),
+            });
+
+            version.observe(timestamp);
+        }
+
         let timestamp = next_timestamp.tick();
         operations.push(ContextOperation::UpdateSummary {
             summary: ContextSummary {
@@ -3412,7 +3471,7 @@ impl SavedContextV0_3_0 {
                 .collect(),
             summary: self.summary,
             slash_command_output_sections: self.slash_command_output_sections,
-            thought_process_sections: Vec::new(),
+            thought_process_output_sections: Vec::new(),
         }
     }
 }

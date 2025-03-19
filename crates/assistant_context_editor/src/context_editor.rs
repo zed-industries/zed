@@ -66,7 +66,7 @@ use workspace::{
 
 use crate::{
     slash_command::SlashCommandCompletionProvider, slash_command_picker,
-    ThoughtProcessOutputSection, ThoughtProcessStatus,
+    ThoughtProcessOutputSection,
 };
 use crate::{
     AssistantContext, AssistantPatch, AssistantPatchStatus, CacheStatus, Content, ContextEvent,
@@ -121,6 +121,11 @@ enum AssistError {
     PaymentRequired,
     MaxMonthlySpendReached,
     Message(SharedString),
+}
+
+pub enum ThoughtProcessStatus {
+    Pending,
+    Completed,
 }
 
 pub trait AssistantPanelDelegate {
@@ -257,7 +262,7 @@ impl ContextEditor {
         ];
 
         let slash_command_sections = context.read(cx).slash_command_output_sections().to_vec();
-        let thought_process_sections = context.read(cx).thought_process_sections().to_vec();
+        let thought_process_sections = context.read(cx).thought_process_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
         let mut this = Self {
@@ -300,7 +305,13 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(slash_command_sections, false, window, cx);
-        this.insert_thought_process_sections(thought_process_sections, window, cx);
+        this.insert_thought_process_output_sections(
+            thought_process_sections
+                .into_iter()
+                .map(|section| (section, ThoughtProcessStatus::Completed)),
+            window,
+            cx,
+        );
         this.patches_updated(&Vec::new(), &patch_ranges, window, cx);
         this
     }
@@ -610,11 +621,13 @@ impl ContextEditor {
                 let (_, _, snapshot) = snapshot.as_singleton().unwrap();
                 let range = start.clone()..start.bias_right(&snapshot);
 
-                let creases = self.insert_thought_process_sections(
-                    [ThoughtProcessOutputSection {
-                        range: range.clone(),
-                        status: ThoughtProcessStatus::Pending,
-                    }],
+                let creases = self.insert_thought_process_output_sections(
+                    [(
+                        ThoughtProcessOutputSection {
+                            range: range.clone(),
+                        },
+                        ThoughtProcessStatus::Pending,
+                    )],
                     window,
                     cx,
                 );
@@ -625,11 +638,13 @@ impl ContextEditor {
                     self.editor.update(cx, |editor, cx| {
                         editor.remove_creases(vec![crease_id], cx);
                     });
-                    self.insert_thought_process_sections(
-                        [ThoughtProcessOutputSection {
-                            range: start..end.clone(),
-                            status: ThoughtProcessStatus::Completed,
-                        }],
+                    self.insert_thought_process_output_sections(
+                        [(
+                            ThoughtProcessOutputSection {
+                                range: start..end.clone(),
+                            },
+                            ThoughtProcessStatus::Completed,
+                        )],
                         window,
                         cx,
                     );
@@ -996,9 +1011,14 @@ impl ContextEditor {
         self.update_active_patch(window, cx);
     }
 
-    fn insert_thought_process_sections(
+    fn insert_thought_process_output_sections(
         &mut self,
-        sections: impl IntoIterator<Item = ThoughtProcessOutputSection<language::Anchor>>,
+        sections: impl IntoIterator<
+            Item = (
+                ThoughtProcessOutputSection<language::Anchor>,
+                ThoughtProcessStatus,
+            ),
+        >,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<CreaseId> {
@@ -1007,7 +1027,7 @@ impl ContextEditor {
             let excerpt_id = *buffer.as_singleton().unwrap().0;
             let mut buffer_rows_to_fold = BTreeSet::new();
             let mut creases = Vec::new();
-            for section in sections {
+            for (section, status) in sections {
                 let start = buffer
                     .anchor_in_excerpt(excerpt_id, section.range.start)
                     .unwrap();
@@ -1023,7 +1043,7 @@ impl ContextEditor {
                             render: render_fold_icon_button(
                                 cx.entity().downgrade(),
                                 IconName::Ai,
-                                match section.status {
+                                match status {
                                     ThoughtProcessStatus::Pending => "Thinking...".into(),
                                     ThoughtProcessStatus::Completed => "Thinking done".into(),
                                 },
