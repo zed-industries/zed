@@ -522,7 +522,7 @@ syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
-tempfile = "3.9.0"
+tempfile = "3.8"
 thiserror = "1.0.29"
 tiktoken-rs = "0.6.0"
 time = { version = "0.3", features = [
@@ -566,6 +566,7 @@ unicode-script = "0.5.7"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+walkdir = "2.3"
 wasmparser = "0.221"
 wasm-encoder = "0.221"
 wasmtime = { version = "29", default-features = false, features = [

@@ -598,7 +598,9 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "tempfile",
  "util",
+ "walkdir",
 ]
 
 [[package]]

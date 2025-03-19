@@ -15,7 +15,10 @@ use std::{
 use util::command::new_smol_command;
 
 pub struct Eval {
+    // Fields kept for internal use even if not directly referenced outside this module
+    #[allow(dead_code)]
     pub name: String,
+    #[allow(dead_code)]
     pub path: PathBuf,
     pub repo_path: PathBuf,
     pub eval_setup: EvalSetup,
@@ -39,14 +42,21 @@ pub struct EvalSetup {
 }
 
 impl Eval {
-    /// Loads the eval from a path (typically in `evaluation_data`). Clones and checks out the repo
-    /// if necessary.
+    // Keep this method for potential future use, but mark it as intentionally unused
+    #[allow(dead_code)]
     pub async fn load(name: String, path: PathBuf, repos_dir: &Path) -> anyhow::Result<Self> {
         let prompt_path = path.join("prompt.txt");
         let user_prompt = smol::unblock(|| std::fs::read_to_string(prompt_path)).await?;
         let setup_path = path.join("setup.json");
         let setup_contents = smol::unblock(|| std::fs::read_to_string(setup_path)).await?;
         let eval_setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
+        
+        // Move this internal function inside the load method since it's only used here
+        fn repo_dir_name(url: &str) -> String {
+            url.trim_start_matches("https://")
+                .replace(|c: char| !c.is_alphanumeric(), "_")
+        }
+        
         let repo_path = repos_dir.join(repo_dir_name(&eval_setup.url));
         Ok(Eval {
             name,
@@ -89,9 +99,36 @@ impl Eval {
 
             done_rx.recv().await??;
 
+            // Add this section to check untracked files
+            println!("Checking for untracked files:");
+            let untracked = query_git(&self.repo_path, vec!["ls-files", "--others", "--exclude-standard"]).await?;
+            if untracked.is_empty() {
+                println!("No untracked files found");
+            } else {                
+                // Add all files to git so they appear in the diff
+                println!("Adding untracked files to git");
+                run_git(&self.repo_path, vec!["add", "."]).await?;
+            }
+            
+            // get git status
+            let status = query_git(&self.repo_path, vec!["status", "--short"]).await?;
+
             let elapsed_time = start_time.elapsed()?;
 
-            let diff = query_git(&self.repo_path, vec!["diff"]).await?;
+            // Get diff of staged changes (the files we just added)
+            let staged_diff = query_git(&self.repo_path, vec!["diff", "--staged"]).await?;
+
+            // Get diff of unstaged changes
+            let unstaged_diff = query_git(&self.repo_path, vec!["diff"]).await?;
+
+            // Combine both diffs
+            let diff = if unstaged_diff.is_empty() {
+                staged_diff
+            } else if staged_diff.is_empty() {
+                unstaged_diff
+            } else {
+                format!("# Staged changes\n{}\n\n# Unstaged changes\n{}", staged_diff, unstaged_diff)
+            };
 
             assistant.update(&mut cx, |assistant, cx| {
                 let thread = assistant.thread.read(cx);
@@ -117,7 +154,8 @@ impl Eval {
 }
 
 impl EvalOutput {
-    // Method to save the output to a directory
+    // Keep this method for potential future use, but mark it as intentionally unused
+    #[allow(dead_code)]
     pub fn save_to_directory(
         &self,
         output_dir: &Path,
@@ -177,12 +215,10 @@ impl EvalOutput {
     }
 }
 
-fn repo_dir_name(url: &str) -> String {
-    url.trim_start_matches("https://")
-        .replace(|c: char| !c.is_alphanumeric(), "_")
-}
-
 async fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Result<()> {
+    // If the URL is a file:// URL, treat it as a local repository
+    let is_local_repo = eval_setup.url.starts_with("file://");
+
     if !repo_path.exists() {
         smol::unblock({
             let repo_path = repo_path.to_path_buf();
@@ -190,8 +226,13 @@ async fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Resu
         })
         .await?;
         run_git(repo_path, vec!["init"]).await?;
-        run_git(repo_path, vec!["remote", "add", "origin", &eval_setup.url]).await?;
-    } else {
+        
+        // Only add remote if it's not a local file:// repo
+        if !is_local_repo {
+            run_git(repo_path, vec!["remote", "add", "origin", &eval_setup.url]).await?;
+        }
+    } else if !is_local_repo {
+        // Only check remote URL for non-local repos
         let actual_origin = query_git(repo_path, vec!["remote", "get-url", "origin"]).await?;
         if actual_origin != eval_setup.url {
             return Err(anyhow!(
@@ -207,12 +248,15 @@ async fn checkout_repo(eval_setup: &EvalSetup, repo_path: &Path) -> anyhow::Resu
         run_git(repo_path, vec!["reset", "--hard", "HEAD"]).await?;
     }
 
-    run_git(
-        repo_path,
-        vec!["fetch", "--depth", "1", "origin", &eval_setup.base_sha],
-    )
-    .await?;
-    run_git(repo_path, vec!["checkout", &eval_setup.base_sha]).await?;
+    // For local repositories, we skip the fetch and checkout since we're working with local files
+    if !is_local_repo {
+        run_git(
+            repo_path,
+            vec!["fetch", "--depth", "1", "origin", &eval_setup.base_sha],
+        )
+        .await?;
+        run_git(repo_path, vec!["checkout", &eval_setup.base_sha]).await?;
+    }
 
     Ok(())
 }
