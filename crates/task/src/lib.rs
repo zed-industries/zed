@@ -7,7 +7,7 @@ mod task_template;
 mod vscode_format;
 
 use collections::{hash_map, HashMap, HashSet};
-use gpui::SharedString;
+use gpui::{prelude::FluentBuilder, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -107,12 +107,44 @@ impl ResolvedTask {
     pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
         match self.original_task.task_type.clone() {
             TaskType::Script => None,
-            TaskType::Debug(mut adapter_config) => {
-                if let Some(resolved) = &self.resolved {
-                    adapter_config.label = resolved.label.clone();
-                    adapter_config.program = resolved.program.clone().or(adapter_config.program);
-                    adapter_config.cwd = resolved.cwd.clone().or(adapter_config.cwd);
-                }
+            TaskType::Debug(debug_args) => {
+                let adapter_config = if let Some(resolved) = &self.resolved {
+                    DebugAdapterConfig {
+                        label: resolved.label.clone(),
+                        kind: debug_args.kind.clone(),
+                        request: debug_args.request.clone(),
+                        program: resolved
+                            .program
+                            .clone()
+                            .or(Some(self.original_task.command.to_owned())),
+                        cwd: resolved.cwd.clone().take_if(|p| p.exists()),
+                        initialize_args: debug_args.initialize_args,
+                        supports_attach: debug_args.supports_attach,
+                    }
+                } else {
+                    let cwd = self
+                        .original_task
+                        .cwd
+                        .clone()
+                        .map(PathBuf::from)
+                        .take_if(|p| p.exists());
+
+                    DebugAdapterConfig {
+                        label: self.original_task.label.clone(),
+                        program: self.original_task.command.clone().map(|program| {
+                            if program.is_empty() {
+                                None
+                            } else {
+                                Some(program.to_owned())
+                            }
+                        }),
+                        kind: debug_args.kind.clone(),
+                        request: debug_args.request.clone(),
+                        cwd,
+                        initialize_args: debug_args.initialize_args.clone(),
+                        supports_attach: debug_args.supports_attach,
+                    }
+                };
 
                 Some(adapter_config)
             }

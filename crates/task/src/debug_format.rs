@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use util::ResultExt;
 
-use crate::{TaskTemplate, TaskTemplates, TaskType};
+use crate::{task_template::DebugArgs, TaskTemplate, TaskTemplates, TaskType};
 
 impl Default for DebugConnectionType {
     fn default() -> Self {
@@ -169,15 +169,19 @@ pub struct DebugTaskDefinition {
 impl DebugTaskDefinition {
     /// Translate from debug definition to a task template
     pub fn to_zed_format(self) -> anyhow::Result<TaskTemplate> {
-        let command = "".to_string();
-        let cwd = self.cwd.clone().map(PathBuf::from).take_if(|p| p.exists());
+        let command =
+            self.program
+                .map(|program| Ok(program))
+                .unwrap_or_else(|| match self.request {
+                    DebugRequestType::Launch => {
+                        Err(anyhow::anyhow!("Program is required for launch request"))
+                    }
+                    DebugRequestType::Attach(_) => Ok("".to_owned()),
+                })?;
 
-        let task_type = TaskType::Debug(DebugAdapterConfig {
-            label: self.label.clone(),
+        let task_type = TaskType::Debug(DebugArgs {
             kind: self.kind,
             request: self.request,
-            program: self.program,
-            cwd: cwd.clone(),
             initialize_args: self.initialize_args,
             supports_attach: true,
         });

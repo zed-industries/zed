@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    debug_format::DebugAdapterConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
+    DebugAdapterKind, DebugRequestType, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
     TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
 };
 
@@ -75,6 +75,16 @@ pub struct TaskTemplate {
     pub show_command: bool,
 }
 
+#[derive(Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
+pub struct DebugArgs {
+    #[serde(default)]
+    pub(crate) request: DebugRequestType,
+    #[serde(flatten)]
+    pub(crate) kind: DebugAdapterKind,
+    pub(crate) initialize_args: Option<serde_json::value::Value>,
+    pub(crate) supports_attach: bool,
+}
+
 /// Represents the type of task that is being ran
 #[derive(Default, Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "type")]
@@ -84,7 +94,7 @@ pub enum TaskType {
     #[default]
     Script,
     /// This task starts the debugger for a language
-    Debug(DebugAdapterConfig),
+    Debug(DebugArgs),
 }
 
 #[cfg(test)]
@@ -105,27 +115,22 @@ mod deserialization_tests {
 
     #[test]
     fn deserialize_task_type_debug() {
-        let adapter_config = DebugAdapterConfig {
-            label: "test config".into(),
+        let debug_args = DebugArgs {
             kind: DebugAdapterKind::Python(TCPHost::default()),
             request: crate::DebugRequestType::Launch,
-            program: Some("main".to_string()),
             supports_attach: false,
-            cwd: None,
             initialize_args: None,
         };
         let json = json!({
-            "label": "test config",
             "type": "debug",
             "adapter": "python",
-            "program": "main",
             "supports_attach": false,
         });
 
         let task_type: TaskType =
             serde_json::from_value(json).expect("Failed to deserialize TaskType::Debug");
         if let TaskType::Debug(config) = task_type {
-            assert_eq!(config, adapter_config);
+            assert_eq!(config, debug_args);
         } else {
             panic!("Expected TaskType::Debug");
         }
@@ -271,18 +276,12 @@ impl TaskTemplate {
 
         let program = match &self.task_type {
             TaskType::Script => None,
-            TaskType::Debug(adapter_config) => {
-                if let Some(program) = &adapter_config.program {
-                    Some(substitute_all_template_variables_in_str(
-                        program,
-                        &task_variables,
-                        &variable_names,
-                        &mut substituted_variables,
-                    )?)
-                } else {
-                    None
-                }
-            }
+            TaskType::Debug(_) => substitute_all_template_variables_in_str(
+                &self.command,
+                &task_variables,
+                &variable_names,
+                &mut substituted_variables,
+            ),
         };
 
         let task_hash = to_hex_hash(self)
