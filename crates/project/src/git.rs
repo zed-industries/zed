@@ -11,10 +11,10 @@ use collections::HashMap;
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
-    future::{OptionFuture, Shared},
+    future::{self, OptionFuture, Shared},
     FutureExt as _, StreamExt as _,
 };
-use git::repository::DiffType;
+use git::{repository::DiffType, Oid};
 use git::{
     repository::{
         Branch, CommitDetails, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
@@ -115,6 +115,16 @@ enum GitStoreState {
         upstream_client: AnyProtoClient,
         project_id: ProjectId,
     },
+}
+
+#[derive(Clone)]
+pub struct GitStoreCheckpoint {
+    checkpoints_by_dot_git_abs_path: HashMap<PathBuf, RepositoryCheckpoint>,
+}
+
+#[derive(Copy, Clone)]
+pub struct RepositoryCheckpoint {
+    sha: Oid,
 }
 
 pub struct Repository {
@@ -504,6 +514,45 @@ impl GitStore {
     ) -> Option<Entity<BufferDiff>> {
         let diff_state = self.diffs.get(&buffer_id)?;
         diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
+    }
+
+    pub fn checkpoint(&self, cx: &App) -> Task<Result<GitStoreCheckpoint>> {
+        let mut dot_git_abs_paths = Vec::new();
+        let mut checkpoints = Vec::new();
+        for repository in self.repositories.values() {
+            let repository = repository.read(cx);
+            dot_git_abs_paths.push(repository.dot_git_abs_path.clone());
+            checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
+        }
+
+        cx.background_executor().spawn(async move {
+            let checkpoints: Vec<RepositoryCheckpoint> = future::try_join_all(checkpoints).await?;
+            Ok(GitStoreCheckpoint {
+                checkpoints_by_dot_git_abs_path: dot_git_abs_paths
+                    .into_iter()
+                    .zip(checkpoints)
+                    .collect(),
+            })
+        })
+    }
+
+    pub fn restore_checkpoint(&self, checkpoint: GitStoreCheckpoint, cx: &App) -> Task<Result<()>> {
+        let repositories_by_dot_git_abs_path = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        let mut tasks = Vec::new();
+        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_dot_git_abs_path {
+            if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                tasks.push(repository.read(cx).restore_checkpoint(checkpoint));
+            }
+        }
+        cx.background_spawn(async move {
+            future::try_join_all(tasks).await?;
+            Ok(())
+        })
     }
 
     fn downstream_client(&self) -> Option<(AnyProtoClient, ProjectId)> {
@@ -2919,6 +2968,32 @@ impl Repository {
 
                     Ok(branches)
                 }
+            }
+        })
+    }
+
+    pub fn checkpoint(&self) -> oneshot::Receiver<Result<RepositoryCheckpoint>> {
+        self.send_job(|repo, cx| async move {
+            match repo {
+                GitRepo::Local(git_repository) => {
+                    let sha = git_repository.checkpoint(cx).await?;
+                    Ok(RepositoryCheckpoint { sha })
+                }
+                GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
+            }
+        })
+    }
+
+    pub fn restore_checkpoint(
+        &self,
+        checkpoint: RepositoryCheckpoint,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(move |repo, cx| async move {
+            match repo {
+                GitRepo::Local(git_repository) => {
+                    git_repository.restore_checkpoint(checkpoint.sha, cx).await
+                }
+                GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
     }

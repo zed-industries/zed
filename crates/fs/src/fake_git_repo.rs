@@ -408,4 +408,12 @@ impl GitRepository for FakeGitRepository {
     ) -> BoxFuture<Result<String>> {
         unimplemented!()
     }
+
+    fn checkpoint(&self, _cx: AsyncApp) -> BoxFuture<Result<git::Oid>> {
+        unimplemented!()
+    }
+
+    fn restore_checkpoint(&self, _oid: git::Oid, _cx: AsyncApp) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
 }

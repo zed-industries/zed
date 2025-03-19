@@ -550,6 +550,7 @@ impl ActiveThread {
 
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
+        let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
         let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
@@ -734,7 +735,25 @@ impl ActiveThread {
             ),
         };
 
-        styled_message.into_any()
+        v_flex()
+            .when_some(checkpoint, |parent, checkpoint| {
+                parent.child(
+                    h_flex().pl_2().child(
+                        Button::new("restore-checkpoint", "Restore Checkpoint")
+                            .icon(IconName::Undo)
+                            .size(ButtonSize::Compact)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            })),
+                    ),
+                )
+            })
+            .child(styled_message)
+            .into_any()
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
