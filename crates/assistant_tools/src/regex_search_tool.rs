@@ -45,7 +45,7 @@ impl Tool for RegexSearchTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
-            Ok(input) => format!("Search files for regex `{}`", input.regex),
+            Ok(input) => format!("Search files for regex “`{}`”", input.regex),
             Err(_) => "Search with regex".to_string(),
         }
     }
