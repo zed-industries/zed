@@ -7,10 +7,10 @@ use settings::Settings as _;
 use task::TCPHost;
 use theme::ThemeSettings;
 use ui::{
-    h_flex, relative, v_flex, ActiveTheme as _, ButtonLike, Clickable, Context, ContextMenu,
-    Disableable, Disclosure, DropdownMenu, FluentBuilder, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, PopoverMenu, PopoverMenuHandle, Render, SharedString,
-    SplitButton, Styled, Window,
+    div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
+    ContextMenu, Disableable, Disclosure, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
+    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement, PopoverMenu,
+    PopoverMenuHandle, Render, SharedString, SplitButton, Styled, Window,
 };
 use workspace::Workspace;
 
@@ -176,10 +176,19 @@ impl Render for InertState {
                                 this.child(SplitButton {
                                     left: spawn_button,
                                     right: PopoverMenu::new("debugger-select-spawn-mode")
-                                        .trigger(Disclosure::new(
-                                            "debugger-spawn-button-disclosure",
-                                            self.popover_handle.is_deployed(),
-                                        ))
+                                        .trigger(
+                                            ButtonLike::new_rounded_right(
+                                                "debugger-spawn-button-mode",
+                                            )
+                                            .layer(ui::ElevationIndex::ModalSurface)
+                                            .size(ui::ButtonSize::None)
+                                            .child(
+                                                div().px_1().child(
+                                                    Icon::new(IconName::ChevronDownSmall)
+                                                        .size(IconSize::XSmall),
+                                                ),
+                                            ),
+                                        )
                                         .menu(move |window, cx| {
                                             Some(ContextMenu::build(window, cx, {
                                                 let entity = entity.clone();
