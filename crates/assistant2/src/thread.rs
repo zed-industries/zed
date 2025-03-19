@@ -822,7 +822,12 @@ impl Thread {
                     cx,
                 );
 
-                self.insert_tool_output(tool_use.id.clone(), tool_use.ui_text.clone(), task, cx);
+                self.insert_tool_output(
+                    tool_use.id.clone(),
+                    tool_use.ui_text.clone().into(),
+                    task,
+                    cx,
+                );
             }
         }
 

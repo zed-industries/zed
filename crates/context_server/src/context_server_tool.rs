@@ -82,10 +82,10 @@ impl Tool for ContextServerTool {
 
                 log::trace!(
                     "Running tool: {} with arguments: {:?}",
-                    tool_name_clone,
+                    tool_name,
                     arguments
                 );
-                let response = protocol.run_tool(tool_name_clone, arguments).await?;
+                let response = protocol.run_tool(tool_name, arguments).await?;
 
                 let mut result = String::new();
                 for content in response.content {

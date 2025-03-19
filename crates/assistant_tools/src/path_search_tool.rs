@@ -70,7 +70,7 @@ impl Tool for PathSearchTool {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect();
 
-        let task = cx.background_spawn(async move {
+        cx.background_spawn(async move {
             let mut matches = Vec::new();
 
             for worktree in snapshots {
