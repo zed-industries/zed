@@ -7,10 +7,10 @@ use settings::Settings as _;
 use task::TCPHost;
 use theme::ThemeSettings;
 use ui::{
-    h_flex, relative, v_flex, ActiveTheme as _, ButtonLike, Clickable, Context, ContextMenu,
-    Disableable, Disclosure, DropdownMenu, FluentBuilder, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, PopoverMenu, PopoverMenuHandle, Render, SharedString,
-    SplitButton, Styled, Window,
+    div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
+    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement, PopoverMenu,
+    PopoverMenuHandle, Render, SharedString, SplitButton, Styled, Window,
 };
 use workspace::Workspace;
 
@@ -176,10 +176,19 @@ impl Render for InertState {
                                 this.child(SplitButton {
                                     left: spawn_button,
                                     right: PopoverMenu::new("debugger-select-spawn-mode")
-                                        .trigger(Disclosure::new(
-                                            "debugger-spawn-button-disclosure",
-                                            self.popover_handle.is_deployed(),
-                                        ))
+                                        .trigger(
+                                            ButtonLike::new_rounded_right(
+                                                "debugger-spawn-button-mode",
+                                            )
+                                            .layer(ui::ElevationIndex::ModalSurface)
+                                            .size(ui::ButtonSize::None)
+                                            .child(
+                                                div().px_1().child(
+                                                    Icon::new(IconName::ChevronDownSmall)
+                                                        .size(IconSize::XSmall),
+                                                ),
+                                            ),
+                                        )
                                         .menu(move |window, cx| {
                                             Some(ContextMenu::build(window, cx, {
                                                 let entity = entity.clone();
@@ -255,7 +264,6 @@ impl InertState {
     }
 
     fn attach(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let process_id = self.program_editor.read(cx).text(cx).parse::<u32>().ok();
         let cwd = PathBuf::from(self.cwd_editor.read(cx).text(cx));
         let kind = kind_for_label(self.selected_debugger.as_deref().unwrap_or_else(|| {
             unimplemented!("Automatic selection of a debugger based on users project")
@@ -264,22 +272,18 @@ impl InertState {
         let config = DebugAdapterConfig {
             label: "hard coded attach".into(),
             kind,
-            request: DebugRequestType::Attach(task::AttachConfig { process_id }),
+            request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             program: None,
             cwd: Some(cwd),
             initialize_args: None,
             supports_attach: true,
         };
 
-        if process_id.is_some() {
-            cx.emit(InertEvent::Spawned { config });
-        } else {
-            let _ = self.workspace.update(cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    AttachModal::new(project, config, window, cx)
-                });
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                AttachModal::new(project, config, window, cx)
             });
-        }
+        });
     }
 }
