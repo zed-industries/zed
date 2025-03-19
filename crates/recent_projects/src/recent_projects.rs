@@ -177,16 +177,16 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, window: &mut Window, _: &mut App) -> Arc<str> {
+    fn placeholder_text(&self, window: &mut Window, cx: &mut App) -> Arc<str> {
         let (create_window, reuse_window) = if self.create_new_window {
             (
-                window.keystroke_text_for(&menu::Confirm),
-                window.keystroke_text_for(&menu::SecondaryConfirm),
+                ui::text_for_action(&menu::Confirm, window, cx).unwrap_or_default(),
+                ui::text_for_action(&menu::SecondaryConfirm, window, cx).unwrap_or_default(),
             )
         } else {
             (
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-                window.keystroke_text_for(&menu::Confirm),
+                ui::text_for_action(&menu::SecondaryConfirm, window, cx).unwrap_or_default(),
+                ui::text_for_action(&menu::Confirm, window, cx).unwrap_or_default(),
             )
         };
         Arc::from(format!(
