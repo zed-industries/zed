@@ -173,10 +173,8 @@ impl ToolUseState {
 
             let ui_text =
                 if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
-                    println!("Rendering UI text for tool {}: '{}'", tool_use.id, pending_tool_use.ui_text);
                     pending_tool_use.ui_text.clone().into()
                 } else {
-                    println!("Rendering default name for tool {}: '{}'", tool_use.id, tool_use.name);
                     tool_use.name.clone().into()
                 };
 
@@ -247,20 +245,14 @@ impl ToolUseState {
         );
     }
 
-    pub fn update_pending_tool_ui_text(&mut self, tool_use_id: LanguageModelToolUseId, ui_text: SharedString) {
+    pub fn run_pending_tool(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
+        task: Task<()>,
+    ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-            println!("Updating UI text for tool {}: from '{}' to '{}'", tool_use_id, tool_use.ui_text, ui_text);
             tool_use.ui_text = ui_text.to_string().into();
-        } else {
-            println!("No pending tool use found for {}", tool_use_id);
-        }
-    }
-
-    pub fn run_pending_tool(&mut self, tool_use_id: LanguageModelToolUseId, ui_text: Option<SharedString>, task: Task<()>) {
-        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-            if let Some(text) = ui_text {
-                tool_use.ui_text = text.to_string().into();
-            }
             tool_use.status = PendingToolUseStatus::Running {
                 _task: task.shared(),
             };
@@ -270,14 +262,8 @@ impl ToolUseState {
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        ui_text: Option<SharedString>,
         output: Result<String>,
     ) -> Option<PendingToolUse> {
-        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-            if let Some(text) = ui_text {
-                tool_use.ui_text = text.to_string().into();
-            }
-        }
         match output {
             Ok(tool_result) => {
                 self.tool_results.insert(

@@ -34,6 +34,7 @@ pub struct ActiveThread {
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, Entity<Markdown>>,
     rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
+    rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     last_error: Option<ThreadError>,
@@ -67,6 +68,7 @@ impl ActiveThread {
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
             rendered_scripting_tool_uses: HashMap::default(),
+            rendered_tool_use_labels: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.entity().downgrade();
@@ -84,6 +86,13 @@ impl ActiveThread {
             this.push_message(&message.id, message.text.clone(), window, cx);
 
             for tool_use in thread.read(cx).scripting_tool_uses_for_message(message.id) {
+                this.render_tool_use_label_markdown(
+                    tool_use.id.clone(),
+                    tool_use.name.clone(),
+                    window,
+                    cx,
+                );
+
                 this.render_scripting_tool_use_markdown(
                     tool_use.id.clone(),
                     tool_use.name.as_ref(),
@@ -284,6 +293,19 @@ impl ActiveThread {
             .insert(tool_use_id, lua_script);
     }
 
+    fn render_tool_use_label_markdown(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_label: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rendered_tool_use_labels.insert(
+            tool_use_id,
+            self.render_markdown(tool_label.into(), window, cx),
+        );
+    }
+
     fn handle_thread_event(
         &mut self,
         _thread: &Entity<Thread>,
@@ -338,9 +360,19 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::UsePendingTools => {
-                self.thread.update(cx, |thread, cx| {
-                    thread.use_pending_tools(cx);
-                });
+                let tool_uses = self
+                    .thread
+                    .update(cx, |thread, cx| thread.use_pending_tools(cx));
+
+                for tool_use in tool_uses {
+                    self.render_tool_use_label_markdown(
+                        tool_use.id,
+                        tool_use.ui_text.clone(),
+                        window,
+                        cx,
+                    );
+                }
+
                 cx.notify();
             }
             ThreadEvent::ToolFinished {
@@ -350,6 +382,13 @@ impl ActiveThread {
             } => {
                 let canceled = *canceled;
                 if let Some(tool_use) = pending_tool_use {
+                    self.render_tool_use_label_markdown(
+                        tool_use.id.clone(),
+                        SharedString::from(tool_use.ui_text.clone()),
+                        window,
+                        cx,
+                    );
+
                     self.render_scripting_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.name.as_ref(),
@@ -717,7 +756,7 @@ impl ActiveThread {
                                 .children(
                                     tool_uses
                                         .into_iter()
-                                        .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
+                                        .map(|tool_use| self.render_tool_use(tool_use, cx)),
                                 )
                                 .children(scripting_tool_uses.into_iter().map(|tool_use| {
                                     self.render_scripting_tool_use(tool_use, window, cx)
@@ -736,12 +775,7 @@ impl ActiveThread {
         styled_message.into_any()
     }
 
-    fn render_tool_use(
-        &self,
-        tool_use: ToolUse,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
@@ -786,11 +820,9 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(div().text_ui(cx).child(self.render_markdown(
-                                    dbg!(tool_use.ui_text.clone()),
-                                    window,
-                                    cx,
-                                ))),
+                                .child(div().text_ui(cx).children(
+                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
+                                )),
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
