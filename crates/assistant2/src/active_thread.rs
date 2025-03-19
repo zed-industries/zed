@@ -738,15 +738,18 @@ impl ActiveThread {
         v_flex()
             .when_some(checkpoint, |parent, checkpoint| {
                 parent.child(
-                    Button::new("restore-checkpoint", "Restore Checkpoint").on_click(cx.listener(
-                        move |this, _, _window, cx| {
-                            this.thread.update(cx, |thread, cx| {
-                                thread
-                                    .restore_checkpoint(checkpoint.clone(), cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        },
-                    )),
+                    h_flex().pl_2().child(
+                        Button::new("restore-checkpoint", "Restore Checkpoint")
+                            .icon(IconName::Undo)
+                            .size(ButtonSize::Compact)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            })),
+                    ),
                 )
             })
             .child(styled_message)

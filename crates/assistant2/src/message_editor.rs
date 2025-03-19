@@ -450,16 +450,6 @@ impl Render for MessageEditor {
                                             ),
                                         )
                                         .child(
-                                            Label::new("Git Status")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new("•")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
                                             Label::new(format!(
                                                 "{} {} changed",
                                                 changed_files,

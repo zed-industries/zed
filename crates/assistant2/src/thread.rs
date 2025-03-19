@@ -277,9 +277,7 @@ impl Thread {
             .git_store()
             .read(cx)
             .restore_checkpoint(checkpoint.git_checkpoint, cx);
-        // todo!("show spinner")
         cx.spawn(async move |this, cx| {
-            // todo!("show this error in the UI")
             restore.await?;
             this.update(cx, |this, cx| this.truncate(checkpoint.message_id, cx))
         })
