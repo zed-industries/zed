@@ -307,7 +307,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             &["Troubleshoot and Quit"],
             cx,
         );
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
@@ -338,7 +338,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             &["Troubleshoot and Quit"],
             cx,
         );
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/windows");
