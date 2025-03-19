@@ -60,9 +60,9 @@ impl ModuleList {
     }
 
     fn open_module(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, move |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let (worktree, relative_path) = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.workspace.update(cx, |workspace, cx| {
                         workspace.project().update(cx, |this, cx| {
                             this.find_or_create_worktree(&path, false, cx)
@@ -72,7 +72,7 @@ impl ModuleList {
                 .await?;
 
             let buffer = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.workspace.update(cx, |this, cx| {
                         this.project().update(cx, |this, cx| {
                             let worktree_id = worktree.read(cx).id();
@@ -88,7 +88,7 @@ impl ModuleList {
                 })??
                 .await?;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
                         anyhow!("Could not select a stack frame for unnamed buffer")

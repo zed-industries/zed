@@ -288,8 +288,8 @@ impl MarksState {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(|this, mut cx| async move {
-            let Some(workspace_id) = this.update(&mut cx, |this, cx| this.workspace_id(cx))? else {
+        cx.spawn(async move |this, cx| {
+            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx))? else {
                 return Ok(());
             };
             let (marks, paths) = cx
@@ -299,7 +299,7 @@ impl MarksState {
                     anyhow::Ok((marks, paths))
                 })
                 .await?;
-            this.update(&mut cx, |this, cx| this.loaded(marks, paths, cx))
+            this.update(cx, |this, cx| this.loaded(marks, paths, cx))
         })
         .detach_and_log_err(cx);
     }

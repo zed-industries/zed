@@ -4810,7 +4810,7 @@ impl Workspace {
             })?;
 
             let _ = project
-                .update(&mut cx, |project, cx| {
+                .update(cx, |project, cx| {
                     project
                         .breakpoint_store()
                         .update(cx, |breakpoint_store, cx| {

@@ -1632,7 +1632,7 @@ impl Pane {
                 }
 
                 // Remove the item from the pane.
-                pane.update_in(&mut cx, |pane, window, cx| {
+                pane.update_in(cx, |pane, window, cx| {
                     pane.remove_item(
                         item_to_close.item_id(),
                         false,

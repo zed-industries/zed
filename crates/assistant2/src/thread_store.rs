@@ -133,7 +133,7 @@ impl ThreadStore {
             thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
 
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let serialized_thread = serialized_thread.await?;
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.save_thread(metadata, serialized_thread).await?;

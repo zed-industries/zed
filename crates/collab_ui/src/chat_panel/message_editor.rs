@@ -249,7 +249,7 @@ impl MessageEditor {
             self.collect_mention_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn(|_, cx| async move {
+                return cx.spawn(async move |_, cx| {
                     Ok(Some(
                         Self::resolve_completions_for_candidates(
                             &cx,
@@ -268,7 +268,7 @@ impl MessageEditor {
             self.collect_emoji_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn(|_, cx| async move {
+                return cx.spawn(async move |_, cx| {
                     Ok(Some(
                         Self::resolve_completions_for_candidates(
                             &cx,

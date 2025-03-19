@@ -149,12 +149,12 @@ impl DapStore {
         let (start_debugging_tx, mut message_rx) =
             futures::channel::mpsc::unbounded::<(SessionId, Message)>();
 
-        let _start_debugging_task = cx.spawn(move |this, mut cx| async move {
+        let _start_debugging_task = cx.spawn(async move |this, cx| {
             while let Some((session_id, message)) = message_rx.next().await {
                 match message {
                     Message::Request(request) => {
                         let _ = this
-                            .update(&mut cx, |this, cx| {
+                            .update(cx, |this, cx| {
                                 if request.command == StartDebugging::COMMAND {
                                     this.handle_start_debugging_request(session_id, request, cx)
                                         .detach_and_log_err(cx);
@@ -361,11 +361,11 @@ impl DapStore {
             cx,
         );
 
-        let task = cx.spawn(|this, mut cx| async move {
+        let task = cx.spawn(async move |this, cx| {
             let session = match start_client_task.await {
                 Ok(session) => session,
                 Err(error) => {
-                    this.update(&mut cx, |_, cx| {
+                    this.update(cx, |_, cx| {
                         cx.emit(DapStoreEvent::Notification(error.to_string()));
                     })
                     .log_err();
@@ -376,21 +376,21 @@ impl DapStore {
 
             // we have to insert the session early, so we can handle reverse requests
             // that need the session to be available
-            this.update(&mut cx, |store, cx| {
+            this.update(cx, |store, cx| {
                 store.sessions.insert(session_id, session.clone());
                 cx.emit(DapStoreEvent::DebugClientStarted(session_id));
                 cx.notify();
             })?;
 
             match session
-                .update(&mut cx, |session, cx| {
+                .update(cx, |session, cx| {
                     session.initialize_sequence(initialized_rx, cx)
                 })?
                 .await
             {
                 Ok(_) => {}
                 Err(error) => {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         cx.emit(DapStoreEvent::Notification(error.to_string()));
 
                         this.shutdown_session(session_id, cx)
@@ -456,7 +456,7 @@ impl DapStore {
         );
 
         let request_seq = request.seq;
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             let (success, body) = match new_session_task.await {
                 Ok(_) => (true, None),
                 Err(error) => (
@@ -476,7 +476,7 @@ impl DapStore {
             };
 
             parent_session
-                .update(&mut cx, |session, cx| {
+                .update(cx, |session, cx| {
                     session.respond_to_client(
                         request_seq,
                         success,
@@ -572,7 +572,7 @@ impl DapStore {
         cx.notify();
 
         let session = session.downgrade();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             let (success, body) = match rx.next().await {
                 Some(Ok(pid)) => (
                     true,
@@ -615,7 +615,7 @@ impl DapStore {
             };
 
             session
-                .update(&mut cx, |session, cx| {
+                .update(cx, |session, cx| {
                     session.respond_to_client(
                         seq,
                         success,

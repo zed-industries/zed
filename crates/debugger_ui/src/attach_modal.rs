@@ -114,9 +114,9 @@ impl PickerDelegate for AttachModalDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let Some(processes) = this
-                .update(&mut cx, |this, _| {
+                .update(cx, |this, _| {
                     if let Some(processes) = this.delegate.candidates.clone() {
                         processes
                     } else {
@@ -172,7 +172,7 @@ impl PickerDelegate for AttachModalDelegate {
             )
             .await;
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 let delegate = &mut this.delegate;
 
                 delegate.matches = matches;

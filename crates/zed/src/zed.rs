@@ -26,10 +26,10 @@ use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
-    Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
-    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind,
-    WindowOptions,
+    actions, point, px, Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
+    DismissEvent, Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement,
+    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions,
+    UpdateGlobal, Window, WindowKind, WindowOptions,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -436,13 +436,17 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<Debugger>(window, |_, window, cx| {
-                cx.spawn_in(window, |workspace, mut cx| async move {
-                    let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
-                    workspace.update_in(&mut cx, |workspace, window, cx| {
-                        workspace.add_panel(debug_panel, window, cx);
-                    })?;
-                    Result::<_, anyhow::Error>::Ok(())
-                })
+                cx.spawn_in(
+                    window,
+                    async move |workspace: gpui::WeakEntity<Workspace>,
+                                cx: &mut AsyncWindowContext| {
+                        let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(debug_panel, window, cx);
+                        })?;
+                        Result::<_, anyhow::Error>::Ok(())
+                    },
+                )
                 .detach()
             });
 

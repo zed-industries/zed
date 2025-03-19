@@ -323,7 +323,7 @@ impl TaskStore {
                 };
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(()) = task_store.update(&mut cx, |task_store, cx| {
+                let Ok(()) = task_store.update(cx, |task_store, cx| {
                     let result = task_store.update_user_tasks(
                         None,
                         Some(&user_tasks_content),

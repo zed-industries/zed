@@ -111,7 +111,7 @@ fn main() {
         let editor_model_provider_id = editor_model.provider_id();
         let judge_model_provider_id = judge_model.provider_id();
 
-        cx.spawn(move |cx| async move {
+        cx.spawn(async move |cx| {
             // Authenticate all model providers first
             cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))
                 .unwrap()

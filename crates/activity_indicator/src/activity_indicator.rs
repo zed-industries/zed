@@ -76,9 +76,9 @@ impl ActivityIndicator {
             .detach();
 
             let mut status_events = languages.dap_server_binary_statuses();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 while let Some((name, status)) = status_events.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.statuses.retain(|s| s.name != name);
                         this.statuses.push(ServerStatus { name, status });
                         cx.notify();
@@ -123,7 +123,7 @@ impl ActivityIndicator {
                 let project = project.clone();
                 let error = error.clone();
                 let server_name = server_name.clone();
-                cx.spawn_in(window, |workspace, mut cx| async move {
+                cx.spawn_in(window, async move |workspace, cx| {
                     let buffer = create_buffer.await?;
                     buffer.update(cx, |buffer, cx| {
                         buffer.edit(

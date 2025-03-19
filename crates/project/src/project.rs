@@ -2230,7 +2230,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<(Option<ProjectEntryId>, AnyEntity)>> {
         let task = self.open_buffer(path.clone(), cx);
-        cx.spawn(move |_project, cx| async move {
+        cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
             let project_entry_id = buffer.read_with(cx, |buffer, cx| {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
@@ -2890,25 +2890,24 @@ impl Project {
     }
 
     fn recalculate_buffer_diffs(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(move |this, mut cx| async move {
-            loop {
-                let task = this
-                    .update(&mut cx, |this, cx| {
-                        let buffers = this
-                            .buffers_needing_diff
-                            .drain()
-                            .filter_map(|buffer| buffer.upgrade())
-                            .collect::<Vec<_>>();
-                        if buffers.is_empty() {
-                            None
-                        } else {
-                            Some(this.git_store.update(cx, |git_store, cx| {
-                                git_store.recalculate_buffer_diffs(buffers, cx)
-                            }))
-                        }
-                    })
-                    .ok()
-                    .flatten();
+        cx.spawn(async move |this, cx| loop {
+            let task = this
+                .update(cx, |this, cx| {
+                    let buffers = this
+                        .buffers_needing_diff
+                        .drain()
+                        .filter_map(|buffer| buffer.upgrade())
+                        .collect::<Vec<_>>();
+                    if buffers.is_empty() {
+                        None
+                    } else {
+                        Some(this.git_store.update(cx, |git_store, cx| {
+                            git_store.recalculate_buffer_diffs(buffers, cx)
+                        }))
+                    }
+                })
+                .ok()
+                .flatten();
 
             if let Some(task) = task {
                 task.await;

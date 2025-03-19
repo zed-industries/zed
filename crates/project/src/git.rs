@@ -350,7 +350,7 @@ impl GitStore {
                 let staged_text = self.state.load_staged_text(&buffer, &self.buffer_store, cx);
                 entry
                     .insert(
-                        cx.spawn(move |this, cx| async move {
+                        cx.spawn(async move |this, cx| {
                             Self::open_diff_internal(
                                 this,
                                 DiffKind::Unstaged,
@@ -405,7 +405,7 @@ impl GitStore {
 
                 entry
                     .insert(
-                        cx.spawn(move |this, cx| async move {
+                        cx.spawn(async move |this, cx| {
                             Self::open_diff_internal(
                                 this,
                                 DiffKind::Uncommitted,
@@ -430,11 +430,11 @@ impl GitStore {
         kind: DiffKind,
         texts: Result<DiffBasesChange>,
         buffer_entity: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Entity<BufferDiff>> {
         let diff_bases_change = match texts {
             Err(e) => {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let buffer = buffer_entity.read(cx);
                     let buffer_id = buffer.remote_id();
                     this.loading_diffs.remove(&(buffer_id, kind));
@@ -444,7 +444,7 @@ impl GitStore {
             Ok(change) => change,
         };
 
-        this.update(&mut cx, |this, cx| {
+        this.update(cx, |this, cx| {
             let buffer = buffer_entity.read(cx);
             let buffer_id = buffer.remote_id();
             let language = buffer.language().cloned();
@@ -807,9 +807,8 @@ impl GitStore {
             return;
         }
 
-        cx.spawn(move |this, mut cx| async move {
-            let snapshot =
-                worktree.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
+        cx.spawn(async move |this, cx| {
+            let snapshot = worktree.update(cx, |tree, _| tree.as_local().unwrap().snapshot())?;
 
             let mut diff_bases_changes_by_buffer = Vec::new();
             for (buffer, path, current_index_text, current_head_text) in diff_state_updates {
@@ -866,7 +865,7 @@ impl GitStore {
                 diff_bases_changes_by_buffer.push((buffer, diff_bases_change))
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
                     let Some(diff_state) = this.diffs.get(&buffer.read(cx).remote_id()) else {
                         continue;
@@ -1752,7 +1751,7 @@ impl BufferDiffState {
             (None, None) => true,
             _ => false,
         };
-        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+        self.recalculate_diff_task = Some(cx.spawn(async move |this, cx| {
             let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
                 new_unstaged_diff = Some(
@@ -1764,7 +1763,7 @@ impl BufferDiffState {
                         language_changed,
                         language.clone(),
                         language_registry.clone(),
-                        &mut cx,
+                        cx,
                     )
                     .await?,
                 );
@@ -1784,7 +1783,7 @@ impl BufferDiffState {
                             language_changed,
                             language.clone(),
                             language_registry.clone(),
-                            &mut cx,
+                            cx,
                         )
                         .await?,
                     )
@@ -1794,7 +1793,7 @@ impl BufferDiffState {
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
-                unstaged_diff.update(&mut cx, |diff, cx| {
+                unstaged_diff.update(cx, |diff, cx| {
                     diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
                 })?
             } else {
@@ -1804,7 +1803,7 @@ impl BufferDiffState {
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
-                uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
+                uncommitted_diff.update(cx, |uncommitted_diff, cx| {
                     uncommitted_diff.set_snapshot(
                         &buffer,
                         new_uncommitted_diff,
@@ -1816,7 +1815,7 @@ impl BufferDiffState {
             }
 
             if let Some(this) = this.upgrade() {
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.index_changed = false;
                     this.head_changed = false;
                     this.language_changed = false;
@@ -2166,7 +2165,7 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        cx.spawn(|repository, mut cx| async move {
+        cx.spawn(async move |repository, cx| {
             let buffer = buffer_store
                 .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
                 .await?;
@@ -2178,7 +2177,7 @@ impl Repository {
                 })?;
             }
 
-            repository.update(&mut cx, |repository, _| {
+            repository.update(cx, |repository, _| {
                 repository.commit_message_buffer = Some(buffer.clone());
             })?;
             Ok(buffer)

@@ -297,9 +297,9 @@ impl MessageEditor {
             .thread
             .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             report.await?;
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 let message = if is_positive {
                     "Positive feedback recorded. Thank you!"
                 } else {

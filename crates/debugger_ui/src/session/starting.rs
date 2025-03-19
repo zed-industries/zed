@@ -29,10 +29,10 @@ impl StartingState {
         task: Task<Result<Entity<Session>>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let _notify_parent = cx.spawn(move |this, mut cx| async move {
+        let _notify_parent = cx.spawn(async move |this, cx| {
             let entity = task.await;
 
-            this.update(&mut cx, |_, cx| {
+            this.update(cx, |_, cx| {
                 if let Ok(entity) = entity {
                     cx.emit(StartingEvent::Finished(entity))
                 } else {

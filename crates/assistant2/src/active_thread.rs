@@ -372,10 +372,10 @@ impl ActiveThread {
                             cx,
                         );
 
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(async move |this, cx| {
                             let updated_context_ids = refresh_task.await;
 
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.context_store.read_with(cx, |context_store, cx| {
                                     context_store
                                         .context()
@@ -394,10 +394,10 @@ impl ActiveThread {
 
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(async move |this, cx| {
                             let updated_context = context_update_task.await?;
 
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.thread.update(cx, |thread, cx| {
                                     thread.attach_tool_results(updated_context, cx);
                                     if !canceled {

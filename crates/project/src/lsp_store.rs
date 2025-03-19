@@ -804,8 +804,9 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::CodeLensRefresh, _, _>({
                 let this = this.clone();
-                move |(), mut cx| {
+                move |(), cx| {
                     let this = this.clone();
+                    let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
                             cx.emit(LspStoreEvent::RefreshCodeLens);
@@ -4441,7 +4442,7 @@ impl LspStore {
                 )),
             });
             let buffer = buffer_handle.clone();
-            cx.spawn(|weak_project, cx| async move {
+            cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
                 };
@@ -4479,7 +4480,7 @@ impl LspStore {
         } else {
             let code_lens_task =
                 self.request_multiple_lsp_locally(buffer_handle, None::<usize>, GetCodeLens, cx);
-            cx.spawn(|_, _| async move { Ok(code_lens_task.await.into_iter().flatten().collect()) })
+            cx.spawn(async move |_, _| Ok(code_lens_task.await.into_iter().flatten().collect()))
         }
     }
 

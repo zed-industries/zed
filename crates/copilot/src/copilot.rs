@@ -388,7 +388,7 @@ impl Copilot {
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
-            .spawn(move |this, cx| {
+            .spawn(async move |this, cx| {
                 Self::start_language_server(
                     server_id,
                     http,
@@ -398,6 +398,7 @@ impl Copilot {
                     awaiting_sign_in_after_start,
                     cx,
                 )
+                .await
             })
             .shared();
         self.server = CopilotServer::Starting { task: start_task };
@@ -468,7 +469,7 @@ impl Copilot {
         env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
         awaiting_sign_in_after_start: bool,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
             let server_path = get_copilot_lsp(http).await?;
