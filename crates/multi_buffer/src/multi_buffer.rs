@@ -274,6 +274,7 @@ pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
     diffs: TreeMap<BufferId, BufferDiffSnapshot>,
+    replaced_excerpts: TreeMap<ExcerptId, ExcerptId>,
     diff_transforms: SumTree<DiffTransform>,
     trailing_excerpt_update_count: usize,
     all_diff_hunks_expanded: bool,
@@ -1620,7 +1621,6 @@ impl MultiBuffer {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         let (new, counts) = self.merge_excerpt_ranges(&ranges);
-        dbg!(&new, &counts, &ranges);
         let (excerpt_ids, added_a_new_excerpt) =
             self.update_path_excerpts(path, buffer, &buffer_snapshot, new, cx);
 
@@ -1687,9 +1687,18 @@ impl MultiBuffer {
 
         let mut excerpt_ids = Vec::new();
         let mut to_remove = Vec::new();
-        let mut to_insert = Vec::new();
+        let mut to_insert: Vec<(ExcerptId, ExcerptRange<Point>)> = Vec::new();
         let mut added_a_new_excerpt = false;
         let snapshot = self.snapshot(cx);
+
+        let mut next_excerpt_id =
+            if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
+                last_entry.id.0 + 1
+            } else {
+                1
+            };
+
+        let mut next_excerpt_id = move || ExcerptId(post_inc(&mut next_excerpt_id));
 
         let mut excerpts_cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
         excerpts_cursor.next(&());
@@ -1699,12 +1708,29 @@ impl MultiBuffer {
                 (Some(new), Some(existing)) => (new, existing),
                 (None, None) => break,
                 (None, Some(_)) => {
-                    to_remove.push(existing_iter.next().unwrap());
+                    let existing_id = existing_iter.next().unwrap();
+                    let locator = snapshot.excerpt_locator_for_id(existing_id);
+                    let existing_excerpt = excerpts_cursor.item().unwrap();
+                    excerpts_cursor.seek_forward(&Some(locator), Bias::Left, &());
+                    let existing_end = existing_excerpt
+                        .range
+                        .context
+                        .end
+                        .to_point(&buffer_snapshot);
+                    if let Some((new_id, last)) = to_insert.last() {
+                        if existing_end <= last.context.end {
+                            self.snapshot
+                                .borrow_mut()
+                                .replaced_excerpts
+                                .insert(existing_id, *new_id);
+                        }
+                    }
+                    to_remove.push(existing_id);
                     continue;
                 }
                 (Some(_), None) => {
                     added_a_new_excerpt = true;
-                    to_insert.push(new_iter.next().unwrap());
+                    to_insert.push((next_excerpt_id(), new_iter.next().unwrap()));
                     continue;
                 }
             };
@@ -1713,7 +1739,7 @@ impl MultiBuffer {
             let existing_excerpt = excerpts_cursor.item().unwrap();
             if existing_excerpt.buffer_id != buffer_snapshot.remote_id() {
                 to_remove.push(existing_iter.next().unwrap());
-                to_insert.push(new_iter.next().unwrap());
+                to_insert.push((next_excerpt_id(), new_iter.next().unwrap()));
                 continue;
             }
 
@@ -1729,33 +1755,49 @@ impl MultiBuffer {
                 .to_point(&buffer_snapshot);
 
             if existing_end < new.context.start {
-                to_remove.push(existing_iter.next().unwrap());
+                let existing_id = existing_iter.next().unwrap();
+                if let Some((new_id, last)) = to_insert.last() {
+                    if existing_end <= last.context.end {
+                        self.snapshot
+                            .borrow_mut()
+                            .replaced_excerpts
+                            .insert(existing_id, *new_id);
+                    }
+                }
+                to_remove.push(existing_id);
                 continue;
             } else if existing_start > new.context.end {
-                to_insert.push(new_iter.next().unwrap());
+                to_insert.push((next_excerpt_id(), new_iter.next().unwrap()));
                 continue;
             }
 
-            // maybe merge overlapping excerpts?
-            // it's hard to distinguish between a manually expanded excerpt, and one that
-            // got smaller because of a missing diff.
             if existing_start == new.context.start && existing_end == new.context.end {
-                excerpt_ids.append(&mut self.insert_excerpts_after(
+                excerpt_ids.extend(to_insert.iter().map(|(id, _)| id));
+                self.insert_excerpts_with_ids_after(
                     insert_after,
                     buffer.clone(),
                     mem::take(&mut to_insert),
                     cx,
-                ));
+                );
                 insert_after = existing_iter.next().unwrap();
                 excerpt_ids.push(insert_after);
                 new_iter.next();
             } else {
-                to_remove.push(existing_iter.next().unwrap());
-                to_insert.push(new_iter.next().unwrap());
+                let existing_id = existing_iter.next().unwrap();
+                let new_id = next_excerpt_id();
+                if existing_start >= new.context.start && existing_end <= new.context.end {
+                    self.snapshot
+                        .borrow_mut()
+                        .replaced_excerpts
+                        .insert(existing_id, new_id);
+                }
+                to_remove.push(existing_id);
+                to_insert.push((new_id, new_iter.next().unwrap()));
             }
         }
 
-        excerpt_ids.append(&mut self.insert_excerpts_after(insert_after, buffer, to_insert, cx));
+        excerpt_ids.extend(to_insert.iter().map(|(id, _)| id));
+        self.insert_excerpts_with_ids_after(insert_after, buffer, to_insert, cx);
         self.remove_excerpts(to_remove, cx);
         if excerpt_ids.is_empty() {
             self.excerpts_by_path.remove(&path);
@@ -4806,6 +4848,15 @@ impl MultiBufferSnapshot {
         position
     }
 
+    // until we remove excerpt ids, we need a way to preserve block and cursor
+    // positions when expanding excerpts.
+    pub fn latest_excerpt_id(&self, mut excerpt_id: ExcerptId) -> ExcerptId {
+        while let Some(replacement) = self.replaced_excerpts.get(&excerpt_id) {
+            excerpt_id = *replacement;
+        }
+        return excerpt_id;
+    }
+
     pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
@@ -4820,10 +4871,10 @@ impl MultiBufferSnapshot {
 
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
-            let excerpt_id = anchor.excerpt_id;
+            let excerpt_id = self.latest_excerpt_id(anchor.excerpt_id);
             let excerpt_anchors = iter::from_fn(|| {
                 let anchor = anchors.peek()?;
-                if anchor.excerpt_id == excerpt_id {
+                if self.latest_excerpt_id(anchor.excerpt_id) == excerpt_id {
                     Some(anchors.next().unwrap())
                 } else {
                     None
