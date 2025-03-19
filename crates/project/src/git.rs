@@ -2505,14 +2505,16 @@ impl Repository {
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        amend: bool,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let env = self.worktree_environment(cx);
-        self.send_job(|git_repo, cx| async move {
+
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 GitRepo::Local(repo) => {
                     let env = env.await;
-                    repo.commit(message, name_and_email, env, cx).await
+                    repo.commit(message, name_and_email, env, amend, cx).await
                 }
                 GitRepo::Remote {
                     project_id,

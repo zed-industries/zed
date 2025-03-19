@@ -246,6 +246,7 @@ pub trait GitRepository: Send + Sync {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         env: HashMap<String, String>,
+        amend: bool,
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>>;
 
@@ -792,6 +793,7 @@ impl GitRepository for RealGitRepository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         env: HashMap<String, String>,
+        amend: bool,
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
@@ -805,6 +807,10 @@ impl GitRepository for RealGitRepository {
 
             if let Some((name, email)) = name_and_email {
                 cmd.arg("--author").arg(&format!("{name} <{email}>"));
+            }
+
+            if amend {
+                cmd.arg("--amend");
             }
 
             let output = cmd.output().await?;

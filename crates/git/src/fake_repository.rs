@@ -249,6 +249,7 @@ impl GitRepository for FakeGitRepository {
         _message: SharedString,
         _name_and_email: Option<(SharedString, SharedString)>,
         _env: HashMap<String, String>,
+        _amend: bool,
         _: AsyncApp,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
