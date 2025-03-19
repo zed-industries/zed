@@ -25,6 +25,7 @@ assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
+buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
 clock.workspace = true
@@ -82,6 +83,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+buffer_diff = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
