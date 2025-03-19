@@ -41,7 +41,7 @@ impl Tool for DeletePathTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<DeletePathToolInput>(input.clone()) {
-            Ok(input) => format!("Delete `{}`", input.path),
+            Ok(input) => format!("Delete “`{}`”", input.path),
             Err(_) => "Delete path".to_string(),
         }
     }
