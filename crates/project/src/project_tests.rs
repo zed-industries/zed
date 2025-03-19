@@ -1,6 +1,7 @@
 #![allow(clippy::format_collect)]
 
 use crate::{task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event, *};
+use anyhow::Context;
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
@@ -21,12 +22,14 @@ use lsp::{
 use parking_lot::Mutex;
 use paths::tasks_file;
 use pretty_assertions::{assert_eq, assert_matches};
+use rand::{rngs::StdRng, seq::SliceRandom, Rng};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{str::FromStr, sync::OnceLock};
-
-use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
+use std::{
+    collections::VecDeque, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock,
+    task::Poll,
+};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -6689,6 +6692,155 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
     }
 
     uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &expected_hunks,
+        );
+    });
+}
+
+#[gpui::test(iterations = 50)]
+async fn test_staging_multiline_hunks_randomly(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+    // if this fails, to ease debugging, you can set this to `false` and see if it still fails
+    let random_staging_order = false;
+
+    const LINE_COUNT: usize = 1000;
+    const HUNK_COUNT: usize = 500;
+
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_lines = (0..LINE_COUNT)
+        .map(|i| format!("{}\n", i))
+        .collect::<Vec<String>>();
+
+    let hunk_lines = {
+        let mut candidates = (0..LINE_COUNT).collect::<Vec<usize>>();
+        candidates.shuffle(&mut rng);
+        candidates
+            .into_iter()
+            .take(HUNK_COUNT)
+            .sorted()
+            .collect::<Vec<usize>>()
+    };
+
+    // hunks are merged from a random list of indices, potentially becoming multiline hunks
+    let (hunk_indices, hunk_heights) = hunk_lines
+        .chunk_by(|&a, &b| a + 1 == b)
+        .map(|chunk| (chunk[0], chunk.len()))
+        .collect::<(Vec<usize>, Vec<usize>)>();
+
+    // mix committed contents with chosen hunk lines
+    let unstaged_lines = {
+        let mut lines = committed_lines.clone();
+        for &hunk_line in &hunk_lines {
+            lines[hunk_line] = format!("{} <- hunk here\n", hunk_line);
+        }
+        lines
+    };
+
+    let lines_to_string =
+        |lines: &[String]| -> String { lines.iter().map(String::as_str).collect() };
+
+    let [committed_contents, unstaged_contents] =
+        [committed_lines.as_slice(), unstaged_lines.as_slice()].map(lines_to_string);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": unstaged_contents.clone()
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+    fs.set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut expected_hunks = hunk_indices
+        .iter()
+        .zip(&hunk_heights)
+        .map(|(&hunk_index, &hunk_height)| {
+            (
+                hunk_index as u32..hunk_index as u32 + hunk_height as u32,
+                lines_to_string(&committed_lines[hunk_index..][..hunk_height]),
+                lines_to_string(&unstaged_lines[hunk_index..][..hunk_height]),
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )
+        })
+        .collect::<Vec<(Range<u32>, String, String, DiffHunkStatus)>>();
+
+    // The hunks are initially unstaged
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &expected_hunks,
+        );
+    });
+
+    let hunks_to_stage = if random_staging_order {
+        // will stage hunks in this random order
+        let mut indices = hunk_indices.iter().copied().collect::<Vec<usize>>();
+        indices.shuffle(&mut rng);
+        indices
+    } else {
+        hunk_indices.clone()
+    };
+
+    // we delay filesystem events to test concurrency problems
+    fs.pause_events();
+
+    for chosen_hunk in hunks_to_stage {
+        uncommitted_diff.update(cx, |diff, cx| {
+            let hunks: Vec<_> = diff
+                .hunks_in_row_range(chosen_hunk as u32..chosen_hunk as u32, &snapshot.text, cx)
+                .collect();
+            assert_eq!(hunks.len(), 1);
+
+            diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+        });
+
+        let flushed_amount = rng.gen_range(0..=2);
+        fs.flush_events(flushed_amount);
+
+        if rng.gen_ratio(1, 10) {
+            cx.run_until_parked();
+        }
+    }
+
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    for (_, _, _, status) in expected_hunks.iter_mut() {
+        *status = DiffHunkStatus::modified(NoSecondaryHunk);
+    }
+
+    // All hunks should be staged by now
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.hunks(&snapshot, cx),
             &snapshot,

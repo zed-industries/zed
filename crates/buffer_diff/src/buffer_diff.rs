@@ -1248,13 +1248,13 @@ impl DiffHunkStatus {
     }
 }
 
-/// Range (crossing new lines), old, new
 #[cfg(any(test, feature = "test-support"))]
 #[track_caller]
 pub fn assert_hunks<ExpectedText, HunkIter>(
     diff_hunks: HunkIter,
     buffer: &text::BufferSnapshot,
     diff_base: &str,
+    // Line range, deleted, added, status
     expected_hunks: &[(Range<u32>, ExpectedText, ExpectedText, DiffHunkStatus)],
 ) where
     HunkIter: Iterator<Item = DiffHunk>,
@@ -1275,11 +1275,11 @@ pub fn assert_hunks<ExpectedText, HunkIter>(
 
     let expected_hunks: Vec<_> = expected_hunks
         .iter()
-        .map(|(r, old_text, new_text, status)| {
+        .map(|(line_range, deleted_text, added_text, status)| {
             (
-                Point::new(r.start, 0)..Point::new(r.end, 0),
-                old_text.as_ref(),
-                new_text.as_ref().to_string(),
+                Point::new(line_range.start, 0)..Point::new(line_range.end, 0),
+                deleted_text.as_ref(),
+                added_text.as_ref().to_string(),
                 *status,
             )
         })

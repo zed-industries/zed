@@ -1109,9 +1109,9 @@ impl GitStore {
             let worktree = worktree.downgrade();
             let git_store = cx.weak_entity();
 
-            let _ = active_repo.read(cx).send_keyed_job(
-                Some(GitJobKey::BatchReadIndex(repo_id)),
-                |_, mut cx| async move {
+            let _ = active_repo
+                .read(cx)
+                .send_keyed_job(None, |_, mut cx| async move {
                     let snapshot = worktree.update(&mut cx, |tree, _| {
                         tree.as_local().map(|local_tree| local_tree.snapshot())
                     });
@@ -1230,8 +1230,7 @@ impl GitStore {
                             }
                         })
                         .ok();
-                },
-            );
+                });
         }
     }
 
