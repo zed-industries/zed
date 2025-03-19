@@ -1,13 +1,5 @@
 pub mod call_settings;
 
-#[cfg(any())]
-mod macos;
+mod call_impl;
 
-#[cfg(any())]
-pub use macos::*;
-
-#[cfg(all())]
-mod cross_platform;
-
-#[cfg(all())]
-pub use cross_platform::*;
+pub use call_impl::*;

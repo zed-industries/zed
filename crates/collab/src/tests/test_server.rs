@@ -45,11 +45,7 @@ use std::{
 };
 use workspace::{Workspace, WorkspaceStore};
 
-#[cfg(not(target_os = "macos"))]
 use livekit_client::test::TestServer as LivekitTestServer;
-
-#[cfg(target_os = "macos")]
-use livekit_client_macos::TestServer as LivekitTestServer;
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
