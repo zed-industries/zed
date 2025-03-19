@@ -832,9 +832,10 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(div().max_w_full().flex_grow().text_ui(cx).truncate().children(
+                                .child(div().text_ui_sm(cx).children(
                                     self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
-                                )),
+                                ))
+                                .truncate(),
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
@@ -1008,9 +1009,12 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(div().max_w_full().flex_grow().text_ui(cx).truncate().child(
-                                    self.render_markdown(tool_use.ui_text.clone(), window, cx),
-                                )),
+                                .child(div().text_ui_sm(cx).child(self.render_markdown(
+                                    tool_use.ui_text.clone(),
+                                    window,
+                                    cx,
+                                )))
+                                .truncate(),
                         )
                         .child(
                             Label::new(match tool_use.status {
