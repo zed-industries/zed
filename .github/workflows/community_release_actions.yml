@@ -53,7 +53,7 @@ jobs:
           VERSION="${{ github.event.release.tag_name }}"
           VERSION="0.178.4"
           PREVIEW_TAG="${VERSION}-pre"
-
+          git rev-parse "$PREVIEW_TAG"
           if git rev-parse "$PREVIEW_TAG" > /dev/null 2>&1; then
               echo "was_promoted_from_preview=true" >> $GITHUB_OUTPUT
           else
