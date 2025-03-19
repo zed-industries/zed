@@ -1586,7 +1586,7 @@ impl App {
     /// Get the name for this App.
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub fn get_name(&self) -> &'static str {
-        self.name.as_ref().unwrap()
+        self.name.unwrap_or("Unnamed App")
     }
 
     /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
