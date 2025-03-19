@@ -2026,8 +2026,7 @@ message Diagnostic {
     uint64 group_id = 7;
     bool is_primary = 8;
 
-    // TODO: remove this field
-    bool is_valid = 9;
+    reserved 9;
 
     bool is_disk_based = 10;
     bool is_unnecessary = 11;
