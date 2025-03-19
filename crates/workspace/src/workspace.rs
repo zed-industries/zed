@@ -1947,7 +1947,7 @@ impl Workspace {
 
         let keystrokes = self.dispatching_keystrokes.clone();
         window
-            .spawn(cx, async move |mut cx| {
+            .spawn(cx, async move |cx| {
                 // limit to 100 keystrokes to avoid infinite recursion.
                 for _ in 0..100 {
                     let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
@@ -2840,7 +2840,7 @@ impl Workspace {
         });
 
         let task = self.load_path(path.into(), window, cx);
-        window.spawn(cx, async move |mut cx| {
+        window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
                 let result = pane.open_item(

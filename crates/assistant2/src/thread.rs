@@ -489,7 +489,7 @@ impl Thread {
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
 
-        let task = cx.spawn(|thread, mut cx| async move {
+        let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
             let stream_completion = async {
                 let mut events = stream.await?;
@@ -499,7 +499,7 @@ impl Thread {
                 while let Some(event) = events.next().await {
                     let event = event?;
 
-                    thread.update(&mut cx, |thread, cx| {
+                    thread.update(cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 thread.insert_message(Role::Assistant, String::new(), cx);
@@ -558,7 +558,7 @@ impl Thread {
                     smol::future::yield_now().await;
                 }
 
-                thread.update(&mut cx, |thread, cx| {
+                thread.update(cx, |thread, cx| {
                     thread
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
@@ -574,7 +574,7 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |thread, cx| match result.as_ref() {
+                .update(cx, |thread, cx| match result.as_ref() {
                     Ok(stop_reason) => match stop_reason {
                         StopReason::ToolUse => {
                             cx.emit(ThreadEvent::UsePendingTools);
@@ -632,7 +632,7 @@ impl Thread {
             cache: false,
         });
 
-        self.pending_summary = cx.spawn(|this, mut cx| {
+        self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
                 let stream = model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
@@ -649,7 +649,7 @@ impl Thread {
                     }
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if !new_summary.is_empty() {
                         this.summary = Some(new_summary.into());
                     }
@@ -660,6 +660,7 @@ impl Thread {
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
     }
 
@@ -699,10 +700,10 @@ impl Thread {
                         });
 
                     let session = self.scripting_session.clone();
-                    cx.spawn(|_, cx| async move {
+                    cx.spawn(async move |_, cx| {
                         script_task.await;
 
-                        let message = session.read_with(&cx, |session, _cx| {
+                        let message = session.read_with(cx, |session, _cx| {
                             // Using a id to get the script output seems impractical.
                             // Why not just include it in the Task result?
                             // This is because we'll later report the script state as it runs,
@@ -727,12 +728,12 @@ impl Thread {
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
-        let insert_output_task = cx.spawn(|thread, mut cx| {
+        let insert_output_task = cx.spawn({
             let tool_use_id = tool_use_id.clone();
-            async move {
+            async move |thread, cx| {
                 let output = output.await;
                 thread
-                    .update(&mut cx, |thread, cx| {
+                    .update(cx, |thread, cx| {
                         let pending_tool_use = thread
                             .tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -756,12 +757,12 @@ impl Thread {
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
-        let insert_output_task = cx.spawn(|thread, mut cx| {
+        let insert_output_task = cx.spawn({
             let tool_use_id = tool_use_id.clone();
-            async move {
+            async move |thread, cx| {
                 let output = output.await;
                 thread
-                    .update(&mut cx, |thread, cx| {
+                    .update(cx, |thread, cx| {
                         let pending_tool_use = thread
                             .scripting_tool_use
                             .insert_tool_output(tool_use_id.clone(), output);

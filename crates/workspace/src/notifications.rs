@@ -879,7 +879,7 @@ where
         f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     ) -> Task<Option<R>> {
         let msg = msg.to_owned();
-        window.spawn(cx, async move |mut cx| {
+        window.spawn(cx, async move |cx| {
             let result = self.await;
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");

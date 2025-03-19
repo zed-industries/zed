@@ -90,8 +90,8 @@ pub(crate) fn deserialize_terminal_panel(
     window: &mut Window,
     cx: &mut App,
 ) -> Task<anyhow::Result<Entity<TerminalPanel>>> {
-    window.spawn(cx, move |mut cx| async move {
-        let terminal_panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+    window.spawn(cx, async move |cx| {
+        let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| {
                 let mut panel = TerminalPanel::new(workspace, window, cx);
                 panel.height = serialized_panel.height.map(|h| h.round());
@@ -106,11 +106,11 @@ pub(crate) fn deserialize_terminal_panel(
                     project,
                     workspace,
                     item_ids.as_slice(),
-                    &mut cx,
+                    cx,
                 )
                 .await;
                 let active_item = serialized_panel.active_item_id;
-                terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
+                terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                     terminal_panel.active_pane.update(cx, |pane, cx| {
                         populate_pane_items(pane, items, active_item, window, cx);
                     });
@@ -123,11 +123,11 @@ pub(crate) fn deserialize_terminal_panel(
                     terminal_panel.clone(),
                     database_id,
                     serialized_pane_group,
-                    &mut cx,
+                    cx,
                 )
                 .await;
                 if let Some((center_group, active_pane)) = center_pane {
-                    terminal_panel.update(&mut cx, |terminal_panel, _| {
+                    terminal_panel.update(cx, |terminal_panel, _| {
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());

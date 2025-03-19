@@ -109,7 +109,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
                         cx,
                     );
 
-                    cx.spawn_in(window, |_, mut cx| async move {
+                    cx.spawn_in(window, async move |_, cx| {
                         response.await?;
                         cx.update(|_, cx| cx.quit())
                     })
@@ -285,7 +285,7 @@ fn main() {
         {
             cx.spawn({
                 let app_state = app_state.clone();
-                |mut cx| async move {
+                async move |mut cx| {
                     if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
                         fail_to_open_window_async(e, &mut cx)
                     }
@@ -578,7 +578,7 @@ fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            |cx| async move { authenticate(client, &cx).await }
+            async move |cx| authenticate(client, &cx).await
         })
         .detach_and_log_err(cx);
 
@@ -604,7 +604,7 @@ fn main() {
             None => {
                 cx.spawn({
                     let app_state = app_state.clone();
-                    |mut cx| async move {
+                    async move |mut cx| {
                         if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
                             fail_to_open_window_async(e, &mut cx)
                         }
@@ -618,7 +618,7 @@ fn main() {
 
         component_preview::init(app_state.clone(), cx);
 
-        cx.spawn(move |cx| async move {
+        cx.spawn(async move |cx| {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
@@ -635,7 +635,7 @@ fn main() {
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
-        cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
+        cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
             .detach();
         return;
     }
@@ -646,7 +646,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     if let Some(connection_options) = request.ssh_connection {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |mut cx| {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
@@ -665,7 +665,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     let mut task = None;
     if !request.open_paths.is_empty() {
         let app_state = app_state.clone();
-        task = Some(cx.spawn(|mut cx| async move {
+        task = Some(cx.spawn(async move |mut cx| {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
@@ -685,7 +685,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |mut cx| {
             let result = maybe!(async {
                 if let Some(task) = task {
                     task.await?;
@@ -709,7 +709,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                 let workspace_window =
                     workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                let workspace = workspace_window.entity(&cx)?;
+                let workspace = workspace_window.entity(cx)?;
 
                 let mut promises = Vec::new();
                 for (channel_id, heading) in request.open_channel_notes {
@@ -734,7 +734,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         })
         .detach()
     } else if let Some(task) = task {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |mut cx| {
             if let Err(err) = task.await {
                 fail_to_open_window_async(err, &mut cx);
             }
@@ -819,13 +819,13 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                             .connection_options_for(ssh.host, ssh.port, ssh.user)
                     })?;
                     let app_state = app_state.clone();
-                    cx.spawn(move |mut cx| async move {
+                    cx.spawn(async move |cx| {
                         recent_projects::open_ssh_project(
                             connection_options,
                             ssh.paths.into_iter().map(PathBuf::from).collect(),
                             app_state,
                             workspace::OpenOptions::default(),
-                            &mut cx,
+                            cx,
                         )
                         .await
                         .log_err();
@@ -1038,7 +1038,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
                 cx.spawn({
                     let theme_registry = theme_registry.clone();
                     let fs = fs.clone();
-                    |cx| async move {
+                    async move |cx| {
                         theme_registry.load_user_theme(&theme_path, fs).await?;
 
                         cx.update(|cx| {
@@ -1064,7 +1064,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
                 cx.spawn({
                     let theme_registry = theme_registry.clone();
                     let fs = fs.clone();
-                    |cx| async move {
+                    async move |cx| {
                         theme_registry
                             .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
                             .await?;
@@ -1084,7 +1084,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
 fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     cx.spawn({
         let fs = fs.clone();
-        |cx| async move {
+        async move |cx| {
             if let Some(theme_registry) =
                 cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
             {
@@ -1117,7 +1117,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
 /// Spawns a background task to watch the themes directory for changes.
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     use std::time::Duration;
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         let (mut events, _) = fs
             .watch(paths::themes_dir(), Duration::from_millis(100))
             .await;
@@ -1155,7 +1155,7 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
         full_path
     };
 
-    cx.spawn(|_| async move {
+    cx.spawn(async move |_| {
         let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while let Some(event) = events.next().await {
             let has_language_file = event.iter().any(|event| {

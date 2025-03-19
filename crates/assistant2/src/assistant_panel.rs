@@ -110,10 +110,10 @@ impl AssistantPanel {
         prompt_builder: Arc<PromptBuilder>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let tools = Arc::new(ToolWorkingSet::default());
             log::info!("[assistant2-debug] initializing ThreadStore");
-            let thread_store = workspace.update(&mut cx, |workspace, cx| {
+            let thread_store = workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
             })??;
@@ -122,7 +122,7 @@ impl AssistantPanel {
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             log::info!("[assistant2-debug] initializing ContextStore");
             let context_store = workspace
-                .update(&mut cx, |workspace, cx| {
+                .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
                     assistant_context_editor::ContextStore::new(
                         project,
@@ -134,7 +134,7 @@ impl AssistantPanel {
                 .await?;
             log::info!("[assistant2-debug] finished initializing ContextStore");
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
             })
         })
@@ -338,9 +338,9 @@ impl AssistantPanel {
 
         let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let context = context.await?;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let editor = cx.new(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -371,9 +371,9 @@ impl AssistantPanel {
             .thread_store
             .update(cx, |this, cx| this.open_thread(thread_id, cx));
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let thread = open_thread_task.await?;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.active_view = ActiveView::Thread;
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
@@ -435,10 +435,10 @@ impl AssistantPanel {
             .languages
             .language_for_name("Markdown");
         let thread = self.active_thread(cx);
-        cx.spawn_in(window, |_this, mut cx| async move {
+        cx.spawn_in(window, async move |_this, cx| {
             let markdown_language = markdown_language_task.await?;
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let thread = thread.read(cx);
                 let markdown = thread.to_markdown()?;
                 let thread_summary = thread

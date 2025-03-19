@@ -1645,7 +1645,7 @@ impl MultiBuffer {
             .detach()
         }
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             let mut results_by_buffer_id = HashMap::default();
             while let Some((buffer_id, buffer, ranges, excerpt_ranges, range_counts)) =
                 excerpt_ranges_rx.next().await

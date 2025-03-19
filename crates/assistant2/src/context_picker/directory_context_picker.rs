@@ -172,12 +172,12 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
 
         let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let mut paths = search_task.await;
             let empty_path = Path::new("");
             paths.retain(|path_match| path_match.path.as_ref() != empty_path);
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = paths;
             })
             .log_err();
@@ -205,10 +205,10 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         };
 
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn_in(window, |this, mut cx| async move {
-            match task.await.notify_async_err(&mut cx) {
+        cx.spawn_in(window, async move |this, cx| {
+            match task.await.notify_async_err(cx) {
                 None => anyhow::Ok(()),
-                Some(()) => this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
+                Some(()) => this.update_in(cx, |this, window, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
                     ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }),

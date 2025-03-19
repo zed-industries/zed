@@ -555,7 +555,7 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::RegisterCapability, _, _>({
                 let this = this.clone();
-                move |params, mut cx| {
+                move |params, cx| {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
@@ -688,7 +688,7 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::UnregisterCapability, _, _>({
                 let this = this.clone();
-                move |params, mut cx| {
+                move |params, cx| {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
@@ -782,7 +782,7 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
                 let this = this.clone();
-                move |(), mut cx| {
+                move |(), cx| {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
@@ -805,7 +805,7 @@ impl LocalLspStore {
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
                 let this = this.clone();
                 let name = name.to_string();
-                move |params, mut cx| {
+                move |params, cx| {
                     let this = this.clone();
                     let name = name.to_string();
                     let mut cx = cx.clone();
@@ -843,7 +843,7 @@ impl LocalLspStore {
             .on_notification::<lsp::notification::ShowMessage, _>({
                 let this = this.clone();
                 let name = name.to_string();
-                move |params, mut cx| {
+                move |params, cx| {
                     let this = this.clone();
                     let name = name.to_string();
                     let mut cx = cx.clone();
@@ -874,7 +874,7 @@ impl LocalLspStore {
         language_server
             .on_notification::<lsp::notification::Progress, _>({
                 let this = this.clone();
-                move |params, mut cx| {
+                move |params, cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| {
                             this.on_lsp_progress(
@@ -893,7 +893,7 @@ impl LocalLspStore {
         language_server
             .on_notification::<lsp::notification::LogMessage, _>({
                 let this = this.clone();
-                move |params, mut cx| {
+                move |params, cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |_, cx| {
                             cx.emit(LspStoreEvent::LanguageServerLog(
@@ -911,7 +911,7 @@ impl LocalLspStore {
         language_server
             .on_notification::<lsp::notification::LogTrace, _>({
                 let this = this.clone();
-                move |params, mut cx| {
+                move |params, cx| {
                     let mut cx = cx.clone();
                     if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |_, cx| {

@@ -857,7 +857,7 @@ impl Worktree {
 
             // On the foreground task, update to the latest snapshot and notify
             // any update observer of all updates that led to that snapshot.
-            cx.spawn(async move |this, mut cx| {
+            cx.spawn(async move |this, cx| {
                 while (snapshot_updated_rx.recv().await).is_some() {
                     this.update(cx, |this, cx| {
                         let mut git_repos_changed = false;
@@ -1150,7 +1150,7 @@ impl Worktree {
                     path: path.as_ref().to_proto(),
                     is_directory,
                 });
-                cx.spawn(async move |this, mut cx| {
+                cx.spawn(async move |this, cx| {
                     let response = request.await?;
                     match response.entry {
                         Some(entry) => this
@@ -1246,7 +1246,7 @@ impl Worktree {
                     relative_worktree_source_path,
                     new_path: new_path.to_proto(),
                 });
-                cx.spawn(async move |this, mut cx| {
+                cx.spawn(async move |this, cx| {
                     let response = response.await?;
                     match response.entry {
                         Some(entry) => this
@@ -1295,7 +1295,7 @@ impl Worktree {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                 });
-                Some(cx.spawn(async move |this, mut cx| {
+                Some(cx.spawn(async move |this, cx| {
                     let response = response.await?;
                     this.update(cx, |this, _| {
                         this.as_remote_mut()
@@ -1321,7 +1321,7 @@ impl Worktree {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                 });
-                Some(cx.spawn(async move |this, mut cx| {
+                Some(cx.spawn(async move |this, cx| {
                     let response = response.await?;
                     this.update(cx, |this, _| {
                         this.as_remote_mut()
@@ -1554,7 +1554,7 @@ impl LocalWorktree {
                     .await;
             }
         });
-        let scan_state_updater = cx.spawn(async move |this, mut cx| {
+        let scan_state_updater = cx.spawn(async move |this, cx| {
             while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade()) {
                 this.update(cx, |this, cx| {
                     let this = this.as_local_mut().unwrap();
@@ -1867,7 +1867,7 @@ impl LocalWorktree {
         });
 
         let lowest_ancestor = self.lowest_ancestor(&path);
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             write.await?;
             if path_excluded {
                 return Ok(CreatedEntry::Excluded { abs_path });
@@ -1924,7 +1924,7 @@ impl LocalWorktree {
             async move { fs.save(&abs_path, &text, line_ending).await }
         });
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             write.await?;
             let entry = this
                 .update(cx, |this, cx| {
@@ -1999,7 +1999,7 @@ impl LocalWorktree {
             anyhow::Ok(entry.path)
         });
 
-        Some(cx.spawn(async move |this, mut cx| {
+        Some(cx.spawn(async move |this, cx| {
             let path = delete.await?;
             this.update(cx, |this, _| {
                 this.as_local_mut()
@@ -2069,7 +2069,7 @@ impl LocalWorktree {
             .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"))
         });
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             rename.await?;
             Ok(this
                 .update(cx, |this, cx| {
@@ -2123,7 +2123,7 @@ impl LocalWorktree {
             .await
         });
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             copy.await?;
             this.update(cx, |this, cx| {
                 this.as_local_mut()
@@ -2398,7 +2398,7 @@ impl RemoteWorktree {
             .snapshot
             .build_initial_update(project_id, self.id().to_proto());
         self.update_observer = Some(tx);
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             let mut update = initial_update;
             'outer: loop {
                 // SSH projects use a special project ID of 0, and we need to
@@ -2457,7 +2457,7 @@ impl RemoteWorktree {
         cx: &Context<Worktree>,
     ) -> Task<Result<Entry>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             wait_for_snapshot.await?;
             this.update(cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();

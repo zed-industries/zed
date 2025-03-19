@@ -276,7 +276,7 @@ impl LivekitWindow {
             cx.notify();
         } else {
             let participant = self.room.local_participant();
-            cx.spawn_in(window, async move |this, mut cx| {
+            cx.spawn_in(window, async move |this, cx| {
                 let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
                 let publication = participant
                     .publish_track(
@@ -310,7 +310,7 @@ impl LivekitWindow {
         } else {
             let participant = self.room.local_participant();
             let sources = cx.screen_capture_sources();
-            cx.spawn_in(window, async move |this, mut cx| {
+            cx.spawn_in(window, async move |this, cx| {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
                 let (track, stream) = capture_local_video_track(&*source).await?;

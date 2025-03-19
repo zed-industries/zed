@@ -208,8 +208,8 @@ impl TestServer {
             .unwrap()
             .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
-                cx.spawn(|_| async move {
-                    let access_token = "the-token".to_string();
+                let access_token = "the-token".to_string();
+                cx.spawn(async move |_| {
                     Ok(Credentials {
                         user_id: user_id.to_proto(),
                         access_token,
@@ -230,7 +230,7 @@ impl TestServer {
                 let connection_killers = connection_killers.clone();
                 let forbid_connections = forbid_connections.clone();
                 let client_name = client_name.clone();
-                cx.spawn(move |cx| async move {
+                cx.spawn(async move |cx| {
                     if forbid_connections.load(SeqCst) {
                         Err(EstablishConnectionError::other(anyhow!(
                             "server is forbidding connections"

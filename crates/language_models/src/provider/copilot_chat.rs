@@ -229,8 +229,8 @@ impl LanguageModel for CopilotChatLanguageModel {
         let is_streaming = copilot_request.stream;
 
         let request_limiter = self.request_limiter.clone();
-        let future = cx.spawn(|cx| async move {
-            let response = CopilotChat::stream_completion(copilot_request, cx);
+        let future = cx.spawn(async move |cx| {
+            let response = CopilotChat::stream_completion(copilot_request, cx.clone());
             request_limiter.stream(async move {
                 let response = response.await?;
                 let stream = response
@@ -264,6 +264,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                         }
                     })
                     .boxed();
+
                 Ok(stream)
             }).await
         });

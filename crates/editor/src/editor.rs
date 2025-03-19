@@ -4078,7 +4078,7 @@ impl Editor {
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
-        let task = cx.spawn_in(window, async move |editor, mut cx| {
+        let task = cx.spawn_in(window, async move |editor, cx| {
             async move {
                 editor.update(cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);

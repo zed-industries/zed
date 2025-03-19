@@ -149,9 +149,9 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             }
         });
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = 0;
                 cx.notify();
@@ -171,9 +171,9 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&entry.id, cx));
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let thread = open_thread_task.await?;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| context_store.add_thread(thread, cx))

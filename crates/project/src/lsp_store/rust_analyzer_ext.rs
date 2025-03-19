@@ -43,7 +43,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
     language_server
         .on_notification::<ServerStatus, _>({
             let name = name.to_string();
-            move |params, mut cx| {
+            move |params, cx| {
                 let this = this.clone();
                 let name = name.to_string();
                 if let Some(ref message) = params.message {

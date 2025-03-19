@@ -173,7 +173,7 @@ impl UserStore {
                     }
                 }
             }),
-            _maintain_current_user: cx.spawn(async move |this, mut cx| {
+            _maintain_current_user: cx.spawn(async move |this, cx| {
                 let mut status = client.status();
                 let weak = Arc::downgrade(&client);
                 drop(client);
@@ -697,7 +697,7 @@ impl UserStore {
         };
 
         let client = self.client.clone();
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             if let Some(client) = client.upgrade() {
                 let response = client
                     .request(proto::AcceptTermsOfService {})
@@ -785,7 +785,7 @@ impl UserStore {
         }
         if !missing_user_ids.is_empty() {
             let this = self.weak_self.clone();
-            cx.spawn(async move |mut cx| {
+            cx.spawn(async move |cx| {
                 this.update(cx, |this, cx| this.get_users(missing_user_ids, cx))?
                     .await
             })
