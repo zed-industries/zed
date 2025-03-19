@@ -296,13 +296,6 @@ impl Thread {
         self.scripting_tool_use.tool_results_for_message(id)
     }
 
-    pub fn scripting_changed_buffers<'a>(
-        &self,
-        cx: &'a App,
-    ) -> impl ExactSizeIterator<Item = &'a Entity<language::Buffer>> {
-        self.scripting_session.read(cx).changed_buffers()
-    }
-
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
     }
@@ -1125,6 +1118,10 @@ impl Thread {
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
     }
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {

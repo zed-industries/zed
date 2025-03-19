@@ -3,8 +3,9 @@ use std::sync::Arc;
 use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
-use file_icons::FileIcons;
 use fs::Fs;
+use git::ExpandCommitEditor;
+use git_ui::git_panel;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
     WeakEntity,
@@ -17,8 +18,7 @@ use std::time::Duration;
 use text::Bias;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
-    Tooltip,
+    prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, NotifyTaskExt};
@@ -44,7 +44,6 @@ pub struct MessageEditor {
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
     tool_selector: Entity<ToolSelector>,
-    edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -125,7 +124,6 @@ impl MessageEditor {
                 )
             }),
             tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
-            edits_expanded: false,
             _subscriptions: subscriptions,
         }
     }
@@ -347,8 +345,12 @@ impl Render for MessageEditor {
             px(64.)
         };
 
-        let changed_buffers = self.thread.read(cx).scripting_changed_buffers(cx);
-        let changed_buffers_count = changed_buffers.len();
+        let project = self.thread.read(cx).project();
+        let changed_files = if let Some(repository) = project.read(cx).active_repository(cx) {
+            repository.read(cx).status().count()
+        } else {
+            0
+        };
 
         v_flex()
             .size_full()
@@ -410,7 +412,7 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            .when(changed_buffers_count > 0, |parent| {
+            .when(changed_files > 0, |parent| {
                 parent.child(
                     v_flex()
                         .mx_2()
@@ -421,96 +423,70 @@ impl Render for MessageEditor {
                         .rounded_t_md()
                         .child(
                             h_flex()
-                                .gap_2()
+                                .justify_between()
                                 .p_2()
                                 .child(
-                                    Disclosure::new("edits-disclosure", self.edits_expanded)
-                                        .on_click(cx.listener(|this, _ev, _window, cx| {
-                                            this.edits_expanded = !this.edits_expanded;
-                                            cx.notify();
-                                        })),
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            IconButton::new(
+                                                "edits-disclosure",
+                                                IconName::GitBranchSmall,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .on_click(
+                                                |_ev, _window, cx| {
+                                                    cx.defer(|cx| {
+                                                        cx.dispatch_action(&git_panel::ToggleFocus)
+                                                    });
+                                                },
+                                            ),
+                                        )
+                                        .child(
+                                            Label::new("Git Status")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("•")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} {} changed",
+                                                changed_files,
+                                                if changed_files == 1 { "file" } else { "files" }
+                                            ))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                        ),
                                 )
                                 .child(
-                                    Label::new("Edits")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
-                                .child(
-                                    Label::new(format!(
-                                        "{} {}",
-                                        changed_buffers_count,
-                                        if changed_buffers_count == 1 {
-                                            "file"
-                                        } else {
-                                            "files"
-                                        }
-                                    ))
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            Button::new("review", "Review")
+                                                .label_size(LabelSize::XSmall)
+                                                .on_click(|_event, _window, cx| {
+                                                    cx.defer(|cx| {
+                                                        cx.dispatch_action(
+                                                            &git_ui::project_diff::Diff,
+                                                        );
+                                                    });
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("commit", "Commit")
+                                                .label_size(LabelSize::XSmall)
+                                                .on_click(|_event, _window, cx| {
+                                                    cx.defer(|cx| {
+                                                        cx.dispatch_action(&ExpandCommitEditor)
+                                                    });
+                                                }),
+                                        ),
                                 ),
-                        )
-                        .when(self.edits_expanded, |parent| {
-                            parent.child(
-                                v_flex().bg(cx.theme().colors().editor_background).children(
-                                    changed_buffers.enumerate().flat_map(|(index, buffer)| {
-                                        let file = buffer.read(cx).file()?;
-                                        let path = file.path();
-
-                                        let parent_label = path.parent().and_then(|parent| {
-                                            let parent_str = parent.to_string_lossy();
-
-                                            if parent_str.is_empty() {
-                                                None
-                                            } else {
-                                                Some(
-                                                    Label::new(format!(
-                                                        "{}{}",
-                                                        parent_str,
-                                                        std::path::MAIN_SEPARATOR_STR
-                                                    ))
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                                )
-                                            }
-                                        });
-
-                                        let name_label = path.file_name().map(|name| {
-                                            Label::new(name.to_string_lossy().to_string())
-                                                .size(LabelSize::Small)
-                                        });
-
-                                        let file_icon = FileIcons::get_icon(&path, cx)
-                                            .map(Icon::from_path)
-                                            .unwrap_or_else(|| Icon::new(IconName::File));
-
-                                        let element = div()
-                                            .p_2()
-                                            .when(index + 1 < changed_buffers_count, |parent| {
-                                                parent
-                                                    .border_color(cx.theme().colors().border)
-                                                    .border_b_1()
-                                            })
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(file_icon)
-                                                    .child(
-                                                        // TODO: handle overflow
-                                                        h_flex()
-                                                            .children(parent_label)
-                                                            .children(name_label),
-                                                    )
-                                                    // TODO: show lines changed
-                                                    .child(Label::new("+").color(Color::Created))
-                                                    .child(Label::new("-").color(Color::Deleted)),
-                                            );
-
-                                        Some(element)
-                                    }),
-                                ),
-                            )
-                        }),
+                        ),
                 )
             })
             .child(
