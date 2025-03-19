@@ -66,11 +66,12 @@ jobs:
           RELEASE_BODY: "${{ toJSON(github.event.release.body) }}"
         run: |
           TAG="v0.178.4"
-          RELEASE_BODY="$(curl -s 'https://api.github.com/repos/zed-industries/zed/releases' | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .prerelease == false) | .body')"
-          echo "$TAG"
-          echo "$RELEASE_BODY"
-          echo "{\"version\": \"$TAG\", \"markdown_body\": \"$RELEASE_BODY\"}" \
-            | curl -X POST "https://zed.dev/api/send_release_notes_email" \
-              -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              -d @-
+          curl -s 'https://api.github.com/repos/zed-industries/zed/releases' | \
+            jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .prerelease == false) | .body' \
+            > release_body.txt
+          jq -n --arg tag "$TAG" --rawfile body release_body.txt '{version: $tag, markdown_body: $body}' \
+            > release_data.json
+          curl -X POST "https://zed.dev/api/send_release_notes_email" \
+            -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d @release_data.json
