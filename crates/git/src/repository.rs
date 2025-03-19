@@ -1084,16 +1084,27 @@ impl GitRepository for RealGitRepository {
         let git_binary_path = self.git_binary_path.clone();
         cx.background_spawn(async move {
             let working_directory = working_directory?;
-            let status = new_smol_command(&git_binary_path)
-                .current_dir(&working_directory)
-                .args(&["restore", "--source", &oid.to_string(), "--worktree", "."])
-                .status()
-                .await?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(anyhow!("Failed to restore checkpoint"))?
-            }
+            let index_file_path = working_directory.join(".git/index.tmp");
+
+            let run_git_command = async |args: &[&str]| {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .env("GIT_INDEX_FILE", &index_file_path)
+                    .args(args)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+                } else {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    Err(anyhow!("Git command failed: {:?}", error))
+                }
+            };
+
+            run_git_command(&["restore", "--source", &oid.to_string(), "--worktree", "."]).await?;
+            run_git_command(&["read-tree", &oid.to_string()]).await?;
+            run_git_command(&["clean", "-d", "--force"]).await?;
+            Ok(())
         })
         .boxed()
     }
@@ -1354,6 +1365,9 @@ mod tests {
         smol::fs::write(repo_dir.path().join("foo"), "bar")
             .await
             .unwrap();
+        smol::fs::write(repo_dir.path().join("baz"), "qux")
+            .await
+            .unwrap();
         repo.restore_checkpoint(checkpoint_sha, cx.to_async())
             .await
             .unwrap();
@@ -1362,6 +1376,12 @@ mod tests {
                 .await
                 .unwrap(),
             "foo"
+        );
+        assert_eq!(
+            smol::fs::read_to_string(repo_dir.path().join("baz"))
+                .await
+                .ok(),
+            None
         );
     }
 
