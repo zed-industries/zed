@@ -17,6 +17,7 @@ use crate::thread_store::SerializedMessage;
 pub struct ToolUse {
     pub id: LanguageModelToolUseId,
     pub name: SharedString,
+    pub ui_text: SharedString,
     pub status: ToolUseStatus,
     pub input: serde_json::Value,
 }

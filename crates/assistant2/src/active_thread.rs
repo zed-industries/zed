@@ -705,27 +705,25 @@ impl ActiveThread {
                         )
                         .child(div().p_2().child(message_content)),
                 ),
-            Role::Assistant => {
-                v_flex()
-                    .id(("message-container", ix))
-                    .child(div().py_3().px_4().child(message_content))
-                    .when(
-                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
-                        |parent| {
-                            parent.child(
-                                v_flex()
-                                    .children(
-                                        tool_uses
-                                            .into_iter()
-                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                                    )
-                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
-                                        self.render_scripting_tool_use(tool_use, cx)
-                                    })),
-                            )
-                        },
-                    )
-            }
+            Role::Assistant => v_flex()
+                .id(("message-container", ix))
+                .child(div().py_3().px_4().child(message_content))
+                .when(
+                    !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                    |parent| {
+                        parent.child(
+                            v_flex()
+                                .children(
+                                    tool_uses
+                                        .into_iter()
+                                        .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
+                                )
+                                .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                    self.render_scripting_tool_use(tool_use, window, cx)
+                                })),
+                        )
+                    },
+                ),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -737,7 +735,12 @@ impl ActiveThread {
         styled_message.into_any()
     }
 
-    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tool_use(
+        &self,
+        tool_use: ToolUse,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
@@ -782,11 +785,11 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(
-                                    Label::new(tool_use.name)
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx),
-                                ),
+                                .child(div().text_ui(cx).child(self.render_markdown(
+                                    tool_use.ui_text.clone(),
+                                    window,
+                                    cx,
+                                ))),
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
@@ -914,6 +917,7 @@ impl ActiveThread {
     fn render_scripting_tool_use(
         &self,
         tool_use: ToolUse,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_open = self
@@ -959,7 +963,11 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(Label::new(tool_use.name)),
+                                .child(div().text_ui(cx).child(self.render_markdown(
+                                    tool_use.ui_text.clone(),
+                                    window,
+                                    cx,
+                                ))),
                         )
                         .child(
                             Label::new(match tool_use.status {

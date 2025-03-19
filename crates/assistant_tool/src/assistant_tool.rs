@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use gpui::Context;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Context, Entity, SharedString, Task};
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
