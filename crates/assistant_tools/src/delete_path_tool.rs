@@ -39,6 +39,13 @@ impl Tool for DeletePathTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<DeletePathToolInput>(input.clone()) {
+            Ok(input) => format!("Delete `{}`", input.path),
+            Err(_) => "Delete path".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

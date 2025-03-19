@@ -85,7 +85,10 @@ impl ActiveThread {
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
             this.push_message(&message.id, message.text.clone(), window, cx);
 
-            for tool_use in thread.read(cx).scripting_tool_uses_for_message(message.id) {
+            for tool_use in thread
+                .read(cx)
+                .scripting_tool_uses_for_message(message.id, cx)
+            {
                 this.render_tool_use_label_markdown(
                     tool_use.id.clone(),
                     tool_use.name.clone(),

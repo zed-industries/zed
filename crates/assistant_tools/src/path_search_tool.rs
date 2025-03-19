@@ -48,6 +48,13 @@ impl Tool for PathSearchTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
+            Ok(input) => format!("Find paths matching `{}`", input.glob),
+            Err(_) => "Search paths".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

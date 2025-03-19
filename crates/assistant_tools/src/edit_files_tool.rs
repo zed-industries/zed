@@ -88,6 +88,13 @@ impl Tool for EditFilesTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<EditFilesToolInput>(input.clone()) {
+            Ok(input) => input.display_description,
+            Err(_) => "Edit files".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

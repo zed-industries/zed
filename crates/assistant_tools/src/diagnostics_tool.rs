@@ -46,6 +46,17 @@ impl Tool for DiagnosticsTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
+            .ok()
+            .and_then(|input| input.path)
+        {
+            format!("Check diagnostics for `{}`", path.display())
+        } else {
+            "Check project diagnostics".to_string()
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

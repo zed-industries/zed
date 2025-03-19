@@ -5,7 +5,7 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use futures::future::Shared;
 use futures::FutureExt as _;
-use gpui::{SharedString, Task};
+use gpui::{App, SharedString, Task};
 use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
@@ -176,7 +176,7 @@ impl ToolUseState {
             })();
 
             let ui_text = if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                tool.ui_text(tool_use.input.clone())
+                tool.ui_text(&tool_use.input).into()
             } else {
                 "Unknown tool".into()
             };

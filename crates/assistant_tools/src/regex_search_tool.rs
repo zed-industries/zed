@@ -43,6 +43,13 @@ impl Tool for RegexSearchTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
+            Ok(input) => format!("Search files for regex `{}`", input.regex),
+            Err(_) => "Search with regex".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

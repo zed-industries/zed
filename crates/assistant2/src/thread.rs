@@ -397,7 +397,7 @@ impl Thread {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
-            this.read_with(cx, |this, _| SerializedThread {
+            this.read_with(cx, |this, cx| SerializedThread {
                 summary: this.summary_or_default(),
                 updated_at: this.updated_at(),
                 messages: this
@@ -407,7 +407,7 @@ impl Thread {
                         role: message.role,
                         text: message.text.clone(),
                         tool_uses: this
-                            .tool_uses_for_message(message.id)
+                            .tool_uses_for_message(message.id, cx)
                             .into_iter()
                             .chain(this.scripting_tool_uses_for_message(message.id, cx))
                             .map(|tool_use| SerializedToolUse {
@@ -1111,7 +1111,7 @@ impl Thread {
         })
     }
 
-    pub fn to_markdown(&self) -> Result<String> {
+    pub fn to_markdown(&self, cx: &App) -> Result<String> {
         let mut markdown = Vec::new();
 
         if let Some(summary) = self.summary() {

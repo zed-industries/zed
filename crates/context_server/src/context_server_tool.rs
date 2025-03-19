@@ -56,6 +56,10 @@ impl Tool for ContextServerTool {
         }
     }
 
+    fn ui_text(&self, _input: &serde_json::Value) -> String {
+        format!("Run MCP tool `{}`", self.tool.name)
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
