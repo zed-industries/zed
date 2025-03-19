@@ -11,7 +11,7 @@ mod metal_atlas;
 #[cfg(not(feature = "macos-blade"))]
 pub mod metal_renderer;
 
-use media::core_video::CVImageBuffer;
+use core_video::image_buffer::CVImageBuffer;
 #[cfg(not(feature = "macos-blade"))]
 use metal_renderer as renderer;
 

@@ -13,9 +13,12 @@ use cocoa::{
 };
 use collections::HashMap;
 use core_foundation::base::TCFType;
-use foreign_types::ForeignType;
-use media::core_video::CVMetalTextureCache;
-use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use core_video::{
+    metal_texture_cache::CVMetalTextureCache,
+    pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+};
+use foreign_types::{ForeignType, ForeignTypeRef};
+use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange, TextureRef};
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -107,7 +110,7 @@ pub(crate) struct MetalRenderer {
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
-    core_video_texture_cache: CVMetalTextureCache,
+    core_video_texture_cache: core_video::metal_texture_cache::CVMetalTextureCache,
 }
 
 impl MetalRenderer {
@@ -235,7 +238,7 @@ impl MetalRenderer {
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), PATH_SAMPLE_COUNT));
         let core_video_texture_cache =
-            unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() };
+            CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
         Self {
             device,
@@ -1054,13 +1057,13 @@ impl MetalRenderer {
 
         for surface in surfaces {
             let texture_size = size(
-                DevicePixels::from(surface.image_buffer.width() as i32),
-                DevicePixels::from(surface.image_buffer.height() as i32),
+                DevicePixels::from(surface.image_buffer.get_width() as i32),
+                DevicePixels::from(surface.image_buffer.get_height() as i32),
             );
 
             assert_eq!(
-                surface.image_buffer.pixel_format_type(),
-                media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                surface.image_buffer.get_pixel_format(),
+                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             );
 
             let y_texture = unsafe {
@@ -1068,10 +1071,10 @@ impl MetalRenderer {
                 self.core_video_texture_cache
                     .create_texture_from_image(
                         surface.image_buffer.as_concrete_TypeRef(),
-                        ptr::null(),
+                        None,
                         MTLPixelFormat::R8Unorm,
-                        dbg!(surface.image_buffer.plane_width(0)),
-                        dbg!(surface.image_buffer.plane_height(0)),
+                        dbg!(surface.image_buffer.get_width_of_plane(0)),
+                        dbg!(surface.image_buffer.get_height_of_plane(0)),
                         0,
                     )
                     .unwrap()
@@ -1080,10 +1083,10 @@ impl MetalRenderer {
                 self.core_video_texture_cache
                     .create_texture_from_image(
                         surface.image_buffer.as_concrete_TypeRef(),
-                        ptr::null(),
+                        None,
                         MTLPixelFormat::RG8Unorm,
-                        surface.image_buffer.plane_width(1),
-                        surface.image_buffer.plane_height(1),
+                        surface.image_buffer.get_width_of_plane(1),
+                        surface.image_buffer.get_height_of_plane(1),
                         1,
                     )
                     .unwrap()
@@ -1105,13 +1108,18 @@ impl MetalRenderer {
                 mem::size_of_val(&texture_size) as u64,
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
+            // let y_texture = y_texture.get_texture().unwrap().
             command_encoder.set_fragment_texture(
                 SurfaceInputIndex::YTexture as u64,
-                Some(y_texture.as_texture_ref()),
+                y_texture
+                    .get_texture()
+                    .map(|t| unsafe { TextureRef::from_ptr(t.as_ptr() as _) }),
             );
             command_encoder.set_fragment_texture(
                 SurfaceInputIndex::CbCrTexture as u64,
-                Some(cb_cr_texture.as_texture_ref()),
+                cb_cr_texture
+                    .get_texture()
+                    .map(|t| unsafe { TextureRef::from_ptr(t.as_ptr() as _) }),
             );
 
             unsafe {

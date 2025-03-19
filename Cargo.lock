@@ -3357,6 +3357,7 @@ dependencies = [
  "core-graphics2",
  "io-surface",
  "libc",
+ "metal",
 ]
 
 [[package]]
@@ -5697,6 +5698,7 @@ dependencies = [
  "core-foundation-sys",
  "core-graphics 0.24.0",
  "core-text",
+ "core-video",
  "cosmic-text",
  "ctor",
  "derive_more",
@@ -8092,6 +8094,7 @@ dependencies = [
  "anyhow",
  "bindgen 0.70.1",
  "core-foundation 0.10.0",
+ "core-video",
  "ctor",
  "foreign-types 0.5.0",
  "metal",
@@ -8141,9 +8144,9 @@ dependencies = [
 
 [[package]]
 name = "metal"
-version = "0.31.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f569fb946490b5743ad69813cb19629130ce9374034abe31614a36402d18f99e"
+checksum = "7ecfd3296f8c56b7c1f6fbac3c71cefa9d78ce009850c45000015f206dc7fa21"
 dependencies = [
  "bitflags 2.8.0",
  "block",

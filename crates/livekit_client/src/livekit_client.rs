@@ -602,18 +602,7 @@ fn create_buffer_pool(width: u32, height: u32) -> Result<CVPixelBufferPool> {
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Clone)]
-pub struct RemoteVideoFrame(core_video::image_buffer::CVImageBuffer);
-#[cfg(target_os = "macos")]
-impl Into<SurfaceSource> for RemoteVideoFrame {
-    fn into(self) -> SurfaceSource {
-        unsafe {
-            SurfaceSource::Surface(media::core_video::CVImageBuffer::wrap_under_get_rule(
-                self.0.as_CFTypeRef() as _,
-            ))
-        }
-    }
-}
+pub type RemoteVideoFrame = core_video::pixel_buffer::CVPixelBuffer;
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_from_webrtc(
@@ -622,6 +611,7 @@ fn video_frame_buffer_from_webrtc(
 ) -> Option<RemoteVideoFrame> {
     use core_video::{
         image_buffer::{CVImageBuffer, TCVImageBuffer},
+        pixel_buffer::CVPixelBuffer,
         r#return::kCVReturnSuccess,
     };
     use livekit::webrtc::native::yuv_helper::i420_to_nv12;
@@ -631,11 +621,7 @@ fn video_frame_buffer_from_webrtc(
         if pixel_buffer.is_null() {
             return None;
         }
-        return unsafe {
-            Some(RemoteVideoFrame(CVImageBuffer::wrap_under_get_rule(
-                pixel_buffer as _,
-            )))
-        };
+        return unsafe { Some(CVPixelBuffer::wrap_under_get_rule(pixel_buffer as _)) };
     }
 
     let i420_buffer = buffer.as_i420()?;
@@ -681,10 +667,10 @@ fn video_frame_buffer_from_webrtc(
             return None;
         }
 
-        pixel_buffer.as_image_buffer()
+        pixel_buffer
     };
 
-    Some(RemoteVideoFrame(image_buffer))
+    Some(image_buffer)
 }
 
 #[cfg(not(target_os = "macos"))]

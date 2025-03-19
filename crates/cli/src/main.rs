@@ -706,6 +706,7 @@ mod mac_os {
     use anyhow::{anyhow, Context as _, Result};
     use core_foundation::{
         array::{CFArray, CFIndex},
+        base::TCFType as _,
         string::kCFStringEncodingUTF8,
         url::{CFURLCreateWithBytes, CFURL},
     };

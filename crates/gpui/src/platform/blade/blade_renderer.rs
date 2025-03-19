@@ -12,7 +12,7 @@ use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
-use media::core_video::CVMetalTextureCache;
+use core_video::CVMetalTextureCache;
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
@@ -709,7 +709,7 @@ impl BladeRenderer {
 
                                     assert_eq!(
                                         surface.image_buffer.pixel_format_type(),
-                                        media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                                        core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                                     );
 
                                     let y_texture = self
